@@ -7,10 +7,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Key } from "../../../kits/typescript/src/kit.ts";
+import { Colour, Key, mosaicColour } from "../../../kits/typescript/src/kit.ts";
 import { Harness, type Sent, shows } from "../../../kits/typescript/src/testing.ts";
 import { audio } from "../src/audio.ts";
-import { MENU, RADIO } from "../src/audio/pages.ts";
+import * as drums from "../src/audio/drums.ts";
+import { BOARD, DRUMS, MENU, PIANO, RADIO } from "../src/audio/pages.ts";
 import { BLOCK_SAMPLES, CHANNEL, HANDLE, LEAD_MS, TICK_MS, sampleAt } from "../src/audio/radio.ts";
 import { RATE } from "../src/audio/synth.ts";
 import { Tracker } from "../src/audio/tracker.ts";
@@ -213,5 +214,111 @@ test("digits and the coloured keys select pages from the menu and the radio", ()
   harness.typeText(1, "500");
   harness.press(1, Key.F1);
   assert.deepEqual(harness.gotos(1), [RADIO, MENU, MENU], "nor does the radio, whose red link is Sound");
+  assert.deepEqual(harness.errors, []);
+});
+
+/** The piano's key for note 0, middle C: its colour cell on a lower row (piano.ts). */
+const MIDDLE_C_CELL = [11, 4] as const;
+
+// The piano plays by key position: Q on a French keyboard is A's key,
+// middle C, the library's handle 1; a repeat or a release sends no sound.
+test("the piano plays a note by key position", () => {
+  const harness = area();
+  harness.join(1, PIANO);
+  const loaded = names(soundLines(harness, { session: 1 }));
+  assert.ok(loaded.filter((name) => name === "object").length > 13, "the library first");
+  let since = harness.sent.length;
+  harness.send(1, { kind: "key", action: "press", key: "q", base: "a" });
+  const played = soundLines(harness, { session: 1 }, since).map(member);
+  assert.equal(played.length, 1);
+  const [[name, fields] = ["", {}]] = played;
+  assert.equal(name, "play");
+  assert.equal(fields["handle"], 1);
+  assert.equal(fields["page"], undefined);
+  assert.ok(typeof fields["channel"] === "number" && fields["channel"] <= 2, `${String(fields["channel"])}`);
+  assert.equal(harness.own(1, PIANO)[MIDDLE_C_CELL[0]]?.[MIDDLE_C_CELL[1]], mosaicColour(Colour.Red), "the page lights the key");
+  since = harness.sent.length;
+  harness.send(1, { kind: "key", action: "repeat", key: "q", base: "a" });
+  assert.deepEqual(soundLines(harness, { session: 1 }, since), [], "a repeat plays nothing");
+  harness.send(1, { kind: "key", action: "release", key: "q", base: "a" });
+  assert.deepEqual(soundLines(harness, { session: 1 }, since), [], "a release plays nothing");
+  assert.equal(harness.own(1, PIANO)[MIDDLE_C_CELL[0]]?.[MIDDLE_C_CELL[1]], mosaicColour(Colour.White), "and lets the key go");
+  harness.send(1, { kind: "key", action: "press", key: "k" });
+  const above = soundLines(harness, { session: 1 }, since).map(member);
+  assert.deepEqual(
+    above.map(([kind, play]) => [kind, play["handle"]]),
+    [["play", 13]],
+    "the C above, without base",
+  );
+});
+
+// A digit on the board plays its effect: 3 is the hit, handle 22.
+test("the board plays an effect for a digit", () => {
+  const harness = area();
+  harness.join(1, BOARD);
+  const since = harness.sent.length;
+  harness.typeText(1, "3");
+  const played = soundLines(harness, { session: 1 }, since).map(member);
+  assert.deepEqual(
+    played.map(([kind, fields]) => [kind, fields["handle"]]),
+    [["play", 22]],
+  );
+  assert.ok(shows(harness.own(1, BOARD), "Last played: Hit"));
+});
+
+// Enter starts the drum machine; each step plays that step's sounds to its
+// viewer alone, on one clock.
+test("the drum machine plays its steps in time", () => {
+  const harness = area();
+  harness.join(1, DRUMS);
+  harness.join(2, DRUMS);
+  harness.runUntil(10);
+  harness.press(1, Key.Enter);
+  assert.equal(harness.channel.nextWake(), drums.STEP_MS);
+  const machine = new drums.Machine();
+  let playedAny = false;
+  for (let step = 1; step <= drums.STEPS; step += 1) {
+    const now = step * drums.STEP_MS;
+    const since = harness.sent.length;
+    harness.runUntil(now);
+    const played = names(soundLines(harness, { session: 1 }, since)).filter((name) => name === "play").length;
+    const index = drums.stepAt(now);
+    const expected = drums.TRACKS.filter((_, track) => machine.on(track, index)).length;
+    assert.equal(played, expected, `step ${index}`);
+    playedAny ||= played > 0;
+    assert.deepEqual(soundLines(harness, { session: 2 }, since), [], "the other viewer's machine is stopped");
+  }
+  assert.ok(playedAny);
+});
+
+// Not in the Rust showcase: the board keeps the number keys, and the
+// piano and the drum machine select pages by digits (INPUT.md section 9.4).
+test("digits play on the board and select pages elsewhere", () => {
+  const harness = area();
+  harness.join(1, MENU);
+  harness.typeText(1, "502");
+  assert.deepEqual(harness.gotos(1), [PIANO], "the menu takes no digits");
+  harness.open(1, PIANO);
+  for (const digit of ["5", "0", "4"]) {
+    harness.send(1, { kind: "key", action: "press", key: digit, base: digit });
+    harness.send(1, { kind: "key", action: "release", key: digit, base: digit });
+  }
+  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS], "the piano's digit keys in ALL_KEYS");
+  harness.open(1, DRUMS);
+  harness.typeText(1, "503");
+  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS, BOARD], "nor does the drum machine");
+  harness.open(1, BOARD);
+  const since = harness.sent.length;
+  harness.typeText(1, "5");
+  harness.typeText(1, "0");
+  harness.typeText(1, "1");
+  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS, BOARD], "the board plays them");
+  assert.deepEqual(
+    soundLines(harness, { session: 1 }, since).map(member).map(([, fields]) => fields["handle"]),
+    [24, 20],
+    "5 the jump, 0 nothing, 1 the laser",
+  );
+  harness.press(1, Key.Red);
+  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS, BOARD, MENU], "the board's red link, Sound");
   assert.deepEqual(harness.errors, []);
 });

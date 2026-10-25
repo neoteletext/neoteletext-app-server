@@ -5,10 +5,13 @@
 // - 500, the menu.
 // - 501, NeoTeletext Radio: one live stream of synthesized music for every
 //   listener (audio/radio.ts).
+// - 502, the piano; 503, the sound board; 504, the drum machine: each
+//   viewer's own, playing the showcase's effects library (audio/studio.ts).
 
 import type { Area, Section } from "./area.ts";
 import { BOARD, DRUMS, MENU, PIANO, RADIO } from "./audio/pages.ts";
 import { Radio } from "./audio/radio.ts";
+import { Studio } from "./audio/studio.ts";
 import { page } from "./common.ts";
 import { type Application, Colour, type Context, type PageEntry, pageText } from "./kit.ts";
 
@@ -53,6 +56,6 @@ class Menu implements Application {
 
 /** Sound. */
 export const audio: Area = {
-  applications: () => [new Menu(), new Radio()],
+  applications: () => [new Menu(), new Radio(), new Studio()],
   sections: (): readonly Section[] => [{ page: MENU, name: "Sound", about: "radio, piano, sound board, drums" }],
 };
