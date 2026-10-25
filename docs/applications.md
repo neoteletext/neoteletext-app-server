@@ -23,6 +23,7 @@ How a channel's application, a program in any language, talks to the server. It 
 | `leave` | `session`, `page` | The viewer left it |
 | `input` | `session`, `page`, `event` | Input on the page open, from INPUT.md |
 | `close` | `session` | The viewer went: forget the session |
+| `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7, for a page to show |
 
 `session` is a whole number, never reused. `page` is three hexadecimal digits, `"100"` to `"8FF"`.
 
@@ -117,3 +118,22 @@ The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
 ```
 
 `teletext-server --channels channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder.
+
+## 7. Figures
+
+The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` at the server's root holds the same for every channel; the log has a one-line summary each minute.
+
+- **`server`:**
+  - `uptime_s`;
+  - `connections`, `connections_peak` and `connections_total`;
+  - `messages_sent` and `bytes_sent` (WebSocket);
+  - `requests` and `not_modified` (HTTP; answered from the client's `ETag`);
+  - `restarts` (of programs);
+  - `memory_kb` (resident, where the system says; -1 elsewhere);
+  - `channels`, and `viewers` by channel folder.
+- **`channel`:**
+  - `viewers`, `viewers_peak` and `viewers_total`;
+  - `opens`, and `most_opened`: ten page numbers with how often each was opened;
+  - `inputs` and `keys`;
+  - `shared_published` and `own_published`;
+  - `gotos`, `sound_records`, `lines_to_application` and `lines_from_application`.

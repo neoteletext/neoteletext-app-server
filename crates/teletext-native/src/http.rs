@@ -19,6 +19,7 @@ use tokio::net::TcpStream;
 
 use crate::connection;
 use crate::hub::Hub;
+use crate::stats::{ServerStats, count};
 
 /// A whole response body.
 #[derive(Debug, Default)]
@@ -49,7 +50,12 @@ pub struct Routes {
     pub hubs: BTreeMap<String, Hub>,
     /// Sessions are numbered from here, never reused.
     pub sessions: AtomicU64,
+    /// The server's figures.
+    pub stats: Arc<ServerStats>,
 }
+
+/// Where the server's figures are served, beside the channels' folders.
+pub const STATS: &str = "stats.json";
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
@@ -60,8 +66,15 @@ const T42_TYPE: &str = "application/x-teletext-t42";
 pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let path = request.uri().path().trim_start_matches('/').to_owned();
     let (folder, file) = path.split_once('/').unwrap_or((path.as_str(), ""));
+    count(&routes.stats.requests);
     if folder.is_empty() {
         return listing(routes);
+    }
+    if folder == STATS && file.is_empty() {
+        let mut response = Response::new(Whole(Some(Bytes::from(routes.stats.document()))));
+        response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
     }
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
     if file == PUSH {
@@ -82,7 +95,11 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
             None => return status(StatusCode::NOT_FOUND),
         },
     };
-    file_response(&request, content_type, &body)
+    let response = file_response(&request, content_type, &body);
+    if response.status() == StatusCode::NOT_MODIFIED {
+        count(&routes.stats.not_modified);
+    }
+    response
 }
 
 /// A file, or 304 when the client holds it already.

@@ -14,6 +14,12 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::apps::{FromApplication, Link};
+use crate::stats::{ServerStats, count};
+
+/// How often a channel's counts are recorded and sent to its application,
+/// in seconds: often enough for a live figure on a page, rarely enough to
+/// cost nothing.
+pub const STATS_EVERY_S: u64 = 10;
 
 /// How many changes the log keeps: a connection further behind than this
 /// is sent every shared page again, which is the same as catching up.
@@ -122,13 +128,15 @@ pub struct Hub {
     pub generation: watch::Receiver<u64>,
     /// Its task's commands.
     pub commands: mpsc::Sender<Command>,
+    /// The server's figures, which every connection adds to.
+    pub stats: Arc<ServerStats>,
 }
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
 /// zero; `link`, for a channel whose application is a program of its own,
 /// carries that program's lines (`docs/applications.md`).
 #[must_use]
-pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Link>) -> Hub {
+pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>) -> Hub {
     let now = move || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     channel.start(now());
     let descriptor: Arc<[u8]> = channel.resource("channel.json").map(|resource| resource.body).unwrap_or_default().into();
@@ -136,12 +144,14 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
     let pages = Arc::new(Pages::default());
     let (generation_sender, generation) = watch::channel(0_u64);
     let (commands, mut queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, contents, pages: Arc::clone(&pages), generation, commands };
+    let hub = Hub { folder: folder.to_owned(), descriptor, contents, pages: Arc::clone(&pages), generation, commands, stats: Arc::clone(&stats) };
+    let folder = folder.to_owned();
     tokio::spawn(async move {
         let mut outboxes: BTreeMap<SessionId, mpsc::Sender<Outbound>> = BTreeMap::new();
         let mut current = 0_u64;
         let (mut from_application, to_application) = link.map_or((None, None), |link| (Some(link.from), Some(link.to)));
         let mut dropped = Dropped::default();
+        let mut figures = tokio::time::interval(Duration::from_secs(STATS_EVERY_S));
         let mut sink = Sink {
             pages: &pages,
             generation: &generation_sender,
@@ -168,6 +178,7 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                     Event::Application(arrived)
                 }
                 () = sleep_until(wake) => Event::Deadline,
+                _ = figures.tick() => Event::Figures,
             };
             match event {
                 Event::Command(Command::Opened { session, outbox }) => {
@@ -180,8 +191,18 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                     channel.closed(session, now());
                 }
                 Event::Application(FromApplication::Line(text)) => channel.from_application(0, &text, now()),
-                Event::Application(FromApplication::Restarted) => channel.restarted(0, now()),
+                Event::Application(FromApplication::Restarted) => {
+                    count(&stats.restarts);
+                    channel.restarted(0, now());
+                }
                 Event::Deadline => channel.deadline(now()),
+                Event::Figures => {
+                    stats.record(&folder, channel.stats());
+                    if let Some(to) = to_application.as_ref() {
+                        // A figure missed is sent again in ten seconds.
+                        let _ = to.try_send(stats.line(channel.stats()));
+                    }
+                }
             }
             let mut sink = Sink {
                 pages: &pages,
@@ -202,6 +223,7 @@ enum Event {
     Command(Command),
     Application(FromApplication),
     Deadline,
+    Figures,
 }
 
 /// The next line from the program, or never when there is none.

@@ -38,12 +38,14 @@ pub mod layout;
 pub mod remote;
 pub mod screen;
 mod session;
+pub mod stats;
 
 pub use application::{Application, Audience, Context, Owner, PageEntry};
 pub use channel::{Channel, ChannelConfig, Effect, SessionId};
 pub use input::{Input, Named};
 pub use remote::Remote;
 pub use screen::{Colour, Screen};
+pub use stats::ChannelStats;
 
 /// The engine's packet, 42 bytes on the wire (EN 300 706 clause 7.1).
 pub use neoteletext_core::packet::Packet;

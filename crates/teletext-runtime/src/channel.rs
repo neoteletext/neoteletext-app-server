@@ -25,6 +25,7 @@ use crate::application::{Action, Application, Audience, Context, Owner, PageEntr
 use crate::frame::page_frame;
 use crate::input::Input;
 use crate::session::Session;
+use crate::stats::{ChannelStats, count};
 
 /// A connection's number, which the host chooses and never reuses.
 pub type SessionId = u64;
@@ -135,6 +136,7 @@ pub struct Channel {
     sessions: BTreeMap<SessionId, Session>,
     effects: Vec<Effect>,
     seed: u64,
+    stats: ChannelStats,
 }
 
 impl Channel {
@@ -154,7 +156,16 @@ impl Channel {
             })
             .collect();
         // xorshift needs a seed other than zero.
-        Self { config, applications, owners, shared: BTreeMap::new(), sessions: BTreeMap::new(), effects: Vec::new(), seed: seed | 1 }
+        Self {
+            config,
+            applications,
+            owners,
+            shared: BTreeMap::new(),
+            sessions: BTreeMap::new(),
+            effects: Vec::new(),
+            seed: seed | 1,
+            stats: ChannelStats::default(),
+        }
     }
 
     /// The channel's description.
@@ -182,7 +193,9 @@ impl Channel {
 
     /// A connection opened. The host sends it every shared page itself.
     pub fn opened(&mut self, session: SessionId, now: u64) {
-        self.sessions.insert(session, Session::new());
+        if self.sessions.insert(session, Session::new()).is_none() {
+            self.stats.joined();
+        }
         for index in 0..self.applications.len() {
             self.call(index, now, |application, context| application.joined(session, context));
         }
@@ -191,6 +204,7 @@ impl Channel {
     /// A connection closed.
     pub fn closed(&mut self, session: SessionId, now: u64) {
         if self.sessions.remove(&session).is_some() {
+            self.stats.left();
             for index in 0..self.applications.len() {
                 self.call(index, now, |application, context| application.ended(session, context));
             }
@@ -229,6 +243,7 @@ impl Channel {
     /// A line from the process of application `application` (its place
     /// in the channel), without its newline.
     pub fn from_application(&mut self, application: usize, line: &[u8], now: u64) {
+        count(&mut self.stats.lines_from_application);
         self.call(application, now, |hosted, context| hosted.process_line(line, context));
     }
 
@@ -249,6 +264,12 @@ impl Channel {
         core::mem::take(&mut self.effects)
     }
 
+    /// What the channel has counted since it started.
+    #[must_use]
+    pub const fn stats(&self) -> &ChannelStats {
+        &self.stats
+    }
+
     /// The number of sessions.
     #[must_use]
     pub fn sessions(&self) -> usize {
@@ -264,6 +285,10 @@ impl Channel {
             _ => {
                 let open = state.page;
                 if let (Some(input), Some(&index)) = (Input::of(item), self.owners.get(&open)) {
+                    count(&mut self.stats.inputs);
+                    if matches!(input, Input::Key { action: neoteletext_input::event::Action::Press, .. } | Input::Text(_)) {
+                        count(&mut self.stats.keys);
+                    }
                     self.call(index, now, |application, context| application.input(session, open, &input, context));
                 }
             }
@@ -292,6 +317,7 @@ impl Channel {
             self.call(index, now, |application, context| application.left_page(session, before, context));
         }
         if let Some(&index) = self.owners.get(&page) {
+            self.stats.opened(page);
             self.call(index, now, |application, context| application.opened(session, page, context));
         }
         // The page again, with its cursor and modes, so its IM applies
@@ -357,12 +383,14 @@ impl Channel {
     fn act(&mut self, index: usize, action: Action) {
         match action {
             Action::Publish { owner: Owner::Channel, number, subpages } => {
+                count(&mut self.stats.shared_published);
                 let held = Held::of(&subpages);
                 self.effects.push(Effect::Shared { page: number, frame: Arc::clone(&held.frame) });
                 self.shared.insert(number, held);
             }
             Action::Publish { owner: Owner::Session(session), number, subpages } => {
                 let Some(state) = self.sessions.get_mut(&session) else { return };
+                count(&mut self.stats.own_published);
                 let held = Held::of(&subpages);
                 if state.own.insert(number, held).is_none() {
                     self.effects.push(Effect::Own { session, page: number });
@@ -372,6 +400,7 @@ impl Channel {
             Action::Records { audience, records } => self.records(audience, &records),
             Action::Goto { session, page } => {
                 let Some(state) = self.sessions.get_mut(&session) else { return };
+                count(&mut self.stats.gotos);
                 state.went = Some(page);
                 let held = state.own.get(&page).or_else(|| self.shared.get(&page)).map(|held| held.cursor);
                 let cursor = cursor_of(page, state.acked, held.flatten().as_ref());
@@ -385,12 +414,16 @@ impl Channel {
                     hosted.wake = Some(hosted.wake.map_or(at, |wake| wake.min(at)));
                 }
             }
-            Action::Message(line) => self.effects.push(Effect::ToApplication { application: index, line }),
+            Action::Message(line) => {
+                count(&mut self.stats.lines_to_application);
+                self.effects.push(Effect::ToApplication { application: index, line });
+            }
             Action::Log(text) => self.effects.push(Effect::Log { text: alloc::format!("{}: {text}", self.config.name) }),
         }
     }
 
     fn records(&mut self, audience: Audience, records: &[Vec<u8>]) {
+        self.stats.sound_records = self.stats.sound_records.saturating_add(u64::try_from(records.len()).unwrap_or(u64::MAX));
         let targets: Vec<SessionId> = match audience {
             Audience::Session(session) => alloc::vec![session],
             Audience::Viewers(page) => self.sessions.iter().filter(|(_, state)| state.page == page).map(|(&id, _)| id).collect(),

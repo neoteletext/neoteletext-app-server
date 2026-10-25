@@ -221,3 +221,24 @@ fn bad_lines_are_refused_and_reported() {
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Shared { .. } | Effect::Send { .. })), "nothing done");
     }
 }
+
+/// The channel counts viewers, what they open and press, and its lines,
+/// and never anything that says who a viewer is.
+#[test]
+fn the_channel_counts_what_happens() {
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    channel.opened(VIEWER + 1, 0);
+    send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    send(&mut channel, &InputItem::Text("a"));
+    channel.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\n"}"#, 0);
+    channel.closed(VIEWER + 1, 0);
+    let stats = channel.stats();
+    assert_eq!((stats.viewers, stats.viewers_peak, stats.viewers_total), (1, 2, 2));
+    assert_eq!(stats.most_opened(), [(0x300, 1)]);
+    assert_eq!((stats.inputs, stats.keys), (1, 1));
+    assert_eq!(stats.shared_published, 1);
+    assert_eq!(stats.lines_from_application, 1);
+    assert!(stats.lines_to_application >= 4, "start, joins, open, input and close went to it");
+}
