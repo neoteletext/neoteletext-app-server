@@ -228,7 +228,7 @@ impl Screen {
         let mut page = PageFile::new();
         page.address = address(number);
         page.subpage = subpage;
-        page.subcode = SubCode::new(u16::from(subpage));
+        page.subcode = SubCode::new(decimal_subcode(subpage));
         for (row, codes) in self.rows.iter().enumerate() {
             page.set_row(row, codes);
         }
@@ -254,6 +254,16 @@ impl Screen {
     pub fn row_text(&self, row: usize) -> String {
         self.rows.get(row).map(|line| line.iter().map(|&code| char::from(code)).collect()).unwrap_or_default()
     }
+}
+
+/// A sub-page's number as a sub-code: its decimal digits, one to a
+/// hexadecimal digit, as page numbers are written (sub-page 10 is
+/// `0010`, as TTI's `SC` line and receivers show it).
+#[must_use]
+pub const fn decimal_subcode(subpage: u8) -> u16 {
+    let tens = (subpage / 10) % 10;
+    let units = subpage % 10;
+    ((tens as u16) << 4) | units as u16
 }
 
 /// The page every channel has: 100, where a number outside the channel
@@ -342,3 +352,6 @@ impl Sixels {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
