@@ -132,6 +132,38 @@ def test_a_page_that_takes_keys_keeps_them() -> None:
     assert not [message for message in app.sent if message["type"] == "goto"]
 
 
+def test_sections_are_declared_and_a_viewers_own_page_released() -> None:
+    app = Recorder()
+    app.sections = {0x200: "Stories"}
+    assert app.declaration()["pages"] == [{"page": "100", "title": "Front"}, {"page": "200", "title": "Story", "section": "Stories"}]
+    app.publish(0x100, Screen(), 3)
+    app.release(3, 0x100)
+    app.release(3, 0x100)
+    assert [message for message in app.sent if message["type"] == "release"] == [{"type": "release", "session": 3, "page": "100"}], "once"
+
+
+def test_a_click_on_a_prompt_or_a_page_number_follows_it() -> None:
+    app = Recorder()
+    front = Screen()
+    front.coloured(5, 0, Colour.WHITE, "See 200 or 9999")
+    front.coloured(24, 0, Colour.RED, "Red")
+    front.coloured(24, 10, Colour.GREEN, "Green")
+    front.fastext([0x200, 0x100, None, None])
+    front.modes(16)
+    app.publish(0x100, front)
+
+    def click(column: int, row: int) -> dict[str, Any]:
+        return {
+            "type": "input",
+            "session": 1,
+            "page": "100",
+            "event": {"kind": "mouse", "action": "press", "button": 0, "column": column, "row": row},
+        }
+
+    run(app, click(6, 5), click(13, 5), click(3, 24), click(12, 24))
+    assert [message["page"] for message in app.sent if message["type"] == "goto"] == ["200", "200", "100"]
+
+
 def test_publishing_an_undeclared_page_is_refused() -> None:
     with pytest.raises(ValueError, match="300 was not declared"):
         Recorder().publish(0x300, Screen())

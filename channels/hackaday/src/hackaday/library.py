@@ -21,25 +21,29 @@ from typing import TYPE_CHECKING, Any
 
 from hackaday.fetch import Fetcher, FetchError, api
 from hackaday.html import plain
-from hackaday.posts import Post, comment_of, post_of
+from hackaday.posts import Comment, Post, comment_of, post_of
 from hackaday.tools import ToolError, picture_tti
 
 if TYPE_CHECKING:
     import random
     from collections.abc import Awaitable, Callable
 
-#: Posts the channel holds: one magazine of story pages.
-LATEST = 100
+#: Posts the channel holds: about a month's (300 posts were 21 September to
+#: 25 October 2026), enough to fill each subject magazine's 90 story pages
+#: no further than its busiest needs.
+LATEST = 300
 #: How often the newest posts are checked, in seconds: Hackaday posts
 #: about every three hours (8.9 a day, measured 13 to 25 October 2026).
 POSTS_EVERY_S = 300
 #: How often the newest posts' comments are read, and how many posts count as newest.
 NEW_COMMENTS_EVERY_S = 600
 NEWEST = 15
-#: How often every post's comments are read.
-ALL_COMMENTS_EVERY_S = 3600
-#: The most comments read for one post (the most this fortnight was 99).
-MOST_COMMENTS = 100
+#: How often every post's comments are read: a post more than a few days
+#: old is rarely commented on.
+ALL_COMMENTS_EVERY_S = 3 * 3600
+#: The most comments read for one post: all of them, in requests of a
+#: hundred, up to a bound (the most this fortnight was 99).
+MOST_COMMENTS = 500
 #: The REST API's most items a request (WordPress `per_page`).
 PAGE_SIZE = 100
 #: What the posts are asked for with.
@@ -70,11 +74,16 @@ class Library:
             await self.on_change(what)
 
     async def load_posts(self, count: int = LATEST) -> list[Post]:
-        """Read the newest `count` posts."""
-        answer = await self.fetcher.get(api("posts", per_page=min(count, PAGE_SIZE), _embed=EMBED))
-        self.total = int(answer.headers.get("x-wp-total", "0") or 0)
-        raw = json.loads(answer.body)
-        return [post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None]
+        """Read the newest `count` posts, a hundred a request."""
+        found: list[Post] = []
+        for number in range(1, -(-count // PAGE_SIZE) + 1):
+            answer = await self.fetcher.get(api("posts", per_page=min(count, PAGE_SIZE), page=number, _embed=EMBED))
+            self.total = int(answer.headers.get("x-wp-total", "0") or 0)
+            raw = json.loads(answer.body)
+            found.extend(post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None)
+            if len(raw) < PAGE_SIZE:
+                break
+        return found[:count]
 
     async def refresh_posts(self) -> None:
         """Bring the posts up to date, telling of each new one."""
@@ -93,12 +102,18 @@ class Library:
                 await self.on_news(post)
 
     async def load_comments(self, post: Post) -> None:
-        """Read one post's comments."""
-        url = api("comments", post=post.id, per_page=MOST_COMMENTS, order="asc", _fields="id,parent,author_name,date_gmt,content")
-        answer = await self.fetcher.get(url)
-        raw: list[Any] = json.loads(answer.body)
-        post.comments = [comment for item in raw if isinstance(item, dict) and (comment := comment_of(item)) is not None]
-        post.comment_count = int(answer.headers.get("x-wp-total", len(post.comments)) or 0)
+        """Read every one of a post's comments, a hundred a request, up to `MOST_COMMENTS`."""
+        comments: list[Comment] = []
+        total = 0
+        for number in range(1, MOST_COMMENTS // PAGE_SIZE + 1):
+            fields = "id,parent,author_name,date_gmt,content"
+            answer = await self.fetcher.get(api("comments", post=post.id, per_page=PAGE_SIZE, page=number, order="asc", _fields=fields))
+            raw: list[Any] = json.loads(answer.body)
+            comments.extend(comment for item in raw if isinstance(item, dict) and (comment := comment_of(item)) is not None)
+            total = int(answer.headers.get("x-wp-total", len(comments)) or 0)
+            if len(comments) >= total or len(raw) < PAGE_SIZE:
+                break
+        post.comments, post.comment_count = comments, max(total, len(comments))
 
     async def load_picture(self, post: Post) -> None:
         """Make the post's lead picture into a teletext page, once; kept on disk."""

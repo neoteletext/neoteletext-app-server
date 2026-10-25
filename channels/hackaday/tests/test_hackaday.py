@@ -7,10 +7,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from hackaday import numbers, views
-from hackaday.channel import POLL_OPTIONS, Hackaday, Viewer
-from hackaday.layout import JOLLY_WRENCHER, last_top, thumb, wrap
+from hackaday import numbers, site, views
+from hackaday.channel import POLL_OPTIONS, SPLASH_S, Hackaday, Viewer
+from hackaday.layout import JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, last_top, thumb, wrap
 from hackaday.posts import Comment, Post, comment_of, post_of, threaded
+from neoteletext_app.screen import Colour
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,14 +81,35 @@ def test_comments_thread_replies_under_what_they_answer() -> None:
     assert [(depth, item.id) for depth, item in ordered] == [(0, 1), (1, 3), (2, 4), (0, 2)], "a comment answering itself is not shown"
 
 
-def test_story_pages_are_numbered_in_decimal_digits() -> None:
-    assert numbers.slot_page(numbers.STORY_MAGAZINE, 0) == 0x200
-    assert numbers.slot_page(numbers.STORY_MAGAZINE, 42) == 0x242
-    assert numbers.slot_page(numbers.LINKS_MAGAZINE, 99) == 0x599
-    assert numbers.slot_of(0x342) == (numbers.PICTURE_MAGAZINE, 42)
-    assert numbers.slot_of(0x2A0) is None, "a page a remote cannot type is no story"
-    assert numbers.slot_of(0x100) is None
-    assert [numbers.section_page(index) for index in (0, 9)] == [0x130, 0x139]
+def test_pages_are_numbered_in_decimal_digits() -> None:
+    assert numbers.page(2, 10) == 0x210
+    assert numbers.page(8, 99) == 0x899
+    assert numbers.decimal(0x342) == (3, 42)
+    assert numbers.decimal(0x2A0) is None, "a page a remote cannot type is none of ours"
+    assert numbers.is_story(0x210)
+    assert numbers.is_story(0x160)
+    assert not numbers.is_story(0x209), "N00 to N09 are the magazine's own pages"
+    assert not numbers.is_story(0x150)
+
+
+def test_each_post_goes_to_the_magazine_its_labels_name_first() -> None:
+    held = posts()
+    placed = site.place(held)
+    assert placed.page_of(held[0]) == 0x210, "Retrocomputing, 2xx, newest first"
+    assert placed.page_of(held[1]) == 0x510, "Radio, 5xx"
+    assert placed.page_of(held[2]) == 0x211
+    assert placed.post_at(0x511) is held[3]
+    assert placed.post_at(0x299) is None
+    column = post_of(raw_post(99, category="Hackaday Columns", tags=()))
+    assert column is not None
+    assert site.magazines_of(column)[0] is site.HOME, "a column that names no subject is magazine 1's"
+    both = post_of(raw_post(98, category="Security Hacks", tags=("retrocomputing",)))
+    assert both is not None
+    assert [mag.number for mag in site.magazines_of(both)] == [2, 7], "the Challenge's subject comes first"
+    nothing = post_of(raw_post(97, category="Slider", tags=()))
+    assert nothing is not None
+    assert site.magazines_of(nothing)[0].number == site.CATCH_ALL
+    assert placed.tag_pages(2) == [(0x204, "doom", 6)], "a magazine's busiest tag has its page"
 
 
 def test_text_wraps_and_the_scroll_bar_fits() -> None:
@@ -96,33 +118,41 @@ def test_text_wraps_and_the_scroll_bar_fits() -> None:
     assert thumb(0, 100, 14, 14) == (0, 2)
     start, length = thumb(last_top(100, 14), 100, 14, 14)
     assert start + length == 14, "the block reaches the bottom at the end"
-    assert len({len(line) for line in JOLLY_WRENCHER}) == 1
-    assert all(line == line[::-1] for line in JOLLY_WRENCHER), "the emblem is symmetric"
+    for bitmap, size in ((JOLLY_WRENCHER, (26, 21)), (JOLLY_WRENCHER_LARGE, (70, 63))):
+        assert {len(line) for line in bitmap} == {size[0]}
+        assert len(bitmap) == size[1]
 
 
 def test_every_page_draws_in_the_page() -> None:
     held = posts()
+    placed = site.place(held)
+    retro = site.magazine(2)
     screens = [
-        views.front(held, NOW, 3),
-        views.headlines(held, 0),
-        views.sections_index(held),
-        views.section(0, held, 0),
-        views.story(held[0], 0, 0),
-        views.picture(held[0], 0, None),
-        views.comments(held[0], 0, 0),
-        views.links_page(held[0], 0, None, "The full story"),
+        views.front(held, placed, NOW, 3, NOW + timedelta(days=2)),
+        views.splash(),
+        views.headlines(held, placed, 0),
+        views.magazines_index(placed),
+        views.popular_tags(held, placed),
+        views.columns_index(held, placed),
+        views.magazine_front(retro, placed, "Retrocomputing Challenge"),
+        views.magazine_stories(retro, placed, 0),
+        views.tag_page(retro, "doom", held, placed, 0),
+        views.story(held[0], retro, 0x210, 0x211, 0),
+        views.picture(held[0], retro, 0x210, 0x211, None),
+        views.comments(held[0], retro, 0x210, 0x211, 0),
+        views.links_page(held[0], retro, 0x210, 0x211, None, "The full story"),
         views.reader(held[0], 0),
         views.doom(held, NOW),
         views.statistics(held),
         views.writers(held),
-        views.discussed(held),
-        views.comments_wall(held, 0),
+        views.discussed(held, placed),
+        views.comments_wall(held, placed, 0),
         views.challenge(held, NOW, NOW + timedelta(days=2)),
         views.then_and_now(held, held),
         views.about(),
         views.quiz(held[0], ["Radio", "Retrocomputing", "Making", "Hardware"], None, (1, 2), 3),
         views.poll(POLL_OPTIONS, [1] * len(POLL_OPTIONS), 2, 0),
-        views.mine(views.section_names(), {"Radio"}, 1, held),
+        views.mine({5}, 1, held, placed),
         views.search("doom", held, 0, searching=False),
     ]
     for screen in screens:
@@ -132,7 +162,8 @@ def test_every_page_draws_in_the_page() -> None:
     front = screens[0]
     assert "HACKADAY" in front.row_text(1)
     assert "NEWSFLASH" in front.row_text(views.NEWSFLASH_ROW), "the newest post is news for a while"
-    assert "201" in front.row_text(14)
+    assert "200 Retro" in front.row_text(14), "the magazines, each with its page"
+    assert "510" in front.row_text(18), "the latest, each with its page"
 
 
 class Recorder(Hackaday):
@@ -181,20 +212,20 @@ def channel(tmp_path: Path) -> Recorder:
 
 def test_everything_is_published_once_and_unchanged_pages_not_again(channel: Recorder) -> None:
     first = len(channel.sent)
-    assert published(channel, 0x200, "channel"), "story 00"
-    assert published(channel, 0x599, "channel") == [], "only held stories"
+    assert published(channel, 0x210, "channel"), "the newest Retrocomputing story"
+    assert published(channel, 0x299, "channel") == [], "only held stories"
     channel.publish_all()
     assert len(channel.sent) == first, "nothing changed, nothing sent"
 
 
 def test_a_story_scrolls_for_its_reader_alone(channel: Recorder) -> None:
     channel.library.posts[0].article.blocks *= 10
-    drive(channel, {"type": "open", "session": 1, "page": "200"}, key(1, "200", "PageDown"))
-    own = published(channel, 0x200, 1)
+    drive(channel, {"type": "open", "session": 1, "page": "210"}, key(1, "210", "PageDown"))
+    own = published(channel, 0x210, 1)
     assert len(own) == 1
     assert "Lines 14-27" in own[0]
-    drive(channel, key(1, "200", "End"), key(1, "200", "PageDown"))
-    assert len(published(channel, 0x200, 1)) == 2, "no further than the end"
+    drive(channel, key(1, "210", "End"), key(1, "210", "PageDown"))
+    assert len(published(channel, 0x210, 1)) == 2, "no further than the end"
 
 
 def mouse(session: int, page: str, action: str, column: int, row: int, **more: Any) -> dict[str, Any]:  # noqa: ANN401 - the event's other fields
@@ -210,56 +241,95 @@ def test_the_scroll_bar_is_pulled_and_pages_on_either_side(channel: Recorder) ->
     channel.library.posts[0].article.blocks *= 10
     channel.publish_all()
     total = len(views.article_lines(channel.posts[0]))
-    assert "IM,16" in published(channel, 0x200, "channel")[-1], "a page with a scroll bar asks for drags"
+    assert "IM,16" in published(channel, 0x210, "channel")[-1], "a page with a scroll bar asks for drags"
     first, rows = views.STORY_TEXT_ROW, views.STORY_ROWS
     _, length = thumb(0, total, rows, rows)
     drive(
         channel,
-        mouse(1, "200", "press", 39, first, pressed=True, button=0),
-        mouse(1, "200", "move", 39, first + rows - length, buttons=1),
-        mouse(1, "200", "release", 39, first + rows - length, pressed=False, button=0),
+        mouse(1, "210", "press", 39, first, pressed=True, button=0),
+        mouse(1, "210", "move", 39, first + rows - length, buttons=1),
+        mouse(1, "210", "release", 39, first + rows - length, pressed=False, button=0),
     )
-    assert channel.viewers[1].tops[0x200] == last_top(total, rows), "the block dragged to the bottom shows the end"
+    assert channel.viewers[1].tops[0x210] == last_top(total, rows), "the block dragged to the bottom shows the end"
     assert not channel.viewers[1].grips, "let go on release"
-    drive(channel, mouse(1, "200", "move", 39, first, buttons=1))
-    assert channel.viewers[1].tops[0x200] == last_top(total, rows), "a move with nothing gripped does nothing"
-    drive(channel, mouse(1, "200", "press", 39, first, pressed=True, button=0))
-    assert channel.viewers[1].tops[0x200] == last_top(total, rows) - (rows - 1), "a press above the block turns a screen back"
+    drive(channel, mouse(1, "210", "move", 39, first, buttons=1))
+    assert channel.viewers[1].tops[0x210] == last_top(total, rows), "a move with nothing gripped does nothing"
+    drive(channel, mouse(1, "210", "press", 39, first, pressed=True, button=0))
+    assert channel.viewers[1].tops[0x210] == last_top(total, rows) - (rows - 1), "a press above the block turns a screen back"
 
 
-def test_a_click_on_a_prompt_follows_its_link(channel: Recorder) -> None:
-    channel.library.posts[0].article.blocks *= 10
-    drive(channel, mouse(2, "200", "press", 1, 24, pressed=True, button=0))
-    screen = channel.shown(2, 0x200)
-    assert screen is not None
-    assert [message["page"] for message in channel.sent if message["type"] == "goto"] == [f"{screen.fastext_links[0]:03X}"]
+def test_a_storys_keys_and_prompts_show_its_views_and_the_next(channel: Recorder) -> None:
+    drive(channel, {"type": "open", "session": 2, "page": "210"}, key(2, "210", "F1"))
+    assert channel.viewers[2].views[0x210] == views.PICTURE, "red, the text's first prompt, is its picture"
+    assert published(channel, 0x210, 2), "the picture is the viewer's own copy"
+    drive(channel, key(2, "210", "F1"))
+    assert 0x210 not in channel.viewers[2].views, "red on the picture is the text"
+    assert [message for message in channel.sent if message["type"] == "release"] == [{"type": "release", "session": 2, "page": "210"}], (
+        "the text is the channel's copy again"
+    )
+    drive(channel, key(2, "210", "ColorF1Green"))
+    assert channel.viewers[2].views[0x210] == views.COMMENTS, "green on the text is its comments"
+    drive(channel, key(2, "210", "F3"))
+    assert channel.viewers[2].views[0x210] == views.LINKS, "yellow on the comments is its links"
+    shown = channel.shown(2, 0x210)
+    assert shown is not None
+    cyan = next(column for column, code in enumerate(shown.rows[24]) if code == Colour.CYAN.text)
+    drive(channel, mouse(2, "210", "press", cyan + 1, 24, pressed=True, button=0))
+    assert [message["page"] for message in channel.sent if message["type"] == "goto"] == ["211"], (
+        "the cyan prompt, clicked, is the next story"
+    )
+    drive(channel, {"type": "leave", "session": 2, "page": "210"})
+    assert 0x210 not in channel.viewers[2].views, "one who leaves finds the text when they come back"
 
 
 def test_story_pages_are_titled_with_their_posts(channel: Recorder) -> None:
     titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
-    assert titles["200"] == 'Hack number 0 - with a "title"'
+    assert titles["210"] == 'Hack number 0 - with a "title"'
     long = "A title of a post that runs to well past what the contents holds"
     channel.library.posts[1].title = long
     channel.publish_all()
     titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
-    assert titles["201"] == long[:29].rstrip() + "...", titles["201"]
-    assert len(titles["201"]) <= 32
+    assert titles["510"] == long[:29].rstrip() + "...", titles["510"]
+    assert len(titles["510"]) <= 32
+    assert titles["204"] == "doom (6)", "a tag page is titled by its tag"
+    assert "205" not in titles, "a tag page without a tag keeps the title it was declared with"
+    assert channel.pages[0x205] == "Retro: tag 2"
+
+
+def test_the_magazines_are_named_in_the_contents(channel: Recorder) -> None:
+    declared = channel.declaration()["pages"]
+    sections = {entry["page"]: entry["section"] for entry in declared if "section" in entry}
+    assert sections == {f"{mag.front:03X}": mag.name for mag in site.SUBJECTS}
+    assert len(declared) <= 800, "the server's most"
+    assert all(len(entry["title"]) <= 32 for entry in declared)
+
+
+def test_a_viewer_arriving_sees_the_emblem_for_two_seconds(channel: Recorder) -> None:
+    async def arrive() -> None:
+        await channel.receive({"type": "open", "session": 7, "page": "100"})
+        assert published(channel, 0x100, 7) == [views.splash().tti(0x100)], "the whole-page emblem, theirs alone"
+        await asyncio.sleep(SPLASH_S + 0.1)
+        await channel.receive({"type": "open", "session": 7, "page": "100"})
+
+    asyncio.run(arrive())
+    assert [message for message in channel.sent if message["type"] == "release"] == [{"type": "release", "session": 7, "page": "100"}]
+    assert len(published(channel, 0x100, 7)) == 1, "once a visit"
 
 
 def test_the_poll_counts_one_vote_each(channel: Recorder) -> None:
-    drive(channel, key(1, "116", "ArrowDown"), key(1, "116", "Enter"), key(1, "116", "Enter"), key(2, "116", "Enter"))
+    drive(channel, key(1, "141", "ArrowDown"), key(1, "141", "Enter"), key(1, "141", "Enter"), key(2, "141", "Enter"))
     assert channel.votes[:2] == [1, 1]
     drive(channel, {"type": "close", "session": 1})
     assert channel.votes[:2] == [1, 0], "a viewer who goes takes their vote"
 
 
 def test_the_quiz_scores_and_sounds(channel: Recorder) -> None:
-    drive(channel, {"type": "open", "session": 3, "page": "108"})
+    drive(channel, {"type": "open", "session": 3, "page": "140"})
     viewer = channel.viewers[3]
     assert viewer.question is not None
     right = viewer.answers.index(viewer.question.sections[0])
     names = ("F1", "F2", "F3", "F4")
-    drive(channel, key(3, "108", names[right]))
+    drive(channel, key(3, "140", names[right]))
     assert viewer.score == (1, 1)
     sounds = [message for message in channel.sent if message["type"] == "sound"]
     assert {"object", "play"} <= {member for message in sounds for member in message if member in {"object", "play"}}
@@ -268,10 +338,10 @@ def test_the_quiz_scores_and_sounds(channel: Recorder) -> None:
 def test_search_takes_typing_but_colour_keys_still_leave(channel: Recorder) -> None:
     drive(
         channel,
-        {"type": "input", "session": 4, "page": "104", "event": {"kind": "text", "text": "200"}},
-        key(4, "104", "F1"),
+        {"type": "input", "session": 4, "page": "105", "event": {"kind": "text", "text": "210"}},
+        key(4, "105", "F1"),
     )
-    assert channel.viewers[4].typed == "200", "digits typed into the search are not a page number"
+    assert channel.viewers[4].typed == "210", "digits typed into the search are not a page number"
     assert [message["page"] for message in channel.sent if message["type"] == "goto"] == ["100"]
 
 
@@ -280,13 +350,13 @@ def test_digits_select_a_page_on_a_page_that_does_not_take_them(channel: Recorde
     assert [message["page"] for message in channel.sent if message["type"] == "goto"] == ["242"]
 
 
-def test_my_hackaday_stars_sections(channel: Recorder) -> None:
-    drive(channel, key(6, "115", "ArrowDown"), key(6, "115", "Enter"))
-    assert channel.viewers[6].favourites == {"Radio"}
+def test_my_hackaday_stars_magazines(channel: Recorder) -> None:
+    drive(channel, key(6, "142", "ArrowDown"), key(6, "142", "Enter"))
+    assert channel.viewers[6].favourites == {3}, "the second subject, Hardware"
     assert Viewer().favourites == set()
 
 
-def test_the_servers_figures_show_on_page_121(channel: Recorder) -> None:
+def test_the_servers_figures_show_on_page_150(channel: Recorder) -> None:
     stats = {
         "type": "stats",
         "server": {
@@ -304,7 +374,7 @@ def test_the_servers_figures_show_on_page_121(channel: Recorder) -> None:
     assert "Peak 9, 31 visits" in text
     assert "3.0 MB" in text
     assert "1h 02m, memory 20.0 MB" in text
-    assert "242 Story 42" in text
+    assert "242 Retro story 33" in text
     assert "showcase 2" in text
     assert published(channel, numbers.SERVER_STATS, "channel")[-1] == screen.tti(numbers.SERVER_STATS)
 
@@ -331,12 +401,12 @@ def test_podcast_grabs_play_from_the_sound_board(tmp_path: Path) -> None:
     made = Recorder(tmp_path / "cache")
     assert [clip.name for clip in made.clips] == ["welcome"], "a stereo clip is refused"
     assert made.clips[0].seconds == 1.0
-    drive(made, key(9, "122", "Enter"), key(9, "122", "Enter"), {"type": "open", "session": 9, "page": "113"})
+    drive(made, key(9, "113", "Enter"), key(9, "113", "Enter"), {"type": "open", "session": 9, "page": "112"})
     sounds_sent = [message for message in made.sent if message["type"] == "sound"]
     assert [next(iter(set(message) & {"object", "play"})) for message in sounds_sent] == ["object", "play", "play", "play"], (
         "sent once, played thrice"
     )
-    assert sounds_sent[-1]["play"]["page"] == "113", "the welcome belongs to the podcast page"
+    assert sounds_sent[-1]["play"]["page"] == "112", "the welcome belongs to the podcast page"
 
 
 def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
@@ -381,15 +451,15 @@ def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
     made = Recorder(tmp_path / "cache")
     made.publish_all()
     assert [person.name for person in made.people] == ["Ada Example", "Bo Example"]
-    assert made.pages[0x141] == "Ada Example"
+    assert made.pages[0x121] == "Ada Example"
     first = views.profile(made.people[0], 0, 2)
     assert first.rows[2][:3] == bytes([0x17, 0x7F, 0x7F]), "the portrait's rows"
     assert first.packets == ["OL,26,@iAKA"], "its colours"
     assert "Ada Example" in first.row_text(17)
     assert "no photo" in views.profile(made.people[1], 1, 2).row_text(12), "the Jolly Wrencher stands in"
-    drive(made, {"type": "open", "session": 3, "page": "141"}, {"type": "open", "session": 3, "page": "142"})
+    drive(made, {"type": "open", "session": 3, "page": "121"}, {"type": "open", "session": 3, "page": "122"})
     plays = [message["play"] for message in made.sent if message["type"] == "sound" and "play" in message]
-    assert [play["page"] for play in plays] == ["141"], "Ada says hello on her page; Bo has no clip on this server"
+    assert [play["page"] for play in plays] == ["121"], "Ada says hello on her page; Bo has no clip on this server"
 
 
 def test_a_long_biography_ends_on_a_whole_sentence_or_a_mark() -> None:

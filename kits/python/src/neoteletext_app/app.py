@@ -140,9 +140,10 @@ class Event:
 class App:
     """A channel's application: one instance serves every viewer."""
 
-    def __init__(self, pages: dict[int, str]) -> None:
-        """Serve `pages`, page numbers and their titles."""
+    def __init__(self, pages: dict[int, str], sections: dict[int, str] | None = None) -> None:
+        """Serve `pages`, page numbers and their titles; `sections` names the pages that start a section, each with its name."""
         self.pages = pages
+        self.sections = sections or {}
         self.epoch_ms = 0
         self._digits: dict[int, str] = {}
         self._shown: dict[tuple[Owner, int], Screen] = {}
@@ -191,6 +192,13 @@ class App:
         """Send the viewer to `page`."""
         self.send({"type": "goto", "session": session, "page": page_text(page)})
 
+    def release(self, session: int, page: int) -> None:
+        """Drop `session`'s own copy of `page`: it sees the channel's copy again."""
+        if (session, page) in self._owned:
+            self._owned.discard((session, page))
+            self._shown.pop((session, page), None)
+            self.send({"type": "release", "session": session, "page": page_text(page)})
+
     def title(self, page: int, title: str) -> None:
         """Give `page` a new title in the channel's contents, for what it holds now."""
         if page not in self.pages:
@@ -229,6 +237,16 @@ class App:
         """Answer the page `session` has open, if it is one of ours."""
         return self._open.get(session)
 
+    def declaration(self) -> dict[str, Any]:
+        """Answer the first line: the pages, each with its title, and the sections they start (docs/applications.md section 3.1)."""
+        declared = []
+        for number, title in sorted(self.pages.items()):
+            entry = {"page": page_text(number), "title": title}
+            if number in self.sections:
+                entry["section"] = self.sections[number]
+            declared.append(entry)
+        return {"type": "pages", "pages": declared}
+
     def send(self, message: dict[str, Any]) -> None:
         """Write one line to the server."""
         sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -242,7 +260,7 @@ class App:
 
     async def serve(self) -> None:
         """Declare the pages, then answer each line from the server."""
-        self.send({"type": "pages", "pages": [{"page": page_text(number), "title": title} for number, title in sorted(self.pages.items())]})
+        self.send(self.declaration())
         loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader(limit=LONGEST_LINE)
         await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
@@ -334,12 +352,21 @@ def clicked_link(screen: Screen, column: int, row: int) -> int | None:
 
 
 def prompt_link(screen: Screen, column: int) -> int | None:
-    """Answer the Fastext link of the row 24 prompt at `column`: a prompt runs from its colour code to the next colour code."""
+    """Answer the Fastext link of the row 24 prompt at `column`."""
+    key = prompt_at(screen, column)
+    return None if key is None else screen.fastext_links[key]
+
+
+def prompt_at(screen: Screen, column: int) -> int | None:
+    """Answer which coloured key's prompt in row 24 is at `column`, 0 (red) to 3 (cyan).
+
+    A prompt runs from its colour code to the next colour code.
+    """
     colours = {colour.text for colour in Colour}
+    keys = [colour.text for colour in PROMPT_COLOURS]
     for code in reversed(screen.rows[FASTEXT_ROW][: column + 1]):
         if code in colours:
-            keys = [colour.text for colour in PROMPT_COLOURS]
-            return screen.fastext_links[keys.index(code)] if code in keys else None
+            return keys.index(code) if code in keys else None
     return None
 
 

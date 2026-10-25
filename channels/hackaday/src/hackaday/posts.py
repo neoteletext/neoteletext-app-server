@@ -12,79 +12,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from hackaday import site
 from hackaday.html import Article, plain, read
-
-#: Categories the site uses for its own pages, not subjects: never shown.
-HOUSEKEEPING = frozenset({"slider", "featured", "original art", "uncategorized"})
-
-#: The channel's sections, each a page, and the categories in each (by
-#: name, lower case). A post is in every section one of its categories is.
-SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Retrocomputing", ("retrocomputing", "classic hacks", "history", "retrotechtacular")),
-    ("Radio", ("radio hacks", "wireless hacks", "sdr")),
-    (
-        "Making",
-        (
-            "3d printer hacks",
-            "tool hacks",
-            "cnc hacks",
-            "repair hacks",
-            "led hacks",
-            "home hacks",
-            "clock hacks",
-            "wearable hacks",
-            "how-to",
-        ),
-    ),
-    (
-        "Hardware",
-        (
-            "microcontrollers",
-            "raspberry pi",
-            "arduino hacks",
-            "hardware",
-            "parts",
-            "peripherals hacks",
-            "computer hacks",
-            "cyberdecks",
-            "teardown",
-            "reverse engineering",
-        ),
-    ),
-    ("Science and space", ("science", "space", "chemistry hacks", "medical hacks", "green hacks", "engineering", "solar hacks")),
-    (
-        "Games and music",
-        (
-            "games",
-            "toy hacks",
-            "nintendo ds hacks",
-            "home entertainment hacks",
-            "musical hacks",
-            "digital audio hacks",
-            "video hacks",
-            "art",
-        ),
-    ),
-    (
-        "Security and software",
-        (
-            "security hacks",
-            "software hacks",
-            "software development",
-            "linux hacks",
-            "artificial intelligence",
-            "internet hacks",
-            "phone hacks",
-        ),
-    ),
-    ("Getting about", ("transportation hacks", "car hacks", "drone hacks", "robots hacks", "weapons hacks")),
-    (
-        "News and columns",
-        ("hackaday columns", "news", "current events", "cons", "contests", "interest", "rants", "reviews", "podcasts", "hackaday links"),
-    ),
-)
-#: The section of posts no other section holds.
-OTHER_SECTION = "Everything else"
+from hackaday.site import HOUSEKEEPING
 
 
 @dataclass(frozen=True)
@@ -117,10 +47,8 @@ class Post:
 
     @property
     def sections(self) -> list[str]:
-        """Answer the channel's sections the post is in."""
-        names = {category.lower() for category in self.categories} | {tag.lower() for tag in self.tags}
-        found = [name for name, members in SECTIONS if names & set(members)]
-        return found or [OTHER_SECTION]
+        """Answer the names of the magazines the post's labels name, its own first (`site.py`)."""
+        return [magazine.name for magazine in site.magazines_of(self)]
 
     def has(self, label: str) -> bool:
         """Answer whether a category or tag of the post is `label`, in any case."""

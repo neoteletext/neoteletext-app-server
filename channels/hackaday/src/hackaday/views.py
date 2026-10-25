@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING, Any
 from neoteletext_app.charset import codes
 from neoteletext_app.screen import COLUMNS, ECHO, FASTEXT_ROW, Attribute, Colour, Screen
 
-from hackaday import numbers
+from hackaday import numbers, site
 from hackaday.layout import (
     BODY_ROW,
+    JOLLY_WRENCHER_LARGE,
     NO_LINK,
     SCROLL_TEXT_WIDTH,
     TEXT_WIDTH,
@@ -33,11 +34,12 @@ from hackaday.layout import (
     scroll,
     wrap,
 )
-from hackaday.posts import OTHER_SECTION, SECTIONS, Post, threaded
+from hackaday.posts import Post, threaded
 
 if TYPE_CHECKING:
     from hackaday.clips import Clip
     from hackaday.people import Person
+    from hackaday.site import Magazine, Placed
 
 #: Rows a story's text scrolls in, from `STORY_TEXT_ROW`.
 STORY_TEXT_ROW = 8
@@ -50,8 +52,10 @@ HINT_ROW = 22
 #: The front page's newsflash and ticker rows.
 NEWSFLASH_ROW = 21
 TICKER_ROW = 22
-#: How many headlines the front page lists.
-FRONT_HEADLINES = 6
+#: How many headlines the front page lists under its magazines.
+FRONT_HEADLINES = 3
+#: How many stories a magazine's front page lists after its lead.
+MAGAZINE_HEADLINES = 9
 #: How long a newsflash stays, after the post.
 NEWSFLASH_FOR = timedelta(minutes=45)
 #: Hackaday posts about every three hours (8.9 a day, measured).
@@ -60,37 +64,13 @@ POSTING_INTERVAL = timedelta(hours=3)
 DEEPEST_INDENT = 4
 #: Columns a comment is indented per level of reply.
 INDENT_STEP = 2
-#: Each section's colour band.
-SECTION_COLOURS = (
-    Colour.MAGENTA,
-    Colour.BLUE,
-    Colour.RED,
-    Colour.GREEN,
-    Colour.BLUE,
-    Colour.MAGENTA,
-    Colour.RED,
-    Colour.GREEN,
-    Colour.BLUE,
-    Colour.MAGENTA,
-)
-#: The page numbers of the list in front of each line on the front page.
+#: The page numbers of the list in front of each line.
 NUMBER_WIDTH = 4
-
-
-def story_page(slot: int) -> int:
-    """Answer story `slot`'s page."""
-    return numbers.slot_page(numbers.STORY_MAGAZINE, slot)
-
-
-def section_index(name: str) -> int:
-    """Answer a section's place, the last for the other posts."""
-    names = [section for section, _ in SECTIONS]
-    return names.index(name) if name in names else len(names)
-
-
-def section_names() -> list[str]:
-    """Answer every section's name, the catch-all last."""
-    return [name for name, _ in SECTIONS] + [OTHER_SECTION]
+#: A story's views, chosen with the coloured keys: its text, its lead
+#: picture, its comments and its links; the fourth key is the next story.
+STORY, PICTURE, COMMENTS, LINKS = "story", "picture", "comments", "links"
+VIEWS = (STORY, PICTURE, COMMENTS, LINKS)
+NEXT = "next"
 
 
 def short_date(when: datetime) -> str:
@@ -106,57 +86,96 @@ def fit(text: str, width: int) -> str:
 # The front page.
 
 
-def front(posts: list[Post], now: datetime, ticker: int) -> Screen:
-    """Draw page 100: the emblem, the top story, the latest headlines and the news."""
+def splash() -> Screen:
+    """Draw the whole-page Jolly Wrencher a viewer arriving at page 100 sees first."""
+    screen = Screen()
+    screen.header("HACKADAY  fresh hacks every day")
+    emblem(screen, 1, 3, Colour.WHITE, JOLLY_WRENCHER_LARGE)
+    screen.double_height(22, 15, Colour.YELLOW, "HACKADAY")
+    return screen
+
+
+def front(posts: list[Post], placed: Placed, now: datetime, ticker: int, closes: datetime) -> Screen:
+    """Draw page 100: the emblem, the top story, the magazines, the latest and the news."""
     screen = page(
         "",
         Colour.BLACK,
-        [("Headlines", numbers.HEADLINES), ("Sections", numbers.SECTIONS), ("Roulette", numbers.ROULETTE), ("Help", numbers.ABOUT)],
+        [
+            ("Headlines", numbers.HEADLINES),
+            ("Magazines", numbers.MAGAZINES),
+            ("Tags", numbers.POPULAR_TAGS),
+            ("Challenge", numbers.CHALLENGE),
+        ],
     )
-    # The title band is the emblem's: row 1 and 2 are drawn over.
+    # The title band is the emblem's.
     screen.rows[1] = bytearray([0x20] * COLUMNS)
     emblem(screen, 1, 1, Colour.WHITE)
-    screen.double_height(1, 17, Colour.YELLOW, "HACKADAY")
-    screen.coloured(3, 17, Colour.WHITE, "fresh hacks every day")
-    screen.coloured(4, 17, Colour.CYAN, now.strftime("%a %d %b %Y"))
-    if posts:
-        due = posts[0].date + POSTING_INTERVAL
-        left = due - now
-        wait = "any minute now" if left <= timedelta(0) else f"in {left.seconds // 3600}h {left.seconds % 3600 // 60:02d}m"
-        screen.coloured(5, 17, Colour.GREEN, "next hack due")
-        screen.coloured(6, 17, Colour.GREEN, wait)
-        top = posts[0]
-        band(screen, 8, Colour.RED, Colour.YELLOW, f"TOP STORY  {numbers.slot_page(numbers.STORY_MAGAZINE, 0):03X}")
-        for offset, line in enumerate(wrap(top.title, TEXT_WIDTH)[:2]):
-            screen.coloured(9 + offset, 0, Colour.WHITE, line)
-        for offset, line in enumerate(wrap(top.excerpt, TEXT_WIDTH)[:3]):
-            screen.coloured(11 + offset, 0, Colour.CYAN, line)
-        for offset, post in enumerate(posts[1 : 1 + FRONT_HEADLINES]):
-            row = 14 + offset
-            screen.coloured(row, 0, Colour.YELLOW, f"{story_page(offset + 1):03X}")
-            screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
-        if now - top.date <= NEWSFLASH_FOR:
-            flashing(screen, NEWSFLASH_ROW, 0, Colour.RED, "NEWSFLASH")
-            screen.coloured(NEWSFLASH_ROW, 12, Colour.YELLOW, fit(f"{story_page(0):03X} {top.title}", COLUMNS - 13))
-        else:
-            screen.coloured(NEWSFLASH_ROW, 0, Colour.MAGENTA, "Archive 105 DOOM 107 Quiz 108 Poll 116")
-        shown = posts[ticker % min(len(posts), 10)]
-        slot = posts.index(shown)
-        band(screen, TICKER_ROW, Colour.BLUE, Colour.WHITE, fit(f"{story_page(slot):03X} {shown.title}", COLUMNS - 4))
-    else:
+    screen.double_height(1, 16, Colour.YELLOW, "HACKADAY")
+    screen.coloured(3, 16, Colour.WHITE, "fresh hacks every day")
+    screen.coloured(4, 16, Colour.CYAN, now.strftime("%a %d %b %Y"))
+    if not posts:
         screen.centred(10, Colour.WHITE, "Fetching the latest hacks...")
+        return screen
+    due = posts[0].date + POSTING_INTERVAL
+    left = due - now
+    wait = "any minute now" if left <= timedelta(0) else f"in {left.seconds // 3600}h {left.seconds % 3600 // 60:02d}m"
+    screen.coloured(5, 16, Colour.GREEN, f"next hack {wait}")
+    challenge = closes - now
+    if challenge > timedelta(0):
+        screen.coloured(6, 16, Colour.MAGENTA, f"Retro Challenge {challenge.days}d {challenge.seconds // 3600}h")
+    top = posts[0]
+    band(screen, 8, Colour.RED, Colour.YELLOW, fit(f"TOP STORY {number_of(placed, top)}  {site.magazines_of(top)[0].name}", COLUMNS - 3))
+    for offset, line in enumerate(wrap(top.title, TEXT_WIDTH)[:2]):
+        screen.coloured(9 + offset, 0, Colour.WHITE, line)
+    for offset, line in enumerate(wrap(top.excerpt, TEXT_WIDTH)[:2]):
+        screen.coloured(11 + offset, 0, Colour.CYAN, line)
+    band(screen, 13, Colour.BLUE, Colour.WHITE, "THE MAGAZINES")
+    for index, mag in enumerate(site.SUBJECTS):
+        row, column = 14 + index // 2, (index % 2) * 20
+        screen.coloured(row, column, ink_on_black(mag), f"{mag.front:03X} {mag.short}")
+        screen.coloured(row, column + 13, Colour.WHITE, f"{len(placed.stories.get(mag.number, [])):3d}")
+    screen.coloured(17, 20, Colour.YELLOW, "101 Headlines")
+    for offset, post in enumerate(posts[1 : 1 + FRONT_HEADLINES]):
+        row = 18 + offset
+        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
+        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    if now - top.date <= NEWSFLASH_FOR:
+        flashing(screen, NEWSFLASH_ROW, 0, Colour.RED, "NEWSFLASH")
+        screen.coloured(NEWSFLASH_ROW, 12, Colour.YELLOW, fit(f"{number_of(placed, top)} {top.title}", COLUMNS - 13))
+    else:
+        screen.coloured(NEWSFLASH_ROW, 0, Colour.MAGENTA, "Archive 130 Roulette 131 Quiz 140 Poll 141")
+    shown = posts[ticker % min(len(posts), 10)]
+    band(screen, TICKER_ROW, Colour.BLUE, Colour.WHITE, fit(f"{number_of(placed, shown)} {shown.title}", COLUMNS - 4))
     screen.coloured(23, 0, Colour.GREEN, "Type a page number or press a colour")
     return screen
+
+
+def ink_on_black(mag: Magazine) -> Colour:
+    """Answer the colour a magazine's name is written in on black: its band's, blue being too dark to read."""
+    return Colour.CYAN if mag.band == Colour.BLUE else mag.band
+
+
+def number_of(placed: Placed, post: Post) -> str:
+    """Answer a held post's page number as text, or the reader's for one the channel does not hold."""
+    found = placed.page_of(post)
+    return f"{found if found is not None else numbers.READER:03X}"
 
 
 # Lists that scroll.
 
 
-def scrolling(  # noqa: PLR0913 - a scrolling page: title, colour, lines, place, links and hint
-    title: str, colour: Colour, lines: list[Line], top: int, links: list[Link], *, hint: str = "PgDn PgUp arrows Home End wheel"
+def scrolling(  # noqa: PLR0913 - a scrolling page: title, colours, lines, place, links and hint
+    title: str,
+    colour: Colour,
+    lines: list[Line],
+    top: int,
+    links: list[Link],
+    *,
+    hint: str = "PgDn PgUp arrows Home End wheel",
+    title_colour: Colour = Colour.WHITE,
 ) -> Screen:
     """Draw a page of `lines` that scrolls under its title band."""
-    screen = page(title, colour, links)
+    screen = page(title, colour, links, title_colour=title_colour)
     scroll(screen, lines, top, BODY_ROW, LIST_ROWS)
     if len(lines) > LIST_ROWS:
         last = min(len(lines), top + LIST_ROWS)
@@ -165,69 +184,151 @@ def scrolling(  # noqa: PLR0913 - a scrolling page: title, colour, lines, place,
     return screen
 
 
-def headline_lines(posts: list[Post], slots: dict[int, int]) -> list[Line]:
+def headline_lines(posts: list[Post], placed: Placed) -> list[Line]:
     """Answer one line a post: its page and title."""
-    lines: list[Line] = []
-    for post in posts:
-        slot = slots.get(post.id)
-        number = f"{story_page(slot):03X}" if slot is not None else "199"
-        lines.append(Line(Colour.WHITE, f"{number} {fit(post.title, SCROLL_TEXT_WIDTH - NUMBER_WIDTH)}"))
-    return lines
+    return [Line(Colour.WHITE, f"{number_of(placed, post)} {fit(post.title, SCROLL_TEXT_WIDTH - NUMBER_WIDTH)}") for post in posts]
 
 
-def headlines(posts: list[Post], top: int) -> Screen:
-    """Draw page 101: every story the channel holds, newest first."""
-    slots = {post.id: slot for slot, post in enumerate(posts)}
+def headlines(posts: list[Post], placed: Placed, top: int) -> Screen:
+    """Draw page 101: every story the channel holds, newest first, in every magazine."""
     return scrolling(
         "Headlines",
         Colour.RED,
-        headline_lines(posts, slots),
+        headline_lines(posts, placed),
         top,
-        [("Front", numbers.FRONT), ("Sections", numbers.SECTIONS), ("Tags", numbers.TAGS), ("Search", numbers.SEARCH)],
+        [("Front", numbers.FRONT), ("Magazines", numbers.MAGAZINES), ("Tags", numbers.POPULAR_TAGS), ("Search", numbers.SEARCH)],
     )
 
 
-def sections_index(posts: list[Post]) -> Screen:
-    """Draw page 102: the sections, how many stories each has, and their pages."""
+def magazines_index(placed: Placed) -> Screen:
+    """Draw page 102: the magazines, how many stories each holds, and their busiest tags."""
     screen = page(
-        "Sections",
+        "The magazines",
         Colour.BLUE,
-        [("Front", numbers.FRONT), ("Headlines", numbers.HEADLINES), ("Tags", numbers.TAGS), ("Writers", numbers.WRITERS)],
+        [("Front", numbers.FRONT), ("Headlines", numbers.HEADLINES), ("Tags", numbers.POPULAR_TAGS), ("Retro", numbers.page(2, 0))],
     )
-    counts = Counter(name for post in posts for name in post.sections)
-    most = max(counts.values(), default=1)
-    for index, name in enumerate(section_names()):
-        row = BODY_ROW + 1 + index * 2
-        screen.coloured(row, 0, Colour.YELLOW, f"{numbers.section_page(index):03X}")
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, name)
-        screen.coloured(row, 26, Colour.CYAN, f"{counts.get(name, 0):3d}")
-        bar(screen, row + 1, NUMBER_WIDTH, 30, counts.get(name, 0), most, SECTION_COLOURS[index % len(SECTION_COLOURS)])
+    screen.coloured(BODY_ROW - 1 + 1, 0, Colour.WHITE, "100 Hackaday: front, lists, columns")
+    for index, mag in enumerate(site.SUBJECTS):
+        row = BODY_ROW + 1 + index * 2 + 1
+        count = len(placed.stories.get(mag.number, []))
+        screen.coloured(row, 0, ink_on_black(mag), fit(f"{mag.front:03X} {mag.name}", 30))
+        screen.coloured(row, 31, Colour.WHITE, f"{count:3d}")
+        tags = "  ".join(f"{number:03X} {tag}" for number, tag, _ in placed.tag_pages(mag.number)[:3])
+        screen.coloured(row + 1, NUMBER_WIDTH, Colour.CYAN, fit(tags, COLUMNS - NUMBER_WIDTH - 1))
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Each magazine: N00 front  N02 stories")
+    screen.coloured(HINT_ROW + 1, 0, Colour.GREEN, "N03 tags  N04-N09 its busiest tags")
     return screen
 
 
-def section(index: int, posts: list[Post], top: int) -> Screen:
-    """Draw a section's page: its stories."""
-    name = section_names()[index]
-    slots = {post.id: slot for slot, post in enumerate(posts)}
-    chosen = [post for post in posts if name in post.sections]
-    lines = headline_lines(chosen, slots) or [Line(Colour.WHITE, "Nothing in this section yet")]
-    links: list[Link] = [("Sections", numbers.SECTIONS), ("Front", numbers.FRONT)]
-    if index + 1 < len(section_names()):
-        links.append(("Next", numbers.section_page(index + 1)))
-    return scrolling(name, SECTION_COLOURS[index % len(SECTION_COLOURS)], lines, top, links)
-
-
-# A story's four pages.
-
-
-def story_links(slot: int) -> list[Link]:
-    """Answer a story's Fastext: its picture, comments and links, and the next story."""
+def magazine_links(mag: Magazine) -> list[Link]:
+    """Answer a subject magazine's Fastext: home, its stories, its tags and the next magazine."""
+    following = site.SUBJECTS[(site.SUBJECTS.index(mag) + 1) % len(site.SUBJECTS)]
     return [
-        ("Picture", numbers.slot_page(numbers.PICTURE_MAGAZINE, slot)),
-        ("Comments", numbers.slot_page(numbers.COMMENTS_MAGAZINE, slot)),
-        ("Links", numbers.slot_page(numbers.LINKS_MAGAZINE, slot)),
-        ("Next", story_page((slot + 1) % numbers.STORIES)),
+        ("Home", numbers.FRONT),
+        ("Stories", mag.stories_page),
+        ("Tags", numbers.page(mag.number, numbers.TAG_INDEX)),
+        (following.short, following.front),
     ]
+
+
+def magazine_front(mag: Magazine, placed: Placed, feature: str | None) -> Screen:
+    """Draw a subject magazine's front page: its lead story, the latest, its tags and its feature."""
+    screen = page(mag.name, mag.band, magazine_links(mag), title_colour=mag.ink)
+    posts = placed.stories.get(mag.number, [])
+    if not posts:
+        screen.centred(10, Colour.WHITE, "Fetching the latest hacks...")
+        return screen
+    lead = posts[0]
+    screen.coloured(BODY_ROW, 0, Colour.YELLOW, fit(f"{number_of(placed, lead)} {lead.title}", TEXT_WIDTH))
+    for offset, line in enumerate(wrap(lead.excerpt, TEXT_WIDTH)[:3]):
+        screen.coloured(BODY_ROW + 1 + offset, 0, Colour.CYAN, line)
+    band(screen, 7, mag.band, mag.ink, f"LATEST: {len(posts)} STORIES ON {mag.stories_page:03X}")
+    for offset, post in enumerate(posts[1 : 1 + MAGAZINE_HEADLINES]):
+        row = 8 + offset
+        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
+        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    tags = placed.tag_pages(mag.number)
+    if tags:
+        band(screen, 18, Colour.BLUE, Colour.WHITE, f"BY TAG, ALL ON {numbers.page(mag.number, numbers.TAG_INDEX):03X}")
+        for index, (number, tag, count) in enumerate(tags):
+            row, column = 19 + index // 2, (index % 2) * 20
+            screen.coloured(row, column, Colour.YELLOW, f"{number:03X}")
+            screen.coloured(row, column + NUMBER_WIDTH, Colour.WHITE, fit(f"{tag} {count}", 15))
+    if feature:
+        screen.coloured(HINT_ROW, 0, Colour.MAGENTA, fit(f"{numbers.page(mag.number, numbers.FEATURE):03X} {feature}", TEXT_WIDTH))
+    return screen
+
+
+def magazine_stories(mag: Magazine, placed: Placed, top: int) -> Screen:
+    """Draw a magazine's N02: every story it holds, newest first, which scrolls."""
+    posts = placed.stories.get(mag.number, [])
+    lines = headline_lines(posts, placed) or [Line(Colour.WHITE, "Nothing here yet")]
+    return scrolling(f"{mag.short}: every story", mag.band, lines, top, magazine_links(mag), title_colour=mag.ink)
+
+
+def tag_lines(posts: list[Post], placed: Placed, tag: str) -> list[Line]:
+    """Answer the held stories with `tag`, newest first, as lines with their pages."""
+    return headline_lines([post for post in posts if post.has(tag)], placed)
+
+
+def tag_page(mag: Magazine, tag: str, posts: list[Post], placed: Placed, top: int) -> Screen:
+    """Draw one of a magazine's tag pages: every held story with the tag, in any magazine."""
+    lines = tag_lines(posts, placed, tag) or [Line(Colour.WHITE, "No story has this tag now")]
+    return scrolling(fit(f"Tag: {tag}", 30), mag.band, lines, top, magazine_links(mag), title_colour=mag.ink)
+
+
+def popular_tags(posts: list[Post], placed: Placed) -> Screen:
+    """Draw page 103: the tags the held stories have most, each with its page where a magazine gives it one."""
+    screen = page(
+        "Popular tags",
+        Colour.GREEN,
+        [("Front", numbers.FRONT), ("A to Z", numbers.TAGS), ("Magazines", numbers.MAGAZINES), ("Search", numbers.SEARCH)],
+        title_colour=Colour.BLACK,
+    )
+    ranked = site.tag_counts(posts)[: LIST_ROWS - 1]
+    most = ranked[0][1] if ranked else 1
+    screen.coloured(BODY_ROW, 0, Colour.CYAN, f"Tags of the last {len(posts)} stories")
+    for offset, (tag, count) in enumerate(ranked):
+        row = BODY_ROW + 1 + offset
+        found = placed.tag_page(tag)
+        screen.coloured(row, 0, Colour.YELLOW, f"{found:03X}" if found is not None else "104")
+        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(tag, 17))
+        screen.coloured(row, 22, Colour.CYAN, f"{count:3d}")
+        bar(screen, row, 26, 12, count, most, Colour.GREEN)
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Every tag, A to Z, on 104")
+    return screen
+
+
+def columns_index(posts: list[Post], placed: Placed) -> Screen:
+    """Draw page 110: Hackaday's columns, the latest edition of each and where it is."""
+    screen = page(
+        "Columns",
+        Colour.RED,
+        [("Front", numbers.FRONT), ("Links", numbers.LINKS_COLUMN), ("Podcast", numbers.PODCAST), ("Security", numbers.SECURITY)],
+        title_colour=Colour.YELLOW,
+    )
+    held = [post for post in posts if post.has("hackaday columns") or post.has("podcasts") or post.has("hackaday links")]
+    screen.coloured(BODY_ROW, 0, Colour.CYAN, "The regulars, newest first")
+    for offset, post in enumerate(held[: LIST_ROWS - 1]):
+        row = BODY_ROW + 1 + offset
+        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
+        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "111 Links  112 Podcast  701 Security")
+    return screen
+
+
+# A story, and its views.
+
+
+def story_links(view: str, post_page: int, next_page: int) -> list[Link]:
+    """Answer a story's prompts in `view`: the other three views, then the next story. Each view is the story's own page."""
+    named = {STORY: "Story", PICTURE: "Picture", COMMENTS: "Comments", LINKS: "Links"}
+    return [*((named[other], post_page) for other in VIEWS if other != view), ("Next", next_page)]
+
+
+def story_choices(view: str) -> list[str]:
+    """Answer what each coloured key does in `view`: a view, or the next story."""
+    return [*(other for other in VIEWS if other != view), NEXT]
 
 
 def article_lines(post: Post) -> list[Line]:
@@ -249,11 +350,9 @@ def article_lines(post: Post) -> list[Line]:
     return lines
 
 
-def story(post: Post, slot: int, top: int) -> Screen:
-    """Draw story `slot`'s page: its title, who and when, and its text, which scrolls."""
-    section_name = post.sections[0]
-    screen = page(f"{section_name}", SECTION_COLOURS[section_index(section_name) % len(SECTION_COLOURS)], story_links(slot))
-    screen.coloured(1, COLUMNS - 8, Colour.WHITE, f"{slot + 1:3d}/100")
+def story(post: Post, mag: Magazine, post_page: int, next_page: int, top: int) -> Screen:
+    """Draw a story: its title, who and when, and its text, which scrolls."""
+    screen = page(mag.name, mag.band, story_links(STORY, post_page, next_page), title_colour=mag.ink)
     title = wrap(post.title, TEXT_WIDTH)
     for offset, line in enumerate(title[:2]):
         screen.coloured(BODY_ROW + offset, 0, Colour.YELLOW, line)
@@ -265,32 +364,33 @@ def story(post: Post, slot: int, top: int) -> Screen:
         f"Lines {top + 1}-{min(len(lines), top + STORY_ROWS)} of {len(lines)}" if len(lines) > STORY_ROWS else f"{post.article.words} words"
     )
     screen.coloured(POSITION_ROW + 1, 0, Colour.CYAN, f"{shown}  {post.comment_count} comments")
-    screen.coloured(23, 0, Colour.GREEN, "PgDn PgUp to read, colours for more")
+    screen.coloured(23, 0, Colour.GREEN, fit(f"PgDn reads on; index {mag.front:03X}", TEXT_WIDTH))
+    screen.index_link(mag.front)
     return screen
 
 
-def picture(post: Post, slot: int, tti: str | None) -> Screen:
-    """Draw story `slot`'s picture page: the lead picture in mosaics, or a word that it is coming."""
-    screen = Screen()
-    screen.header(f"HACKADAY  picture {story_page(slot):03X}")
-    links = story_links(slot)
-    links[0] = ("Story", story_page(slot))
+def picture(post: Post, mag: Magazine, post_page: int, next_page: int, tti: str | None) -> Screen:
+    """Draw a story's lead picture in mosaics, or a word that it is coming."""
+    links = story_links(PICTURE, post_page, next_page)
     if tti is None:
-        screen = page("Picture", Colour.BLUE, links)
+        screen = page("Picture", mag.band, links, title_colour=mag.ink)
         screen.centred(10, Colour.WHITE, "This picture is being drawn")
         screen.centred(12, Colour.CYAN, "in teletext mosaics: back soon")
         screen.centred(14, Colour.YELLOW, fit(post.title, 36))
+        screen.index_link(mag.front)
         return screen
+    screen = Screen()
+    screen.header(f"HACKADAY  picture {post_page:03X}")
     # The picture takes rows 1 to 24 (the engine's converter); the coloured
-    # keys still follow these links, though row 24 shows the picture.
+    # keys still choose the views, though row 24 shows the picture.
     screen.load_tti(tti, first_row=1, last_row=FASTEXT_ROW)
     screen.fastext([target for _, target in links])
-    screen.index_link(numbers.FRONT)
+    screen.index_link(mag.front)
     return screen
 
 
 def comment_lines(post: Post) -> list[Line]:
-    """Answer a post's comments as lines, replies indented under what they answer."""
+    """Answer every one of a post's comments as lines, replies indented under what they answer."""
     lines: list[Line] = []
     for depth, comment in threaded(post.comments):
         indent = " " * (min(depth, DEEPEST_INDENT) * INDENT_STEP)
@@ -301,18 +401,23 @@ def comment_lines(post: Post) -> list[Line]:
     return lines or [Line(Colour.WHITE, "No comments yet: be the first on"), Line(Colour.WHITE, "hackaday.com")]
 
 
-def comments(post: Post, slot: int, top: int) -> Screen:
-    """Draw story `slot`'s comments, which scroll."""
-    links = story_links(slot)
-    links[1] = ("Story", story_page(slot))
-    return scrolling(fit(f"{post.comment_count} comments", 30), Colour.GREEN, comment_lines(post), top, links)
+def comments(post: Post, mag: Magazine, post_page: int, next_page: int, top: int) -> Screen:
+    """Draw a story's comments, all of them on one page, which scrolls."""
+    screen = scrolling(
+        fit(f"{post.comment_count} comments", 30),
+        Colour.GREEN,
+        comment_lines(post),
+        top,
+        story_links(COMMENTS, post_page, next_page),
+        title_colour=Colour.BLACK,
+    )
+    screen.index_link(mag.front)
+    return screen
 
 
-def links_page(post: Post, slot: int, qr: str | None, what: str) -> Screen:
-    """Draw one of story `slot`'s link pages: a QR code a phone can follow, and what it leads to."""
-    links = story_links(slot)
-    links[2] = ("Story", story_page(slot))
-    screen = page("Read on", Colour.MAGENTA, links)
+def links_page(post: Post, mag: Magazine, post_page: int, next_page: int, qr: str | None, what: str) -> Screen:  # noqa: PLR0913, PLR0917 - a link page: the story, its place, its code and what it leads to
+    """Draw one of a story's link pages: a QR code a phone can follow, and what it leads to."""
+    screen = page("Read on", Colour.MAGENTA, story_links(LINKS, post_page, next_page))
     if qr is not None:
         screen.load_tti(qr, first_row=BODY_ROW, last_row=20)
     side = 25
@@ -323,6 +428,7 @@ def links_page(post: Post, slot: int, qr: str | None, what: str) -> Screen:
         screen.coloured(BODY_ROW + 8 + offset, side, Colour.CYAN, line)
     for offset, (text, _) in enumerate(post.article.links[:3]):
         screen.coloured(21 + offset - 1, 0, Colour.GREEN, fit(f"Link: {text}", TEXT_WIDTH))
+    screen.index_link(mag.front)
     return screen
 
 
@@ -356,7 +462,7 @@ def choices(title: str, colour: Colour, items: list[Choice], chosen: int, links:
 
 
 def reader(post: Post, top: int) -> Screen:
-    """Draw page 199: a post from the archive, which scrolls."""
+    """Draw page 133: a post from the archive, which scrolls."""
     screen = page(
         "From the archive",
         Colour.BLUE,
@@ -377,11 +483,10 @@ def reader(post: Post, top: int) -> Screen:
 
 
 def doom(ports: list[Post], now: datetime) -> Screen:
-    """Draw page 107: days since the last port of DOOM, and the ports."""
+    """Draw page 801, Games' feature: days since the last port of DOOM, and the ports."""
+    games = site.magazine(8)
     screen = page(
-        "DOOM watch",
-        Colour.RED,
-        [("Front", numbers.FRONT), ("Roulette", numbers.ROULETTE), ("Quiz", numbers.QUIZ), ("Stats", numbers.STATISTICS)],
+        "DOOM watch", Colour.RED, [("Home", numbers.FRONT), ("Games", games.front), ("Roulette", numbers.ROULETTE), ("Quiz", numbers.QUIZ)]
     )
     if not ports:
         screen.centred(10, Colour.WHITE, "Counting the ports of DOOM...")
@@ -399,20 +504,21 @@ def doom(ports: list[Post], now: datetime) -> Screen:
 
 
 def statistics(posts: list[Post]) -> Screen:
-    """Draw page 109: the stories by section, by hour of posting, and the busiest threads."""
+    """Draw page 109: the stories by magazine, by hour of posting, and the comments."""
     screen = page(
         "Statistics",
         Colour.GREEN,
-        [("Front", numbers.FRONT), ("Writers", numbers.WRITERS), ("Discussed", numbers.DISCUSSED), ("DOOM", numbers.DOOM)],
+        [("Front", numbers.FRONT), ("Writers", numbers.WRITERS), ("Discussed", numbers.DISCUSSED), ("Magazines", numbers.MAGAZINES)],
+        title_colour=Colour.BLACK,
     )
-    counts = Counter(name for post in posts for name in post.sections)
+    counts = Counter(site.magazines_of(post)[0].number for post in posts)
     most = max(counts.values(), default=1)
-    screen.coloured(BODY_ROW, 0, Colour.YELLOW, f"The last {len(posts)} stories by section")
-    for index, name in enumerate(section_names()):
+    screen.coloured(BODY_ROW, 0, Colour.YELLOW, f"The last {len(posts)} stories by magazine")
+    for index, mag in enumerate(site.MAGAZINES):
         row = BODY_ROW + 1 + index
-        screen.coloured(row, 0, Colour.WHITE, fit(name, 20))
-        screen.coloured(row, 21, Colour.CYAN, f"{counts.get(name, 0):3d}")
-        bar(screen, row, 25, 13, counts.get(name, 0), most, Colour.GREEN)
+        screen.coloured(row, 0, ink_on_black(mag), fit(f"{mag.front:03X} {mag.short}", 20))
+        screen.coloured(row, 21, Colour.CYAN, f"{counts.get(mag.number, 0):3d}")
+        bar(screen, row, 25, 13, counts.get(mag.number, 0), most, Colour.GREEN)
     hours = Counter(post.date.hour // 3 for post in posts)
     peak = max(hours.values(), default=1)
     screen.coloured(14, 0, Colour.YELLOW, "When they post, UTC")
@@ -427,11 +533,11 @@ def statistics(posts: list[Post]) -> Screen:
 
 
 def writers(posts: list[Post]) -> Screen:
-    """Draw page 110: who writes Hackaday, and how much."""
+    """Draw page 108: who writes Hackaday, and how much."""
     screen = page(
         "Writers",
         Colour.MAGENTA,
-        [("Front", numbers.FRONT), ("Stats", numbers.STATISTICS), ("Sections", numbers.SECTIONS), ("Headlines", numbers.HEADLINES)],
+        [("Front", numbers.FRONT), ("Stats", numbers.STATISTICS), ("People", numbers.PEOPLE), ("Headlines", numbers.HEADLINES)],
     )
     counts = Counter(post.author for post in posts).most_common(17)
     most = counts[0][1] if counts else 1
@@ -444,46 +550,44 @@ def writers(posts: list[Post]) -> Screen:
     return screen
 
 
-def discussed(posts: list[Post]) -> Screen:
-    """Draw page 118: the most argued-about stories."""
+def discussed(posts: list[Post], placed: Placed) -> Screen:
+    """Draw page 106: the most argued-about stories."""
     screen = page(
         "Most discussed",
         Colour.RED,
         [("Front", numbers.FRONT), ("Comments", numbers.COMMENTS_WALL), ("Stats", numbers.STATISTICS), ("Headlines", numbers.HEADLINES)],
     )
-    slots = {post.id: slot for slot, post in enumerate(posts)}
     ranked = sorted(posts, key=lambda post: post.comment_count, reverse=True)[:9]
     most = ranked[0].comment_count if ranked and ranked[0].comment_count else 1
     for offset, post in enumerate(ranked):
         row = BODY_ROW + offset * 2
-        screen.coloured(row, 0, Colour.YELLOW, f"{story_page(slots[post.id]):03X}")
+        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
         screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
         bar(screen, row + 1, NUMBER_WIDTH, 26, post.comment_count, most, Colour.RED)
         screen.coloured(row + 1, 33, Colour.CYAN, f"{post.comment_count:4d}")
     return screen
 
 
-def comments_wall_lines(posts: list[Post]) -> list[Line]:
+def comments_wall_lines(posts: list[Post], placed: Placed) -> list[Line]:
     """Answer the newest comments on every story as lines: who, on which story, and the start of what they said."""
-    slots = {post.id: slot for slot, post in enumerate(posts)}
     every = sorted(((comment, post) for post in posts for comment in post.comments), key=lambda pair: pair[0].date, reverse=True)[:60]
     lines: list[Line] = []
     for comment, post in every:
-        lines.append(Line(Colour.CYAN, fit(f"{comment.author} on {story_page(slots[post.id]):03X}", SCROLL_TEXT_WIDTH)))
+        lines.append(Line(Colour.CYAN, fit(f"{comment.author} on {number_of(placed, post)}", SCROLL_TEXT_WIDTH)))
         lines.extend(Line(Colour.WHITE, line) for line in wrap(comment.text, SCROLL_TEXT_WIDTH)[:4])
         lines.append(Line(Colour.WHITE, ""))
     return lines or [Line(Colour.WHITE, "Reading the comments...")]
 
 
-def comments_wall(posts: list[Post], top: int) -> Screen:
-    """Draw page 117: the newest comments on every story."""
+def comments_wall(posts: list[Post], placed: Placed, top: int) -> Screen:
+    """Draw page 107: the newest comments on every story."""
     links: list[Link] = [
         ("Front", numbers.FRONT),
         ("Discussed", numbers.DISCUSSED),
         ("Headlines", numbers.HEADLINES),
         ("Stats", numbers.STATISTICS),
     ]
-    return scrolling("Comments", Colour.GREEN, comments_wall_lines(posts), top, links)
+    return scrolling("Comments", Colour.GREEN, comments_wall_lines(posts, placed), top, links, title_colour=Colour.BLACK)
 
 
 def column_page(title: str, colour: Colour, post: Post | None, top: int, links: list[Link]) -> Screen:
@@ -498,11 +602,13 @@ def column_page(title: str, colour: Colour, post: Post | None, top: int, links: 
 
 
 def challenge(entries: list[Post], now: datetime, closes: datetime) -> Screen:
-    """Draw page 114: the Retrocomputing Challenge, its countdown and the entries written up."""
+    """Draw page 201, Retrocomputing's feature: the Challenge, its countdown and the entries written up."""
+    retro = site.magazine(2)
     screen = page(
         "Retro Challenge",
-        Colour.MAGENTA,
-        [("Front", numbers.FRONT), ("Retro", numbers.section_page(0)), ("Then+now", numbers.THEN_AND_NOW), ("DOOM", numbers.DOOM)],
+        retro.band,
+        [("Home", numbers.FRONT), ("Retro", retro.front), ("Poll", numbers.POLL), ("Then+now", numbers.THEN_AND_NOW)],
+        title_colour=retro.ink,
     )
     screen.coloured(BODY_ROW, 0, Colour.YELLOW, "2026 Hackaday Retrocomputing Challenge")
     left = closes - now
@@ -521,11 +627,11 @@ def challenge(entries: list[Post], now: datetime, closes: datetime) -> Screen:
 
 
 def then_and_now(first: list[Post], latest: list[Post]) -> Screen:
-    """Draw page 119: Hackaday's first posts beside today's."""
+    """Draw page 132: Hackaday's first posts beside today's."""
     screen = page(
         "Then and now",
         Colour.BLUE,
-        [("Front", numbers.FRONT), ("Archive", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE), ("Retro", numbers.CHALLENGE)],
+        [("Front", numbers.FRONT), ("Archive", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE), ("Challenge", numbers.CHALLENGE)],
     )
     first_year = first[0].date.year if first else 2004
     band(screen, BODY_ROW, Colour.YELLOW, Colour.BLUE, f"THEN: the first posts, {first_year}")
@@ -538,46 +644,46 @@ def then_and_now(first: list[Post], latest: list[Post]) -> Screen:
 
 
 def about() -> Screen:
-    """Draw page 120: how to use the channel, and its pages."""
+    """Draw page 190: how to use the channel, and where everything is."""
     screen = page(
         "How it works",
         Colour.BLUE,
-        [("Front", numbers.FRONT), ("Headlines", numbers.HEADLINES), ("Sections", numbers.SECTIONS), ("Archive", numbers.ON_THIS_DAY)],
+        [("Front", numbers.FRONT), ("Magazines", numbers.MAGAZINES), ("Tags", numbers.POPULAR_TAGS), ("Archive", numbers.ON_THIS_DAY)],
     )
     rows = [
         (Colour.YELLOW, "Hackaday, live, as 1980s teletext"),
-        (Colour.WHITE, "Type a page number, or press a coloured"),
-        (Colour.WHITE, "key (F1 to F4) for its prompt below."),
-        (Colour.CYAN, "2NN story NN    3NN its picture"),
-        (Colour.CYAN, "4NN comments    5NN links and QR code"),
-        (Colour.GREEN, "101 headlines   102 sections  103 tags"),
-        (Colour.GREEN, "104 search      105 on this day"),
-        (Colour.GREEN, "106 roulette    107 DOOM watch"),
-        (Colour.GREEN, "108 quiz        109 statistics"),
-        (Colour.GREEN, "110 writers     111 security"),
-        (Colour.GREEN, "112 links       113 podcast"),
-        (Colour.GREEN, "114 challenge   115 my Hackaday"),
-        (Colour.GREEN, "116 poll        117 comments"),
-        (Colour.GREEN, "118 discussed   119 then and now"),
-        (Colour.WHITE, "Long pages scroll: Page Up, Page Down,"),
-        (Colour.WHITE, "the arrows, Home, End and the wheel."),
-        (Colour.GREEN, "121 behind the scenes 122 podcast sounds"),
-        (Colour.GREEN, "140 the people of Hackaday"),
-        (Colour.MAGENTA, "Served by the NeoTeletext server (Rust)"),
-        (Colour.MAGENTA, "from hackaday.com, by an app in Python."),
+        (Colour.WHITE, "Type a page number, press a coloured key"),
+        (Colour.WHITE, "for its prompt, or click a number."),
+        (Colour.CYAN, "1xx Hackaday  2xx Retro  3xx Hardware"),
+        (Colour.CYAN, "4xx Making    5xx Radio  6xx Science"),
+        (Colour.CYAN, "7xx Software and security  8xx Games"),
+        (Colour.GREEN, "N00 front  N02 stories  N03 tags"),
+        (Colour.GREEN, "N04-N09 its busiest tags  N10+ stories"),
+        (Colour.WHITE, "In a story the colours show its picture,"),
+        (Colour.WHITE, "comments and links, or the next story."),
+        (Colour.GREEN, "101 headlines 102 magazines 103 tags"),
+        (Colour.GREEN, "104 tags A-Z  105 search  106 discussed"),
+        (Colour.GREEN, "107 comments  108 writers  109 stats"),
+        (Colour.GREEN, "110 columns   112 podcast  113 sounds"),
+        (Colour.GREEN, "120 people  130 on this day  131 roulette"),
+        (Colour.GREEN, "140 quiz  141 poll  142 my Hackaday"),
+        (Colour.GREEN, "201 Retro Challenge  801 DOOM watch"),
+        (Colour.WHITE, "Long pages scroll: the keys, the wheel"),
+        (Colour.WHITE, "or the bar at the right, pulled."),
+        (Colour.MAGENTA, "A Rust server, a Python channel: live"),
     ]
     for offset, (colour, text) in enumerate(rows):
-        screen.coloured(BODY_ROW + offset, 0, colour, text)
+        screen.coloured(BODY_ROW + offset - 1 + 1, 0, colour, text)
     return screen
 
 
 def quiz(post: Post | None, answers: list[str], picked: int | None, score: tuple[int, int], best: int) -> Screen:
-    """Draw a quiz question: which section is this story in? The answer is concealed until it is given."""
-    screen = page("Guess the section", Colour.YELLOW, [(answer[:9], None) for answer in answers] or [NO_LINK], title_colour=Colour.BLUE)
+    """Draw a quiz question: which magazine is this story in? The answer is concealed until it is given."""
+    screen = page("Guess the magazine", Colour.YELLOW, [(answer[:9], None) for answer in answers] or [NO_LINK], title_colour=Colour.BLUE)
     if post is None:
         screen.centred(10, Colour.WHITE, "Fetching a question...")
         return screen
-    screen.coloured(BODY_ROW, 0, Colour.CYAN, "Which section is this story in?")
+    screen.coloured(BODY_ROW, 0, Colour.CYAN, "Which magazine is this story in?")
     for offset, line in enumerate(wrap(post.title, TEXT_WIDTH)[:3]):
         screen.coloured(BODY_ROW + 2 + offset, 0, Colour.WHITE, line)
     for offset, line in enumerate(wrap(post.excerpt, TEXT_WIDTH)[:4]):
@@ -601,14 +707,14 @@ def quiz(post: Post | None, answers: list[str], picked: int | None, score: tuple
 
 
 def poll(options: list[str], votes: list[int], mine: int | None, chosen: int) -> Screen:
-    """Draw page 116: the live poll, every vote counted for everyone at once."""
+    """Draw page 141: the live poll, every vote counted for everyone at once."""
     screen = page(
         "Live poll",
         Colour.GREEN,
         [
             ("Front", numbers.FRONT),
             ("Challenge", numbers.CHALLENGE),
-            ("Retro", numbers.section_page(0)),
+            ("Retro", site.magazine(2).front),
             ("Then+now", numbers.THEN_AND_NOW),
         ],
     )
@@ -627,37 +733,36 @@ def poll(options: list[str], votes: list[int], mine: int | None, chosen: int) ->
     return screen
 
 
-def mine(names: list[str], favourites: set[str], chosen: int, posts: list[Post]) -> Screen:
-    """Draw page 115: the viewer's favourite sections, and the stories in them."""
+def mine(favourites: set[int], chosen: int, posts: list[Post], placed: Placed) -> Screen:
+    """Draw page 142: the viewer's favourite magazines, and the latest stories in them."""
     screen = page(
         "My Hackaday",
         Colour.MAGENTA,
-        [("Front", numbers.FRONT), ("Sections", numbers.SECTIONS), ("Headlines", numbers.HEADLINES), ("Tags", numbers.TAGS)],
+        [("Front", numbers.FRONT), ("Magazines", numbers.MAGAZINES), ("Headlines", numbers.HEADLINES), ("Tags", numbers.POPULAR_TAGS)],
     )
     screen.coloured(BODY_ROW, 0, Colour.CYAN, "Up Down to choose, Enter to star")
-    for index, name in enumerate(names):
+    for index, mag in enumerate(site.SUBJECTS):
         row = BODY_ROW + 1 + index
-        star = "*" if name in favourites else " "
+        star = "*" if mag.number in favourites else " "
         if index == chosen:
-            band(screen, row, Colour.YELLOW, Colour.BLUE, f"{star} {name}")
+            band(screen, row, Colour.YELLOW, Colour.BLUE, f"{star} {mag.name}")
         else:
-            screen.coloured(row, 0, Colour.WHITE, f"{star} {name}")
-    slots = {post.id: slot for slot, post in enumerate(posts)}
-    picked = [post for post in posts if favourites & set(post.sections)][:7]
-    first = BODY_ROW + 2 + len(names)
+            screen.coloured(row, 0, Colour.WHITE, f"{star} {mag.name}")
+    picked = [post for post in posts if site.magazines_of(post)[0].number in favourites][:7]
+    first = BODY_ROW + 2 + len(site.SUBJECTS)
     if favourites:
         screen.coloured(first - 1, 0, Colour.YELLOW, "Your latest")
     for offset, post in enumerate(picked):
         row = first + offset
         if row >= HINT_ROW:
             break
-        screen.coloured(row, 0, Colour.YELLOW, f"{story_page(slots[post.id]):03X}")
+        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
         screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
     return screen
 
 
 def search(typed: str, results: list[Post], chosen: int, *, searching: bool) -> Screen:
-    """Draw page 104: words typed, and the archive's posts for them."""
+    """Draw page 105: words typed, and the archive's posts for them."""
     items = [Choice(f"{post.date.year} {post.title}", post) for post in results]
     intro = ["Type words, then Enter: the whole", "archive, back to 2004", ""]
     screen = choices(
@@ -665,7 +770,7 @@ def search(typed: str, results: list[Post], chosen: int, *, searching: bool) -> 
         Colour.BLUE,
         items,
         chosen,
-        [("Front", numbers.FRONT), ("Tags", numbers.TAGS), ("Archive", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE)],
+        [("Front", numbers.FRONT), ("Tags", numbers.POPULAR_TAGS), ("Archive", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE)],
         intro,
     )
     screen.background(BODY_ROW + 2, 0, Colour.BLUE)
@@ -692,7 +797,7 @@ def amount(value: int) -> str:
 
 
 def server_stats(stats: dict[str, Any], titles: dict[int, str]) -> Screen:
-    """Draw page 121: the Rust server's own figures, live (docs/applications.md section 7)."""
+    """Draw page 150: the Rust server's own figures, live (docs/applications.md section 7)."""
     screen = page(
         "Behind the scenes",
         Colour.BLUE,
@@ -739,7 +844,7 @@ def server_stats(stats: dict[str, Any], titles: dict[int, str]) -> Screen:
 
 
 def soundboard(clips: list[Clip], chosen: int, playing: str | None) -> Screen:
-    """Draw page 122: the Hackaday Podcast's sound grabs, played with Enter."""
+    """Draw page 113: the Hackaday Podcast's sound grabs, played with Enter."""
     screen = page(
         "Podcast sounds",
         Colour.MAGENTA,
@@ -797,7 +902,7 @@ def two_lines(text: str) -> list[str]:
 
 
 def people_index(people: list[Person]) -> Screen:
-    """Draw page 140: the people of Hackaday, each with their page."""
+    """Draw page 120: the people of Hackaday, each with their page."""
     screen = page(
         "The people",
         Colour.MAGENTA,
