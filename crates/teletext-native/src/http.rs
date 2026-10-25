@@ -17,6 +17,8 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use teletext_runtime::layout::bundle;
+
 use crate::connection;
 use crate::hub::Hub;
 use crate::stats::{ServerStats, count};
@@ -84,11 +86,8 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
         "channel.json" => ("application/json", Arc::clone(&hub.descriptor)),
         "contents.txt" => ("text/plain", Arc::clone(&hub.contents.read().unwrap_or_else(PoisonError::into_inner))),
         "index.t42" => {
-            let mut bytes = Vec::new();
-            for (_, frame) in hub.pages.all() {
-                bytes.extend_from_slice(&frame);
-            }
-            (T42_TYPE, bytes.into())
+            let frames = hub.pages.all();
+            (T42_TYPE, bundle(frames.iter().map(|(_, frame)| &frame[..])).into())
         }
         other => match page_of(other).and_then(|page| hub.pages.frame(page)) {
             Some(frame) => (T42_TYPE, frame),

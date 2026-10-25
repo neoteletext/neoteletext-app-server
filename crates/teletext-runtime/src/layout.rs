@@ -6,6 +6,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
+use neoteletext_web::consts::DEFAULT_PAGE_LIMIT;
+
 use crate::channel::Channel;
 
 /// A file of the channel.
@@ -29,13 +31,7 @@ impl Channel {
         match name {
             "channel.json" => Some(Resource { content_type: "application/json", body: self.descriptor().into_bytes() }),
             "contents.txt" => Some(Resource { content_type: "text/plain", body: self.contents().into_bytes() }),
-            "index.t42" => {
-                let mut body = Vec::new();
-                for (_, frame) in self.shared_frames() {
-                    body.extend_from_slice(frame);
-                }
-                Some(Resource { content_type: T42_TYPE, body })
-            }
+            "index.t42" => Some(Resource { content_type: T42_TYPE, body: bundle(self.shared_frames().map(|(_, frame)| &frame[..])) }),
             _ => {
                 let page = page_file(name)?;
                 let (_, frame) = self.shared_frames().find(|&(number, _)| number == page)?;
@@ -70,6 +66,23 @@ impl Channel {
     }
 }
 
+/// The bundle, `index.t42`: whole pages in page order, as many as a
+/// receiver takes in one response (the engine's `DEFAULT_PAGE_LIMIT`,
+/// REQ-WEB-008). A receiver that refuses a bundle opens the channel
+/// without it (the engine's decision E.70 item 5), so one too large would
+/// cost every receiver its pages at opening; the pages left out come by
+/// push or by their own `NNN.t42`.
+pub fn bundle<'a>(frames: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
+    let mut body = Vec::new();
+    for frame in frames {
+        if body.len().saturating_add(frame.len()) > DEFAULT_PAGE_LIMIT {
+            break;
+        }
+        body.extend_from_slice(frame);
+    }
+    body
+}
+
 /// `NNN.t42` as a page number: three capital hexadecimal digits, magazine
 /// 1 to 8.
 fn page_file(name: &str) -> Option<u16> {
@@ -97,4 +110,21 @@ fn json_text(text: &str) -> String {
 /// A `contents.txt` field: printable ASCII without tabs, cut to 32.
 fn plain(text: &str) -> String {
     text.chars().filter(|character| (' '..='~').contains(character)).take(TITLE_CHARACTERS).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A channel of more pages than one response may carry bundles the
+    /// first of them whole, within the limit, in page order.
+    #[test]
+    fn the_bundle_is_whole_pages_within_a_receivers_limit() {
+        let frames: Vec<Vec<u8>> = (0_u8..=255).map(|page| alloc::vec![page; 2_000]).collect();
+        let body = bundle(frames.iter().map(Vec::as_slice));
+        assert!(body.len() <= DEFAULT_PAGE_LIMIT);
+        assert_eq!(body.len(), DEFAULT_PAGE_LIMIT / 2_000 * 2_000, "as many whole pages as fit");
+        assert_eq!(body.first(), Some(&0), "from the first");
+        assert_eq!(bundle(frames.iter().take(3).map(Vec::as_slice)).len(), 6_000, "a small channel's whole");
+    }
 }
