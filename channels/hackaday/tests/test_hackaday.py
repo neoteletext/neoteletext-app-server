@@ -197,6 +197,55 @@ def test_a_story_scrolls_for_its_reader_alone(channel: Recorder) -> None:
     assert len(published(channel, 0x200, 1)) == 2, "no further than the end"
 
 
+def mouse(session: int, page: str, action: str, column: int, row: int, **more: Any) -> dict[str, Any]:  # noqa: ANN401 - the event's other fields
+    return {
+        "type": "input",
+        "session": session,
+        "page": page,
+        "event": {"kind": "mouse", "action": action, "column": column, "row": row, **more},
+    }
+
+
+def test_the_scroll_bar_is_pulled_and_pages_on_either_side(channel: Recorder) -> None:
+    channel.library.posts[0].article.blocks *= 10
+    channel.publish_all()
+    total = len(views.article_lines(channel.posts[0]))
+    assert "IM,16" in published(channel, 0x200, "channel")[-1], "a page with a scroll bar asks for drags"
+    first, rows = views.STORY_TEXT_ROW, views.STORY_ROWS
+    _, length = thumb(0, total, rows, rows)
+    drive(
+        channel,
+        mouse(1, "200", "press", 39, first, pressed=True, button=0),
+        mouse(1, "200", "move", 39, first + rows - length, buttons=1),
+        mouse(1, "200", "release", 39, first + rows - length, pressed=False, button=0),
+    )
+    assert channel.viewers[1].tops[0x200] == last_top(total, rows), "the block dragged to the bottom shows the end"
+    assert not channel.viewers[1].grips, "let go on release"
+    drive(channel, mouse(1, "200", "move", 39, first, buttons=1))
+    assert channel.viewers[1].tops[0x200] == last_top(total, rows), "a move with nothing gripped does nothing"
+    drive(channel, mouse(1, "200", "press", 39, first, pressed=True, button=0))
+    assert channel.viewers[1].tops[0x200] == last_top(total, rows) - (rows - 1), "a press above the block turns a screen back"
+
+
+def test_a_click_on_a_prompt_follows_its_link(channel: Recorder) -> None:
+    channel.library.posts[0].article.blocks *= 10
+    drive(channel, mouse(2, "200", "press", 1, 24, pressed=True, button=0))
+    screen = channel.shown(2, 0x200)
+    assert screen is not None
+    assert [message["page"] for message in channel.sent if message["type"] == "goto"] == [f"{screen.fastext_links[0]:03X}"]
+
+
+def test_story_pages_are_titled_with_their_posts(channel: Recorder) -> None:
+    titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
+    assert titles["200"] == 'Hack number 0 - with a "title"'
+    long = "A title of a post that runs to well past what the contents holds"
+    channel.library.posts[1].title = long
+    channel.publish_all()
+    titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
+    assert titles["201"] == long[:29].rstrip() + "...", titles["201"]
+    assert len(titles["201"]) <= 32
+
+
 def test_the_poll_counts_one_vote_each(channel: Recorder) -> None:
     drive(channel, key(1, "116", "ArrowDown"), key(1, "116", "Enter"), key(1, "116", "Enter"), key(2, "116", "Enter"))
     assert channel.votes[:2] == [1, 1]

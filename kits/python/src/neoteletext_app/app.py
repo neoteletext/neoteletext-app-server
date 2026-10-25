@@ -7,7 +7,9 @@ A subclass of `App` overrides the handlers it needs and calls `publish`,
 `goto`, the sound methods and `log`. Page selection is the kit's default
 (INPUT.md section 9.4): on a page whose `on_input` does not take a key,
 three digits go to that page and the coloured keys follow the page's own
-Fastext links.
+Fastext links. A page that asks for the mouse is sent its own clicks (INPUT.md
+section 6.4), so a click there that `on_input` does not take follows what it
+is on, as the browser would: a Fastext prompt in row 24, or a page number.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from array import array
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from neoteletext_app.screen import FIRST_PAGE, LAST_PAGE, Screen, page_number, page_text, tti
+from neoteletext_app.screen import FASTEXT_ROW, FIRST_PAGE, LAST_PAGE, TITLE_LIMIT, Colour, Screen, page_number, page_text, tti
 
 #: The longest line read from the server (docs/applications.md section 1).
 LONGEST_LINE = 16 * 1024 * 1024
@@ -31,6 +33,11 @@ PAGE_DIGITS = 3
 #: The coloured keys, red to cyan, by the names INPUT.md gives them (section
 #: 5.6): the function keys and a remote's colour keys.
 COLOUR_KEYS: tuple[tuple[str, ...], ...] = (("F1", "ColorF0Red"), ("F2", "ColorF1Green"), ("F3", "ColorF2Yellow"), ("F4", "ColorF3Blue"))
+#: Each coloured key's prompt colour in row 24, red to cyan (the engine's
+#: REQ-NAV-011).
+PROMPT_COLOURS = (Colour.RED, Colour.GREEN, Colour.YELLOW, Colour.CYAN)
+#: The main button (docs/applications.md section 2).
+LEFT_BUTTON = 0
 
 Owner = Literal["channel"] | int
 
@@ -70,6 +77,7 @@ class Event:
     base: str = ""
     pressed: bool = False
     button: int = 0
+    buttons: int = 0
     column: int = 0
     row: int = 0
     dx: int = 0
@@ -95,11 +103,17 @@ class Event:
             base=text("base"),
             pressed=value.get("pressed") is True,
             button=number("button"),
+            buttons=number("buttons"),
             column=number("column"),
             row=number("row"),
             dx=number("dx"),
             dy=number("dy"),
         )
+
+    @property
+    def clicked(self) -> bool:
+        """Whether this is the main button pressed."""
+        return self.kind == "mouse" and self.action == "press" and self.button == LEFT_BUTTON
 
     def pressed_key(self, *names: str) -> bool:
         """Answer whether this is a press or repeat of a key of these names."""
@@ -131,7 +145,7 @@ class App:
         self.pages = pages
         self.epoch_ms = 0
         self._digits: dict[int, str] = {}
-        self._links: dict[tuple[Owner, int], list[int | None]] = {}
+        self._shown: dict[tuple[Owner, int], Screen] = {}
         self._owned: set[tuple[int, int]] = set()
         self._open: dict[int, int] = {}
 
@@ -168,7 +182,7 @@ class App:
             raise ValueError(message)
         screens = screens if isinstance(screens, list) else [screens]
         if screens:
-            self._links[(owner, page)] = [*screens[0].fastext_links, screens[0].index]
+            self._shown[(owner, page)] = screens[0]
         if owner != "channel":
             self._owned.add((owner, page))
         self.send({"type": "publish", "page": page_text(page), "owner": owner, "tti": tti(page, screens)})
@@ -176,6 +190,18 @@ class App:
     def goto(self, session: int, page: int) -> None:
         """Send the viewer to `page`."""
         self.send({"type": "goto", "session": session, "page": page_text(page)})
+
+    def title(self, page: int, title: str) -> None:
+        """Give `page` a new title in the channel's contents, for what it holds now."""
+        if page not in self.pages:
+            message = f"{page_text(page)} was not declared"
+            raise ValueError(message)
+        if len(title) > TITLE_LIMIT:
+            message = f"the title of {page_text(page)} is over {TITLE_LIMIT} characters"
+            raise ValueError(message)
+        if self.pages[page] != title:
+            self.pages[page] = title
+            self.send({"type": "title", "page": page_text(page), "title": title})
 
     def log(self, text: str) -> None:
         """Write a line to the server's log."""
@@ -263,15 +289,25 @@ class App:
             self._digits.pop(session, None)
             self._open.pop(session, None)
             self._owned = {owned for owned in self._owned if owned[0] != session}
+            self._shown = {key: screen for key, screen in self._shown.items() if key[0] != session}
             await self.on_close(session)
 
+    def shown(self, session: int, page: int) -> Screen | None:
+        """Answer the copy of `page` that `session` sees: its own, or the channel's."""
+        owner: Owner = session if (session, page) in self._owned else "channel"
+        return self._shown.get((owner, page)) or self._shown.get(("channel", page))
+
     def navigate(self, session: int, page: int, event: Event) -> None:
-        """Select pages with digits and the coloured keys (INPUT.md section 9.4)."""
+        """Select pages with digits, the coloured keys and clicks (INPUT.md section 9.4)."""
+        screen = self.shown(session, page)
+        if event.clicked:
+            target = None if screen is None else clicked_link(screen, event.column, event.row)
+            if target is not None:
+                self.goto(session, target)
+            return
         colour = event.colour
         if colour is not None:
-            owner: Owner = session if (session, page) in self._owned else "channel"
-            links = self._links.get((owner, page)) or self._links.get(("channel", page)) or []
-            target = links[colour] if colour < len(links) else None
+            target = None if screen is None else screen.fastext_links[colour]
             if target is not None:
                 self.goto(session, target)
             return
@@ -286,6 +322,42 @@ class App:
         number = int(digits, 16)
         if FIRST_PAGE <= number <= LAST_PAGE:
             self.goto(session, number)
+
+
+def clicked_link(screen: Screen, column: int, row: int) -> int | None:
+    """Answer the page a click at a cell goes to: a Fastext prompt's link in row 24, or a page number it is on."""
+    if not (0 <= row < len(screen.rows) and 0 <= column < len(screen.rows[row])):
+        return None
+    if row == FASTEXT_ROW:
+        return prompt_link(screen, column)
+    return number_at(screen.rows[row], column)
+
+
+def prompt_link(screen: Screen, column: int) -> int | None:
+    """Answer the Fastext link of the row 24 prompt at `column`: a prompt runs from its colour code to the next colour code."""
+    colours = {colour.text for colour in Colour}
+    for code in reversed(screen.rows[FASTEXT_ROW][: column + 1]):
+        if code in colours:
+            keys = [colour.text for colour in PROMPT_COLOURS]
+            return screen.fastext_links[keys.index(code)] if code in keys else None
+    return None
+
+
+def number_at(codes: bytearray, column: int) -> int | None:
+    """Answer the page whose three digits stand at `column` on their own, if any."""
+    digits = range(ord("0"), ord("9") + 1)
+    if codes[column] not in digits:
+        return None
+    start = column
+    while start > 0 and codes[start - 1] in digits:
+        start -= 1
+    end = column
+    while end + 1 < len(codes) and codes[end + 1] in digits:
+        end += 1
+    if end - start + 1 != PAGE_DIGITS:
+        return None
+    number = int(bytes(codes[start : end + 1]).decode("ascii"), 16)
+    return number if FIRST_PAGE <= number <= LAST_PAGE else None
 
 
 def pcm(samples: array[int]) -> str:

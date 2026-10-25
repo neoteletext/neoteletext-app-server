@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from neoteletext_app.charset import codes
-from neoteletext_app.screen import COLUMNS, FASTEXT_ROW, SIXELS_ACROSS, Attribute, Colour, Screen, Sixels
+from neoteletext_app.screen import COLUMNS, FASTEXT_ROW, MOUSE_DRAG, SIXELS_ACROSS, Attribute, Colour, Screen, Sixels
 
 #: The service's name in every header.
 SERVICE = "HACKADAY"
@@ -108,13 +108,24 @@ def thumb(top: int, total: int, track: int, shown: int) -> tuple[int, int]:
     return round((track - length) * min(top, last_top) / last_top), length
 
 
+def top_at(start: int, total: int, rows: int) -> int:
+    """Answer the first line shown when the scroll bar's block is dragged to start at cell `start`: `thumb` turned round."""
+    _, length = thumb(0, total, rows, rows)
+    room = rows - length
+    most = last_top(total, rows)
+    if room <= 0 or most <= 0:
+        return 0
+    return max(0, min(most, round(start * most / room)))
+
+
 def scroll(screen: Screen, lines: list[Line], top: int, first_row: int, rows: int) -> None:
-    """Draw `rows` lines of `lines` from `top`, with a scroll bar beside them when they do not fit."""
+    """Draw `rows` lines of `lines` from `top`, with a scroll bar beside them when they do not fit, which the page asks drags for."""
     for offset, line in enumerate(lines[top : top + rows]):
         if line.text:
             screen.coloured(first_row + offset, 0, line.colour, line.text)
     if len(lines) <= rows:
         return
+    screen.modes(screen.input_modes | MOUSE_DRAG)
     start, length = thumb(top, len(lines), rows, rows)
     for cell in range(rows):
         inside = start <= cell < start + length

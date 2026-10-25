@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from neoteletext_app.app import App, Event, page_hears, session_hears
-from neoteletext_app.screen import Colour, Screen, tti
+from neoteletext_app.charset import fold
+from neoteletext_app.screen import TITLE_LIMIT, Colour, Screen, tti
 from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
 from hackaday import clips, numbers, people, views
 from hackaday.fetch import Fetcher, FetchError
-from hackaday.layout import BODY_ROW, TEXT_WIDTH, flashing, last_top, page, wrap
+from hackaday.layout import BAR_ATTRIBUTE_COLUMN, BODY_ROW, TEXT_WIDTH, flashing, last_top, page, thumb, top_at, wrap
 from hackaday.library import Library, now_utc
 from hackaday.tools import ToolError, qr_tti
 
@@ -52,10 +53,22 @@ POLL_OPTIONS = ["Commodore 64", "ZX Spectrum", "Amiga", "Apple II", "BBC Micro",
 #: Sounds, by handle, and the profile channel they play on.
 CHIME, RIGHT, WRONG, SPIN = 1, 2, 3, 4
 SOUND_CHANNEL = 0
+#: The held-buttons bit of the main button on a move (docs/applications.md section 2).
+LEFT_HELD = 1
+#: What ends a title cut short in the contents.
+ELLIPSIS = "..."
 #: The searchable length of what is typed.
 LONGEST_SEARCH = 30
 #: The letters that start every tag group on the tags page.
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def shortened(title: str) -> str:
+    """Answer a post's title for the contents: in characters it can hold, and cut with an ellipsis when it is too long."""
+    folded = " ".join(fold(title).split())
+    if len(folded) <= TITLE_LIMIT:
+        return folded
+    return folded[: TITLE_LIMIT - len(ELLIPSIS)].rstrip() + ELLIPSIS
 
 
 def sounds() -> dict[int, array[int]]:
@@ -74,6 +87,7 @@ class Viewer:
 
     tops: dict[int, int] = field(default_factory=dict)
     wheel: dict[int, int] = field(default_factory=dict)
+    grips: dict[int, int] = field(default_factory=dict)
     chosen: dict[int, int] = field(default_factory=dict)
     reading: Post | None = None
     typed: str = ""
@@ -321,6 +335,10 @@ class Hackaday(App):
         self.put(numbers.SERVER_STATS, views.server_stats(self.figures, self.pages))
         self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, 0, None))
         self.publish_people()
+        for slot in range(numbers.STORIES):
+            self.title(
+                numbers.slot_page(numbers.STORY_MAGAZINE, slot), shortened(posts[slot].title) if slot < len(posts) else f"Story {slot}"
+            )
         if not posts:
             return
         self.put(numbers.READER, views.reader(posts[0], 0))
@@ -492,6 +510,45 @@ class Hackaday(App):
             return top + lines
         return None
 
+    @staticmethod
+    def text_rows(page: int) -> tuple[int, int]:
+        """Answer the first row and the rows a scrolling page's text and scroll bar take."""
+        found = numbers.slot_of(page)
+        if page == numbers.READER or (found is not None and found[0] == numbers.STORY_MAGAZINE):
+            return views.STORY_TEXT_ROW, views.STORY_ROWS
+        return BODY_ROW, views.LIST_ROWS
+
+    @staticmethod
+    def dragged(viewer: Viewer, page: int, event: Event, *, top: int, total: int, first_row: int, rows: int) -> int | None:  # noqa: PLR0913 - the view's state and its place
+        """Answer where the scroll bar takes a view at `top` to, or None when `event` is not the bar's.
+
+        A press on the block grips it where it was pressed and moves drag it;
+        a press above or below it turns a screen, as a desktop scroll bar does.
+        """
+        cell = event.row - first_row
+        if event.action == "press":
+            viewer.grips.pop(page, None)
+            on_bar = event.button == 0 and event.column >= BAR_ATTRIBUTE_COLUMN and 0 <= cell < rows and total > rows
+            return Hackaday.bar_pressed(viewer, page, cell, top=top, total=total, rows=rows) if on_bar else None
+        grip = viewer.grips.get(page)
+        if grip is None:
+            return None
+        if event.action == "move" and event.buttons & LEFT_HELD:
+            return top_at(cell - grip, total, rows)
+        del viewer.grips[page]
+        return top
+
+    @staticmethod
+    def bar_pressed(viewer: Viewer, page: int, cell: int, *, top: int, total: int, rows: int) -> int:  # noqa: PLR0913 - the view's state and its place
+        """Answer where a press on the scroll bar's `cell` takes a view at `top`, gripping the block when it is on it."""
+        start, length = thumb(top, total, rows, rows)
+        if cell < start:
+            return top - (rows - 1)
+        if cell >= start + length:
+            return top + (rows - 1)
+        viewer.grips[page] = cell - start
+        return top
+
     def scroll_input(self, session: int, page: int, event: Event) -> bool:
         """Scroll a page that scrolls: a screen, a line, the ends, the wheel."""
         viewer = self.viewer(session)
@@ -500,8 +557,11 @@ class Hackaday(App):
         if drawn is None:
             return False
         _, last = drawn
-        screen_lines = views.STORY_ROWS - 1 if numbers.slot_of(page) or page == numbers.READER else views.LIST_ROWS - 1
-        moved = self.movement(viewer, page, event, top=top, last=last, screen_lines=screen_lines)
+        first_row, rows = self.text_rows(page)
+        if event.kind == "mouse":
+            moved = self.dragged(viewer, page, event, top=top, total=last + rows, first_row=first_row, rows=rows)
+        else:
+            moved = self.movement(viewer, page, event, top=top, last=last, screen_lines=rows - 1)
         if moved is None:
             return False
         moved = max(0, min(last, moved))

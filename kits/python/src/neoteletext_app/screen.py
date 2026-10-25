@@ -43,6 +43,13 @@ NO_LINK = 0x8FF
 ECHO = 1
 MASKED = 2
 BLOCK = 4
+#: The longest page title (docs/applications.md section 3.1).
+TITLE_LIMIT = 32
+#: The input modes a page may ask for (INPUT.md section 6): clicks and the
+#: wheel; moves while a button is held, as well; every move, as well.
+MOUSE_BUTTONS = 8
+MOUSE_DRAG = 16
+MOUSE_ALL = 32
 #: The lowest and highest page (EN 300 706 clause 3.1).
 FIRST_PAGE = 0x100
 LAST_PAGE = 0x8FF
