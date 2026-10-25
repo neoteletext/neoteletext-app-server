@@ -30,6 +30,7 @@ from hackaday.layout import (
     concealed,
     emblem,
     flashing,
+    headline,
     page,
     scroll,
     wrap,
@@ -71,6 +72,24 @@ NUMBER_WIDTH = 4
 STORY, PICTURE, COMMENTS, LINKS = "story", "picture", "comments", "links"
 VIEWS = (STORY, PICTURE, COMMENTS, LINKS)
 NEXT = "next"
+
+
+def put_headline(  # noqa: PLR0913 - a headline's place, words, number, colours and room
+    screen: Screen, row: int, title: str, *, number: str = "", colour: Colour = Colour.WHITE, last_row: int = POSITION_ROW - 1
+) -> int:
+    """Write a headline from `row`, after its page number when it has one, as `headline` lays it out.
+
+    Answer the rows it took: none when it does not fit by `last_row`.
+    """
+    indent = NUMBER_WIDTH if number else 0
+    lines = headline(title, COLUMNS - indent - 1)
+    if row + len(lines) - 1 > last_row:
+        return 0
+    if number:
+        screen.coloured(row, 0, Colour.YELLOW, number)
+    for offset, line in enumerate(lines):
+        screen.coloured(row + offset, indent, colour, line)
+    return len(lines)
 
 
 def short_date(when: datetime) -> str:
@@ -127,8 +146,7 @@ def front(posts: list[Post], placed: Placed, now: datetime, ticker: int, closes:
         screen.coloured(6, 16, Colour.MAGENTA, f"Retro Challenge {challenge.days}d {challenge.seconds // 3600}h")
     top = posts[0]
     band(screen, 8, Colour.RED, Colour.YELLOW, fit(f"TOP STORY {number_of(placed, top)}  {site.magazines_of(top)[0].name}", COLUMNS - 3))
-    for offset, line in enumerate(wrap(top.title, TEXT_WIDTH)[:2]):
-        screen.coloured(9 + offset, 0, Colour.WHITE, line)
+    put_headline(screen, 9, top.title)
     for offset, line in enumerate(wrap(top.excerpt, TEXT_WIDTH)[:2]):
         screen.coloured(11 + offset, 0, Colour.CYAN, line)
     band(screen, 13, Colour.BLUE, Colour.WHITE, "THE MAGAZINES")
@@ -137,10 +155,12 @@ def front(posts: list[Post], placed: Placed, now: datetime, ticker: int, closes:
         screen.coloured(row, column, ink_on_black(mag), f"{mag.front:03X} {mag.short}")
         screen.coloured(row, column + 13, Colour.WHITE, f"{len(placed.stories.get(mag.number, [])):3d}")
     screen.coloured(17, 20, Colour.YELLOW, "101 Headlines")
-    for offset, post in enumerate(posts[1 : 1 + FRONT_HEADLINES]):
-        row = 18 + offset
-        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    row = 18
+    for post in posts[1 : 1 + FRONT_HEADLINES]:
+        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=NEWSFLASH_ROW - 1)
+        if not taken:
+            break
+        row += taken
     if now - top.date <= NEWSFLASH_FOR:
         flashing(screen, NEWSFLASH_ROW, 0, Colour.RED, "NEWSFLASH")
         screen.coloured(NEWSFLASH_ROW, 12, Colour.YELLOW, fit(f"{number_of(placed, top)} {top.title}", COLUMNS - 13))
@@ -188,7 +208,11 @@ def scrolling(  # noqa: PLR0913 - a scrolling page: title, colours, lines, place
 
 def headline_lines(posts: list[Post], placed: Placed) -> list[Line]:
     """Answer one line a post: its page and title."""
-    return [Line(Colour.WHITE, f"{number_of(placed, post)} {fit(post.title, SCROLL_TEXT_WIDTH - NUMBER_WIDTH)}") for post in posts]
+    lines: list[Line] = []
+    for post in posts:
+        for offset, line in enumerate(headline(post.title, SCROLL_TEXT_WIDTH - NUMBER_WIDTH)):
+            lines.append(Line(Colour.WHITE, f"{number_of(placed, post) if offset == 0 else '':{NUMBER_WIDTH - 1}} {line}"))
+    return lines
 
 
 def headlines(posts: list[Post], placed: Placed, top: int) -> Screen:
@@ -241,14 +265,16 @@ def magazine_front(mag: Magazine, placed: Placed, feature: str | None) -> Screen
         screen.centred(10, Colour.WHITE, "Fetching the latest hacks...")
         return screen
     lead = posts[0]
-    screen.coloured(BODY_ROW, 0, Colour.YELLOW, fit(f"{number_of(placed, lead)} {lead.title}", TEXT_WIDTH))
-    for offset, line in enumerate(wrap(lead.excerpt, TEXT_WIDTH)[:3]):
-        screen.coloured(BODY_ROW + 1 + offset, 0, Colour.CYAN, line)
+    taken = put_headline(screen, BODY_ROW, lead.title, number=number_of(placed, lead), colour=Colour.YELLOW)
+    for offset, line in enumerate(wrap(lead.excerpt, TEXT_WIDTH)[: 4 - taken]):
+        screen.coloured(BODY_ROW + taken + offset, 0, Colour.CYAN, line)
     band(screen, 7, mag.band, mag.ink, f"LATEST: {len(posts)} STORIES ON {mag.stories_page:03X}")
-    for offset, post in enumerate(posts[1 : 1 + MAGAZINE_HEADLINES]):
-        row = 8 + offset
-        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    row = 8
+    for post in posts[1 : 1 + MAGAZINE_HEADLINES]:
+        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=17)
+        if not taken:
+            break
+        row += taken
     tags = placed.tag_pages(mag.number)
     if tags:
         band(screen, 18, Colour.BLUE, Colour.WHITE, f"BY TAG, ALL ON {numbers.page(mag.number, numbers.TAG_INDEX):03X}")
@@ -311,10 +337,12 @@ def columns_index(posts: list[Post], placed: Placed) -> Screen:
     )
     held = [post for post in posts if post.has("hackaday columns") or post.has("podcasts") or post.has("hackaday links")]
     screen.coloured(BODY_ROW, 0, Colour.CYAN, "The regulars, newest first")
-    for offset, post in enumerate(held[: LIST_ROWS - 1]):
-        row = BODY_ROW + 1 + offset
-        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+    row = BODY_ROW + 1
+    for post in held:
+        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=HINT_ROW - 1)
+        if not taken:
+            break
+        row += taken
     screen.coloured(HINT_ROW, 0, Colour.GREEN, "111 Links  112 Podcast  701 Security")
     return screen
 
@@ -355,9 +383,7 @@ def article_lines(post: Post) -> list[Line]:
 def story(post: Post, mag: Magazine, post_page: int, next_page: int, top: int) -> Screen:
     """Draw a story: its title, who and when, and its text, which scrolls."""
     screen = page(mag.name, mag.band, story_links(STORY, post_page, next_page), title_colour=mag.ink)
-    title = wrap(post.title, TEXT_WIDTH)
-    for offset, line in enumerate(title[:2]):
-        screen.coloured(BODY_ROW + offset, 0, Colour.YELLOW, line)
+    put_headline(screen, BODY_ROW, post.title, colour=Colour.YELLOW)
     screen.coloured(5, 0, Colour.CYAN, fit(f"by {post.author}, {short_date(post.date)}", TEXT_WIDTH))
     screen.coloured(6, 0, Colour.GREEN, fit(", ".join(post.categories + post.tags), TEXT_WIDTH))
     lines = article_lines(post)
@@ -378,7 +404,8 @@ def picture(post: Post, mag: Magazine, post_page: int, next_page: int, tti: str 
         screen = page("Picture", mag.band, links, title_colour=mag.ink)
         screen.centred(10, Colour.WHITE, "This picture is being drawn")
         screen.centred(12, Colour.CYAN, "in teletext mosaics: back soon")
-        screen.centred(14, Colour.YELLOW, fit(post.title, 36))
+        for offset, line in enumerate(headline(post.title, 36)):
+            screen.centred(14 + offset, Colour.YELLOW, line)
         screen.index_link(mag.front)
         return screen
     screen = Screen()
@@ -426,7 +453,7 @@ def links_page(post: Post, mag: Magazine, post_page: int, next_page: int, qr: st
     screen.coloured(BODY_ROW + 1, side, Colour.YELLOW, what)
     for offset, line in enumerate(wrap("Scan the code with a phone to open it", COLUMNS - side - 2)):
         screen.coloured(BODY_ROW + 3 + offset, side, Colour.WHITE, line)
-    for offset, line in enumerate(wrap(post.title, COLUMNS - side - 2)[:5]):
+    for offset, line in enumerate(headline(post.title, COLUMNS - side - 2)):
         screen.coloured(BODY_ROW + 8 + offset, side, Colour.CYAN, line)
     for offset, (text, _) in enumerate(post.article.links[:3]):
         screen.coloured(21 + offset - 1, 0, Colour.GREEN, fit(f"Link: {text}", TEXT_WIDTH))
@@ -451,14 +478,27 @@ def choices(title: str, colour: Colour, items: list[Choice], chosen: int, links:
     for offset, line in enumerate(intro):
         screen.coloured(BODY_ROW + offset, 0, Colour.CYAN, line)
     first = BODY_ROW + len(intro) + (1 if intro else 0)
-    rows = POSITION_ROW - first
-    top = max(0, min(chosen - rows // 2, len(items) - rows))
-    for offset, item in enumerate(items[top : top + rows]):
-        row = first + offset
-        if top + offset == chosen:
-            band(screen, row, Colour.YELLOW, Colour.BLUE, fit(item.text, COLUMNS - 4))
-        else:
-            screen.coloured(row, 0, Colour.WHITE, fit(item.text, COLUMNS - 2))
+    # Each item is a headline, on up to two rows: the chosen one's band
+    # covers both. The list starts far enough back to show the chosen
+    # one about the middle.
+    laid = [headline(item.text, COLUMNS - 4) for item in items]
+    room = POSITION_ROW - first
+    top = chosen
+    used = len(laid[chosen]) if laid else 0
+    while top > 0 and used + len(laid[top - 1]) <= room // 2:
+        top -= 1
+        used += len(laid[top])
+    row = first
+    for index in range(top, len(items)):
+        lines = laid[index]
+        if row + len(lines) > POSITION_ROW:
+            break
+        for offset, line in enumerate(lines):
+            if index == chosen:
+                band(screen, row + offset, Colour.YELLOW, Colour.BLUE, line)
+            else:
+                screen.coloured(row + offset, 0, Colour.WHITE, line)
+        row += len(lines)
     screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down to choose, Enter to read")
     return screen
 
@@ -470,8 +510,7 @@ def reader(post: Post, top: int) -> Screen:
         Colour.BLUE,
         [("Front", numbers.FRONT), ("Day", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE), ("Search", numbers.SEARCH)],
     )
-    for offset, line in enumerate(wrap(post.title, TEXT_WIDTH)[:2]):
-        screen.coloured(BODY_ROW + offset, 0, Colour.YELLOW, line)
+    put_headline(screen, BODY_ROW, post.title, colour=Colour.YELLOW)
     screen.coloured(5, 0, Colour.CYAN, fit(f"by {post.author}, {post.date.strftime('%d %b %Y')}", TEXT_WIDTH))
     screen.coloured(6, 0, Colour.GREEN, fit(", ".join(post.categories + post.tags), TEXT_WIDTH))
     lines = article_lines(post)
@@ -497,10 +536,14 @@ def doom(ports: list[Post], now: datetime) -> Screen:
     screen.coloured(BODY_ROW + 1, 0, Colour.YELLOW, "DAYS SINCE THE LAST")
     screen.coloured(BODY_ROW + 2, 0, Colour.YELLOW, "PORT OF DOOM")
     big_text(screen, BODY_ROW + 1, 22, f"{min(days, 999)}", Colour.RED)
-    screen.coloured(BODY_ROW + 4, 0, Colour.CYAN, fit(f"Last: {ports[0].title}", TEXT_WIDTH))
+    put_headline(screen, BODY_ROW + 4, ports[0].title, colour=Colour.CYAN, last_row=BODY_ROW + 5)
     band(screen, 9, Colour.RED, Colour.YELLOW, f"Recent ports: {len(ports)} found")
-    for offset, post in enumerate(ports[:11]):
-        screen.coloured(10 + offset, 0, Colour.WHITE, fit(f"{post.date.year} {post.title}", TEXT_WIDTH))
+    row = 10
+    for post in ports:
+        taken = put_headline(screen, row, post.title, number=f"{post.date.year % 100:02d}'", last_row=HINT_ROW - 1)
+        if not taken:
+            break
+        row += taken
     screen.coloured(HINT_ROW, 0, Colour.GREEN, "Can it run DOOM? On Hackaday, it can")
     return screen
 
@@ -561,12 +604,14 @@ def discussed(posts: list[Post], placed: Placed) -> Screen:
     )
     ranked = sorted(posts, key=lambda post: post.comment_count, reverse=True)[:9]
     most = ranked[0].comment_count if ranked and ranked[0].comment_count else 1
-    for offset, post in enumerate(ranked):
-        row = BODY_ROW + offset * 2
-        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
-        bar(screen, row + 1, NUMBER_WIDTH, 26, post.comment_count, most, Colour.RED)
-        screen.coloured(row + 1, 33, Colour.CYAN, f"{post.comment_count:4d}")
+    row = BODY_ROW
+    for post in ranked:
+        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=HINT_ROW - 2)
+        if not taken:
+            break
+        bar(screen, row + taken, NUMBER_WIDTH, 26, post.comment_count, most, Colour.RED)
+        screen.coloured(row + taken, 33, Colour.CYAN, f"{post.comment_count:4d}")
+        row += taken + 1
     return screen
 
 
@@ -596,7 +641,7 @@ def column_page(title: str, colour: Colour, post: Post | None, top: int, links: 
     """Draw a regular column, its latest edition, which scrolls."""
     if post is None:
         return scrolling(title, colour, [Line(Colour.WHITE, "Looking for the latest edition...")], 0, links)
-    lines = [Line(Colour.YELLOW, line) for line in wrap(post.title, SCROLL_TEXT_WIDTH)]
+    lines = [Line(Colour.YELLOW, line) for line in headline(post.title, SCROLL_TEXT_WIDTH)]
     lines.append(Line(Colour.CYAN, fit(f"by {post.author}, {short_date(post.date)}", SCROLL_TEXT_WIDTH)))
     lines.append(Line(Colour.WHITE, ""))
     lines.extend(article_lines(post))
@@ -622,9 +667,12 @@ def challenge(entries: list[Post], now: datetime, closes: datetime) -> Screen:
     else:
         screen.coloured(BODY_ROW + 1, 0, Colour.WHITE, "Entries have closed: judging is on")
     band(screen, 10, Colour.MAGENTA, Colour.WHITE, f"Entries written up: {len(entries)}")
-    for offset, post in enumerate(entries[:10]):
-        title = post.title.removeprefix("2026 Retrocomputing Challenge: ")
-        screen.coloured(11 + offset, 0, Colour.WHITE, fit(title, TEXT_WIDTH))
+    row = 11
+    for post in entries:
+        taken = put_headline(screen, row, post.title.removeprefix("2026 Retrocomputing Challenge: "), last_row=HINT_ROW)
+        if not taken:
+            break
+        row += taken
     return screen
 
 
@@ -637,11 +685,19 @@ def then_and_now(first: list[Post], latest: list[Post]) -> Screen:
     )
     first_year = first[0].date.year if first else 2004
     band(screen, BODY_ROW, Colour.YELLOW, Colour.BLUE, f"THEN: the first posts, {first_year}")
-    for offset, post in enumerate(first[:7]):
-        screen.coloured(BODY_ROW + 1 + offset, 0, Colour.WHITE, fit(f"{post.date.strftime('%d %b')} {post.title}", TEXT_WIDTH))
+    row = BODY_ROW + 1
+    for post in first:
+        taken = put_headline(screen, row, post.title, number=post.date.strftime("%d%b")[: NUMBER_WIDTH - 1], last_row=11)
+        if not taken:
+            break
+        row += taken
     band(screen, 12, Colour.GREEN, Colour.BLACK, f"NOW: {datetime.now(UTC).year}")
-    for offset, post in enumerate(latest[:8]):
-        screen.coloured(13 + offset, 0, Colour.WHITE, fit(f"{post.date.strftime('%d %b')} {post.title}", TEXT_WIDTH))
+    row = 13
+    for post in latest:
+        taken = put_headline(screen, row, post.title, number=post.date.strftime("%d%b")[: NUMBER_WIDTH - 1], last_row=HINT_ROW)
+        if not taken:
+            break
+        row += taken
     return screen
 
 
@@ -686,8 +742,7 @@ def quiz(post: Post | None, answers: list[str], picked: int | None, score: tuple
         screen.centred(10, Colour.WHITE, "Fetching a question...")
         return screen
     screen.coloured(BODY_ROW, 0, Colour.CYAN, "Which magazine is this story in?")
-    for offset, line in enumerate(wrap(post.title, TEXT_WIDTH)[:3]):
-        screen.coloured(BODY_ROW + 2 + offset, 0, Colour.WHITE, line)
+    put_headline(screen, BODY_ROW + 2, post.title)
     for offset, line in enumerate(wrap(post.excerpt, TEXT_WIDTH)[:4]):
         screen.coloured(BODY_ROW + 6 + offset, 0, Colour.CYAN, line)
     keys = ("red", "green", "yellow", "cyan")
@@ -754,12 +809,12 @@ def mine(favourites: set[int], chosen: int, posts: list[Post], placed: Placed) -
     first = BODY_ROW + 2 + len(site.SUBJECTS)
     if favourites:
         screen.coloured(first - 1, 0, Colour.YELLOW, "Your latest")
-    for offset, post in enumerate(picked):
-        row = first + offset
-        if row >= HINT_ROW:
+    row = first
+    for post in picked:
+        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=HINT_ROW - 1)
+        if not taken:
             break
-        screen.coloured(row, 0, Colour.YELLOW, number_of(placed, post))
-        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, fit(post.title, COLUMNS - NUMBER_WIDTH - 1))
+        row += taken
     return screen
 
 

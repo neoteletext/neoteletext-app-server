@@ -10,7 +10,7 @@ import pytest
 from hackaday import channel as channel_module
 from hackaday import numbers, site, views
 from hackaday.channel import POLL_OPTIONS, SPLASH_S, Hackaday, Viewer
-from hackaday.layout import JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, last_top, thumb, wrap
+from hackaday.layout import JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, headline, last_top, thumb, wrap
 from hackaday.posts import Comment, Post, comment_of, post_of, threaded
 from neoteletext_app.screen import Colour
 
@@ -122,6 +122,16 @@ def test_text_wraps_and_the_scroll_bar_fits() -> None:
     for bitmap, size in ((JOLLY_WRENCHER, (26, 21)), (JOLLY_WRENCHER_LARGE, (70, 63))):
         assert {len(line) for line in bitmap} == {size[0]}
         assert len(bitmap) == size[1]
+
+
+def test_a_headline_takes_two_lines_and_is_cut_only_past_them() -> None:
+    assert headline("A short one", 20) == ["A short one"]
+    assert headline("A title that takes two lines", 20) == ["A title that takes", "two lines"], "two lines, whole"
+    long = headline("A title of a post that runs to well past two lines of twenty", 20)
+    assert len(long) == 2
+    assert long[1].endswith("..."), long
+    assert all(len(line) <= 20 for line in long), long
+    assert long[0] == "A title of a post", "the first line whole"
 
 
 def test_every_page_draws_in_the_page() -> None:

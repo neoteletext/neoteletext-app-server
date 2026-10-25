@@ -772,8 +772,7 @@ class Hackaday(App):
             screen.centred(10, Colour.YELLOW, "Press Space to spin the wheel")
         else:
             screen.coloured(5, 0, Colour.YELLOW, f"{post.date.strftime('%d %B %Y')}")
-            for offset, line in enumerate(wrap(post.title, TEXT_WIDTH)[:3]):
-                screen.coloured(7 + offset, 0, Colour.WHITE, line)
+            views.put_headline(screen, 7, post.title)
             for offset, line in enumerate(wrap(post.excerpt, TEXT_WIDTH)[:7]):
                 screen.coloured(11 + offset, 0, Colour.CYAN, line)
             screen.coloured(19, 0, Colour.GREEN, views.fit(f"by {post.author}  {', '.join(post.categories)}", TEXT_WIDTH))

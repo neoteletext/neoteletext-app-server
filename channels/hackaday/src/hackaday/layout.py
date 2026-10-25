@@ -91,6 +91,29 @@ def wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+#: The most lines a headline takes, everywhere on the channel.
+HEADLINE_LINES = 2
+#: What ends a headline cut short, in characters the English set has.
+HEADLINE_CUT = "..."
+
+
+def headline(title: str, width: int) -> list[str]:
+    """Answer a post's title as the channel shows it everywhere: on one or two lines of `width`.
+
+    It is cut, with an ellipsis, only when it would run past two.
+    """
+    lines = wrap(title, width)
+    if len(lines) <= HEADLINE_LINES:
+        return lines
+    kept = lines[:HEADLINE_LINES]
+    last = kept[-1]
+    while last and len(codes(f"{last}{HEADLINE_CUT}")) > width:
+        # Whole words first; a single word too long loses letters.
+        last = last.rsplit(" ", 1)[0] if " " in last else last[:-1]
+    kept[-1] = f"{last.rstrip()}{HEADLINE_CUT}"
+    return kept
+
+
 @dataclass(frozen=True)
 class Line:
     """A line of a scrolling text: its colour and words."""
