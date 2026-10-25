@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from neoteletext_app.charset import codes
-from neoteletext_app.screen import COLUMNS, ECHO, FASTEXT_ROW, Attribute, Colour, Screen
+from neoteletext_app.screen import COLUMNS, ECHO, FASTEXT_ROW, MOUSE_BUTTONS, Attribute, Colour, Screen
 
 from hackaday import numbers, site
 from hackaday.layout import (
@@ -33,6 +33,8 @@ from hackaday.layout import (
     headline,
     page,
     scroll,
+    scroll_bar,
+    thumb,
     wrap,
 )
 from hackaday.posts import Post, threaded
@@ -327,24 +329,22 @@ def popular_tags(posts: list[Post], placed: Placed) -> Screen:
     return screen
 
 
-def columns_index(posts: list[Post], placed: Placed) -> Screen:
-    """Draw page 110: Hackaday's columns, the latest edition of each and where it is."""
-    screen = page(
+def column_posts(posts: list[Post]) -> list[Post]:
+    """Answer the held posts that are Hackaday's columns, newest first."""
+    return [post for post in posts if post.has("hackaday columns") or post.has("podcasts") or post.has("hackaday links")]
+
+
+def columns_index(posts: list[Post], placed: Placed, top: int = 0) -> Screen:
+    """Draw page 110: Hackaday's columns, newest first, each with its page, which scrolls."""
+    lines = headline_lines(column_posts(posts), placed) or [Line(Colour.WHITE, "Reading the columns...")]
+    return scrolling(
         "Columns",
         Colour.RED,
+        lines,
+        top,
         [("Front", numbers.FRONT), ("Links", numbers.LINKS_COLUMN), ("Podcast", numbers.PODCAST), ("Security", numbers.SECURITY)],
         title_colour=Colour.YELLOW,
     )
-    held = [post for post in posts if post.has("hackaday columns") or post.has("podcasts") or post.has("hackaday links")]
-    screen.coloured(BODY_ROW, 0, Colour.CYAN, "The regulars, newest first")
-    row = BODY_ROW + 1
-    for post in held:
-        taken = put_headline(screen, row, post.title, number=number_of(placed, post), last_row=HINT_ROW - 1)
-        if not taken:
-            break
-        row += taken
-    screen.coloured(HINT_ROW, 0, Colour.GREEN, "111 Links  112 Podcast  701 Security")
-    return screen
 
 
 # A story, and its views.
@@ -466,40 +466,101 @@ def links_page(post: Post, mag: Magazine, post_page: int, next_page: int, qr: st
 
 @dataclass(frozen=True)
 class Choice:
-    """A line of a list to choose from, and the post it leads to."""
+    """An item of a list to choose from, and the post it leads to."""
 
     text: str
     post: Post | None
 
 
-def choices(title: str, colour: Colour, items: list[Choice], chosen: int, links: list[Link], intro: list[str]) -> Screen:  # noqa: PLR0913, PLR0917 - a list page: title, colour, items, choice, links, introduction
-    """Draw a list to choose from with the arrows and Enter: the chosen line on a band."""
-    screen = page(title, colour, links)
-    for offset, line in enumerate(intro):
-        screen.coloured(BODY_ROW + offset, 0, Colour.CYAN, line)
-    first = BODY_ROW + len(intro) + (1 if intro else 0)
-    # Each item is a headline, on up to two rows: the chosen one's band
-    # covers both. The list starts far enough back to show the chosen
-    # one about the middle.
-    laid = [headline(item.text, COLUMNS - 4) for item in items]
-    room = POSITION_ROW - first
-    top = chosen
-    used = len(laid[chosen]) if laid else 0
-    while top > 0 and used + len(laid[top - 1]) <= room // 2:
-        top -= 1
-        used += len(laid[top])
-    row = first
-    for index in range(top, len(items)):
-        lines = laid[index]
-        if row + len(lines) > POSITION_ROW:
-            break
+#: The width of a list's items: a chosen item's band takes three cells
+#: (its background, then its colour) before the text, which stops a cell
+#: short of the scroll bar's colour.
+LISTING_WIDTH = SCROLL_TEXT_WIDTH - 1
+
+
+@dataclass(frozen=True)
+class Listing:
+    """A list to choose from, as it is laid out: the rows it has and each item's lines.
+
+    Every list the viewer chooses from is one of these, drawn by `draw_listing`
+    and worked by the channel's `listing_input`: the arrows, the wheel, a
+    click on an item, and the scroll bar.
+    """
+
+    first_row: int
+    rows: int
+    items: list[list[str]]
+
+    def shown(self, top: int) -> list[tuple[int, int, list[str]]]:
+        """Answer the items that fit from item `top`: each one's index, first row and lines."""
+        placed: list[tuple[int, int, list[str]]] = []
+        row = self.first_row
+        for index in range(max(0, top), len(self.items)):
+            lines = self.items[index]
+            if row + len(lines) > self.first_row + self.rows:
+                break
+            placed.append((index, row, lines))
+            row += len(lines)
+        return placed
+
+    def item_at(self, top: int, row: int) -> int | None:
+        """Answer the item drawn on `row` when the list starts at `top`."""
+        for index, first, lines in self.shown(top):
+            if first <= row < first + len(lines):
+                return index
+        return None
+
+    def last_top(self) -> int:
+        """Answer the first item shown when the list is scrolled to its end."""
+        top = len(self.items)
+        while top > 0 and self.shown(top - 1)[-1:] and self.shown(top - 1)[-1][0] == len(self.items) - 1:
+            top -= 1
+        return min(top, max(0, len(self.items) - 1))
+
+    def keeping(self, top: int, chosen: int) -> int:
+        """Answer the first item to show so that `chosen` is in view, moving from `top` no more than it must."""
+        if chosen < top:
+            return chosen
+        while chosen not in {index for index, _, _ in self.shown(top)} and top < chosen:
+            top += 1
+        return top
+
+
+def listing(texts: list[str], first_row: int, last_row: int = POSITION_ROW - 1) -> Listing:
+    """Lay out a list of `texts` from `first_row` to `last_row`, each a headline beside the scroll bar."""
+    return Listing(first_row, last_row - first_row + 1, [headline(text, LISTING_WIDTH) for text in texts])
+
+
+def draw_listing(screen: Screen, laid: Listing, top: int, chosen: int) -> None:
+    """Draw a list from item `top`, the chosen item on a band, with a scroll bar when not every item fits."""
+    shown = laid.shown(top)
+    for index, row, lines in shown:
         for offset, line in enumerate(lines):
             if index == chosen:
                 band(screen, row + offset, Colour.YELLOW, Colour.BLUE, line)
             else:
                 screen.coloured(row + offset, 0, Colour.WHITE, line)
-        row += len(lines)
-    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down to choose, Enter to read")
+    if len(shown) < len(laid.items):
+        scroll_bar(screen, laid.first_row, laid.rows, thumb(top, len(laid.items), laid.rows, len(shown)))
+    else:
+        # Every item is clicked for, even with no bar to pull.
+        screen.modes(screen.input_modes | MOUSE_BUTTONS)
+
+
+def choices_listing(items: list[Choice], intro: list[str]) -> Listing:
+    """Lay out `choices`' items under its introduction."""
+    return listing([item.text for item in items], BODY_ROW + len(intro) + (1 if intro else 0))
+
+
+def choices(  # noqa: PLR0913, PLR0917 - a list page: title, colour, items, choice, links, introduction and place
+    title: str, colour: Colour, items: list[Choice], chosen: int, links: list[Link], intro: list[str], *, top: int = 0
+) -> Screen:
+    """Draw a list to choose from, from item `top`: the arrows, the wheel, a click or the scroll bar, and Enter."""
+    screen = page(title, colour, links)
+    for offset, line in enumerate(intro):
+        screen.coloured(BODY_ROW + offset, 0, Colour.CYAN, line)
+    draw_listing(screen, choices_listing(items, intro), top, chosen)
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down or click to choose, Enter reads")
     return screen
 
 
@@ -523,8 +584,18 @@ def reader(post: Post, top: int) -> Screen:
 # Fun and figures.
 
 
-def doom(ports: list[Post], now: datetime) -> Screen:
-    """Draw page 801, Games' feature: days since the last port of DOOM, and the ports."""
+#: Where DOOM watch's and the Challenge's lists start, under their figures.
+DOOM_LIST_ROW = 10
+CHALLENGE_LIST_ROW = 11
+
+
+def doom_listing(ports: list[Post]) -> Listing:
+    """Lay out DOOM watch's ports, each with its year."""
+    return listing([f"{post.date.year} {post.title}" for post in ports], DOOM_LIST_ROW)
+
+
+def doom(ports: list[Post], now: datetime, *, chosen: int = 0, top: int = 0) -> Screen:
+    """Draw page 801, Games' feature: days since the last port of DOOM, and every port, a list to read from."""
     games = site.magazine(8)
     screen = page(
         "DOOM watch", Colour.RED, [("Home", numbers.FRONT), ("Games", games.front), ("Roulette", numbers.ROULETTE), ("Quiz", numbers.QUIZ)]
@@ -537,14 +608,9 @@ def doom(ports: list[Post], now: datetime) -> Screen:
     screen.coloured(BODY_ROW + 2, 0, Colour.YELLOW, "PORT OF DOOM")
     big_text(screen, BODY_ROW + 1, 22, f"{min(days, 999)}", Colour.RED)
     put_headline(screen, BODY_ROW + 4, ports[0].title, colour=Colour.CYAN, last_row=BODY_ROW + 5)
-    band(screen, 9, Colour.RED, Colour.YELLOW, f"Recent ports: {len(ports)} found")
-    row = 10
-    for post in ports:
-        taken = put_headline(screen, row, post.title, number=f"{post.date.year % 100:02d}'", last_row=HINT_ROW - 1)
-        if not taken:
-            break
-        row += taken
-    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Can it run DOOM? On Hackaday, it can")
+    band(screen, DOOM_LIST_ROW - 1, Colour.RED, Colour.YELLOW, f"Ports: {len(ports)} found")
+    draw_listing(screen, doom_listing(ports), top, chosen)
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Can it run DOOM? Click one to read it")
     return screen
 
 
@@ -648,7 +714,12 @@ def column_page(title: str, colour: Colour, post: Post | None, top: int, links: 
     return scrolling(title, colour, lines, top, links)
 
 
-def challenge(entries: list[Post], now: datetime, closes: datetime) -> Screen:
+def challenge_listing(entries: list[Post]) -> Listing:
+    """Lay out the Challenge's entries written up."""
+    return listing([post.title.removeprefix("2026 Retrocomputing Challenge: ") for post in entries], CHALLENGE_LIST_ROW)
+
+
+def challenge(entries: list[Post], now: datetime, closes: datetime, *, chosen: int = 0, top: int = 0) -> Screen:
     """Draw page 201, Retrocomputing's feature: the Challenge, its countdown and the entries written up."""
     retro = site.magazine(2)
     screen = page(
@@ -666,13 +737,9 @@ def challenge(entries: list[Post], now: datetime, closes: datetime) -> Screen:
         screen.coloured(BODY_ROW + 6, 2, Colour.CYAN, "days    hours    minutes")
     else:
         screen.coloured(BODY_ROW + 1, 0, Colour.WHITE, "Entries have closed: judging is on")
-    band(screen, 10, Colour.MAGENTA, Colour.WHITE, f"Entries written up: {len(entries)}")
-    row = 11
-    for post in entries:
-        taken = put_headline(screen, row, post.title.removeprefix("2026 Retrocomputing Challenge: "), last_row=HINT_ROW)
-        if not taken:
-            break
-        row += taken
+    band(screen, CHALLENGE_LIST_ROW - 1, Colour.MAGENTA, Colour.WHITE, f"Entries written up: {len(entries)}")
+    draw_listing(screen, challenge_listing(entries), top, chosen)
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down or click to choose, Enter reads")
     return screen
 
 
@@ -818,10 +885,19 @@ def mine(favourites: set[int], chosen: int, posts: list[Post], placed: Placed) -
     return screen
 
 
-def search(typed: str, results: list[Post], chosen: int, *, searching: bool) -> Screen:
-    """Draw page 105: words typed, and the archive's posts for them."""
-    items = [Choice(f"{post.date.year} {post.title}", post) for post in results]
-    intro = ["Type words, then Enter: the whole", "archive, back to 2004", ""]
+#: The lines over the search's results: the typing goes on the third.
+SEARCH_INTRO = ["Type words, then Enter: the whole", "archive, back to 2004", ""]
+
+
+def search_items(results: list[Post]) -> list[Choice]:
+    """Answer the search's results as items: each post's year and title."""
+    return [Choice(f"{post.date.year} {post.title}", post) for post in results]
+
+
+def search(typed: str, results: list[Post], chosen: int, *, searching: bool, top: int = 0) -> Screen:
+    """Draw page 105: words typed, and the archive's posts for them, from result `top`."""
+    items = search_items(results)
+    intro = SEARCH_INTRO
     screen = choices(
         "Search",
         Colour.BLUE,
@@ -829,6 +905,7 @@ def search(typed: str, results: list[Post], chosen: int, *, searching: bool) -> 
         chosen,
         [("Front", numbers.FRONT), ("Tags", numbers.POPULAR_TAGS), ("Archive", numbers.ON_THIS_DAY), ("Roulette", numbers.ROULETTE)],
         intro,
+        top=top,
     )
     screen.background(BODY_ROW + 2, 0, Colour.BLUE)
     screen.coloured(BODY_ROW + 2, 3, Colour.YELLOW, f"> {typed}")
@@ -900,8 +977,13 @@ def server_stats(stats: dict[str, Any], titles: dict[int, str]) -> Screen:
     return screen
 
 
-def soundboard(clips: list[Clip], chosen: int, playing: str | None) -> Screen:
-    """Draw page 113: the Hackaday Podcast's sound grabs, played with Enter."""
+def soundboard_listing(clips: list[Clip]) -> Listing:
+    """Lay out the sound board's grabs, each with its length."""
+    return listing([f"{clip.title} ({clip.seconds:.1f}s)" for clip in clips], BODY_ROW + 2, HINT_ROW - 2)
+
+
+def soundboard(clips: list[Clip], chosen: int, playing: str | None, top: int = 0) -> Screen:
+    """Draw page 113: the Hackaday Podcast's sound grabs, played with Enter or a click."""
     screen = page(
         "Podcast sounds",
         Colour.MAGENTA,
@@ -911,21 +993,10 @@ def soundboard(clips: list[Clip], chosen: int, playing: str | None) -> Screen:
         screen.centred(10, Colour.WHITE, "No sound grabs on this server")
         return screen
     screen.coloured(BODY_ROW, 0, Colour.CYAN, "Sound grabs from the Hackaday Podcast")
-    first = BODY_ROW + 2
-    rows = HINT_ROW - first - 1
-    top = max(0, min(chosen - rows // 2, len(clips) - rows))
-    for offset, clip in enumerate(clips[top : top + rows]):
-        row = first + offset
-        text = fit(f"{clip.title}", 30)
-        length = f"{clip.seconds:4.1f}s"
-        if top + offset == chosen:
-            band(screen, row, Colour.YELLOW, Colour.BLUE, f"{text:30s} {length}")
-        else:
-            screen.coloured(row, 0, Colour.WHITE, text)
-            screen.coloured(row, 33, Colour.CYAN, length)
+    draw_listing(screen, soundboard_listing(clips), top, chosen)
     if playing:
         flashing(screen, HINT_ROW - 1, 0, Colour.GREEN, fit(f"Playing: {playing}", 34))
-    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down to choose, Enter to play")
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down or click to choose, Enter plays")
     return screen
 
 

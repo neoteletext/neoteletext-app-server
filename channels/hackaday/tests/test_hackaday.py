@@ -345,6 +345,38 @@ def test_the_roulette_wheel_turns_then_lands_on_its_post(channel: Recorder, monk
     assert "SPIN" not in frames[-1]
 
 
+def test_a_listing_places_items_of_one_or_two_rows() -> None:
+    laid = views.listing(["one", "a title long enough to need a second line of its own here", "three", "four"], 5, 8)
+    assert [(index, row, len(lines)) for index, row, lines in laid.shown(0)] == [(0, 5, 1), (1, 6, 2), (2, 8, 1)]
+    assert laid.item_at(0, 7) == 1, "either row of an item is it"
+    assert laid.item_at(0, 9) is None
+    assert laid.keeping(0, 3) == 1, "scrolled no further than to bring the chosen into view"
+    assert laid.last_top() == 1, "from item 1 the last item shows"
+
+
+def test_every_list_is_worked_with_keys_wheel_clicks_and_its_bar(channel: Recorder) -> None:
+    channel.on_this_day = posts(30)
+    channel.publish_on_this_day()
+    shared = published(channel, 0x130, "channel")[-1]
+    assert "IM,16" in shared, "a list longer than its page has a bar to pull"
+    laid = views.choices_listing(channel.on_this_day_items(), channel.on_this_day_intro())
+    drive(
+        channel,
+        {"type": "open", "session": 8, "page": "130"},
+        {"type": "input", "session": 8, "page": "130", "event": {"kind": "wheel", "dx": 0, "dy": 240}},
+    )
+    assert channel.viewers[8].tops[0x130] == 2, "two notches, two items on"
+    assert channel.viewers[8].chosen.get(0x130, 0) == 0, "the wheel moves the list, not the choice"
+    _, row, _ = laid.shown(2)[1]
+    drive(channel, mouse(8, "130", "press", 5, row, button=0))
+    assert channel.viewers[8].chosen[0x130] == 3, "a click chooses the item under it"
+    held = channel.on_this_day[3]
+    gotos = [message["page"] for message in channel.sent if message["type"] == "goto"]
+    assert gotos == [f"{channel.placed.page_of(held):03X}"] if channel.placed.page_of(held) else gotos == ["133"], "and opens it"
+    drive(channel, mouse(8, "130", "press", 39, laid.first_row + laid.rows - 1, button=0))
+    assert channel.viewers[8].tops[0x130] > 2, "a press under the bar's block turns a screen"
+
+
 def test_the_poll_counts_one_vote_each(channel: Recorder) -> None:
     drive(channel, key(1, "141", "ArrowDown"), key(1, "141", "Enter"), key(1, "141", "Enter"), key(2, "141", "Enter"))
     assert channel.votes[:2] == [1, 1]

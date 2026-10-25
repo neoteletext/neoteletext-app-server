@@ -132,11 +132,15 @@ def thumb(top: int, total: int, track: int, shown: int) -> tuple[int, int]:
     return round((track - length) * min(top, last_top) / last_top), length
 
 
-def top_at(start: int, total: int, rows: int) -> int:
-    """Answer the first line shown when the scroll bar's block is dragged to start at cell `start`: `thumb` turned round."""
-    _, length = thumb(0, total, rows, rows)
+def top_at(start: int, total: int, rows: int, shown: int | None = None) -> int:
+    """Answer the first line or item shown when the scroll bar's block is dragged to start at cell `start`: `thumb` turned round.
+
+    `shown` is how many lines or items fit, `rows` when each takes a row.
+    """
+    shown = rows if shown is None else shown
+    _, length = thumb(0, total, rows, shown)
     room = rows - length
-    most = last_top(total, rows)
+    most = max(0, total - shown)
     if room <= 0 or most <= 0:
         return 0
     return max(0, min(most, round(start * most / room)))
@@ -149,8 +153,16 @@ def scroll(screen: Screen, lines: list[Line], top: int, first_row: int, rows: in
             screen.coloured(first_row + offset, 0, line.colour, line.text)
     if len(lines) <= rows:
         return
+    scroll_bar(screen, first_row, rows, thumb(top, len(lines), rows, rows))
+
+
+def scroll_bar(screen: Screen, first_row: int, rows: int, block: tuple[int, int]) -> None:
+    """Draw a scroll bar of whole cells down the last column, its `block` (first cell, length) white.
+
+    The page asks for drags, so the bar can be pulled.
+    """
     screen.modes(screen.input_modes | MOUSE_DRAG)
-    start, length = thumb(top, len(lines), rows, rows)
+    start, length = block
     for cell in range(rows):
         inside = start <= cell < start + length
         screen.code(first_row + cell, BAR_ATTRIBUTE_COLUMN, (Colour.WHITE if inside else Colour.BLUE).mosaic)
