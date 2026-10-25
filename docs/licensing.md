@@ -22,3 +22,12 @@ GPL and AGPL, in any form.
 ## 5. What is in use
 
 The engine's crates (MIT), when imported. No other library yet.
+
+### 5.1 What the channels use
+
+The channels are programs of their own (decision 8). What they run is not linked into the server.
+
+| What | Licence | Used by | Why |
+|---|---|---|---|
+| ruff, mypy, pytest (`uv.lock`) | MIT | The Python checks | Development only, not deployed (`uv run --no-dev`) |
+| numpy, Pillow (the engine's `scripts/image-to-teletext.py` pins them) | BSD-3-Clause; MIT-CMU (the historical PIL licence, permissive) | The Hackaday channel's pictures, through the engine's converter run by uv | The engine's own tool, not copied; MIT-CMU is outside `DEVELOPMENT.md` section 7's list, so the owner confirms it |
