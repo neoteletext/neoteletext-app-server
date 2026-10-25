@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from hackaday import channel as channel_module
 from hackaday import numbers, site, views
 from hackaday.channel import POLL_OPTIONS, SPLASH_S, Hackaday, Viewer
 from hackaday.layout import JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, last_top, thumb, wrap
@@ -409,7 +410,7 @@ def test_podcast_grabs_play_from_the_sound_board(tmp_path: Path) -> None:
     assert sounds_sent[-1]["play"]["page"] == "112", "the welcome belongs to the podcast page"
 
 
-def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
+def test_each_person_has_a_page_and_says_hello(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json  # noqa: PLC0415 - only this test writes the manifests
     import wave  # noqa: PLC0415
 
@@ -457,9 +458,23 @@ def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
     assert first.packets == ["OL,26,@iAKA"], "its colours"
     assert "Ada Example" in first.row_text(17)
     assert "no photo" in views.profile(made.people[1], 1, 2).row_text(12), "the Jolly Wrencher stands in"
-    drive(made, {"type": "open", "session": 3, "page": "121"}, {"type": "open", "session": 3, "page": "122"})
-    plays = [message["play"] for message in made.sent if message["type"] == "sound" and "play" in message]
-    assert [play["page"] for play in plays] == ["121"], "Ada says hello on her page; Bo has no clip on this server"
+    monkeypatch.setattr(channel_module, "NAME_DELAY_S", 0.05)
+
+    def plays() -> list[str]:
+        return [message["play"]["page"] for message in made.sent if message["type"] == "sound" and "play" in message]
+
+    async def visit(*pages: str, linger: float) -> None:
+        for page in pages:
+            await made.receive({"type": "open", "session": 3, "page": page})
+        await asyncio.sleep(linger)
+
+    asyncio.run(visit("121", linger=0.01))
+    assert plays() == [], "the page shows first: the name comes after the delay"
+    assert [message for message in made.sent if message["type"] == "sound" and "object" in message], "the sound is sent at once, ready"
+    asyncio.run(visit("121", linger=0.2))
+    assert plays() == ["121"], "then Ada says hello on her page"
+    asyncio.run(visit("121", "122", linger=0.2))
+    assert plays() == ["121"], "not once she is left behind; and Bo has no clip on this server"
 
 
 def test_a_long_biography_ends_on_a_whole_sentence_or_a_mark() -> None:

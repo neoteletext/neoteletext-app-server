@@ -65,6 +65,9 @@ COLUMN_TITLES = {
 }
 #: How long a viewer arriving at page 100 sees the whole-page emblem, in seconds.
 SPLASH_S = 2.0
+#: How long a person's page shows before they say their name, in seconds:
+#: time to see who it is first.
+NAME_DELAY_S = 2.0
 #: The searchable length of what is typed.
 LONGEST_SEARCH = 30
 #: The letters that start every tag group on the tags page.
@@ -842,7 +845,7 @@ class Hackaday(App):
             self.play_named(session, "welcome", page)
         for index, person in enumerate(self.people):
             if page == views.person_page(index):
-                self.play_named(session, person.clip, page)
+                self.play_named(session, person.clip, page, delay=NAME_DELAY_S)
         if page == numbers.QUIZ:
             viewer = self.viewer(session)
             if viewer.question is None:
@@ -857,19 +860,31 @@ class Hackaday(App):
 
     # The podcast's sound grabs.
 
-    def play_clip(self, session: int, clip: clips.Clip, *, page: int | None = None) -> None:
-        """Play a sound grab to one viewer, sending it the first time; bound to `page` when given."""
+    def play_clip(self, session: int, clip: clips.Clip, *, page: int | None = None, delay: float = 0.0) -> None:
+        """Play a sound grab to one viewer, sending it the first time; bound to `page` when given.
+
+        With a `delay`, the sound goes now, so it is there in time, and the
+        play after it, if the viewer still has `page` open then.
+        """
         viewer = self.viewer(session)
         if clip.handle not in viewer.clips_heard:
             self.sound_object(session_hears(session), clip.handle, clip.rate, clip.samples)
             viewer.clips_heard.add(clip.handle)
-        self.play(session_hears(session), SOUND_CHANNEL, clip.handle, gain=90, page=page)
+        if delay <= 0:
+            self.play(session_hears(session), SOUND_CHANNEL, clip.handle, gain=90, page=page)
+            return
 
-    def play_named(self, session: int, name: str, page: int) -> None:
-        """Play the clip called `name` to a viewer, bound to `page`, if the server has it."""
+        def later() -> None:
+            if session in self.viewers and (page is None or self.page_of(session) == page):
+                self.play(session_hears(session), SOUND_CHANNEL, clip.handle, gain=90, page=page)
+
+        asyncio.get_running_loop().call_later(delay, later)
+
+    def play_named(self, session: int, name: str, page: int, *, delay: float = 0.0) -> None:
+        """Play the clip called `name` to a viewer, bound to `page`, after `delay` seconds, if the server has it."""
         clip = next((clip for clip in self.clips if clip.name == name), None)
         if clip is not None:
-            self.play_clip(session, clip, page=page)
+            self.play_clip(session, clip, page=page, delay=delay)
 
     def soundboard_input(self, session: int, event: Event) -> bool:
         """Choose a grab with the arrows or the wheel; Enter or Space plays it."""
