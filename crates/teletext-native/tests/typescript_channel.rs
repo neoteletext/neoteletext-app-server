@@ -4,9 +4,9 @@
 //! the program publishes, read back over HTTP as the engine's packets. It
 //! checks the kit's TTI against the server's reader, which only the server
 //! has: control codes, the English set's signs, mosaics, Fastext links,
-//! the cursor and input modes, sub-pages, and TTI written elsewhere. It
-//! also serves the repository's own `channels.json`, whose showcase is
-//! TypeScript.
+//! the cursor and input modes, sub-pages, links to a sub-page, and TTI
+//! written elsewhere. It also serves the repository's own `channels.json`,
+//! whose showcase is TypeScript.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -89,6 +89,8 @@ struct Received {
     subcode: u16,
     rows: Vec<(u8, Vec<u8>)>,
     links: Vec<Option<u16>>,
+    /// The sub-code each link names.
+    link_subcodes: Vec<Option<u16>>,
     row_24: bool,
 }
 
@@ -112,6 +114,7 @@ fn received(frame: &[u8]) -> Vec<Received> {
             Ok(Decoded::Links(links)) => {
                 let page = pages.last_mut().unwrap();
                 page.links = links.links.iter().map(|link| link.map(|link| (u16::from(link.magazine.number()) << 8) | u16::from(link.page.0))).collect();
+                page.link_subcodes = links.links.iter().map(|link| link.map(|link| link.subcode.value())).collect();
                 page.row_24 = links.display_row_24;
             }
             _ => {}
@@ -164,11 +167,18 @@ fn the_server_serves_what_a_typescript_program_publishes() {
     let raw = received(&fetch(&address, "/kit/102.t42"));
     assert_eq!(raw[0].row(1), padded(b"\x02Raw"), "TTI published as it was written");
 
+    let linked = received(&fetch(&address, "/kit/103.t42"));
+    assert_eq!(linked[0].links, [Some(0x101), None, None, None, None, Some(0x100)]);
+    // Sub-page 2's sub-code, and 3F7F, any sub-page (EN 300 706 clause 9.6.1).
+    assert_eq!(linked[0].link_subcodes, [Some(0x0002), None, None, None, None, Some(0x3F7F)], "the red link names sub-page 2");
+    assert!(linked[0].row_24, "the packed line shows row 24");
+
     let contents = String::from_utf8(fetch(&address, "/kit/contents.txt")).unwrap();
     assert!(contents.contains("Kit index") && contents.contains("Kit carousel"), "{contents}");
 }
 
-/// The repository's own channels file serves the TypeScript showcase, as
+/// The repository's own channels file serves the TypeScript showcase, and
+/// each picture collection's program on a channel of its own, as
 /// `cargo run -p teletext-native -- --channels channels.json` does.
 #[test]
 fn the_channels_file_serves_the_typescript_showcase() {
@@ -176,4 +186,8 @@ fn the_channels_file_serves_the_typescript_showcase() {
     let index = received(&fetch(&address, "/showcase-ts/100.t42"));
     let title = String::from_utf8_lossy(&index[0].row(1)).into_owned();
     assert!(title.contains("NeoTeletext showcase"), "{title:?}");
+    // With pictures or without, each collection has its index.
+    let collection = received(&fetch(&address, "/characters-ts/100.t42"));
+    let title = String::from_utf8_lossy(&collection[0].row(1)).into_owned();
+    assert!(title.contains("Characters"), "{title:?}");
 }

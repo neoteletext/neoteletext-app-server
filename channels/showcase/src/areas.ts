@@ -1,13 +1,14 @@
 // The showcase's areas, registered in one place: their sections make the
 // index on page 100, in this order (its Fastext links the first four), and
 // their applications serve the rest of the channel's pages
-// (crates/teletext-showcase/src/channels.rs). An area still in Rust,
-// in crates/teletext-showcase, is registered here when it is ported; see
+// (crates/teletext-showcase/src/channels.rs). Every area of the Rust
+// showcase, crates/teletext-showcase, is ported and registered here; see
 // PORTING.md.
 
 import { adventure } from "./adventure.ts";
 import type { Area, Section } from "./area.ts";
 import { audio } from "./audio.ts";
+import { gallery } from "./gallery.ts";
 import { games } from "./games.ts";
 import { Index } from "./index-page.ts";
 import { interactive } from "./interactive.ts";
@@ -15,8 +16,8 @@ import type { Application } from "./kit.ts";
 import type { Picture } from "./pictures.ts";
 import { services } from "./services.ts";
 
-/** The areas, in the index's order: the Rust showcase's, as each is ported (gallery to come). */
-export const AREAS: readonly Area[] = [services, interactive, games, adventure, audio];
+/** The areas, in the index's order: the Rust showcase's. */
+export const AREAS: readonly Area[] = [services, interactive, games, adventure, audio, gallery];
 
 /** Every area's sections, in order. */
 export function sections(areas: readonly Area[] = AREAS): Section[] {

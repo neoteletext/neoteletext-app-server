@@ -1,9 +1,11 @@
 // TTI read back as the server's reader takes what Screen.toTti writes:
 // each sub-page's rows, links, cursor and modes, for tests and for the
 // Fastext links of a page published from TTI. It reads the PN, OL, FL,
-// CU and IM lines in the escape form and ignores every other line; the
-// server reads TTI with the engine's reader.
+// CU and IM lines in the escape form, and the packed OL,27 line of links
+// that name a sub-page (packed-links.ts), and ignores every other line;
+// the server reads TTI with the engine's reader.
 
+import { PACKED_LINKS_ROW, readPackedLinks } from "./packed-links.ts";
 import { COLUMNS, type Cursor, ROWS, SPACE } from "./screen.ts";
 
 /** A page as a receiver holds it: each row's codes. */
@@ -13,9 +15,11 @@ export type Rows = readonly (readonly number[])[];
 export interface ReadPage {
   readonly subpage: number;
   readonly rows: Rows;
-  /** The six links of the FL line: red, green, yellow, cyan, link 5 and the index; null for none. */
+  /** The six links of the FL or packed OL,27 line: red, green, yellow, cyan, link 5 and the index; null for none. */
   readonly links: readonly (number | null)[];
-  /** Whether an FL line was present, which shows row 24. */
+  /** The sub-code each of those links names, null for any sub-page: an FL line names none. */
+  readonly linkSubcodes: readonly (number | null)[];
+  /** Whether row 24 is shown: an FL line shows it, a packed line says. */
   readonly fastextRow: boolean;
   readonly cursor: Cursor | null;
   readonly modes: number;
@@ -35,10 +39,19 @@ const DECIMAL = 10;
 export function readTti(tti: string): ReadPage[] {
   const pages: ReadPage[] = [];
   let rows: number[][] = [];
-  let page: { subpage: number; links: (number | null)[]; fastextRow: boolean; cursor: Cursor | null; modes: number } | null = null;
+  let page: {
+    address: number;
+    subpage: number;
+    links: (number | null)[];
+    linkSubcodes: (number | null)[];
+    fastextRow: boolean;
+    cursor: Cursor | null;
+    modes: number;
+  } | null = null;
   const finish = (): void => {
     if (page !== null) {
-      pages.push({ ...page, rows });
+      const { address: _address, ...read } = page;
+      pages.push({ ...read, rows });
     }
   };
   for (const line of tti.split("\n")) {
@@ -48,13 +61,31 @@ export function readTti(tti: string): ReadPage[] {
     if (command === "PN") {
       finish();
       rows = Array.from({ length: ROWS }, () => new Array<number>(COLUMNS).fill(SPACE));
-      page = { subpage: Number.parseInt(rest.slice(PAGE_DIGITS), DECIMAL), links: [], fastextRow: false, cursor: null, modes: 0 };
+      page = {
+        address: Number.parseInt(rest.slice(0, PAGE_DIGITS), HEXADECIMAL),
+        subpage: Number.parseInt(rest.slice(PAGE_DIGITS), DECIMAL),
+        links: [],
+        linkSubcodes: [],
+        fastextRow: false,
+        cursor: null,
+        modes: 0,
+      };
     } else if (page === null) {
       continue;
     } else if (command === "OL") {
       const separator = rest.indexOf(",");
-      const row = rows[Number.parseInt(rest.slice(0, separator), DECIMAL)];
+      const number = Number.parseInt(rest.slice(0, separator), DECIMAL);
+      const row = rows[number];
       const text = rest.slice(separator + 1);
+      if (number === PACKED_LINKS_ROW) {
+        const read = readPackedLinks(page.address, text);
+        if (read !== undefined) {
+          page.links = read.links.map((link) => link?.page ?? null);
+          page.linkSubcodes = read.links.map((link) => link?.subcode ?? null);
+          page.fastextRow = read.displayRow24;
+        }
+        continue;
+      }
       let column = 0;
       for (let at = 0; at < text.length && row !== undefined; at += 1) {
         let code = text.charCodeAt(at);
@@ -70,6 +101,7 @@ export function readTti(tti: string): ReadPage[] {
         const link = Number.parseInt(field, HEXADECIMAL);
         return link === NO_LINK ? null : link;
       });
+      page.linkSubcodes = page.links.map(() => null);
       page.fastextRow = true;
     } else if (command === "CU") {
       const [row = 0, column = 0, width = 0, flags = 0] = rest.split(",").map((field) => Number.parseInt(field, DECIMAL));

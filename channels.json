@@ -1,3 +1,8 @@
 {"channels":[
-  {"folder":"showcase-ts","name":"NeoTeletext showcase, TypeScript","command":["node","src/main.ts","--pictures","../../tmp/pictures"],"directory":"channels/showcase"}
+  {"folder":"showcase-ts","name":"NeoTeletext showcase, TypeScript","command":["node","src/main.ts","--pictures","../../tmp/pictures"],"directory":"channels/showcase"},
+  {"folder":"characters-ts","name":"NeoTeletext characters","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","characters"],"directory":"channels/showcase"},
+  {"folder":"art-ts","name":"NeoTeletext art","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","art"],"directory":"channels/showcase"},
+  {"folder":"people-ts","name":"NeoTeletext people","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","people"],"directory":"channels/showcase"},
+  {"folder":"travel-ts","name":"NeoTeletext travel","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","travel"],"directory":"channels/showcase"},
+  {"folder":"gameart-ts","name":"NeoTeletext game art","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","gameart"],"directory":"channels/showcase"}
 ]}
