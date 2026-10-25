@@ -183,7 +183,8 @@ class Library:
                 elif "comments" in changes.kinds:
                     self.load_comments()
                     await self.changed("comments")
-                if sync.idle and not changes.kinds:
+                # Nothing was due: wait, rather than ask again at once.
+                if not changes.worked:
                     await asyncio.sleep(IDLE_S)
         finally:
             pictures.cancel()

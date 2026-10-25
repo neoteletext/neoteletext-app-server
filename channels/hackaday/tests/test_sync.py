@@ -236,3 +236,11 @@ def test_posts_that_have_gone_are_found_by_the_window_and_by_the_sweep() -> None
     gone = {row[0] for row in store.db.execute("SELECT id FROM posts WHERE gone_at IS NOT NULL")}
     assert gone == {2, 1005}
     assert not sync.sweeping(), "a sweep a week"
+
+
+def test_a_step_with_nothing_due_says_so_and_asks_nothing() -> None:
+    api = archive()
+    sync = syncing(api, Store(":memory:"))
+    changes = asyncio.run(sync.step())
+    assert not changes.worked, "the channel waits rather than step again at once"
+    assert api.asked == []

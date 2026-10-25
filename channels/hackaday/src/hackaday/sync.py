@@ -88,9 +88,10 @@ def total_pages(headers: dict[str, str]) -> int:
 
 @dataclass
 class Changes:
-    """What a step changed: "posts" in the window, "comments" on them, "archive" beyond."""
+    """What a step changed: "posts" in the window, "comments" on them, "archive" beyond; and whether it did anything."""
 
     kinds: set[str] = field(default_factory=set)
+    worked: bool = True
 
 
 class Sync:
@@ -132,13 +133,8 @@ class Sync:
         if self.is_due("terms", TERMS_EVERY_S):
             await self.refresh_names()
             return changes
-        await self.sweep_step(changes)
+        changes.worked = await self.sweep_step(changes)
         return changes
-
-    @property
-    def idle(self) -> bool:
-        """Answer whether there was nothing to do last time: the full download and the sweep are done."""
-        return bool(self.store.state("backfill", {}).get("done")) and not self.sweeping()
 
     # New and edited posts.
 
@@ -316,10 +312,10 @@ class Sync:
             seconds=SWEEP_EVERY_S
         )
 
-    async def sweep_step(self, changes: Changes) -> None:
-        """Read the next page of every post's id, and mark gone the kept posts between them that it lacks."""
+    async def sweep_step(self, changes: Changes) -> bool:
+        """Read the next page of every post's id, and mark gone the kept posts between them that it lacks; answer whether it read one."""
         if not self.store.state("backfill", {}).get("done") or not self.sweeping():
-            return
+            return False
         place: dict[str, Any] = self.store.state("sweep", {})
         page = int(place.get("page") or 1)
         after = int(place.get("after_id") or 0)
@@ -336,3 +332,4 @@ class Sync:
             self.store.set_state("sweep", {"finished_at": zoned(datetime.now(UTC))})
         else:
             self.store.set_state("sweep", {"page": page + 1, "after_id": last})
+        return True
