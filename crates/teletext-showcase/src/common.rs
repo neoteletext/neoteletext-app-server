@@ -1,14 +1,14 @@
 //! What every showcase page shares: the header, the title band and the
 //! Fastext row.
 
-use teletext_runtime::screen::{Colour, Screen};
+use teletext_runtime::screen::{Colour, ROWS, Screen};
 
 /// The cells between Fastext labels: the next label's colour code and a
 /// space.
 const LABEL_GAP: usize = 2;
 
-/// The row of the Fastext prompts (EN 300 706 clause 9.6).
-pub const FASTEXT_ROW: usize = 24;
+/// The row of the Fastext prompts, the page's last (EN 300 706 clause 9.6).
+pub const FASTEXT_ROW: usize = ROWS - 1;
 
 /// The service's name in each header.
 pub const SERVICE: &str = "NeoTeletext";
@@ -50,4 +50,12 @@ pub fn label_columns(labels: [&str; 4]) -> [Option<(usize, usize)>; 4] {
         column = column.saturating_add(label.chars().count()).saturating_add(LABEL_GAP);
         Some(span)
     })
+}
+
+/// The Fastext label, 0 to 3, drawn at `column` of row 24 by [`page`]
+/// with these labels: where a page that takes the mouse finds which
+/// prompt was clicked.
+#[must_use]
+pub fn label_at(labels: [&str; 4], column: usize) -> Option<usize> {
+    label_columns(labels).iter().position(|span| span.is_some_and(|(start, end)| (start..end).contains(&column)))
 }

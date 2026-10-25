@@ -141,11 +141,7 @@ fn chosen(node: &Node, input: &Input<'_>) -> Option<usize> {
         }
         Input::Mouse { pressed: true, button: LEFT_BUTTON, column, row } => {
             let (column, row) = (usize::try_from(column).ok()?, usize::try_from(row).ok()?);
-            if row == FASTEXT_ROW {
-                common::label_columns(labels(node)).iter().position(|span| span.is_some_and(|(start, end)| (start..end).contains(&column)))
-            } else {
-                row.checked_sub(choice_row(node))
-            }
+            if row == FASTEXT_ROW { common::label_at(labels(node), column) } else { row.checked_sub(choice_row(node)) }
         }
         _ => {
             let typed = input.character()?.to_ascii_lowercase();

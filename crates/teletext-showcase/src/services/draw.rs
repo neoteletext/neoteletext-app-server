@@ -6,11 +6,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_core::consts::COLUMNS;
-use teletext_runtime::screen::{Colour, ROWS, Screen, Sixels};
+use teletext_runtime::screen::{Colour, Screen, Sixels};
 use teletext_runtime::{Context, Owner, PageFile};
 
-/// The last row of a page, which carries the Fastext labels.
-pub const FASTEXT_ROW: usize = ROWS - 1;
+pub use crate::common::FASTEXT_ROW;
 /// The row above it, where the demonstration-data banner goes.
 pub const BANNER_ROW: usize = FASTEXT_ROW - 1;
 /// The first row below the title band (rows 1 and 2).

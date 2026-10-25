@@ -101,7 +101,7 @@ Not yet imported. When the first crate needs it, every `neoteletext-*` dependenc
   - `scripts/deploy.sh` deploys as a systemd service.
   - Requirement 1.4's measurement: 100,000 connections at 9.5 KB each.
 - `teletext-showcase`: the showcase, on `foundintelquiet4060` at `http://192.168.0.166:8090/`, seen in the macOS browser on 25 October 2026.
-  - **Live services (101 to 109):** news, weather, world clock, markets, server clock, sport, TV guide, about, teletext facts.
+  - **Live services (101 to 110):** news, weather, world clock, markets, server clock, sport, TV guide, about, teletext facts, and a long read scrolled within its page (Page Up and Page Down, the arrows, the wheel and a mosaic scroll bar), each reader's own.
   - **Input (200 to 207):** form, guestbook, live poll, quiz, calculator, mouse paint.
   - **Action games (300 to 305):** invaders with the sci-fi sprites, snake, breakout, cave flyer, a shared hall of fame.
   - **Adventures (400 to 402):** one page a game, each viewer's own: Station Zero, typed; The Lost Crown, on the coloured keys.

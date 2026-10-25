@@ -1,8 +1,9 @@
 //! Live services (pages 101 to 199): news, weather, a world clock,
-//! markets, the server clock, sport, a TV guide, and pages about
-//! NeoTeletext and teletext. Every page is the channel's: drawn once per
-//! change and sent to every viewer (decision 7), each application waking
-//! only as often as its page changes.
+//! markets, the server clock, sport, a TV guide, pages about NeoTeletext
+//! and teletext, and a long read that scrolls. Every page but the long
+//! read is the channel's: drawn once per change and sent to every viewer
+//! (decision 7), each application waking only as often as its page
+//! changes. The long read is each reader's own once they scroll.
 //!
 //! Weather, markets, sport and the TV guide are simulated, with made-up
 //! places, companies, teams and programmes, and say so on the page.
@@ -23,6 +24,7 @@ pub mod about;
 pub mod calendar;
 pub mod draw;
 pub mod guide;
+pub mod long_read;
 pub mod markets;
 pub mod news;
 pub mod sport;
@@ -50,10 +52,12 @@ pub const GUIDE: u16 = 0x107;
 pub const ABOUT: u16 = 0x108;
 /// The teletext facts page.
 pub const FACTS: u16 = 0x109;
+/// The long read, scrolled within the page.
+pub const LONG_READ: u16 = 0x110;
 
 /// The services in page order, with each one's Fastext label (at most
 /// nine characters, the width of a quarter of row 24 after its colour).
-const SERVICES: [(u16, &str); 9] = [
+const SERVICES: [(u16, &str); 10] = [
     (NEWS, "News"),
     (WEATHER, "Weather"),
     (WORLD_CLOCK, "World"),
@@ -63,6 +67,7 @@ const SERVICES: [(u16, &str); 9] = [
     (GUIDE, "TV guide"),
     (ABOUT, "About"),
     (FACTS, "Facts"),
+    (LONG_READ, "Long read"),
 ];
 
 /// The yellow link's choices, in order: the first that is not the page
@@ -96,6 +101,7 @@ pub fn applications(_pictures: &[Picture]) -> Vec<Box<dyn Application>> {
         Box::new(sport::Sport::default()),
         Box::new(guide::Guide),
         Box::new(about::About),
+        Box::new(long_read::LongRead::default()),
     ]
 }
 
@@ -106,7 +112,7 @@ pub fn sections() -> Vec<Section> {
     alloc::vec![
         Section { page: NEWS, name: "News and live services", about: "weather 102 markets 104 sport 106" },
         Section { page: WORLD_CLOCK, name: "Clocks and TV guide", about: "world 103, server 105, TV 107" },
-        Section { page: ABOUT, name: "About NeoTeletext", about: "and teletext facts on 109" },
+        Section { page: ABOUT, name: "About NeoTeletext", about: "facts 109 and a long read on 110" },
     ]
 }
 

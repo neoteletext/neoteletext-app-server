@@ -1,21 +1,10 @@
-//! The area driven as a receiver drives it: a channel of its one
-//! application, sessions that say HELLO, open pages, type, press keys and
-//! click, and the pages and cursor records the channel sends back, read
-//! as a receiver reads them.
+//! The area driven as a receiver drives it (`crate::testing`): a channel
+//! of its one application, sessions that type, press keys and click, and
+//! the pages and cursor records the channel sends back.
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-
-use neoteletext_audio::idl::FRAGMENT_DATA;
-use neoteletext_core::consts::{COLUMNS, PACKET_BYTES};
-use neoteletext_core::packet::{Decoded, decode};
-use neoteletext_input::control::Control;
-use neoteletext_input::cursor::{Cursor, ECHO, MASKED, Place};
-use neoteletext_input::event::{Action, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, write};
-use neoteletext_input::keys;
-use neoteletext_input::modes::{ALL_MODES, CURSOR_CAP, ECHO_CAP, MOUSE_BUTTONS, PAGE_CAP};
-use teletext_runtime::screen::{ROWS, address};
-use teletext_runtime::{Channel, ChannelConfig, Colour, Effect, Packet, SessionId};
+use neoteletext_input::cursor::{ECHO, MASKED, Place};
+use neoteletext_input::modes::MOUSE_BUTTONS;
+use teletext_runtime::Colour;
 
 use super::calculator::{Problem, evaluate};
 use super::field::printable;
@@ -23,10 +12,8 @@ use super::guestbook::{ENTRIES_KEPT, MESSAGE_LIMIT, POST_INTERVAL_MS};
 use super::paint::{FIRST_COLUMN, PALETTE, PALETTE_COLUMN, PALETTE_ROW, SOLID, SWATCH_CELLS, TOP};
 use super::poll::{BAR_CELLS, CHANGE_INTERVAL_MS};
 use super::quiz::QUESTIONS;
-use super::{CALCULATOR, FORM, GUESTBOOK, MENU, PAINT, POLL, QUIZ, REPUBLISH_INTERVAL_MS, SIGN, applications};
-
-/// A page as a receiver holds it: each row's codes, parity stripped.
-type Rows = Vec<[u8; COLUMNS]>;
+use super::{CALCULATOR, FORM, GUESTBOOK, PAINT, POLL, QUIZ, REPUBLISH_INTERVAL_MS, SIGN, applications};
+use crate::testing::{Harness, row_of, shows, text};
 
 /// A mosaic cell with its top two rows of sixels set, as a poll bar's
 /// cells are (EN 300 706 Table 47).
@@ -36,184 +23,12 @@ const LEFT: u8 = 0;
 /// The right mouse button.
 const RIGHT: u8 = 2;
 
-/// A channel of the area, started, and the effects it has answered with.
-struct Harness {
-    channel: Channel,
-    now: u64,
-    effects: Vec<Effect>,
-}
-
-impl Harness {
-    fn new() -> Self {
-        let config =
-            ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
-        let mut channel = Channel::new(config, applications(&[]), 7);
-        channel.start(0);
-        let effects = channel.take_effects();
-        Self { channel, now: 0, effects }
-    }
-
-    /// Sends one input item from `session`, and keeps what came back.
-    fn send(&mut self, session: SessionId, item: &Item<'_>) {
-        let mut bytes = [0_u8; 256];
-        let length = write(item, &mut bytes).unwrap();
-        self.channel.received(session, &bytes[..length], self.now);
-        self.take();
-    }
-
-    fn take(&mut self) {
-        self.effects.extend(self.channel.take_effects());
-    }
-
-    /// A session that said HELLO with what the browser offers, and opened
-    /// `page`.
-    fn join(&mut self, session: SessionId, page: u16) {
-        self.channel.opened(session, self.now);
-        let hello = Event::Hello { version: neoteletext_input::VERSION, caps: PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES, agent: None };
-        self.send(session, &Item::Event(hello));
-        self.open(session, page);
-    }
-
-    fn open(&mut self, session: SessionId, page: u16) {
-        self.send(session, &Item::Event(Event::Page(page)));
-    }
-
-    fn type_text(&mut self, session: SessionId, text: &str) {
-        self.send(session, &Item::Text(text));
-    }
-
-    /// Presses and releases a key by its INPUT.md name.
-    fn press(&mut self, session: SessionId, name: &str) {
-        let code = keys::code(name).unwrap();
-        for action in [Action::Press, Action::Release] {
-            self.send(session, &Item::Event(Event::Key(Key { action, key: KeyCode::Functional(code), mods: 0, text: None, base: None })));
-        }
-    }
-
-    fn click(&mut self, session: SessionId, button: u8, column: usize, row: usize) {
-        let at = Point { column: u32::try_from(column).unwrap(), row: u32::try_from(row).unwrap(), pixels: None, mods: 0 };
-        for action in [MouseAction::Press, MouseAction::Release] {
-            self.send(session, &Item::Event(Event::Mouse(Mouse { action, button, at })));
-        }
-    }
-
-    /// Runs the clock on by `by`, waking the application if it asked.
-    fn advance(&mut self, by: u64) {
-        self.now = self.now.saturating_add(by);
-        if self.channel.next_wake().is_some_and(|at| at <= self.now) {
-            self.channel.deadline(self.now);
-        }
-        self.take();
-    }
-
-    /// How many times `page` was published shared since the last call.
-    fn shared_publications(&mut self, page: u16) -> usize {
-        let count = self.effects.iter().filter(|effect| matches!(effect, Effect::Shared { page: shared, .. } if *shared == page)).count();
-        self.effects.clear();
-        count
-    }
-
-    /// The channel's copy of `page`, as it is now.
-    fn shared(&self, page: u16) -> Rows {
-        let frame = self.channel.shared_frames().find(|(number, _)| *number == page).map(|(_, frame)| frame.to_vec()).unwrap();
-        pages_in(&frame).into_iter().rev().find(|(number, _)| *number == page).unwrap().1
-    }
-
-    /// The latest copy of `page` sent to `session` alone.
-    fn own(&self, session: SessionId, page: u16) -> Rows {
-        let bytes: Vec<u8> = sent(&self.effects, session).iter().flat_map(|packet| packet.bytes).collect();
-        pages_in(&bytes).into_iter().rev().find(|(number, _)| *number == page).unwrap().1
-    }
-
-    /// The latest cursor record sent to `session`.
-    fn cursor(&self, session: SessionId) -> Cursor {
-        sent(&self.effects, session).iter().filter_map(neoteletext_input::cursor::from_packet).map(Result::unwrap).next_back().unwrap()
-    }
-
-    /// The pages of every cursor record sent to `session`.
-    fn cursor_pages(&self, session: SessionId) -> Vec<u16> {
-        sent(&self.effects, session).iter().filter_map(neoteletext_input::cursor::from_packet).map(|cursor| cursor.unwrap().page).collect()
-    }
-
-    /// The latest `PAGE_MODES` record sent to `session`.
-    fn page_modes(&self, session: SessionId) -> Option<(u16, u32)> {
-        sent(&self.effects, session)
-            .iter()
-            .filter_map(|packet| {
-                let mut buffer = [0_u8; FRAGMENT_DATA];
-                match neoteletext_input::control::from_packet(packet, &mut buffer) {
-                    Some(Ok(Control::PageModes { page, modes })) => Some((page, modes)),
-                    _ => None,
-                }
-            })
-            .next_back()
-    }
-}
-
-/// The packets of every message sent to `session`.
-fn sent(effects: &[Effect], session: SessionId) -> Vec<Packet> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Send { session: to, bytes } if *to == session => Some(bytes),
-            _ => None,
-        })
-        .flat_map(|bytes| bytes.chunks(PACKET_BYTES).map(|chunk| Packet { bytes: chunk.try_into().unwrap() }).collect::<Vec<_>>())
-        .collect()
-}
-
-/// Every page of the area in `bytes`, in order: its number and rows.
-fn pages_in(bytes: &[u8]) -> Vec<(u16, Rows)> {
-    let mut pages: Vec<(u16, Rows)> = Vec::new();
-    for chunk in bytes.chunks(PACKET_BYTES) {
-        let packet = Packet { bytes: chunk.try_into().unwrap() };
-        match decode(&packet) {
-            Ok(Decoded::Header(header)) => {
-                let number = [MENU, FORM, GUESTBOOK, POLL, QUIZ, CALCULATOR, PAINT, SIGN]
-                    .into_iter()
-                    .find(|&number| {
-                        let wanted = address(number);
-                        wanted.magazine == header.magazine && Some(wanted.page) == header.page
-                    })
-                    .unwrap_or(0);
-                pages.push((number, alloc::vec![[b' '; COLUMNS]; ROWS]));
-            }
-            Ok(Decoded::Row(row)) => {
-                if let Some((_, rows)) = pages.last_mut()
-                    && let Some(line) = rows.get_mut(usize::from(row.row))
-                {
-                    for (slot, byte) in line.iter_mut().zip(row.bytes) {
-                        *slot = byte & 0x7F;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    pages
-}
-
-/// A row's codes as text.
-fn text(rows: &Rows, row: usize) -> String {
-    rows[row].iter().map(|&code| char::from(code)).collect()
-}
-
-/// The first row holding `wanted`.
-fn row_of(rows: &Rows, wanted: &str) -> Option<usize> {
-    (0..ROWS).find(|&row| text(rows, row).contains(wanted))
-}
-
-/// Whether any row holds `wanted`.
-fn shows(rows: &Rows, wanted: &str) -> bool {
-    row_of(rows, wanted).is_some()
-}
-
 /// Typed text goes into the focused field, is acknowledged, and the cursor
 /// follows it with ECHO and the room left; the masked field shows stars
 /// and asks for MASKED; Enter greets by name.
 #[test]
 fn the_form_echoes_masks_and_greets() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, FORM);
     let first = harness.cursor(1);
     assert_eq!(first.flags, ECHO);
@@ -252,7 +67,7 @@ fn the_form_echoes_masks_and_greets() {
 /// width.
 #[test]
 fn a_full_field_stops_and_stops_the_echo() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, FORM);
     harness.type_text(1, "abcdefghijklmnopqrstuvwxyz");
     let cursor = harness.cursor(1);
@@ -268,7 +83,7 @@ fn a_full_field_stops_and_stops_the_echo() {
 /// line is cut to the limit; the book keeps only the newest lines.
 #[test]
 fn the_guestbook_is_shared_and_bounded() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, GUESTBOOK);
     harness.effects.clear();
     harness.type_text(1, "Hello from one");
@@ -317,7 +132,7 @@ fn the_guestbook_is_shared_and_bounded() {
 /// most once more per interval, with the last change.
 #[test]
 fn a_burst_is_coalesced() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     for session in 1_u64..=20 {
         harness.join(session, POLL);
     }
@@ -340,7 +155,7 @@ fn a_burst_is_coalesced() {
 /// goes when the session ends.
 #[test]
 fn votes_count_once_per_session() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     for session in 1..=3 {
         harness.join(session, POLL);
     }
@@ -375,7 +190,7 @@ fn votes_count_once_per_session() {
 /// A bar is mosaic graphics as long as its share.
 #[test]
 fn the_results_have_bars() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, POLL);
     harness.join(2, POLL);
     harness.type_text(1, "1");
@@ -392,7 +207,7 @@ fn the_results_have_bars() {
 /// The quiz scores right answers and ends with the score.
 #[test]
 fn the_quiz_scores() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, QUIZ);
     for (number, question) in QUESTIONS.iter().enumerate() {
         // The first two answered wrong, the rest right.
@@ -437,7 +252,7 @@ fn sums_are_checked() {
 /// the answer or the problem.
 #[test]
 fn the_calculator_answers_on_its_page() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, CALCULATOR);
     harness.type_text(1, "6x7");
     assert!(shows(&harness.own(1, CALCULATOR), "6x7"));
@@ -456,7 +271,7 @@ fn the_calculator_answers_on_its_page() {
 /// clears.
 #[test]
 fn the_paint_box_paints() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, PAINT);
     assert_eq!(harness.page_modes(1), Some((PAINT, MOUSE_BUTTONS)));
 
@@ -496,7 +311,7 @@ fn only_printable_characters_pass() {
 /// Ending a session forgets it everywhere.
 #[test]
 fn an_ended_session_is_forgotten() {
-    let mut harness = Harness::new();
+    let mut harness = Harness::new(applications(&[]));
     harness.join(1, FORM);
     harness.type_text(1, "Ada");
     harness.channel.closed(1, harness.now);

@@ -31,5 +31,7 @@ pub mod index;
 pub mod interactive;
 pub mod services;
 pub mod sound;
+#[cfg(test)]
+mod testing;
 
 pub use channels::{ChannelSpec, Picture, channels};

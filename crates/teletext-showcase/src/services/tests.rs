@@ -254,3 +254,173 @@ fn carousels_number_their_sub_pages() {
         }
     }
 }
+
+mod long_read_page {
+    use super::long_read::{BAR_ATTRIBUTE_COLUMN, BAR_COLUMN, POSITION_ROW, TEXT_WIDTH, TRACK_SIXELS, VIEW_FIRST_ROW, VIEW_ROWS, lines, thumb};
+    use super::{LONG_READ, applications, navigation};
+    use crate::common::{FASTEXT_ROW, label_columns};
+    use crate::testing::{Harness, Rows, pages_in, sent, text};
+    use alloc::format;
+    use alloc::string::String;
+    use neoteletext_input::modes::MOUSE_BUTTONS;
+    use teletext_runtime::Colour;
+    use teletext_runtime::SessionId;
+
+    const READER: SessionId = 1;
+    const OTHER: SessionId = 2;
+    /// A mosaic cell with every sixel set (EN 300 706 Table 47).
+    const FULL: u8 = 0x7F;
+    /// A mosaic cell with its left column of sixels set: the thin track.
+    const TRACK: u8 = 0x20 | 0x01 | 0x04 | 0x10;
+
+    /// The first line of the article shown on `rows`: the position row's
+    /// first number, checked against the text in the view's first row.
+    fn top_of(rows: &Rows) -> usize {
+        let position = text(rows, POSITION_ROW);
+        let after = position.split("Lines ").nth(1).unwrap();
+        let first: usize = after.split('-').next().unwrap().parse().unwrap();
+        let top = first.checked_sub(1).unwrap();
+        let line = &lines()[top];
+        assert!(text(rows, VIEW_FIRST_ROW).contains(line.text.as_str()), "line {top} is at the top");
+        top
+    }
+
+    fn opened() -> Harness {
+        let mut harness = Harness::new(applications(&[]));
+        harness.join(READER, LONG_READ);
+        harness
+    }
+
+    fn now_at(harness: &Harness) -> usize {
+        top_of(&harness.own(READER, LONG_READ))
+    }
+
+    /// How many copies of the page the reader has been sent.
+    fn copies(harness: &Harness) -> usize {
+        let bytes: alloc::vec::Vec<u8> = sent(&harness.effects, READER).iter().flat_map(|packet| packet.bytes).collect();
+        pages_in(&bytes).iter().filter(|(number, _)| *number == LONG_READ).count()
+    }
+
+    /// The article is long: several screens, every line within the width
+    /// left beside the bar, in characters the English set shows as
+    /// themselves (EN 300 706 Table 36 replaces `#`, brackets and others).
+    #[test]
+    fn the_article_is_long_and_fits_beside_the_bar() {
+        let all = lines();
+        assert!(all.len() > 5 * VIEW_ROWS, "{} lines", all.len());
+        for line in &all {
+            assert!(line.text.chars().count() <= TEXT_WIDTH, "{:?}", line.text);
+            assert!(line.text.chars().all(|c| c.is_ascii_alphanumeric() || " .,:;'()-!?".contains(c)), "{:?}", line.text);
+        }
+    }
+
+    /// Before scrolling a reader sees the shared start; each key moves only
+    /// their own page, by a screen less one line, a line, or to an end.
+    #[test]
+    fn the_keys_scroll_each_readers_own_page() {
+        let mut harness = opened();
+        let shared = harness.shared(LONG_READ);
+        assert_eq!(top_of(&shared), 0);
+        assert!(text(&shared, POSITION_ROW).contains(&format!("Lines 1-{VIEW_ROWS} of {}", lines().len())));
+        assert_eq!(harness.page_modes(READER), Some((LONG_READ, MOUSE_BUTTONS)), "the page takes clicks and the wheel");
+
+        let screen = VIEW_ROWS - 1;
+        harness.press(READER, "PageDown");
+        assert_eq!(now_at(&harness), screen);
+        harness.type_text(READER, " ");
+        assert_eq!(now_at(&harness), 2 * screen, "Space pages down too");
+        harness.press(READER, "PageUp");
+        assert_eq!(now_at(&harness), screen);
+        harness.press(READER, "ArrowDown");
+        assert_eq!(now_at(&harness), screen + 1);
+        harness.press(READER, "ArrowUp");
+        assert_eq!(now_at(&harness), screen);
+
+        let last = lines().len() - VIEW_ROWS;
+        harness.press(READER, "End");
+        let end = harness.own(READER, LONG_READ);
+        assert_eq!(top_of(&end), last);
+        assert!(text(&end, POSITION_ROW).contains("100%"));
+        let before = copies(&harness);
+        harness.press(READER, "PageDown");
+        assert_eq!(copies(&harness), before, "no further than the end, so nothing sent");
+        assert_eq!(now_at(&harness), last);
+        harness.press(READER, "Home");
+        assert_eq!(now_at(&harness), 0);
+
+        // Another reader still starts at the top, and the shared page never moved.
+        harness.press(READER, "PageDown");
+        harness.join(OTHER, LONG_READ);
+        assert_eq!(top_of(&harness.shared(LONG_READ)), 0);
+        assert_eq!(now_at(&harness), screen);
+    }
+
+    /// The wheel scrolls three lines a notch, and small turns add up.
+    #[test]
+    fn the_wheel_scrolls_and_small_turns_add_up() {
+        let mut harness = opened();
+        harness.wheel(READER, 120, 10, 10);
+        assert_eq!(now_at(&harness), 3);
+        for _ in 0..3 {
+            harness.wheel(READER, 40, 10, 10);
+        }
+        assert_eq!(now_at(&harness), 6, "three thirds of a notch are a notch");
+        harness.wheel(READER, -480, 10, 10);
+        assert_eq!(now_at(&harness), 0, "never above the start");
+    }
+
+    /// The bar's block is the share shown, at the top at the start and at
+    /// the bottom at the end, drawn in white over a thin blue track.
+    #[test]
+    fn the_scroll_bar_shows_where_the_reader_is() {
+        let total = lines().len();
+        let (start, length) = thumb(0, total);
+        assert_eq!(start, 0);
+        assert_eq!(length, (TRACK_SIXELS * VIEW_ROWS / total).max(3));
+        let (start, length) = thumb(total - VIEW_ROWS, total);
+        assert_eq!(start + length, TRACK_SIXELS, "the block ends at the bottom");
+        let middle = thumb((total - VIEW_ROWS) / 2, total).0;
+        assert!(middle > 0 && middle + length < TRACK_SIXELS, "halfway is between");
+
+        let mut harness = opened();
+        let at_top = harness.shared(LONG_READ);
+        let bottom = VIEW_FIRST_ROW + VIEW_ROWS - 1;
+        assert_eq!(at_top[VIEW_FIRST_ROW][BAR_COLUMN], FULL);
+        assert_eq!(at_top[VIEW_FIRST_ROW][BAR_ATTRIBUTE_COLUMN], Colour::White.mosaic());
+        assert_eq!(at_top[bottom][BAR_COLUMN], TRACK);
+        assert_eq!(at_top[bottom][BAR_ATTRIBUTE_COLUMN], Colour::Blue.mosaic());
+        harness.press(READER, "End");
+        let at_end = harness.own(READER, LONG_READ);
+        assert_eq!(at_end[VIEW_FIRST_ROW][BAR_COLUMN], TRACK);
+        assert_eq!(at_end[bottom][BAR_COLUMN], FULL);
+        assert_eq!(at_end[bottom][BAR_ATTRIBUTE_COLUMN], Colour::White.mosaic());
+    }
+
+    /// A click on the track below the block pages down, above it pages up,
+    /// and on the block does nothing.
+    #[test]
+    fn a_click_on_the_bar_moves_a_screen() {
+        let mut harness = opened();
+        let bottom = VIEW_FIRST_ROW + VIEW_ROWS - 1;
+        harness.click(READER, 0, BAR_COLUMN, bottom);
+        assert_eq!(now_at(&harness), VIEW_ROWS - 1);
+        harness.click(READER, 0, BAR_ATTRIBUTE_COLUMN, VIEW_FIRST_ROW);
+        assert_eq!(now_at(&harness), 0, "the colour cell counts as the bar");
+        let before = copies(&harness);
+        harness.click(READER, 0, BAR_COLUMN, VIEW_FIRST_ROW);
+        assert_eq!(copies(&harness), before, "a click on the block does nothing");
+        harness.click(READER, 0, 10, bottom);
+        assert_eq!(copies(&harness), before, "a click on the text does nothing");
+    }
+
+    /// The page takes the mouse, so it follows a click on a Fastext prompt
+    /// itself.
+    #[test]
+    fn a_click_on_a_prompt_follows_its_link() {
+        let mut harness = opened();
+        let links = navigation(LONG_READ);
+        let (start, _) = label_columns(links.map(|(label, _)| label))[1].unwrap();
+        harness.click(READER, 0, start + 1, FASTEXT_ROW);
+        assert_eq!(harness.cursor_pages(READER).last().copied(), links[1].1, "sent to {:?}", String::from(links[1].0));
+    }
+}
