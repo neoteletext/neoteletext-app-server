@@ -151,7 +151,8 @@ export class Paint {
     context.publish(session, PAINT, this.#canvas(session).screen());
   }
 
-  input(session: number, input: Input, sounds: Sounds, context: Context): void {
+  /** Answers whether the page took `input`: a click off the canvas, such as on a Fastext prompt, is the kit's to follow. */
+  input(session: number, input: Input, sounds: Sounds, context: Context): boolean {
     const canvas = this.#canvas(session);
     let effect: Effect | null = null;
     if (input.kind === "mouse") {
@@ -163,10 +164,12 @@ export class Paint {
         effect = Effect.Explosion;
       }
     }
-    if (effect !== null) {
-      context.publish(session, PAINT, canvas.screen());
-      sounds.play(session, effect, context);
+    if (effect === null) {
+      return false;
     }
+    context.publish(session, PAINT, canvas.screen());
+    sounds.play(session, effect, context);
+    return true;
   }
 
   ended(session: number): void {

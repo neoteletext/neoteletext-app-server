@@ -14,9 +14,9 @@
 //   white too; the block moves by whole cells. A click above or below the
 //   block moves a screen.
 // - Fastext: the services' links. The page takes the mouse, so the
-//   receiver sends a click on a prompt here and the page follows it.
+//   receiver sends a click on a prompt here, and the kit follows it.
 
-import { FASTEXT_ROW, labelAt, labels, page } from "../common.ts";
+import { FASTEXT_ROW, page } from "../common.ts";
 import {
   type Application,
   Button,
@@ -241,8 +241,8 @@ interface Reader {
   wheel: number;
 }
 
-/** What an input asks of the view: lines down (up when negative), the start, the end, or another page. */
-type Move = { readonly by: number } | { readonly to: "start" | "end" } | { readonly leave: number };
+/** What an input asks of the view: lines down (up when negative), the start, or the end. */
+type Move = { readonly by: number } | { readonly to: "start" | "end" };
 
 /** A screen's move: one line short of the view, kept for context. */
 const SCREENFUL = VIEW_ROWS - 1;
@@ -290,12 +290,6 @@ export class LongRead implements Application {
     }
     if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
       const { column, row } = input;
-      if (row === FASTEXT_ROW) {
-        const links = navigation(LONG_READ);
-        const place = labelAt(labels(links), column);
-        const link = place === undefined ? null : (links[place]?.[1] ?? null);
-        return link === null ? null : { leave: link };
-      }
       const cellRow = row - VIEW_FIRST_ROW;
       if (cellRow < 0 || cellRow >= VIEW_ROWS || column < BAR_ATTRIBUTE_COLUMN) {
         return null;
@@ -309,24 +303,22 @@ export class LongRead implements Application {
     return null;
   }
 
-  input(session: number, _page: number, input: Input, context: Context): void {
+  /** Answers whether the page took `input`: a click elsewhere than the bar, such as on a Fastext prompt, is the kit's to follow. */
+  input(session: number, _page: number, input: Input, context: Context): boolean {
     const reader = this.#readers.get(session) ?? { top: 0, wheel: 0 };
     this.#readers.set(session, reader);
     const top = reader.top;
     const wanted = this.#wanted(input, top, reader);
     const last = lastTop(this.#lines.length);
     if (wanted === null) {
-      return;
-    }
-    if ("leave" in wanted) {
-      context.goto(session, wanted.leave);
-      return;
+      return false;
     }
     const next = "by" in wanted ? Math.min(last, Math.max(0, top + wanted.by)) : wanted.to === "start" ? 0 : last;
     if (next !== top) {
       reader.top = next;
       context.publish(session, LONG_READ, draw(this.#lines, next));
     }
+    return true;
   }
 
   ended(session: number): void {

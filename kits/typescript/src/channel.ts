@@ -8,13 +8,14 @@
 //
 // Pages that do not use digits or the coloured keys themselves get page
 // selection by them (navigation.ts), so every page can be left by number
-// or by Fastext.
+// or by Fastext; on a page that asks for the mouse, a click the page does
+// not take follows the prompt or the page number it is on.
 
 import { App, type Owner, type PageDeclaration, type ServerEvents, type Streams, processStreams, serveLines } from "./app.ts";
-import type { Input } from "./input.ts";
-import { Navigation, type PageKeys } from "./navigation.ts";
+import { type Input, clicked } from "./input.ts";
+import { Navigation, type PageKeys, type PageView, clickedLink } from "./navigation.ts";
 import { readTti } from "./read-tti.ts";
-import { type FastextLinks, NO_LINKS, type Screen, type Subpage, pageText } from "./screen.ts";
+import { NO_LINKS, ROWS, type Screen, type Subpage, pageText } from "./screen.ts";
 import type { Audience, SoundMember } from "./sound.ts";
 
 /** One page an application serves: its number, its title, which keys it uses itself, and the section it starts, if any. */
@@ -37,12 +38,25 @@ export interface Application {
   opened?(session: number, page: number, context: Context): void;
   /** The session's viewer left one of this application's pages. */
   leftPage?(session: number, page: number, context: Context): void;
-  /** Input on one of this application's pages, open with the keys, that navigation did not take. */
-  input?(session: number, page: number, input: Input, context: Context): void;
+  /**
+   * Input on one of this application's pages, open with the keys, that
+   * navigation did not take. On a page that asks for the mouse, answer
+   * true for a click the page took; any other click follows the Fastext
+   * prompt or the page number it is on.
+   */
+  input?(session: number, page: number, input: Input, context: Context): boolean | void;
   /** The time asked for with {@link Context.wakeAt} has come. */
   wake?(context: Context): void;
   /** The session ended: forget it. */
   ended?(session: number, context: Context): void;
+}
+
+/** A page not yet published: nothing to click on, no links. */
+const NO_VIEW: PageView = { rows: [], links: NO_LINKS };
+
+/** What a viewer sees of `screen`, kept apart from it, since an application may draw on it again. */
+function viewOf(screen: Screen): PageView {
+  return { rows: Array.from({ length: ROWS }, (_, row) => [...(screen.row(row) ?? [])]), links: screen.fastextLinks() };
 }
 
 /** The channel's clock: milliseconds since the program started, never going back. */
@@ -95,7 +109,7 @@ interface Host {
   readonly random: Random;
   epochAtStart(): number;
   wakeAt(index: number, at: number): void;
-  published(owner: Owner, page: number, links: FastextLinks): void;
+  published(owner: Owner, page: number, view: PageView): void;
   released(session: number, page: number): boolean;
 }
 
@@ -129,14 +143,16 @@ export class Context {
   /** Publishes a page with its sub-pages, each numbered as given. */
   publishSubpages(owner: Owner, page: number, subpages: readonly Subpage[]): void {
     this.#host.app.publish(owner, page, subpages);
-    this.#host.published(owner, page, subpages[0]?.screen.fastextLinks() ?? NO_LINKS);
+    const first = subpages[0]?.screen;
+    this.#host.published(owner, page, first === undefined ? NO_VIEW : viewOf(first));
   }
 
   /** Publishes a page from TTI written elsewhere, such as a converted picture's file ({@link App.publishTti}). */
   publishTti(owner: Owner, page: number, text: string): void {
     this.#host.app.publishTti(owner, page, text);
-    const links = readTti(text)[0]?.links ?? [];
-    this.#host.published(owner, page, [links[0] ?? null, links[1] ?? null, links[2] ?? null, links[3] ?? null]);
+    const first = readTti(text)[0];
+    const links = first?.links ?? [];
+    this.#host.published(owner, page, { rows: first?.rows ?? [], links: [links[0] ?? null, links[1] ?? null, links[2] ?? null, links[3] ?? null] });
   }
 
   /** Sends the session's viewer to `page` (INPUT.md section 7.1). */
@@ -209,8 +225,8 @@ export class Channel implements ServerEvents {
   readonly #owners = new Map<number, number>();
   readonly #wakes: (number | null)[];
   readonly #sessions = new Set<number>();
-  readonly #shared = new Map<number, FastextLinks>();
-  readonly #own = new Map<number, Map<number, FastextLinks>>();
+  readonly #shared = new Map<number, PageView>();
+  readonly #own = new Map<number, Map<number, PageView>>();
   readonly #navigation: Navigation;
   readonly #host: Host;
   #epochAtStart = 0;
@@ -239,12 +255,12 @@ export class Channel implements ServerEvents {
         const wake = this.#wakes[index];
         this.#wakes[index] = wake === null || wake === undefined ? at : Math.min(wake, at);
       },
-      published: (owner, page, links) => {
+      published: (owner, page, view) => {
         if (owner === "channel") {
-          this.#shared.set(page, links);
+          this.#shared.set(page, view);
         } else {
-          const own = this.#own.get(owner) ?? new Map<number, FastextLinks>();
-          own.set(page, links);
+          const own = this.#own.get(owner) ?? new Map<number, PageView>();
+          own.set(page, view);
           this.#own.set(owner, own);
         }
       },
@@ -291,15 +307,24 @@ export class Channel implements ServerEvents {
       this.#errors(`input on page ${pageText(page)}, which no application serves`);
       return;
     }
-    const links = this.#own.get(session)?.get(page) ?? this.#shared.get(page) ?? NO_LINKS;
-    const navigated = this.#navigation.take(session, input, entry, links);
+    const view = (): PageView => this.#own.get(session)?.get(page) ?? this.#shared.get(page) ?? NO_VIEW;
+    const navigated = this.#navigation.take(session, input, entry, view().links);
     if (navigated.taken) {
       if (navigated.goto !== null) {
         this.#app.goto(session, navigated.goto);
       }
       return;
     }
-    this.#callOwner(page, (application, context) => application.input?.(session, page, input, context));
+    let taken = false;
+    this.#callOwner(page, (application, context) => {
+      taken = application.input?.(session, page, input, context) === true;
+    });
+    if (!taken && clicked(input) && input.kind === "mouse") {
+      const link = clickedLink(view(), input.column, input.row);
+      if (link !== null) {
+        this.#app.goto(session, link);
+      }
+    }
   }
 
   close(session: number): void {

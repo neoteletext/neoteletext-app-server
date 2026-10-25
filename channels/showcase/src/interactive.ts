@@ -83,29 +83,29 @@ export class Interactive implements Application {
     }
   }
 
-  input(session: number, page: number, input: Input, context: Context): void {
+  /** Answers whether the page took `input`. Only the paint page asks for the mouse, so only its clicks can be the kit's to follow. */
+  input(session: number, page: number, input: Input, context: Context): boolean {
     switch (page) {
       case FORM:
         this.#form.input(session, input, this.#sounds, context);
-        return;
+        return true;
       case GUESTBOOK:
       case SIGN:
         this.#guestbook.input(session, page, input, this.#sounds, context);
-        return;
+        return true;
       case POLL:
         this.#poll.input(session, input, this.#sounds, context);
-        return;
+        return true;
       case QUIZ:
         this.#quiz.input(session, input, this.#sounds, context);
-        return;
+        return true;
       case CALCULATOR:
         this.#calculator.input(session, input, this.#sounds, context);
-        return;
+        return true;
       case PAINT:
-        this.#paint.input(session, input, this.#sounds, context);
-        return;
+        return this.#paint.input(session, input, this.#sounds, context);
       default:
-        return;
+        return false;
     }
   }
 

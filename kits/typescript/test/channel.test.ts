@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { type Application, type Context, type PageEntry, Random } from "../src/channel.ts";
-import { type Input, Key } from "../src/input.ts";
-import { Colour, Screen } from "../src/screen.ts";
+import { Button, Held, type Input, Key } from "../src/input.ts";
+import { Colour, Mode, Screen } from "../src/screen.ts";
 import { Harness, shows } from "../src/testing.ts";
 
 /** A page with `text` on row 1 and Fastext links. */
@@ -154,6 +154,44 @@ test("a page retitled says so once, and the contents list it so", () => {
   assert.equal(harness.sent.filter((message) => message["type"] === "title").length, 1);
   assert.equal(harness.title(0x201), "Robot arm");
   assert.equal(harness.title(0x202), undefined);
+});
+
+test("a click the page does not take follows the prompt or page number it is on", () => {
+  const taken: string[] = [];
+  const front: Application = {
+    pages: () => [
+      { page: 0x100, title: "Index" },
+      { page: 0x200, title: "Two" },
+    ],
+    start: (context) => {
+      const drawn = screen("See 200 here", [0x200, 0x101, null, null]);
+      drawn.coloured(24, 0, Colour.Red, "Two");
+      drawn.coloured(24, 10, Colour.Green, "News");
+      drawn.modes(Mode.MouseButtons);
+      context.publish("channel", 0x100, drawn);
+      context.publishTti("channel", 0x200, "PN,20000\nOL,3,Back to 100\nIM,8\n");
+    },
+    // The page takes a click on row 1's first cell, and nothing else.
+    input: (_session, _page, input) => {
+      const mine = input.kind === "mouse" && input.row === 1 && input.column === 0;
+      if (mine) {
+        taken.push(input.action);
+      }
+      return mine;
+    },
+  };
+  const harness = new Harness([front]);
+  harness.join(1, 0x100);
+  harness.clickLeft(1, 6, 1);
+  harness.clickLeft(1, 12, 24);
+  harness.clickLeft(1, 0, 1);
+  harness.click(1, Button.Right, 6, 1);
+  harness.move(1, Held.Left, 6, 1);
+  assert.deepEqual(harness.gotos(1), [0x200, 0x101], "the number, then the green prompt; never the page's own click, a right click or a move");
+  assert.deepEqual(taken, ["press", "release"]);
+  harness.open(1, 0x200);
+  harness.clickLeft(1, 9, 3);
+  assert.deepEqual(harness.gotos(1).slice(2), [0x100], "a page published from TTI, its rows read back");
 });
 
 test("each application wakes when it asked, the earliest asked for winning", () => {

@@ -72,7 +72,7 @@ interface Application {
   joined?(session: number, context: Context): void;
   opened?(session: number, page: number, context: Context): void;
   leftPage?(session: number, page: number, context: Context): void;
-  input?(session: number, page: number, input: Input, context: Context): void;
+  input?(session: number, page: number, input: Input, context: Context): boolean | void;
   wake?(context: Context): void;
   ended?(session: number, context: Context): void;
 }
@@ -158,7 +158,9 @@ Key names in `Key`: `Up` `Down` `Left` `Right` (the `Arrow…` names), `Enter`, 
 - `ownsDigits: true` for a page that takes typed text or numbers (Station Zero, 401, typed; the sound board's number keys, 503; any page whose Rust input reads digits or text). In `ALL_KEYS` a digit arrives as a key press whose key is the digit, and is taken the same way.
 - `ownsColourKeys: true` for a page that acts on F1–F4 or the colour keys (The Lost Crown, 402: `IMPLEMENTATION-LOG.md` row 5).
 
-Everything else (letters, arrows, the mouse, paste) always reaches the application. Write a test that digits and colour keys navigate where the page does not use them, as `test/services.test.ts` and `test/interactive.test.ts` do at their ends.
+Everything else (letters, arrows, the mouse, paste) always reaches the application.
+
+**Clicks are followed too.** A page whose modes include `Mode.MouseButtons` is sent its own clicks (INPUT.md section 6.4), so the browser follows none of its links. A left click that `input` does not answer `true` to is followed by the kit, as the browser would: on row 24 the link of the Fastext prompt under it (a prompt runs from its colour code to the next colour code), elsewhere a page number of three digits standing alone under it (`clickedLink`, `promptLink`, `promptAt`, `numberAt` in `navigation.ts`, the Python kit's functions). A page that takes the mouse answers `true` for every click it acts on, and need not handle its own Fastext prompts. Write a test that digits and colour keys navigate where the page does not use them, as `test/services.test.ts` and `test/interactive.test.ts` do at their ends.
 
 ### 3.5 Sound
 

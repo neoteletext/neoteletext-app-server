@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import { Colour, CursorFlag, Key, Mode, mosaicColour } from "../../../kits/typescript/src/kit.ts";
 import { Harness, rowOf, shows, text } from "../../../kits/typescript/src/testing.ts";
+import { FASTEXT_ROW, labelColumns } from "../src/common.ts";
 import { interactive } from "../src/interactive.ts";
 import { Problem, evaluate } from "../src/interactive/calculator.ts";
 import { printable } from "../src/interactive/field.ts";
@@ -264,6 +265,18 @@ test("the paint box paints", () => {
 
   harness.typeText(1, "c");
   assert.equal(harness.own(1, PAINT)[row]?.[column + 2], SPACE, "cleared");
+});
+
+// The page takes the mouse, so the receiver leaves its prompts to it: a
+// click off the canvas on a prompt follows the prompt's link, which the
+// kit does for every such page.
+test("a click on the paint box's Fastext prompt follows it", () => {
+  const harness = area();
+  harness.join(1, PAINT);
+  const sums = labelColumns(["Input", "Sums", "", "Index"])[1];
+  assert.ok(sums !== null && sums !== undefined);
+  harness.click(1, LEFT, sums[0] + 1, FASTEXT_ROW);
+  assert.deepEqual(harness.gotos(1), [CALCULATOR]);
 });
 
 test("only printable characters pass", () => {

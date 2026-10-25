@@ -124,7 +124,8 @@ export class Studio implements Application {
     }
   }
 
-  input(session: number, page: number, input: Input, context: Context): void {
+  /** Answers whether the page took `input`: a click off the instrument, such as on a Fastext prompt, is the kit's to follow. */
+  input(session: number, page: number, input: Input, context: Context): boolean {
     let changed = false;
     if (page === PIANO) {
       changed = this.#piano(session, input, context);
@@ -136,6 +137,7 @@ export class Studio implements Application {
     if (changed) {
       this.#draw(session, page, context);
     }
+    return changed;
   }
 
   wake(context: Context): void {

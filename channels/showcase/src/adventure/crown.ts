@@ -202,15 +202,16 @@ export class Crown implements Application {
     }
   }
 
-  input(session: number, _page: number, input: Input, context: Context): void {
+  /** Answers whether the page took `input`: a click on no choice is the kit's to follow. */
+  input(session: number, _page: number, input: Input, context: Context): boolean {
     const here = node(this.#place(session));
     if (here === undefined) {
-      return;
+      return false;
     }
     const place = chosen(here, input);
     const choice = place === undefined ? undefined : here.choices[place];
     if (choice === undefined) {
-      return;
+      return false;
     }
     let next: Id;
     if ("node" in choice.to) {
@@ -223,10 +224,11 @@ export class Crown implements Application {
     }
     const shown = node(next);
     if (shown === undefined) {
-      return;
+      return true;
     }
     this.#places.set(session, next);
     context.publish(session, CROWN, draw(shown));
+    return true;
   }
 
   ended(session: number): void {
