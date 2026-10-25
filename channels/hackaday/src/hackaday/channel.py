@@ -21,7 +21,7 @@ from neoteletext_app.app import App, Event, page_hears, session_hears
 from neoteletext_app.screen import Colour, Screen, tti
 from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
-from hackaday import clips, numbers, views
+from hackaday import clips, numbers, people, views
 from hackaday.fetch import Fetcher, FetchError
 from hackaday.layout import BODY_ROW, TEXT_WIDTH, flashing, last_top, page, wrap
 from hackaday.library import Library, now_utc
@@ -120,6 +120,7 @@ class Hackaday(App):
             numbers.ABOUT: "How it works",
             numbers.SERVER_STATS: "Behind the scenes",
             numbers.SOUNDBOARD: "Podcast sounds",
+            numbers.PEOPLE: "The people of Hackaday",
             numbers.READER: "From the archive",
         }
         for index, name in enumerate(views.section_names()):
@@ -129,7 +130,11 @@ class Hackaday(App):
             pages[numbers.slot_page(numbers.PICTURE_MAGAZINE, slot)] = f"Picture {slot}"
             pages[numbers.slot_page(numbers.COMMENTS_MAGAZINE, slot)] = f"Comments {slot}"
             pages[numbers.slot_page(numbers.LINKS_MAGAZINE, slot)] = f"Links {slot}"
+        found = people.load(cache.parent / "people")
+        for index, person in enumerate(found):
+            pages[views.person_page(index)] = person.name[:32]
         super().__init__(pages)
+        self.people = found
         self.library = Library(Fetcher(cache / "http"), cache / "pictures")
         self.library.pictures.mkdir(parents=True, exist_ok=True)
         self.library.on_change = self.changed
@@ -234,8 +239,21 @@ class Hackaday(App):
                 found = [post for post in await self.library.search(words, 5) if post.title.startswith(words)]
                 self.columns[number] = found[0] if found else None
         self.publish_columns()
+        await self.read_people()
         self.on_this_day = await self.library.on_this_day(now_utc())
         self.publish_on_this_day()
+
+    def publish_people(self) -> None:
+        """Publish the people's index and their pages."""
+        self.put(numbers.PEOPLE, views.people_index(self.people))
+        for index, person in enumerate(self.people):
+            self.put(views.person_page(index), views.profile(person, index, len(self.people)))
+
+    async def read_people(self) -> None:
+        """Read each person's post count and latest posts, and publish their pages again."""
+        for person in self.people:
+            person.posts, person.latest = await self.library.author(person.author)
+        self.publish_people()
 
     def publish_columns(self) -> None:
         """Publish the regular columns' latest editions."""
@@ -302,6 +320,7 @@ class Hackaday(App):
         self.put(numbers.ABOUT, views.about())
         self.put(numbers.SERVER_STATS, views.server_stats(self.figures, self.pages))
         self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, 0, None))
+        self.publish_people()
         if not posts:
             return
         self.put(numbers.READER, views.reader(posts[0], 0))
@@ -650,9 +669,10 @@ class Hackaday(App):
     async def on_open(self, session: int, page: int) -> None:
         """Start a viewer's quiz when they open it; greet a podcast listener."""
         if page == numbers.PODCAST:
-            welcome = next((clip for clip in self.clips if clip.name == "welcome"), None)
-            if welcome is not None:
-                self.play_clip(session, welcome, page=numbers.PODCAST)
+            self.play_named(session, "welcome", page)
+        for index, person in enumerate(self.people):
+            if page == views.person_page(index):
+                self.play_named(session, person.clip, page)
         if page == numbers.QUIZ:
             viewer = self.viewer(session)
             if viewer.question is None:
@@ -668,6 +688,12 @@ class Hackaday(App):
             self.sound_object(session_hears(session), clip.handle, clip.rate, clip.samples)
             viewer.clips_heard.add(clip.handle)
         self.play(session_hears(session), SOUND_CHANNEL, clip.handle, gain=90, page=page)
+
+    def play_named(self, session: int, name: str, page: int) -> None:
+        """Play the clip called `name` to a viewer, bound to `page`, if the server has it."""
+        clip = next((clip for clip in self.clips if clip.name == name), None)
+        if clip is not None:
+            self.play_clip(session, clip, page=page)
 
     def soundboard_input(self, session: int, event: Event) -> bool:
         """Choose a grab with the arrows or the wheel; Enter or Space plays it."""

@@ -18,3 +18,4 @@ __pycache__/
 node_modules/
 channels/hackaday/cache/
 channels/hackaday/sounds/
+channels/hackaday/people/

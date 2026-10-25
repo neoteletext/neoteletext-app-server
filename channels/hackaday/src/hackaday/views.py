@@ -37,6 +37,7 @@ from hackaday.posts import OTHER_SECTION, SECTIONS, Post, threaded
 
 if TYPE_CHECKING:
     from hackaday.clips import Clip
+    from hackaday.people import Person
 
 #: Rows a story's text scrolls in, from `STORY_TEXT_ROW`.
 STORY_TEXT_ROW = 8
@@ -561,6 +562,7 @@ def about() -> Screen:
         (Colour.WHITE, "Long pages scroll: Page Up, Page Down,"),
         (Colour.WHITE, "the arrows, Home, End and the wheel."),
         (Colour.GREEN, "121 behind the scenes 122 podcast sounds"),
+        (Colour.GREEN, "140 the people of Hackaday"),
         (Colour.MAGENTA, "Served by the NeoTeletext server (Rust)"),
         (Colour.MAGENTA, "from hackaday.com, by an app in Python."),
     ]
@@ -762,4 +764,59 @@ def soundboard(clips: list[Clip], chosen: int, playing: str | None) -> Screen:
     if playing:
         flashing(screen, HINT_ROW - 1, 0, Colour.GREEN, fit(f"Playing: {playing}", 34))
     screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down to choose, Enter to play")
+    return screen
+
+
+#: The rows a portrait takes: the engine's converter draws it into rows 2
+#: to 16, the rows under it are the profile's own.
+PORTRAIT_LAST_ROW = 16
+
+
+def person_page(index: int) -> int:
+    """Answer the page of person `index`."""
+    return numbers.PEOPLE + 1 + index
+
+
+def people_index(people: list[Person]) -> Screen:
+    """Draw page 140: the people of Hackaday, each with their page."""
+    screen = page(
+        "The people",
+        Colour.MAGENTA,
+        [("Front", numbers.FRONT), ("Writers", numbers.WRITERS), ("Podcast", numbers.PODCAST), ("Sounds", numbers.SOUNDBOARD)],
+    )
+    screen.coloured(BODY_ROW, 0, Colour.CYAN, "Some of the people who write Hackaday")
+    screen.coloured(BODY_ROW + 1, 0, Colour.CYAN, "and talk about it on the podcast")
+    for index, person in enumerate(people):
+        row = BODY_ROW + 3 + index * 3
+        screen.coloured(row, 0, Colour.YELLOW, f"{person_page(index):03X}")
+        screen.coloured(row, NUMBER_WIDTH, Colour.WHITE, person.name)
+        posts = f"{person.posts} posts" if person.posts else ""
+        screen.coloured(row + 1, NUMBER_WIDTH, Colour.CYAN, fit(f"{person.title}  {posts}", COLUMNS - NUMBER_WIDTH - 1))
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Each says hello when you open the page")
+    return screen
+
+
+def profile(person: Person, index: int, count: int) -> Screen:
+    """Draw one person's page: their portrait, who they are, what they write and how they say hello."""
+    links: list[Link] = [
+        ("People", numbers.PEOPLE),
+        ("Next", person_page((index + 1) % count)),
+        ("Sounds", numbers.SOUNDBOARD),
+        ("Front", numbers.FRONT),
+    ]
+    screen = page("", Colour.BLACK, links)
+    screen.rows[1] = bytearray([0x20] * COLUMNS)
+    if person.portrait is not None:
+        screen.load_tti(person.portrait, first_row=2, last_row=PORTRAIT_LAST_ROW)
+    else:
+        emblem(screen, 4, 13, Colour.WHITE)
+        screen.centred(12, Colour.CYAN, "(no photo: the Jolly Wrencher)")
+    screen.centred(1, Colour.CYAN, "THE PEOPLE OF HACKADAY")
+    screen.double_height(PORTRAIT_LAST_ROW + 1, 1, Colour.YELLOW, person.name)
+    screen.coloured(PORTRAIT_LAST_ROW + 3, 0, Colour.CYAN, fit(f"{person.title}. {person.podcast}", TEXT_WIDTH))
+    detail = person.bio or (f"Latest: {person.latest[0]}" if person.latest else "")
+    for offset, line in enumerate(wrap(detail, TEXT_WIDTH)[:2]):
+        screen.coloured(PORTRAIT_LAST_ROW + 4 + offset, 0, Colour.WHITE, line)
+    if person.posts:
+        screen.coloured(PORTRAIT_LAST_ROW + 6, 0, Colour.GREEN, f"{person.posts} posts on Hackaday")
     return screen

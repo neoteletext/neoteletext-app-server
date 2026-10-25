@@ -288,3 +288,56 @@ def test_podcast_grabs_play_from_the_sound_board(tmp_path: Path) -> None:
         "sent once, played thrice"
     )
     assert sounds_sent[-1]["play"]["page"] == "113", "the welcome belongs to the podcast page"
+
+
+def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
+    import json  # noqa: PLC0415 - only this test writes the manifests
+    import wave  # noqa: PLC0415
+
+    folder = tmp_path / "people"
+    folder.mkdir()
+    portrait = "PN,10000\nOL,2,\x1bW\x7f\x7f\nOL,26,@iAKA\nOL,24,not taken\n"
+    (folder / "ada.tti").write_text(portrait, encoding="latin-1")
+    people_list = [
+        {
+            "slug": "ada",
+            "name": "Ada Example",
+            "author": 1,
+            "title": "Editor",
+            "podcast": "Hosts",
+            "bio": "Writes things.",
+            "clip": "ada",
+            "portrait": "ada.tti",
+        },
+        {
+            "slug": "bo",
+            "name": "Bo Example",
+            "author": 2,
+            "title": "Writer",
+            "podcast": "Co-hosts",
+            "bio": "",
+            "clip": "bo",
+            "portrait": None,
+        },
+    ]
+    (folder / "people.json").write_text(json.dumps(people_list))
+    sounds = tmp_path / "sounds"
+    (sounds / "neoteletext").mkdir(parents=True)
+    (sounds / "clips.json").write_text(json.dumps([{"name": "ada", "title": "I'm Ada"}]))
+    with wave.open(str(sounds / "neoteletext" / "ada.wav"), "wb") as sound:
+        sound.setnchannels(1)
+        sound.setsampwidth(2)
+        sound.setframerate(22_050)
+        sound.writeframes(bytes(2_000))
+    made = Recorder(tmp_path / "cache")
+    made.publish_all()
+    assert [person.name for person in made.people] == ["Ada Example", "Bo Example"]
+    assert made.pages[0x141] == "Ada Example"
+    first = views.profile(made.people[0], 0, 2)
+    assert first.rows[2][:3] == bytes([0x17, 0x7F, 0x7F]), "the portrait's rows"
+    assert first.packets == ["OL,26,@iAKA"], "its colours"
+    assert "Ada Example" in first.row_text(17)
+    assert "no photo" in views.profile(made.people[1], 1, 2).row_text(12), "the Jolly Wrencher stands in"
+    drive(made, {"type": "open", "session": 3, "page": "141"}, {"type": "open", "session": 3, "page": "142"})
+    plays = [message["play"] for message in made.sent if message["type"] == "sound" and "play" in message]
+    assert [play["page"] for play in plays] == ["141"], "Ada says hello on her page; Bo has no clip on this server"

@@ -36,6 +36,8 @@ SERVER_STATS = 0x121
 SOUNDBOARD = 0x122
 #: The first section page; each section follows.
 FIRST_SECTION = 0x130
+#: The people of Hackaday, and each person's page after it.
+PEOPLE = 0x140
 #: The archive reader: any post, each viewer's own.
 READER = 0x199
 

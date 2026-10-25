@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hackaday.fetch import Fetcher, FetchError, api
+from hackaday.html import plain
 from hackaday.posts import Post, comment_of, post_of
 from hackaday.tools import ToolError, picture_tti
 
@@ -144,6 +145,12 @@ class Library:
             return []
         raw = await self.fetcher.json(api("posts", tags=tags[0]["id"], per_page=count, _embed=EMBED))
         return [post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None]
+
+    async def author(self, author: int, count: int = 3) -> tuple[int, list[str]]:
+        """Answer how many posts an author has written, and the titles of their latest."""
+        answer = await self.fetcher.get(api("posts", author=author, per_page=count, _fields="title"))
+        titles = [plain(item["title"]["rendered"]) for item in json.loads(answer.body) if isinstance(item, dict) and "title" in item]
+        return int(answer.headers.get("x-wp-total", "0") or 0), titles
 
     async def random_post(self, generator: random.Random) -> Post | None:
         """Answer a post from anywhere in the archive."""
