@@ -9,6 +9,7 @@
 
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU16, Ordering};
 
 use neoteletext_audio::encode::{Command, Sound};
 use neoteletext_audio::{Codec, IMA_BLOCK_SMALL};
@@ -196,11 +197,17 @@ fn library_records() -> Vec<Vec<u8>> {
     records
 }
 
-/// Which sessions hold the library, and the commands' numbering.
+/// The commands' sequence number, one for every [`Sounds`] of the
+/// process: a receiver keeps one latest sequence per audio channel for the
+/// whole service (the engine's `Command::sequence`, "newer than the
+/// channel's last command"), so two applications numbering their own
+/// commands from 0 would each find the other's newer and its own ignored.
+static SEQUENCE: AtomicU16 = AtomicU16::new(0);
+
+/// Which sessions hold the library, and the channel the next effect uses.
 pub struct Sounds {
     library: Vec<Vec<u8>>,
     loaded: BTreeSet<SessionId>,
-    sequence: u16,
     channel: u8,
 }
 
@@ -214,7 +221,7 @@ impl Sounds {
     /// The library, synthesized once.
     #[must_use]
     pub fn new() -> Self {
-        Self { library: library_records(), loaded: BTreeSet::new(), sequence: 0, channel: 0 }
+        Self { library: library_records(), loaded: BTreeSet::new(), channel: 0 }
     }
 
     /// Sends the library to `session` if it does not hold it yet: once a
@@ -228,11 +235,18 @@ impl Sounds {
     /// Plays `effect` for `session`, sending the library first if needed.
     pub fn play(&mut self, session: SessionId, effect: Effect, context: &mut Context<'_>) {
         self.load(session, context);
-        self.sequence = self.sequence.wrapping_add(1);
+        let command = self.command(effect);
+        context.sound(Audience::Session(session), alloc::vec![command.record()]);
+    }
+
+    /// The command that plays `effect`: the next channel of the three, and
+    /// the next sequence number of the process's one count.
+    fn command(&mut self, effect: Effect) -> Command {
         self.channel = self.channel.wrapping_add(1) % EFFECT_CHANNELS;
-        let command = Command {
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        Command {
             channel: self.channel,
-            sequence: self.sequence,
+            sequence,
             operation: PLAY,
             handle: effect.handle(),
             generation: 1,
@@ -241,8 +255,7 @@ impl Sounds {
             flags: 0,
             duck: 0,
             page: None,
-        };
-        context.sound(Audience::Session(session), alloc::vec![command.record()]);
+        }
     }
 
     /// Forgets `session`, which ended.
@@ -250,3 +263,6 @@ impl Sounds {
         self.loaded.remove(&session);
     }
 }
+
+#[cfg(test)]
+mod tests;
