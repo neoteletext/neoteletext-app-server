@@ -67,6 +67,7 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
   - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`, 8 `MOUSE_BUTTONS`, 16 `MOUSE_DRAG`, 32 `MOUSE_ALL`).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
+- The server writes row 0's header itself, as a teletext inserter does (EN 300 706 clause 9.3.1): the channel's name, the page's number, the date and the time, UTC, such as `HACKADAY 100 Mon 26 Oct 23:15/42`; what a program writes in columns 8 to 39 of row 0 is replaced. It also sends every viewer a time-filling header each second, so the clock on a page that does not change keeps time (the engine's decision E.121). Columns 0 to 7 are the receiver's.
 
 ### 3.3 `goto`
 

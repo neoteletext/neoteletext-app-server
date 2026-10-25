@@ -113,6 +113,11 @@ fn a_published_tti_page_is_the_channels() {
     let pages = texts(&frame);
     assert_eq!(pages.len(), 1);
     assert!(pages[0].1.contains("HACKADAY") && pages[0].1.contains("Fresh hacks every day"), "{:?}", pages[0].1);
+    let header = frame.chunks(PACKET_BYTES).find_map(|chunk| match decode(&Packet { bytes: chunk.try_into().ok()? }) {
+        Ok(Decoded::Header(header)) => Some(header.display.iter().map(|&byte| char::from(byte & 0x7F)).collect::<String>()),
+        _ => None,
+    });
+    assert_eq!(header.as_deref(), Some("TEST     100 Thu 01 Jan 00:00/01"), "the service's header, as an inserter writes it");
 }
 
 /// What a viewer does reaches the application as lines; its answer for one

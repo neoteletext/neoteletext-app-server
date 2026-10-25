@@ -23,6 +23,7 @@ use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, COMPOSE, CURSOR_CAP, ECHO_CAP
 
 use crate::application::{Action, Application, Audience, Context, Owner, PageEntry};
 use crate::frame::page_frame;
+use crate::header;
 use crate::input::Input;
 use crate::session::Session;
 use crate::stats::{ChannelStats, count};
@@ -187,6 +188,23 @@ impl Channel {
     /// Every page the applications serve, in order.
     pub fn entries(&self) -> impl Iterator<Item = &PageEntry> {
         self.applications.iter().flat_map(|hosted| hosted.pages.iter())
+    }
+
+    /// `subpages` with the service's header written in, as an inserter
+    /// writes it, at `now` (`header.rs`).
+    fn headed(&self, mut subpages: Vec<PageFile>, now: u64) -> Vec<PageFile> {
+        let epoch_ms = self.config.epoch_at_start_ms.saturating_add(now);
+        for page in &mut subpages {
+            header::stamp(page, &self.config.name, epoch_ms);
+        }
+        subpages
+    }
+
+    /// A time-filling header at `now`, for the host to send every viewer
+    /// each second, so that their clocks keep time (`header.rs`).
+    #[must_use]
+    pub fn time_filling(&self, now: u64) -> Arc<[u8]> {
+        Arc::from(&header::time_filling(&self.config.name, self.config.epoch_at_start_ms.saturating_add(now))[..])
     }
 
     /// Whether the channel has published `page` for every viewer.
@@ -392,15 +410,15 @@ impl Channel {
             run(hosted.application.as_mut(), &mut context);
         }
         for action in actions {
-            self.act(index, action);
+            self.act(index, action, now);
         }
     }
 
-    fn act(&mut self, index: usize, action: Action) {
+    fn act(&mut self, index: usize, action: Action, now: u64) {
         match action {
             Action::Publish { owner: Owner::Channel, number, subpages } => {
                 count(&mut self.stats.shared_published);
-                let held = Held::of(&subpages);
+                let held = Held::of(&self.headed(subpages, now));
                 self.effects.push(Effect::Shared { page: number, frame: Arc::clone(&held.frame) });
                 // A page published for the first time is listed from now on.
                 if self.shared.insert(number, held).is_none() {
@@ -408,6 +426,7 @@ impl Channel {
                 }
             }
             Action::Publish { owner: Owner::Session(session), number, subpages } => {
+                let subpages = self.headed(subpages, now);
                 let Some(state) = self.sessions.get_mut(&session) else { return };
                 count(&mut self.stats.own_published);
                 let held = Held::of(&subpages);
