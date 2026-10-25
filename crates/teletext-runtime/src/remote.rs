@@ -380,6 +380,7 @@ fn event(input: &Input<'_>) -> Writer {
         Input::Mouse { pressed, button, column, row } => {
             event
                 .text("kind", "mouse")
+                .text("action", if pressed { "press" } else { "release" })
                 .boolean("pressed", pressed)
                 .integer("button", i64::from(button))
                 .integer("column", i64::from(column))

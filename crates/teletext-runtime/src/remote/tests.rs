@@ -296,3 +296,25 @@ fn the_channel_counts_what_happens() {
     assert_eq!(stats.lines_from_application, 1);
     assert!(stats.lines_to_application >= 4, "start, joins, open, input and close went to it");
 }
+
+/// Every mouse event names its action, a press and a release as a move
+/// does (docs/applications.md section 2), since a program tells a press
+/// that grips a scroll bar from the release that lets it go by it alone.
+#[test]
+fn mouse_events_name_their_action() {
+    use neoteletext_input::event::{Mouse, MouseAction, Point};
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    channel.take_effects();
+    let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
+    for (action, button) in [(MouseAction::Press, 0), (MouseAction::Move, 1), (MouseAction::Release, 0)] {
+        send(&mut channel, &InputItem::Event(Event::Mouse(Mouse { action, button, at })));
+    }
+    let told = lines(&channel.take_effects());
+    let actions: Vec<Option<&str>> = told.iter().map(|line| line.get("event").and_then(|event| event.get("action")).and_then(Value::text)).collect();
+    assert_eq!(actions, [Some("press"), Some("move"), Some("release")]);
+    let pressed: Vec<Option<bool>> = told.iter().map(|line| line.get("event").and_then(|event| event.get("pressed")).and_then(Value::boolean)).collect();
+    assert_eq!(pressed, [Some(true), None, Some(false)]);
+}
