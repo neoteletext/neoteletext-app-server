@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Colour, Mode, mosaicColour } from "../../../kits/typescript/src/kit.ts";
+import { Button, Colour, Held, Mode, mosaicColour } from "../../../kits/typescript/src/kit.ts";
 import { Harness, type Rows, text } from "../../../kits/typescript/src/testing.ts";
 import { FASTEXT_ROW, labelColumns, labels } from "../src/common.ts";
 import { services } from "../src/services.ts";
@@ -19,6 +19,7 @@ import {
   draw,
   lines,
   thumb,
+  topAt,
 } from "../src/services/long-read.ts";
 import { LONG_READ, navigation } from "../src/services/pages.ts";
 
@@ -70,7 +71,7 @@ test("the keys scroll each reader's own page", () => {
   const shared = harness.shared(LONG_READ);
   assert.equal(topOf(shared), 0);
   assert.ok(text(shared, POSITION_ROW).includes(`Lines 1-${VIEW_ROWS} of ${lines().length}`));
-  assert.equal(harness.pageModes(READER), Mode.MouseButtons, "the page takes clicks and the wheel");
+  assert.equal(harness.pageModes(READER), Mode.MouseButtons | Mode.MouseDrag, "the page takes clicks, the wheel and drags");
 
   const screen = VIEW_ROWS - 1;
   harness.press(READER, "PageDown");
@@ -174,6 +175,58 @@ test("a click on the bar moves a screen", () => {
   assert.equal(copies(harness), before, "a click on the block does nothing");
   harness.click(READER, LEFT, 10, bottom);
   assert.equal(copies(harness), before, "a click on the text does nothing");
+});
+
+// Not in the Rust showcase: the bar's block can be pulled, as Hackaday's can.
+test("the block's place on the track gives back the line it was drawn for", () => {
+  const total = lines().length;
+  const [, length] = thumb(0, total);
+  for (let start = 0; start <= TRACK_CELLS - length; start += 1) {
+    assert.equal(thumb(topAt(start, total), total)[0], start, `cell ${start}`);
+  }
+  assert.equal(topAt(-5, total), 0, "above the track is the start");
+  assert.equal(topAt(TRACK_CELLS + 5, total), total - VIEW_ROWS, "below it the end");
+  assert.equal(topAt(4, VIEW_ROWS), 0, "an article that fits does not scroll");
+});
+
+test("the block pulled with the mouse follows the pointer, gripped where it was pressed", () => {
+  const harness = opened();
+  const total = lines().length;
+  // The block is three cells at the top; grip its second.
+  harness.mouse(READER, "press", Button.Left, BAR_COLUMN, VIEW_FIRST_ROW + 1);
+  assert.equal(harness.ownPages(READER, LONG_READ), undefined, "gripping moves nothing");
+  harness.move(READER, Held.Left, BAR_COLUMN, VIEW_FIRST_ROW + 9);
+  const pulled = nowAt(harness);
+  assert.equal(pulled, topAt(8, total));
+  assert.equal(thumb(pulled, total)[0], 8, "the block's top is a cell above the pointer, where it was gripped");
+  harness.move(READER, Held.Left, 10, VIEW_FIRST_ROW + 4);
+  assert.equal(nowAt(harness), topAt(3, total), "off the bar the pointer still pulls it");
+  harness.move(READER, Held.Left, BAR_COLUMN, FASTEXT_ROW + 10);
+  assert.equal(nowAt(harness), total - VIEW_ROWS, "no further than the end");
+  harness.mouse(READER, "release", Button.Left, BAR_COLUMN, FASTEXT_ROW);
+  const before = copies(harness);
+  harness.move(READER, Held.Left, BAR_COLUMN, VIEW_FIRST_ROW);
+  assert.equal(copies(harness), before, "let go: a move does nothing");
+  assert.deepEqual(harness.gotos(READER), [], "nor did any of it follow a link");
+});
+
+test("the block is let go when the button is not held, or the reader leaves", () => {
+  const harness = opened();
+  harness.mouse(READER, "press", Button.Left, BAR_COLUMN, VIEW_FIRST_ROW);
+  harness.move(READER, 0, BAR_COLUMN, VIEW_FIRST_ROW + 6);
+  const before = copies(harness);
+  harness.move(READER, Held.Left, BAR_COLUMN, VIEW_FIRST_ROW + 8);
+  assert.equal(copies(harness), before, "a move without the button let go");
+
+  harness.mouse(READER, "press", Button.Left, BAR_COLUMN, VIEW_FIRST_ROW);
+  harness.open(READER, 0x100);
+  harness.open(READER, LONG_READ);
+  harness.move(READER, Held.Left, BAR_COLUMN, VIEW_FIRST_ROW + 8);
+  assert.equal(copies(harness), before, "leaving let go");
+
+  harness.mouse(READER, "press", Button.Right, BAR_COLUMN, VIEW_FIRST_ROW);
+  harness.move(READER, Held.Right, BAR_COLUMN, VIEW_FIRST_ROW + 8);
+  assert.equal(copies(harness), before, "only the left button grips");
 });
 
 test("a click on a prompt follows its link", () => {

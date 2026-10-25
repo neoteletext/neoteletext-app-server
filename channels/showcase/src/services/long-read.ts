@@ -12,7 +12,9 @@
 //   sixels. A cell has one foreground colour (EN 300 706 clause 12.2), so a
 //   block that ended part-way through a cell would paint that cell's track
 //   white too; the block moves by whole cells. A click above or below the
-//   block moves a screen.
+//   block moves a screen; a press on the block grips it, and the page asks
+//   for MOUSE_DRAG, so the pointer's moves with the button held pull it
+//   and the release lets go.
 // - Fastext: the services' links. The page takes the mouse, so the
 //   receiver sends a click on a prompt here, and the kit follows it.
 
@@ -21,6 +23,7 @@ import {
   type Application,
   Button,
   COLUMNS,
+  Held,
   Colour,
   type Context,
   type Input,
@@ -85,7 +88,7 @@ const ARTICLE: readonly Part[] = [
   },
   {
     paragraph:
-      "Page Down and Page Up move a screen at a time, the arrow keys a line, and Home and End go to the start and the end. The wheel scrolls too. The bar on the right shows where you are: click above or below its block to move a screen.",
+      "Page Down and Page Up move a screen at a time, the arrow keys a line, and Home and End go to the start and the end. The wheel scrolls too. The bar on the right shows where you are: pull its block, or click above or below it to move a screen.",
   },
   { heading: "The page" },
   {
@@ -216,10 +219,25 @@ function drawBar(screen: Screen, top: number, total: number): void {
   }
 }
 
+/**
+ * The first line shown when the bar's block is pulled to start at cell
+ * `start` of the track: {@link thumb} turned round, the nearest line
+ * whose block starts there, held within the article.
+ */
+export function topAt(start: number, total: number): number {
+  const [, length] = thumb(0, total);
+  const room = TRACK_CELLS - length;
+  const most = lastTop(total);
+  if (room <= 0 || most <= 0) {
+    return 0;
+  }
+  return Math.min(most, Math.max(0, rounded(start * most, room)));
+}
+
 /** The page with the article from line `top`. */
 export function draw(all: readonly Line[], top: number): Screen {
   const screen = page(TITLE, BAND, navigation(LONG_READ));
-  screen.modes(Mode.MouseButtons);
+  screen.modes(Mode.MouseButtons | Mode.MouseDrag);
   const first = Math.min(top, lastTop(all.length));
   all.slice(first, first + VIEW_ROWS).forEach((line, offset) => {
     if (line.text.length > 0) {
@@ -235,14 +253,15 @@ export function draw(all: readonly Line[], top: number): Screen {
   return screen;
 }
 
-/** One viewer: the first line they see, and the wheel's turn not yet a whole line. */
+/** One viewer: the first line they see, the wheel's turn not yet a whole line, and the cell of the bar's block they hold, if they hold it. */
 interface Reader {
   top: number;
   wheel: number;
+  grip: number | null;
 }
 
-/** What an input asks of the view: lines down (up when negative), the start, or the end. */
-type Move = { readonly by: number } | { readonly to: "start" | "end" };
+/** What an input asks of the view: lines down (up when negative), the start, the end, or a line the bar was pulled to. */
+type Move = { readonly by: number } | { readonly to: "start" | "end" } | { readonly at: number };
 
 /** A screen's move: one line short of the view, kept for context. */
 const SCREENFUL = VIEW_ROWS - 1;
@@ -288,24 +307,50 @@ export class LongRead implements Application {
       reader.wheel = Math.trunc((turned % NOTCH) / WHEEL_LINES);
       return moved === 0 ? null : { by: moved };
     }
-    if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
-      const { column, row } = input;
-      const cellRow = row - VIEW_FIRST_ROW;
-      if (cellRow < 0 || cellRow >= VIEW_ROWS || column < BAR_ATTRIBUTE_COLUMN) {
-        return null;
-      }
-      const [start, length] = thumb(top, this.#lines.length);
-      if (cellRow < start) {
-        return { by: -SCREENFUL };
-      }
-      return cellRow >= start + length ? { by: SCREENFUL } : null;
+    return input.kind === "mouse" ? this.#dragged(input, top, reader) : null;
+  }
+
+  /**
+   * What the mouse does to the bar: a press on the block grips it where it
+   * was pressed and moves with the left button held pull it; a press above
+   * or below it turns a screen, as a desktop scroll bar does; the release
+   * lets go. Anything else is not the bar's.
+   */
+  #dragged(input: Input & { kind: "mouse" }, top: number, reader: Reader): Move | null {
+    const total = this.#lines.length;
+    const cellRow = input.row - VIEW_FIRST_ROW;
+    if (input.action === "press") {
+      reader.grip = null;
+      const onBar = input.button === Button.Left && input.column >= BAR_ATTRIBUTE_COLUMN && cellRow >= 0 && cellRow < VIEW_ROWS && total > VIEW_ROWS;
+      return onBar ? this.#barPressed(cellRow, top, reader) : null;
     }
-    return null;
+    const grip = reader.grip;
+    if (grip === null) {
+      return null;
+    }
+    if (input.action === "move" && (input.buttons & Held.Left) !== 0) {
+      return { at: topAt(cellRow - grip, total) };
+    }
+    reader.grip = null;
+    return { by: 0 };
+  }
+
+  /** Where a press on the bar's cell `cellRow` takes the view at `top`, gripping the block when it is on it. */
+  #barPressed(cellRow: number, top: number, reader: Reader): Move {
+    const [start, length] = thumb(top, this.#lines.length);
+    if (cellRow < start) {
+      return { by: -SCREENFUL };
+    }
+    if (cellRow >= start + length) {
+      return { by: SCREENFUL };
+    }
+    reader.grip = cellRow - start;
+    return { by: 0 };
   }
 
   /** Answers whether the page took `input`: a click elsewhere than the bar, such as on a Fastext prompt, is the kit's to follow. */
   input(session: number, _page: number, input: Input, context: Context): boolean {
-    const reader = this.#readers.get(session) ?? { top: 0, wheel: 0 };
+    const reader = this.#readers.get(session) ?? { top: 0, wheel: 0, grip: null };
     this.#readers.set(session, reader);
     const top = reader.top;
     const wanted = this.#wanted(input, top, reader);
@@ -313,12 +358,20 @@ export class LongRead implements Application {
     if (wanted === null) {
       return false;
     }
-    const next = "by" in wanted ? Math.min(last, Math.max(0, top + wanted.by)) : wanted.to === "start" ? 0 : last;
+    const next = "by" in wanted ? Math.min(last, Math.max(0, top + wanted.by)) : "at" in wanted ? wanted.at : wanted.to === "start" ? 0 : last;
     if (next !== top) {
       reader.top = next;
       context.publish(session, LONG_READ, draw(this.#lines, next));
     }
     return true;
+  }
+
+  /** A viewer who left lets go of the bar: its release went elsewhere. */
+  leftPage(session: number): void {
+    const reader = this.#readers.get(session);
+    if (reader !== undefined) {
+      reader.grip = null;
+    }
   }
 
   ended(session: number): void {
