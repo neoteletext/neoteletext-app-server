@@ -256,7 +256,7 @@ fn carousels_number_their_sub_pages() {
 }
 
 mod long_read_page {
-    use super::long_read::{BAR_ATTRIBUTE_COLUMN, BAR_COLUMN, POSITION_ROW, TEXT_WIDTH, TRACK_SIXELS, VIEW_FIRST_ROW, VIEW_ROWS, lines, thumb};
+    use super::long_read::{BAR_ATTRIBUTE_COLUMN, BAR_COLUMN, POSITION_ROW, TEXT_WIDTH, TRACK_CELLS, VIEW_FIRST_ROW, VIEW_ROWS, lines, thumb};
     use super::{LONG_READ, applications, navigation};
     use crate::common::{FASTEXT_ROW, label_columns};
     use crate::testing::{Harness, Rows, pages_in, sent, text};
@@ -376,11 +376,13 @@ mod long_read_page {
         let total = lines().len();
         let (start, length) = thumb(0, total);
         assert_eq!(start, 0);
-        assert_eq!(length, (TRACK_SIXELS * VIEW_ROWS / total).max(3));
+        // 19 of 140 lines shown, of a 19-cell track: 2.6 cells, rounded.
+        assert_eq!(total, 140, "the figure below is for this length");
+        assert_eq!(length, 3);
         let (start, length) = thumb(total - VIEW_ROWS, total);
-        assert_eq!(start + length, TRACK_SIXELS, "the block ends at the bottom");
+        assert_eq!(start + length, TRACK_CELLS, "the block ends at the bottom");
         let middle = thumb((total - VIEW_ROWS) / 2, total).0;
-        assert!(middle > 0 && middle + length < TRACK_SIXELS, "halfway is between");
+        assert!(middle > 0 && middle + length < TRACK_CELLS, "halfway is between");
 
         let mut harness = opened();
         let at_top = harness.shared(LONG_READ);
@@ -394,6 +396,26 @@ mod long_read_page {
         assert_eq!(at_end[VIEW_FIRST_ROW][BAR_COLUMN], TRACK);
         assert_eq!(at_end[bottom][BAR_COLUMN], FULL);
         assert_eq!(at_end[bottom][BAR_ATTRIBUTE_COLUMN], Colour::White.mosaic());
+    }
+
+    /// At every place in the article each cell of the bar is wholly block
+    /// (white, every sixel) or wholly track (blue, the thin line), and the
+    /// block is one run: a cell has one foreground colour, so a cell with
+    /// both drew a second, smaller white piece beside the block.
+    #[test]
+    fn the_bar_is_one_clean_block_at_every_place() {
+        let all = lines();
+        for top in 0..=all.len() - VIEW_ROWS {
+            let screen = super::long_read::draw(&all, top);
+            let cells: alloc::vec::Vec<(u8, u8)> =
+                (0..VIEW_ROWS).map(|row| (screen.at(VIEW_FIRST_ROW + row, BAR_ATTRIBUTE_COLUMN), screen.at(VIEW_FIRST_ROW + row, BAR_COLUMN))).collect();
+            for &cell in &cells {
+                assert!(cell == (Colour::White.mosaic(), FULL) || cell == (Colour::Blue.mosaic(), TRACK), "line {top}: {cell:02X?}");
+            }
+            let block: alloc::vec::Vec<usize> = (0..VIEW_ROWS).filter(|&row| cells[row].1 == FULL).collect();
+            assert!(block.windows(2).all(|pair| pair[1] == pair[0] + 1), "line {top}: one run, {block:?}");
+            assert_eq!(block.first().copied(), Some(thumb(top, all.len()).0));
+        }
     }
 
     /// A click on the track below the block pages down, above it pages up,

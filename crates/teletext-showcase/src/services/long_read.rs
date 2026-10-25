@@ -6,9 +6,12 @@
 //! - **Keys:** Page Down (or Space) and Page Up a screen, keeping one line
 //!   for context; Down and Up a line; Home and End.
 //! - **The wheel:** three lines a notch.
-//! - **The scroll bar,** in the last column, drawn in mosaic sixels: its
-//!   block is the part shown, in proportion to the whole. A click above or
-//!   below the block moves a screen.
+//! - **The scroll bar,** in the last column: a white block of whole cells,
+//!   the part shown in proportion to the whole, on a thin blue track of
+//!   mosaic sixels. A cell has one foreground colour (EN 300 706 clause
+//!   12.2), so a block that ended part-way through a cell would paint that
+//!   cell's track white too; the block moves by whole cells. A click above
+//!   or below the block moves a screen.
 //! - **Fastext:** the services' links. The page takes the mouse, so the
 //!   receiver sends a click on a prompt here and the page follows it.
 
@@ -45,10 +48,10 @@ pub const BAR_ATTRIBUTE_COLUMN: usize = BAR_COLUMN - 1;
 /// The characters of an article line after its colour attribute, ending
 /// a cell short of the scroll bar's colour.
 pub const TEXT_WIDTH: usize = BAR_ATTRIBUTE_COLUMN - BODY_COLUMN - 2;
-/// The bar's height in sixels.
-pub const TRACK_SIXELS: usize = VIEW_ROWS * SIXELS_DOWN;
-/// The shortest block, a cell's height, so it can always be seen and hit.
-const SHORTEST_THUMB: usize = SIXELS_DOWN;
+/// The bar's height in cells.
+pub const TRACK_CELLS: usize = VIEW_ROWS;
+/// The shortest block, one cell, so it can always be seen and hit.
+const SHORTEST_THUMB: usize = 1;
 /// The sixel column of the bar's thin track: the left of the cell's two.
 const TRACK_SIXEL: usize = 0;
 /// Lines a wheel notch scrolls, as desktop browsers do.
@@ -158,42 +161,43 @@ pub fn lines() -> Vec<Line> {
     lines
 }
 
-/// Where the scroll bar's block lies, in sixels from the top of the
-/// track: its first sixel and its length. The block's length is the share
-/// of the article shown; it reaches the track's top exactly at the first
-/// line and its bottom exactly at the last.
+/// `numerator` / `denominator`, rounded to the nearest whole number; 0
+/// for a denominator of 0.
+fn rounded(numerator: usize, denominator: usize) -> usize {
+    numerator.saturating_mul(2).saturating_add(denominator).checked_div(denominator.saturating_mul(2)).unwrap_or(0)
+}
+
+/// Where the scroll bar's block lies, in cells from the top of the track:
+/// its first cell and its length. The block's length is the share of the
+/// article shown; it reaches the track's top exactly at the first line and
+/// its bottom exactly at the last.
 #[must_use]
 pub fn thumb(top: usize, total: usize) -> (usize, usize) {
     let shown = VIEW_ROWS.min(total);
-    let length = TRACK_SIXELS.saturating_mul(shown).checked_div(total).unwrap_or(TRACK_SIXELS).clamp(SHORTEST_THUMB, TRACK_SIXELS);
+    let length = rounded(TRACK_CELLS.saturating_mul(shown), total).clamp(SHORTEST_THUMB, TRACK_CELLS);
     let last_top = total.saturating_sub(VIEW_ROWS);
-    let room = TRACK_SIXELS.saturating_sub(length);
-    // Rounded to the nearest sixel.
-    let start = room.saturating_mul(top.min(last_top)).saturating_mul(2).saturating_add(last_top).checked_div(last_top.saturating_mul(2)).unwrap_or(0);
-    (start.min(room), length)
+    let room = TRACK_CELLS.saturating_sub(length);
+    (rounded(room.saturating_mul(top.min(last_top)), last_top).min(room), length)
 }
 
 /// Draws the scroll bar for the view from line `top` of `total`.
 fn draw_bar(screen: &mut Screen, top: usize, total: usize) {
     let (start, length) = thumb(top, total);
-    let end = start.saturating_add(length);
-    let mut bar = Sixels::new(SIXELS_ACROSS, TRACK_SIXELS);
-    for y in 0..TRACK_SIXELS {
-        if (start..end).contains(&y) {
-            for x in 0..SIXELS_ACROSS {
-                bar.set(x, y, true);
-            }
-        } else {
-            bar.set(TRACK_SIXEL, y, true);
+    let block = start..start.saturating_add(length);
+    // One cell of each: the block fills its cell, the track is a line.
+    let mut cells = Sixels::new(SIXELS_ACROSS.saturating_mul(2), SIXELS_DOWN);
+    for y in 0..SIXELS_DOWN {
+        for x in 0..SIXELS_ACROSS {
+            cells.set(x, y, true);
         }
+        cells.set(SIXELS_ACROSS.saturating_add(TRACK_SIXEL), y, true);
     }
-    for cell_row in 0..VIEW_ROWS {
-        let first_sixel = cell_row.saturating_mul(SIXELS_DOWN);
-        let holds_thumb = first_sixel < end && first_sixel.saturating_add(SIXELS_DOWN) > start;
-        let colour = if holds_thumb { Colour::White } else { Colour::Blue };
+    let (full, track) = (cells.cell(0, 0), cells.cell(SIXELS_ACROSS, 0));
+    for cell_row in 0..TRACK_CELLS {
+        let (colour, code) = if block.contains(&cell_row) { (Colour::White, full) } else { (Colour::Blue, track) };
         let row = VIEW_FIRST_ROW.saturating_add(cell_row);
         screen.code(row, BAR_ATTRIBUTE_COLUMN, colour.mosaic());
-        screen.code(row, BAR_COLUMN, bar.cell(0, first_sixel));
+        screen.code(row, BAR_COLUMN, code);
     }
 }
 
@@ -301,10 +305,9 @@ impl LongRead {
                     return None;
                 }
                 let (start, length) = thumb(top, self.lines.len());
-                let middle = cell_row.saturating_mul(SIXELS_DOWN).saturating_add(SIXELS_DOWN / 2);
-                if middle < start {
+                if cell_row < start {
                     Some(Move::By(screenful().saturating_neg()))
-                } else if middle >= start.saturating_add(length) {
+                } else if cell_row >= start.saturating_add(length) {
                     Some(Move::By(screenful()))
                 } else {
                     None
