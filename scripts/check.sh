@@ -25,7 +25,7 @@ fuzz_seconds="${TELETEXT_FUZZ_SECONDS:-20}"
 # (requirement 1.3).
 readonly WASM_TARGET="wasm32-unknown-unknown"
 # The crates that build for WebAssembly: everything a Worker links.
-readonly WASM_CRATES=(teletext-runtime)
+readonly WASM_CRATES=(teletext-runtime teletext-showcase)
 
 step() { printf '\n== %s\n' "$*"; }
 fail() {
@@ -40,7 +40,8 @@ $out_of_date"
 
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root. Every crate root must be listed.
-readonly NO_PANIC_ROOTS=(crates/teletext-runtime/src/lib.rs)
+readonly NO_PANIC_ROOTS=(crates/teletext-runtime/src/lib.rs crates/teletext-showcase/src/lib.rs crates/teletext-native/src/lib.rs crates/teletext-native/src/main.rs
+    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-native/src/bin/teletext-pages.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate root"

@@ -37,6 +37,18 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Verification:** Check: the commit gate runs Clippy for `wasm32-unknown-unknown` over the runtime, and `no_std` keeps the standard library's input and output out.
 - **State:** Met for what exists, 25 October 2026: `teletext-runtime` is `no_std` and passes Clippy for `wasm32-unknown-unknown`.
 
+### Requirement 1.4: As many connections as possible
+- **Statement:** The native server must hold as many WebSocket connections as the host's memory and open-file limit allow. Its costs:
+  - a shared page's change costs the channel the same whatever the number of viewers;
+  - each connection's idle memory is measured and kept small;
+  - a slow connection never makes the server hold more than one version of each page for it.
+
+  The numbers must be measured on `foundintelquiet4060` and recorded here: connections held, memory per connection, and time from a change to the last viewer's send.
+- **Reason:** The owner: scale is critical.
+- **Source:** Decision 7.
+- **Verification:** Test: the load client (`teletext-load`) against the server on the host; the numbers in this State line.
+- **State:** Not met, 25 October 2026: not yet built or measured.
+
 ## 2. Build and verification
 
 ### Requirement 2.1: One check script and the git hooks

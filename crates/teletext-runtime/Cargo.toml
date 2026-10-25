@@ -1,11 +1,17 @@
 [package]
 name = "teletext-runtime"
-description = "The server's runtime without input or output: one channel's page store, tune tables, sender, sessions and application host, driven by the events a host gives it and answering with the effects the host carries out"
+description = "The server's runtime without input or output: one channel's pages, sessions and applications, driven by the events a host gives it and answering with the bytes the host sends"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+neoteletext-core.workspace = true
+neoteletext-formats.workspace = true
+neoteletext-input.workspace = true
+neoteletext-audio.workspace = true
 
 [lints]
 workspace = true

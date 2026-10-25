@@ -1,0 +1,33 @@
+[package]
+name = "teletext-native"
+description = "The server on Linux, macOS and Windows: tokio and hyper around the runtime, HTTP and WebSocket, and the load client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "teletext-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "teletext-load"
+path = "src/bin/teletext-load.rs"
+
+[[bin]]
+name = "teletext-pages"
+path = "src/bin/teletext-pages.rs"
+
+[dependencies]
+teletext-runtime.workspace = true
+teletext-showcase.workspace = true
+neoteletext-web.workspace = true
+neoteletext-core.workspace = true
+neoteletext-input.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+
+[lints]
+workspace = true

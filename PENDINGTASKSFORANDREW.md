@@ -4,9 +4,8 @@ What only Andrew can do: decisions, accounts, money, keys, people, machines, and
 
 ## Decisions
 
-1. **Confirm decision 2:** async Rust in the hosts around a runtime with no input or output; native on tokio, Cloudflare on `workers-rs` with a Durable Object per channel (`docs/architecture.md` section 3). Unblocks the hosts.
 2. **Confirm decision 4:** the MIT licence.
-3. **Approve the libraries of decision 5 by name:** `tokio`, `hyper`, `hyper-util`, `rustls`, `tokio-rustls` for the native host; `worker` for Cloudflare; `getrandom` for session tokens. Unblocks the native and Cloudflare hosts.
+3. **Approve `worker` (Cloudflare) and `getrandom`** by name when the Cloudflare host is built (decision 5).
 
 ## Accounts
 
