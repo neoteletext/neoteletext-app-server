@@ -16,10 +16,10 @@ import { Instrument, STEP_CHOICES } from "../src/services/markets.ts";
 import { screens as newsScreens } from "../src/services/news.ts";
 import {
   ABOUT,
+  BEHIND,
   CLOCK,
   FACTS,
   GUIDE,
-  LONG_READ,
   MARKETS,
   NEWS,
   SERVICES,
@@ -295,7 +295,7 @@ test("digits and the coloured keys select pages from the services", () => {
   harness.press(1, Key.F1);
   harness.press(1, Key.Green);
   harness.press(1, Key.Blue);
-  assert.deepEqual(harness.gotos(1), [FACTS, LONG_READ, WEATHER, INDEX], "red the service before, green after, cyan the index");
+  assert.deepEqual(harness.gotos(1), [FACTS, BEHIND, WEATHER, INDEX], "red the service before (the last, round the ring), green after, cyan the index");
   harness.typeText(1, "999");
-  assert.deepEqual(harness.gotos(1), [FACTS, LONG_READ, WEATHER, INDEX], "no magazine 9");
+  assert.deepEqual(harness.gotos(1), [FACTS, BEHIND, WEATHER, INDEX], "no magazine 9");
 });

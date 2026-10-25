@@ -24,6 +24,8 @@ export const ABOUT = 0x108;
 export const FACTS = 0x109;
 /** The long read, scrolled within the page. */
 export const LONG_READ = 0x110;
+/** Behind the scenes: the server's own figures, at the number Hackaday shows its own on. */
+export const BEHIND = 0x150;
 
 /** A service: its page and its Fastext label (at most nine characters, a quarter of row 24 after its colour). */
 type Service = readonly [page: number, label: string];
@@ -40,6 +42,7 @@ export const SERVICES: readonly Service[] = [
   [ABOUT, "About"],
   [FACTS, "Facts"],
   [LONG_READ, "Long read"],
+  [BEHIND, "Behind"],
 ];
 
 /** The yellow link's choices, in order: the first that is not the page itself nor already red or green. */

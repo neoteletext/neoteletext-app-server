@@ -1,7 +1,7 @@
 // Live services (pages 101 to 199; crates/teletext-showcase/src/
 // services.rs): news, weather, a world clock, markets, the server clock,
-// sport, a TV guide, pages about NeoTeletext and teletext, and a long read
-// that scrolls. Every page but the long read is the channel's: drawn once
+// sport, a TV guide, pages about NeoTeletext and teletext, a long read
+// that scrolls, and the server's own figures behind the scenes. Every page but the long read is the channel's: drawn once
 // per change and sent to every viewer (decision 7), each application
 // waking only as often as its page changes. The long read is each
 // reader's own once they scroll.
@@ -13,13 +13,14 @@ import type { Area, Section } from "./area.ts";
 import { page } from "./common.ts";
 import { type Application, Colour, type Context, type PageEntry, Sixels } from "./kit.ts";
 import { About } from "./services/about.ts";
+import { Behind } from "./services/behind.ts";
 import { SECOND_MS, two } from "./services/calendar.ts";
 import { DIGIT_HEIGHT, digits, publish } from "./services/draw.ts";
 import { Guide } from "./services/guide.ts";
 import { LongRead } from "./services/long-read.ts";
 import { Markets } from "./services/markets.ts";
 import { News } from "./services/news.ts";
-import { ABOUT, CLOCK, NEWS, WORLD_CLOCK, navigation } from "./services/pages.ts";
+import { ABOUT, BEHIND, CLOCK, NEWS, WORLD_CLOCK, navigation } from "./services/pages.ts";
 import { Sport } from "./services/sport.ts";
 import { Weather } from "./services/weather.ts";
 import { WorldClock } from "./services/world-clock.ts";
@@ -77,11 +78,12 @@ export class Clock implements Application {
 
 /** The live services. */
 export const services: Area = {
-  applications: () => [new News(), new Weather(), new WorldClock(), new Markets(), new Clock(), new Sport(), new Guide(), new About(), new LongRead()],
-  // Three entries, each naming the pages it leads to, so the index keeps room for the other areas.
+  applications: () => [new News(), new Weather(), new WorldClock(), new Markets(), new Clock(), new Sport(), new Guide(), new About(), new LongRead(), new Behind()],
+  // Four entries, each naming the pages it leads to, so the index keeps room for the other areas.
   sections: (): readonly Section[] => [
     { page: NEWS, name: "News and live services", about: "weather 102 markets 104 sport 106" },
     { page: WORLD_CLOCK, name: "Clocks and TV guide", about: "world 103, server 105, TV 107" },
     { page: ABOUT, name: "About NeoTeletext", about: "facts 109 and a long read on 110" },
+    { page: BEHIND, name: "Behind the scenes", about: "the server's own figures, live" },
   ],
 };
