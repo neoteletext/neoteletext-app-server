@@ -1,0 +1,9 @@
+[toolchain]
+# The engine's and the browser's release (`neoteletext-common/DEVELOPMENT.md`
+# section 11: the repositories pin the same Rust). wasm32-unknown-unknown is
+# Cloudflare Workers' target, which the runtime must always build for
+# (requirement 1.3).
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

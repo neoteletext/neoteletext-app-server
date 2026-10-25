@@ -1,3 +1,12 @@
 target/
+/tools
+tmp/
+.claude/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
 .DS_Store
-.env
+.env*
+*.pem
+*.key
+*.bak*
