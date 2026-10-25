@@ -52,7 +52,7 @@ impl Application for Echo {
 }
 
 fn channel() -> Channel {
-    let config = ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100 };
+    let config = ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
     let mut channel = Channel::new(config, alloc::vec![Box::new(Echo::default())], 7);
     channel.start(0);
     channel

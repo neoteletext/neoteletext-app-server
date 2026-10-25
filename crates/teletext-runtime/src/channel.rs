@@ -48,6 +48,10 @@ pub struct ChannelConfig {
     pub push_address: String,
     /// The page a viewer starts on.
     pub initial_page: u16,
+    /// The time the host's clock started, in milliseconds since the Unix
+    /// epoch, so applications can show the real time (the host's clock
+    /// itself starts at 0).
+    pub epoch_at_start_ms: u64,
 }
 
 /// What the host does for the channel.
@@ -317,7 +321,7 @@ impl Channel {
         let mut actions = Vec::new();
         {
             let Some(hosted) = self.applications.get_mut(index) else { return };
-            let mut context = Context { now, actions: &mut actions, seed: &mut self.seed };
+            let mut context = Context { now, epoch_at_start: self.config.epoch_at_start_ms, actions: &mut actions, seed: &mut self.seed };
             run(hosted.application.as_mut(), &mut context);
         }
         for action in actions {

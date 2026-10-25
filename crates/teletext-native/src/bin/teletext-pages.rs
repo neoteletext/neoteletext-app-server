@@ -103,7 +103,14 @@ fn main() -> ExitCode {
     }
     let pictures = arguments.pictures.as_deref().map(teletext_native::pictures::load).unwrap_or_default();
     for spec in teletext_showcase::channels(&pictures) {
-        let config = ChannelConfig { name: spec.name.to_owned(), push_address: format!("ws://127.0.0.1/{}/push", spec.folder), initial_page: 0x100 };
+        let config = ChannelConfig {
+            name: spec.name.to_owned(),
+            push_address: format!("ws://127.0.0.1/{}/push", spec.folder),
+            initial_page: 0x100,
+            epoch_at_start_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0)),
+        };
         let mut channel = Channel::new(config, spec.applications, 1);
         let mut now = 0_u64;
         channel.start(now);

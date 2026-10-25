@@ -20,9 +20,9 @@ pub fn sections() -> Vec<Section> {
     Vec::new()
 }
 
-/// The pictures channel's applications: the characters, art, people and
-/// travel collections; none when there are no pictures.
+/// The picture collections' own channels (characters, art, people,
+/// travel); none when there are no pictures.
 #[must_use]
-pub fn collections(_pictures: &[Picture]) -> Vec<Box<dyn Application>> {
+pub fn channels(_pictures: &[Picture]) -> Vec<crate::channels::ChannelSpec> {
     Vec::new()
 }

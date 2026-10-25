@@ -65,6 +65,7 @@ pub(crate) enum Action {
 /// The application's view of the runtime during one call.
 pub struct Context<'a> {
     pub(crate) now: u64,
+    pub(crate) epoch_at_start: u64,
     pub(crate) actions: &'a mut Vec<Action>,
     pub(crate) seed: &'a mut u64,
 }
@@ -74,6 +75,12 @@ impl Context<'_> {
     #[must_use]
     pub const fn now(&self) -> u64 {
         self.now
+    }
+
+    /// The real time, in milliseconds since the Unix epoch (UTC).
+    #[must_use]
+    pub const fn epoch_ms(&self) -> u64 {
+        self.epoch_at_start.saturating_add(self.now)
     }
 
     /// Publishes a page drawn on a screen, as its one sub-page.

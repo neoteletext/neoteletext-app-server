@@ -99,9 +99,11 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
     // The games' randomness: the time is enough, nothing here is a secret.
     let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |since| u64::try_from(since.as_nanos() & u128::from(u64::MAX)).unwrap_or(1));
     let push = push_origin(&arguments.origin);
+    let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let mut hubs = BTreeMap::new();
     for spec in teletext_showcase::channels(&pictures) {
-        let config = ChannelConfig { name: spec.name.to_owned(), push_address: format!("{push}/{}/{PUSH}", spec.folder), initial_page: 0x100 };
+        let config =
+            ChannelConfig { name: spec.name.to_owned(), push_address: format!("{push}/{}/{PUSH}", spec.folder), initial_page: 0x100, epoch_at_start_ms };
         let channel = Channel::new(config, spec.applications, seed ^ u64::try_from(spec.folder.len()).unwrap_or(0));
         hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start));
     }

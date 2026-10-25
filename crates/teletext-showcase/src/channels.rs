@@ -54,9 +54,6 @@ pub fn channels(pictures: &[Picture]) -> Vec<ChannelSpec> {
         applications.extend(area);
     }
     let mut channels = alloc::vec![ChannelSpec { folder: "showcase", name: "NeoTeletext showcase", applications }];
-    let collections = gallery::collections(pictures);
-    if !collections.is_empty() {
-        channels.push(ChannelSpec { folder: "pictures", name: "NeoTeletext pictures", applications: collections });
-    }
+    channels.extend(gallery::channels(pictures));
     channels
 }
