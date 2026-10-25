@@ -70,10 +70,20 @@ pub fn declared_pages(line: &[u8]) -> Result<Vec<PageEntry>, Refusal> {
     for item in items {
         let number = page_number(item.get("page")).ok_or("pages: a page is a number such as \"100\"")?;
         let title = title_of(item.get("title"), number)?;
+        let section = match item.get("section") {
+            None | Some(Value::Null) => None,
+            some => {
+                Some(title_of(some, number).map_err(|_| format!("pages: the section {number:03X} starts is over {TITLE_LIMIT} characters or has controls"))?)
+            }
+        };
         if entries.iter().any(|entry| entry.number == number) {
             return Err(format!("pages: {number:03X} twice"));
         }
-        entries.push(PageEntry::new(number, title));
+        let entry = PageEntry::new(number, title);
+        entries.push(match section {
+            Some(name) if !name.is_empty() => entry.starting(name),
+            _ => entry,
+        });
     }
     Ok(entries)
 }
@@ -135,6 +145,12 @@ impl Remote {
                 Ok(())
             }
             Some("sound") => self.sound(&value, context),
+            Some("release") => {
+                let session = session_of(value.get("session")).ok_or("release: a session is needed")?;
+                let page = page_number(value.get("page")).ok_or("release: a page such as \"100\" is needed")?;
+                context.release(session, page);
+                Ok(())
+            }
             Some("title") => {
                 let number = page_number(value.get("page")).ok_or("title: a page such as \"100\" is needed")?;
                 if !self.serves(number) {

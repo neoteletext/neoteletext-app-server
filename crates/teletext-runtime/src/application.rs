@@ -39,13 +39,23 @@ pub struct PageEntry {
     /// Its title, at most 32 printable characters (the engine's
     /// `contents.txt` rule).
     pub title: String,
+    /// The section this page starts, if it starts one: `contents.txt`'s
+    /// heading before it, which a receiver takes as its magazine's name.
+    pub section: Option<String>,
 }
 
 impl PageEntry {
     /// An entry.
     #[must_use]
     pub fn new(number: u16, title: &str) -> Self {
-        Self { number, title: String::from(title) }
+        Self { number, title: String::from(title), section: None }
+    }
+
+    /// The entry, starting the section `name`.
+    #[must_use]
+    pub fn starting(mut self, name: &str) -> Self {
+        self.section = Some(String::from(name));
+        self
     }
 }
 
@@ -60,6 +70,8 @@ pub(crate) enum Action {
     Goto { session: SessionId, page: u16 },
     /// Give one of the application's pages a new title, for `contents.txt`.
     Title { number: u16, title: String },
+    /// Drop a session's own copy of a page: the channel's is its again.
+    Release { session: SessionId, page: u16 },
     /// Call `wake` at this time.
     WakeAt(u64),
     /// A line for the application's process (`docs/applications.md`).
@@ -117,6 +129,12 @@ impl Context<'_> {
     /// one about what the page holds now.
     pub fn retitle(&mut self, number: u16, title: &str) {
         self.actions.push(Action::Title { number, title: String::from(title) });
+    }
+
+    /// Drops `session`'s own copy of `page`, so that it sees the channel's
+    /// copy again, as every other viewer does.
+    pub fn release(&mut self, session: SessionId, page: u16) {
+        self.actions.push(Action::Release { session, page });
     }
 
     /// Asks for `wake` at `at`, in milliseconds.

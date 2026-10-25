@@ -63,6 +63,9 @@ pub enum Outbound {
     /// The connection owns this page from now on: the shared page of
     /// that number is not sent to it.
     Own(u16),
+    /// The connection no longer owns this page: the shared page of that
+    /// number is sent to it again.
+    Disown(u16),
     /// Close the connection.
     Close,
 }
@@ -272,6 +275,7 @@ impl Sink<'_> {
                     changed = true;
                 }
                 Effect::Own { session, page } => send(self.outboxes, session, Outbound::Own(page)),
+                Effect::Disown { session, page } => send(self.outboxes, session, Outbound::Disown(page)),
                 Effect::Send { session, bytes } => send(self.outboxes, session, Outbound::Bytes(bytes)),
                 Effect::Close { session } => send(self.outboxes, session, Outbound::Close),
                 Effect::ToApplication { line, .. } => {

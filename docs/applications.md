@@ -50,6 +50,8 @@ Which keys reach the program: while the browser sends keys to the channel, every
 
 At most 800 pages, each once; a title at most 32 characters, without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
 
+A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 32 characters, which a receiver shows as the name of the page's magazine.
+
 ### 3.2 `publish`
 
 ```json
@@ -95,7 +97,15 @@ The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to
 
 Gives one of the program's pages a new title, as `pages` does, for what the page holds now: `contents.txt` lists it from then on.
 
-### 3.6 `log`
+### 3.6 `release`
+
+```json
+{"type":"release","session":7,"page":"100"}
+```
+
+Drops the session's own copy of a page: from now on it sees the channel's copy, as every viewer does, and is sent it at once. For a page shown to one viewer for a while, such as a greeting.
+
+### 3.7 `log`
 
 ```json
 {"type":"log","text":"fetched 7 posts"}
@@ -105,7 +115,7 @@ A line for the server's log.
 
 ## 4. Pages and sessions
 
-- A session's own copy of a page replaces the channel's for that viewer from its first `publish`, until the session ends.
+- A session's own copy of a page replaces the channel's for that viewer from its first `publish`, until the session ends or the program releases it (section 3.6).
 - A program keeps each session's state itself and forgets it on `close` (`SERVER.md` section 8.4).
 - The server keeps each page's latest copy. A program publishes again only when the page changes. A shared page's change costs the same whatever the number of viewers (decision 7).
 

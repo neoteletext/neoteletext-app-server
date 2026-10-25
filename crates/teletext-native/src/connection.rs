@@ -49,6 +49,7 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
             outbound = own_queue.recv() => match outbound {
                 Some(Outbound::Bytes(bytes)) => open = write(&mut writing, Opcode::Binary, &bytes, &stats).await,
                 Some(Outbound::Own(page)) => { own.insert(page); }
+                Some(Outbound::Disown(page)) => { own.remove(&page); }
                 Some(Outbound::Close) | None => open = false,
             },
             changed = generation.changed() => {

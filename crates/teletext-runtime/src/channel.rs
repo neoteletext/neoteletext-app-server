@@ -74,6 +74,14 @@ pub enum Effect {
         /// The page.
         page: u16,
     },
+    /// The session no longer owns this page: the host sends it the shared
+    /// page of that number again.
+    Disown {
+        /// The session.
+        session: SessionId,
+        /// The page.
+        page: u16,
+    },
     /// Bytes for one session, as one binary WebSocket message.
     Send {
         /// The session.
@@ -413,6 +421,13 @@ impl Channel {
                 let entry = self.applications.get_mut(index).and_then(|hosted| hosted.pages.iter_mut().find(|entry| entry.number == number));
                 if let Some(entry) = entry {
                     entry.title = title;
+                }
+            }
+            Action::Release { session, page } => {
+                let Some(state) = self.sessions.get_mut(&session) else { return };
+                if state.own.remove(&page).is_some() {
+                    self.effects.push(Effect::Disown { session, page });
+                    self.send_page(session, page, true);
                 }
             }
             Action::WakeAt(at) => {
