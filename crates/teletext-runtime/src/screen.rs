@@ -234,6 +234,10 @@ impl Screen {
         }
         let links = [self.fastext[0], self.fastext[1], self.fastext[2], self.fastext[3], self.index];
         if links.iter().any(Option::is_some) {
+            // The link control byte's bit 4 shows row 24, where the
+            // Fastext prompts are (EN 300 706 Table 14); without it the
+            // receiver hides the row.
+            page.fastext_row_24 = true;
             for (slot, link) in page.fastext.iter_mut().zip(links) {
                 *slot = link.map(|number| FastextLink { address: address(number), subcode: SubCode::ANY });
             }

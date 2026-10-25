@@ -157,3 +157,42 @@ fn broken_input_closes_the_session() {
     channel.received(3, &[0xFF, 0x00], 0);
     assert!(channel.take_effects().contains(&Effect::Close { session: 3 }));
 }
+
+/// Sends the viewer to page 300 on any key.
+struct Mover;
+
+impl Application for Mover {
+    fn pages(&self) -> Vec<PageEntry> {
+        alloc::vec![PageEntry::new(0x250, "Mover")]
+    }
+
+    fn start(&mut self, context: &mut Context<'_>) {
+        context.publish(Owner::Channel, 0x250, &Screen::new());
+        context.publish(Owner::Channel, 0x300, &Screen::new());
+    }
+
+    fn input(&mut self, session: SessionId, _: u16, _: &Input<'_>, context: &mut Context<'_>) {
+        context.goto(session, 0x300);
+    }
+}
+
+/// A page the channel sends the viewer to is named by every cursor record
+/// until the receiver opens it: the receiver goes to the last record's
+/// page. Before, the acknowledgement after the input named the page left.
+#[test]
+fn a_page_gone_to_is_named_until_it_is_open() {
+    let config = ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let mut channel = Channel::new(config, alloc::vec![Box::new(Mover)], 7);
+    channel.start(0);
+    channel.opened(1, 0);
+    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    channel.received(1, &message(&Item::Event(receiver.open(0, None))), 0);
+    channel.received(1, &message(&Item::Event(Event::Page(0x250))), 0);
+    channel.take_effects();
+    channel.received(1, &message(&Item::Text("x")), 0);
+    let pages: Vec<u16> = cursors(&sent(&channel.take_effects(), 1)).iter().map(|cursor| cursor.page).collect();
+    assert_eq!(pages.last(), Some(&0x300), "{pages:x?}");
+    channel.received(1, &message(&Item::Event(Event::Page(0x300))), 0);
+    let pages: Vec<u16> = cursors(&sent(&channel.take_effects(), 1)).iter().map(|cursor| cursor.page).collect();
+    assert_eq!(pages.last(), Some(&0x300));
+}

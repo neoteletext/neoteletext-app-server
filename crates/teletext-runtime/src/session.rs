@@ -22,6 +22,10 @@ pub(crate) struct Session {
     pub acked: u16,
     /// The page open with the keys, as PAGE last said; 0 for none.
     pub page: u16,
+    /// A page the channel sent the viewer to, until PAGE says it is open:
+    /// acknowledgements name it meanwhile, since the receiver goes to the
+    /// page of the last cursor record it reads (INPUT.md section 7.1).
+    pub went: Option<u16>,
     /// The next record number on the audio and input service.
     pub record_id: u8,
     /// Pages this session owns: each viewer's own game, typed form or
@@ -31,7 +35,7 @@ pub(crate) struct Session {
 
 impl Session {
     pub(crate) const fn new() -> Self {
-        Self { decoder: None, welcomed: false, acked: 0, page: 0, record_id: 0, own: BTreeMap::new() }
+        Self { decoder: None, welcomed: false, acked: 0, page: 0, went: None, record_id: 0, own: BTreeMap::new() }
     }
 
     /// The next record number, advanced.

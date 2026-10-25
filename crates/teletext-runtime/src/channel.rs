@@ -260,6 +260,7 @@ impl Channel {
 
     fn page_open(&mut self, session: SessionId, page: u16, now: u64) {
         let Some(state) = self.sessions.get_mut(&session) else { return };
+        state.went = None;
         let before = core::mem::replace(&mut state.page, page);
         if before != page
             && let Some(&index) = self.owners.get(&before)
@@ -307,7 +308,7 @@ impl Channel {
         if !state.welcomed {
             return;
         }
-        let page = state.page;
+        let page = state.went.unwrap_or(state.page);
         let held = state.own.get(&page).or_else(|| self.shared.get(&page)).map(|held| held.cursor);
         let cursor = cursor_of(page, state.acked, held.flatten().as_ref());
         let record = state.next_record();
@@ -347,6 +348,7 @@ impl Channel {
             Action::Records { audience, records } => self.records(audience, &records),
             Action::Goto { session, page } => {
                 let Some(state) = self.sessions.get_mut(&session) else { return };
+                state.went = Some(page);
                 let held = state.own.get(&page).or_else(|| self.shared.get(&page)).map(|held| held.cursor);
                 let cursor = cursor_of(page, state.acked, held.flatten().as_ref());
                 let record = state.next_record();

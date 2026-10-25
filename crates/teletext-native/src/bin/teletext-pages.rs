@@ -115,10 +115,15 @@ fn main() -> ExitCode {
         let mut now = 0_u64;
         channel.start(now);
         let mut received: Vec<u8> = Vec::new();
-        let take = |channel: &mut Channel, received: &mut Vec<u8>| {
+        let mut owned: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+        let take = |channel: &mut Channel, received: &mut Vec<u8>, owned: &mut std::collections::BTreeSet<u16>| {
             for effect in channel.take_effects() {
-                if let Effect::Send { bytes, .. } = effect {
-                    received.extend_from_slice(&bytes);
+                match effect {
+                    Effect::Send { bytes, .. } => received.extend_from_slice(&bytes),
+                    Effect::Own { page, .. } => {
+                        owned.insert(page);
+                    }
+                    _ => {}
                 }
             }
         };
@@ -128,7 +133,7 @@ fn main() -> ExitCode {
             &message(&Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES, agent: None })),
             now,
         );
-        take(&mut channel, &mut received);
+        take(&mut channel, &mut received, &mut owned);
         let pages: Vec<u16> = channel.entries().map(|entry| entry.number).collect();
         for page in pages {
             channel.received(1, &message(&Item::Event(Event::Page(page))), now);
@@ -146,7 +151,7 @@ fn main() -> ExitCode {
                     channel.deadline(now);
                 }
             }
-            take(&mut channel, &mut received);
+            take(&mut channel, &mut received, &mut owned);
         }
         let end = now.saturating_add(arguments.seconds.saturating_mul(1_000));
         while now < end {
@@ -155,18 +160,16 @@ fn main() -> ExitCode {
                 channel.deadline(now);
             }
         }
-        // Effects of the run, and the shared pages as they ended.
-        let effects = channel.take_effects();
-        let mut file: Vec<u8> = Vec::new();
-        for (_, frame) in channel.shared_frames() {
-            file.extend_from_slice(frame);
-        }
-        for effect in effects {
-            if let Effect::Shared { frame, .. } | Effect::Send { bytes: frame, .. } = effect {
-                file.extend_from_slice(&frame);
+        // What the session was sent, then each shared page as it ended,
+        // except those the session owns: the last frame of a page wins, as
+        // a receiver keeps it.
+        take(&mut channel, &mut received, &mut owned);
+        let mut file: Vec<u8> = received;
+        for (page, frame) in channel.shared_frames() {
+            if !owned.contains(&page) {
+                file.extend_from_slice(frame);
             }
         }
-        file.extend_from_slice(&received);
         let path = arguments.out.join(format!("{}.t42", spec.folder));
         match std::fs::write(&path, &file) {
             Ok(()) => println!("{}: {} pages, {} bytes", path.display(), channel.entries().count(), file.len()),
