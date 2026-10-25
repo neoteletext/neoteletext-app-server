@@ -47,7 +47,15 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Reason:** The owner: scale is critical.
 - **Source:** Decision 7.
 - **Verification:** Test: the load client (`teletext-load`) against the server on the host; the numbers in this State line.
-- **State:** Not met, 25 October 2026: not yet built or measured.
+- **State:** Met, 25 October 2026, on `foundintelquiet4060` (20 cores, Linux), the server as a systemd service with an open-file limit of 524,288, and the load clients on the same host against loopback addresses. Each connection received the clock page (105, 1,092 bytes) once a second.
+
+  | Connections | Server memory | Per connection | Change to the last viewer | Sent |
+  |---|---|---|---|---|
+  | 10,000 | 95 MB | 8.6 KB | 11 to 16 ms | 10.9 MB/s |
+  | 50,000 | 440 MB | 8.6 KB | 61 to 64 ms | 54.6 MB/s |
+  | 100,000 | 961 MB | 9.5 KB | 123 to 130 ms | 109 MB/s |
+
+  The server's memory before any connection was 8.9 MB. A run beyond 100,000 is limited by the load clients' ports, about 28,000 per loopback address, and their own memory, not by the server.
 
 ## 2. Build and verification
 
