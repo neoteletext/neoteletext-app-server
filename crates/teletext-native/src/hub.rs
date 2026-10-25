@@ -121,10 +121,10 @@ impl Pages {
 pub struct Hub {
     /// The channel's folder.
     pub folder: String,
-    /// Its descriptor and contents, which do not change.
+    /// Its descriptor, which does not change.
     pub descriptor: Arc<[u8]>,
-    /// Its contents file.
-    pub contents: Arc<[u8]>,
+    /// Its contents file, made again when a page is retitled.
+    pub contents: Arc<RwLock<Arc<[u8]>>>,
     /// Its shared pages.
     pub pages: Arc<Pages>,
     /// The latest generation: every connection watches it.
@@ -143,11 +143,19 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
     let now = move || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     channel.start(now());
     let descriptor: Arc<[u8]> = channel.resource("channel.json").map(|resource| resource.body).unwrap_or_default().into();
-    let contents: Arc<[u8]> = channel.resource("contents.txt").map(|resource| resource.body).unwrap_or_default().into();
+    let contents = Arc::new(RwLock::new(contents_of(&channel)));
     let pages = Arc::new(Pages::default());
     let (generation_sender, generation) = watch::channel(0_u64);
     let (commands, mut queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, contents, pages: Arc::clone(&pages), generation, commands, stats: Arc::clone(&stats) };
+    let hub = Hub {
+        folder: folder.to_owned(),
+        descriptor,
+        contents: Arc::clone(&contents),
+        pages: Arc::clone(&pages),
+        generation,
+        commands,
+        stats: Arc::clone(&stats),
+    };
     let folder = folder.to_owned();
     tokio::spawn(async move {
         let mut outboxes: BTreeMap<SessionId, mpsc::Sender<Outbound>> = BTreeMap::new();
@@ -163,7 +171,7 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
             to_application: to_application.as_ref(),
             dropped: &mut dropped,
         };
-        sink.apply(channel.take_effects());
+        sink.apply(channel.take_effects(), &channel, &contents);
         loop {
             let wake = channel.next_wake().and_then(|at| start.checked_add(Duration::from_millis(at)));
             let event = tokio::select! {
@@ -215,10 +223,15 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                 to_application: to_application.as_ref(),
                 dropped: &mut dropped,
             };
-            sink.apply(channel.take_effects());
+            sink.apply(channel.take_effects(), &channel, &contents);
         }
     });
     hub
+}
+
+/// The channel's `contents.txt`.
+fn contents_of(channel: &Channel) -> Arc<[u8]> {
+    channel.resource("contents.txt").map(|resource| resource.body).unwrap_or_default().into()
 }
 
 /// What woke the channel's task.
@@ -264,11 +277,13 @@ struct Sink<'a> {
 impl Sink<'_> {
     /// Carries out the channel's effects: a shared page into the table and
     /// the log, once; what is one session's own into its queue; a line for
-    /// the program into its queue.
-    fn apply(&mut self, effects: Vec<Effect>) {
+    /// the program into its queue; and `contents.txt` made again from
+    /// `channel` when a page was retitled.
+    fn apply(&mut self, effects: Vec<Effect>, channel: &Channel, contents: &RwLock<Arc<[u8]>>) {
         let mut changed = false;
         for effect in effects {
             match effect {
+                Effect::Contents => *contents.write().unwrap_or_else(PoisonError::into_inner) = contents_of(channel),
                 Effect::Shared { page, frame } => {
                     *self.current = self.current.saturating_add(1);
                     self.pages.set(page, frame, *self.current);
@@ -303,3 +318,6 @@ fn send(outboxes: &BTreeMap<SessionId, mpsc::Sender<Outbound>>, session: Session
         let _ = outbox.try_send(outbound);
     }
 }
+
+#[cfg(test)]
+mod tests;

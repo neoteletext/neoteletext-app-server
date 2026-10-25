@@ -230,9 +230,13 @@ fn a_title_renames_a_page_in_the_contents() {
     let mut channel = channel();
     channel.take_effects();
     channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
-    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
+    let effects = channel.take_effects();
+    assert_eq!(logs(&effects), Vec::<String>::new());
+    assert_eq!(effects.iter().filter(|effect| **effect == Effect::Contents).count(), 1, "the host is told to serve the contents anew");
     let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
     assert!(contents.contains("p\t300\tTiny Robot Arm...\n") && contents.contains("p\t100\tFront\n"), "{contents}");
+    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
+    assert!(!channel.take_effects().contains(&Effect::Contents), "the same title again changes nothing");
 }
 
 /// A viewer's own copy released, the channel's copy is theirs again: the

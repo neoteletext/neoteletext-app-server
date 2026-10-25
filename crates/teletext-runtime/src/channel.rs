@@ -74,6 +74,8 @@ pub enum Effect {
         /// The page.
         page: u16,
     },
+    /// A page was given a new title: the host serves `contents.txt` anew.
+    Contents,
     /// The session no longer owns this page: the host sends it the shared
     /// page of that number again.
     Disown {
@@ -419,8 +421,11 @@ impl Channel {
             }
             Action::Title { number, title } => {
                 let entry = self.applications.get_mut(index).and_then(|hosted| hosted.pages.iter_mut().find(|entry| entry.number == number));
-                if let Some(entry) = entry {
+                if let Some(entry) = entry
+                    && entry.title != title
+                {
                     entry.title = title;
+                    self.effects.push(Effect::Contents);
                 }
             }
             Action::Release { session, page } => {

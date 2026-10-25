@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError};
 use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
@@ -82,7 +82,7 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     }
     let (content_type, body): (&str, Arc<[u8]>) = match file {
         "channel.json" => ("application/json", Arc::clone(&hub.descriptor)),
-        "contents.txt" => ("text/plain", Arc::clone(&hub.contents)),
+        "contents.txt" => ("text/plain", Arc::clone(&hub.contents.read().unwrap_or_else(PoisonError::into_inner))),
         "index.t42" => {
             let mut bytes = Vec::new();
             for (_, frame) in hub.pages.all() {
