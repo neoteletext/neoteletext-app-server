@@ -17,10 +17,12 @@ import { readTti } from "./read-tti.ts";
 import { type FastextLinks, NO_LINKS, type Screen, type Subpage, pageText } from "./screen.ts";
 import type { Audience, SoundMember } from "./sound.ts";
 
-/** One page an application serves: its number, its title, and which keys it uses itself. */
+/** One page an application serves: its number, its title, which keys it uses itself, and the section it starts, if any. */
 export interface PageEntry extends PageKeys {
   readonly page: number;
   readonly title: string;
+  /** The name of the section of `contents.txt` this page starts: its magazine's name (docs/applications.md section 3.1). */
+  readonly section?: string;
 }
 
 /** A program behind some of a channel's pages. */
@@ -94,6 +96,7 @@ interface Host {
   epochAtStart(): number;
   wakeAt(index: number, at: number): void;
   published(owner: Owner, page: number, links: FastextLinks): void;
+  released(session: number, page: number): boolean;
 }
 
 /** An application's view of the channel during one call. */
@@ -139,6 +142,22 @@ export class Context {
   /** Sends the session's viewer to `page` (INPUT.md section 7.1). */
   goto(session: number, page: number): void {
     this.#host.app.goto(session, page);
+  }
+
+  /** Gives `page` a new title in the channel's contents, for what it holds now (docs/applications.md section 3.5). */
+  title(page: number, title: string): void {
+    this.#host.app.title(page, title);
+  }
+
+  /**
+   * Drops the session's own copy of `page`: from now on it sees the
+   * channel's copy, as every viewer does, and is sent it at once
+   * (docs/applications.md section 3.6). Nothing is sent if it has none.
+   */
+  release(session: number, page: number): void {
+    if (this.#host.released(session, page)) {
+      this.#host.app.release(session, page);
+    }
   }
 
   /** Sends a sound (docs/applications.md section 3.4). */
@@ -229,13 +248,14 @@ export class Channel implements ServerEvents {
           this.#own.set(owner, own);
         }
       },
+      released: (session, page) => this.#own.get(session)?.delete(page) ?? false,
     };
     this.#epochAtStart = Date.now() - this.#clock.now();
   }
 
   /** The pages, in the order the applications declare them, for the first line. */
   declarations(): PageDeclaration[] {
-    return [...this.#entries.values()].map(({ page, title }) => ({ page, title }));
+    return [...this.#entries.values()].map(({ page, title, section }) => ({ page, title, ...(section === undefined ? {} : { section }) }));
   }
 
   /** Every page the applications serve. */

@@ -4,8 +4,8 @@
 //! the program publishes, read back over HTTP as the engine's packets. It
 //! checks the kit's TTI against the server's reader, which only the server
 //! has: control codes, the English set's signs, mosaics, Fastext links,
-//! the cursor and input modes, sub-pages, links to a sub-page, and TTI
-//! written elsewhere. It also serves the repository's own `channels.json`,
+//! the cursor and input modes, sub-pages, links to a sub-page, TTI
+//! written elsewhere, and a section and a new title in `contents.txt`. It also serves the repository's own `channels.json`,
 //! whose showcase is TypeScript.
 
 use std::io::{Read, Write};
@@ -175,6 +175,8 @@ fn the_server_serves_what_a_typescript_program_publishes() {
 
     let contents = String::from_utf8(fetch(&address, "/kit/contents.txt")).unwrap();
     assert!(contents.contains("Kit index") && contents.contains("Kit carousel"), "{contents}");
+    assert!(contents.contains("p\t102\tKit raw, retitled\n") && !contents.contains("\tKit raw\n"), "the page's new title: {contents}");
+    assert!(contents.contains("s\tKit links\np\t103\tKit sub-page link\n"), "the section page 103 starts: {contents}");
 }
 
 /// The repository's own channels file serves the TypeScript showcase, and

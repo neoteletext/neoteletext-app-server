@@ -2,7 +2,8 @@
 // (crates/teletext-native/tests/typescript_channel.rs): pages drawn with
 // the kit, with control codes, the English set's own signs, mosaics,
 // Fastext, links to a sub-page and sub-pages, so the test can check the
-// server reads the TTI the kit writes as it was drawn.
+// server reads the TTI the kit writes as it was drawn; and a section and
+// a new title, which the server's contents.txt shows.
 
 import { runChannel } from "../../src/channel.ts";
 import { packedLinksLine } from "../../src/packed-links.ts";
@@ -57,9 +58,11 @@ await runChannel([
       { page: INDEX, title: "Kit index" },
       { page: CAROUSEL, title: "Kit carousel" },
       { page: RAW, title: "Kit raw" },
-      { page: SUBPAGE_LINK, title: "Kit sub-page link" },
+      { page: SUBPAGE_LINK, title: "Kit sub-page link", section: "Kit links" },
     ],
     start: (context) => {
+      // Before the pages, whose publication the test waits for.
+      context.title(RAW, "Kit raw, retitled");
       context.publish("channel", INDEX, index());
       context.publishSubpages(
         "channel",

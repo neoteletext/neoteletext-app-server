@@ -195,10 +195,26 @@ export class Harness {
     return readTti(String(latest["tti"]));
   }
 
-  /** The latest copy of `page` sent to `session` alone, every sub-page; undefined if none since it joined. */
+  /** The latest copy of `page` sent to `session` alone, every sub-page; undefined if none since it joined, or since it was released. */
   ownPages(session: number, page: number): ReadPage[] | undefined {
-    const latest = this.sent.slice(this.#since.get(session) ?? 0).findLast((message) => isPublication(message, page, session));
-    return latest === undefined ? undefined : readTti(String(latest["tti"]));
+    const since = this.sent.slice(this.#since.get(session) ?? 0);
+    const latest = since.findLastIndex((message) => isPublication(message, page, session) || isRelease(message, page, session));
+    const message = since[latest];
+    return message === undefined || message["type"] === "release" ? undefined : readTti(String(message["tti"]));
+  }
+
+  /** The title `contents.txt` lists `page` under now: its declaration's, or the last it was given. */
+  title(page: number): string | undefined {
+    for (const message of this.sent.toReversed()) {
+      if (message["type"] === "title" && pageOf(message["page"]) === page) {
+        return String(message["title"]);
+      }
+      if (message["type"] === "pages" && Array.isArray(message["pages"])) {
+        const declared = (message["pages"] as Sent[]).find((entry) => pageOf(entry["page"]) === page);
+        return declared === undefined ? undefined : String(declared["title"]);
+      }
+    }
+    return undefined;
   }
 
   /** The shared copy's rows: its last sub-page, as a receiver ends up holding it. */
@@ -255,6 +271,10 @@ export class Harness {
 
 function isPublication(message: Sent, page: number, owner: "channel" | number): boolean {
   return message["type"] === "publish" && pageOf(message["page"]) === page && message["owner"] === owner;
+}
+
+function isRelease(message: Sent, page: number, session: number): boolean {
+  return message["type"] === "release" && pageOf(message["page"]) === page && message["session"] === session;
 }
 
 function last(pages: readonly ReadPage[]): ReadPage {

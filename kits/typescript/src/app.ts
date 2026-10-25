@@ -1,8 +1,8 @@
 // A channel's program as the server runs it (docs/applications.md): one
 // JSON object a line on standard input and output, the pages declared in
 // the first line, then the server's `start`, `join`, `open`, `leave`,
-// `input` and `close`, and the program's `publish`, `goto`, `sound` and
-// `log`. Standard output carries protocol lines and nothing else; anything
+// `input` and `close`, and the program's `publish`, `goto`, `sound`,
+// `title`, `release` and `log`. Standard output carries protocol lines and nothing else; anything
 // for a person goes to standard error, which the server logs.
 //
 // Everything the server sends is checked whole before it is acted on, and
@@ -40,6 +40,13 @@ export type Owner = "channel" | number;
 export interface PageDeclaration {
   readonly page: number;
   readonly title: string;
+  /** The name of the section this page starts in `contents.txt`, which a receiver shows as its magazine's name (docs/applications.md section 3.1). */
+  readonly section?: string;
+}
+
+/** Whether `text` is a title or a section's name the server takes: at most {@link LONGEST_TITLE} characters, none a control. */
+function isTitle(text: string): boolean {
+  return [...text].length <= LONGEST_TITLE && !CONTROL_CHARACTER.test(text);
 }
 
 /** A message from the server, checked. */
@@ -143,7 +150,8 @@ export function dispatch(message: ServerMessage, events: ServerEvents): void {
 /** The program's side of the protocol: each call writes one line, checked first as the server will check it. */
 export class App {
   readonly #write: (line: string) => void;
-  readonly #pages = new Set<number>();
+  /** Each declared page's title as `contents.txt` lists it now. */
+  readonly #titles = new Map<number, string>();
   #declared = false;
 
   /** A program that writes its lines, each without its newline, to `write`. */
@@ -163,27 +171,61 @@ export class App {
     if (pages.length > MOST_PAGES) {
       throw new RangeError(`at most ${MOST_PAGES} pages`);
     }
-    for (const { page, title } of pages) {
-      if (!isPageNumber(page) || this.#pages.has(page)) {
+    for (const { page, title, section } of pages) {
+      if (!isPageNumber(page) || this.#titles.has(page)) {
         throw new RangeError(`page ${page} is not a page number, or is declared twice`);
       }
-      if ([...title].length > LONGEST_TITLE || CONTROL_CHARACTER.test(title)) {
+      if (!isTitle(title)) {
         throw new RangeError(`the title of ${pageText(page)} is over ${LONGEST_TITLE} characters or has controls`);
       }
-      this.#pages.add(page);
+      if (section !== undefined && !isTitle(section)) {
+        throw new RangeError(`the section ${pageText(page)} starts is over ${LONGEST_TITLE} characters or has controls`);
+      }
+      this.#titles.set(page, title);
     }
     this.#declared = true;
-    this.#send({ type: "pages", pages: pages.map(({ page, title }) => ({ page: pageText(page), title })) });
+    this.#send({
+      type: "pages",
+      pages: pages.map(({ page, title, section }) => ({ page: pageText(page), title, ...(section === undefined ? {} : { section }) })),
+    });
   }
 
   /** Whether `page` was declared. */
   serves(page: number): boolean {
-    return this.#pages.has(page);
+    return this.#titles.has(page);
+  }
+
+  /** The title `contents.txt` lists `page` under now, if it was declared. */
+  titleOf(page: number): string | undefined {
+    return this.#titles.get(page);
+  }
+
+  /** Gives `page` a new title in the channel's contents, for what it holds now; nothing is sent if it already has it (docs/applications.md section 3.5). */
+  title(page: number, title: string): void {
+    const now = this.#titles.get(page);
+    if (now === undefined) {
+      throw new RangeError(`title: ${pageText(page)} was not declared`);
+    }
+    if (!isTitle(title)) {
+      throw new RangeError(`title: the title of ${pageText(page)} is over ${LONGEST_TITLE} characters or has controls`);
+    }
+    if (now !== title) {
+      this.#titles.set(page, title);
+      this.#send({ type: "title", page: pageText(page), title });
+    }
+  }
+
+  /** Drops `session`'s own copy of `page`: from now on it sees the channel's (docs/applications.md section 3.6). */
+  release(session: number, page: number): void {
+    if (!isSession(session) || !this.#titles.has(page)) {
+      throw new RangeError(`release: session ${session}, page ${page}, which was not declared`);
+    }
+    this.#send({ type: "release", session, page: pageText(page) });
   }
 
   /** Publishes `page`: one screen as sub-page 0, or sub-pages each numbered as given. */
   publish(owner: Owner, page: number, content: Screen | readonly Subpage[]): void {
-    if (!this.#pages.has(page)) {
+    if (!this.#titles.has(page)) {
       throw new RangeError(`publish: ${pageText(page)} was not declared`);
     }
     if (owner !== "channel" && !isSession(owner)) {
@@ -208,7 +250,7 @@ export class App {
    * two bytes of UTF-8.
    */
   publishTti(owner: Owner, page: number, text: string): void {
-    if (!this.#pages.has(page)) {
+    if (!this.#titles.has(page)) {
       throw new RangeError(`publish: ${pageText(page)} was not declared`);
     }
     if (owner !== "channel" && !isSession(owner)) {

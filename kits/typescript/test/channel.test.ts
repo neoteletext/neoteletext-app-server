@@ -120,6 +120,42 @@ test("colour keys follow the links of the copy the viewer sees", () => {
   assert.ok(shows(harness.own(1, 0x100), "own"));
 });
 
+test("a released copy leaves the viewer the channel's, its links with it", () => {
+  const greeting: Application = {
+    pages: () => [{ page: 0x100, title: "Index", section: "Front" }],
+    start: (context) => context.publish("channel", 0x100, screen("shared", [0x101, null, null, null])),
+    opened: (session, page, context) => context.publish(session, page, screen("hello", [0x102, null, null, null])),
+    input: (session, page, _input, context) => {
+      context.release(session, page);
+      context.release(session, page);
+    },
+  };
+  const harness = new Harness([greeting]);
+  assert.deepEqual(harness.sent[0], { type: "pages", pages: [{ page: "100", title: "Index", section: "Front" }] }, "the section is declared");
+  harness.join(1, 0x100);
+  assert.ok(shows(harness.own(1, 0x100), "hello"));
+  harness.typeText(1, "x");
+  assert.equal(harness.sent.filter((message) => message["type"] === "release").length, 1, "released once: then it has no copy of its own");
+  assert.equal(harness.ownPages(1, 0x100), undefined);
+  assert.ok(shows(harness.seen(1, 0x100).rows, "shared"));
+  harness.press(1, Key.Red);
+  assert.deepEqual(harness.gotos(1), [0x101], "red follows the channel's link now");
+});
+
+test("a page retitled says so once, and the contents list it so", () => {
+  const story: Application = {
+    pages: () => [{ page: 0x201, title: "Story" }],
+    start: (context) => {
+      context.title(0x201, "Robot arm");
+      context.title(0x201, "Robot arm");
+    },
+  };
+  const harness = new Harness([story]);
+  assert.equal(harness.sent.filter((message) => message["type"] === "title").length, 1);
+  assert.equal(harness.title(0x201), "Robot arm");
+  assert.equal(harness.title(0x202), undefined);
+});
+
 test("each application wakes when it asked, the earliest asked for winning", () => {
   const woken: string[] = [];
   const clock = (name: string, first: number, every: number): Application => ({

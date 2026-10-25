@@ -65,7 +65,7 @@ The kit hosts the Rust runtime's `Application` and `Context` shape in the progra
 ### 3.1 Applications
 
 ```ts
-interface PageEntry { page: number; title: string; ownsDigits?: boolean; ownsColourKeys?: boolean }
+interface PageEntry { page: number; title: string; section?: string; ownsDigits?: boolean; ownsColourKeys?: boolean }
 interface Application {
   pages(): readonly PageEntry[];
   start(context: Context): void;
@@ -92,9 +92,11 @@ A Rust `impl Application for X` becomes `class X implements Application`; unused
 | `context.sound(audience, records)` | one `context.sound(to, member)` per sound (section 3.5) |
 | `context.wake_at(t)`, `context.wake_in(d)` | `context.wakeAt(t)`, `context.wakeIn(d)`; one wake per application, the earliest asked for wins, as in Rust |
 | `context.random()`, `context.below(n)` | `context.random()`, `context.below(n)`: the same xorshift64*, one generator per channel, so the same seed and the same order of calls give the same numbers |
+| | `context.title(page, title)`: a new title in `contents.txt`, sent only when it differs (docs/applications.md section 3.5) |
+| | `context.release(session, page)`: drops the session's own copy, so it sees the channel's again (section 3.6); nothing is sent if it has none |
 | `context.log(text)` | `context.log(text)` (the server's log; `console.error` also reaches it, but never `console.log`: standard output is protocol only) |
 
-A session's own copy of a page replaces the channel's for that viewer from its first publish until the session ends. An application that throws is reported on standard error and the channel goes on; do not rely on it.
+A session's own copy of a page replaces the channel's for that viewer from its first publish until the session ends or the application releases it. A `PageEntry`'s `section` names the section of `contents.txt` the page starts, which a receiver shows as its magazine's name. An application that throws is reported on standard error and the channel goes on; do not rely on it.
 
 ### 3.2 Screen and Sixels (`screen.ts`)
 

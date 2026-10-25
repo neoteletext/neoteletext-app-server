@@ -69,6 +69,8 @@ test("pages the server would refuse are refused at the declaration", () => {
     ],
     [{ page: 0x100, title: "x".repeat(33) }],
     [{ page: 0x100, title: "tab\there" }],
+    [{ page: 0x100, title: "", section: "x".repeat(33) }],
+    [{ page: 0x100, title: "", section: "new\nline" }],
     Array.from({ length: 801 }, (_, index) => ({ page: 0x100 + index, title: "" })),
   ]) {
     assert.throws(() => written().app.declare(pages), RangeError);
@@ -76,6 +78,41 @@ test("pages the server would refuse are refused at the declaration", () => {
   const titled = written();
   titled.app.declare([{ page: 0x100, title: "é".repeat(32) }]);
   assert.equal(titled.lines.length, 1, "32 characters, however many bytes");
+});
+
+test("a page that starts a section names it in the declaration", () => {
+  const { app, lines } = written();
+  app.declare([
+    { page: 0x100, title: "Index" },
+    { page: 0x200, title: "Retrocomputing", section: "Retrocomputing" },
+  ]);
+  assert.deepEqual(lines, [
+    {
+      type: "pages",
+      pages: [
+        { page: "100", title: "Index" },
+        { page: "200", title: "Retrocomputing", section: "Retrocomputing" },
+      ],
+    },
+  ]);
+});
+
+test("a page is retitled once for each new title, and a session's own copy released", () => {
+  const { app, lines } = written();
+  app.declare([{ page: 0x201, title: "Story" }]);
+  app.title(0x201, "A Robot Arm From Bits Of Wo...");
+  app.title(0x201, "A Robot Arm From Bits Of Wo...");
+  assert.equal(app.titleOf(0x201), "A Robot Arm From Bits Of Wo...");
+  app.release(7, 0x201);
+  assert.deepEqual(lines.slice(1), [
+    { type: "title", page: "201", title: "A Robot Arm From Bits Of Wo..." },
+    { type: "release", session: 7, page: "201" },
+  ]);
+  assert.throws(() => app.title(0x202, "Other"), /not declared/);
+  assert.throws(() => app.title(0x201, "x".repeat(33)), RangeError);
+  assert.throws(() => app.title(0x201, "tab\there"), RangeError);
+  assert.throws(() => app.release(7, 0x202), RangeError);
+  assert.throws(() => app.release(-1, 0x201), RangeError);
 });
 
 test("publish writes TTI for the declared page and owner", () => {
