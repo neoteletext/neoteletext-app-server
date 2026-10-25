@@ -21,7 +21,7 @@ from neoteletext_app.app import App, Event, page_hears, session_hears
 from neoteletext_app.screen import Colour, Screen, tti
 from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
-from hackaday import numbers, views
+from hackaday import clips, numbers, views
 from hackaday.fetch import Fetcher, FetchError
 from hackaday.layout import BODY_ROW, TEXT_WIDTH, flashing, last_top, page, wrap
 from hackaday.library import Library, now_utc
@@ -88,6 +88,7 @@ class Viewer:
     favourites: set[str] = field(default_factory=set)
     tag: str | None = None
     heard: set[int] = field(default_factory=set)
+    clips_heard: set[int] = field(default_factory=set)
 
 
 class Hackaday(App):
@@ -118,6 +119,7 @@ class Hackaday(App):
             numbers.THEN_AND_NOW: "Then and now",
             numbers.ABOUT: "How it works",
             numbers.SERVER_STATS: "Behind the scenes",
+            numbers.SOUNDBOARD: "Podcast sounds",
             numbers.READER: "From the archive",
         }
         for index, name in enumerate(views.section_names()):
@@ -143,6 +145,7 @@ class Hackaday(App):
         self.columns: dict[int, Post | None] = {numbers.SECURITY: None, numbers.LINKS_COLUMN: None, numbers.PODCAST: None}
         self.votes = [0] * len(POLL_OPTIONS)
         self.figures: dict[str, Any] = {}
+        self.clips = clips.load(cache.parent / "sounds")
         self.best = 0
         self.sounds = sounds()
         self.random = random.Random()  # noqa: S311 - a game's choices, not a secret
@@ -298,6 +301,7 @@ class Hackaday(App):
         self.put(numbers.THEN_AND_NOW, views.then_and_now(self.first_posts, posts))
         self.put(numbers.ABOUT, views.about())
         self.put(numbers.SERVER_STATS, views.server_stats(self.figures, self.pages))
+        self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, 0, None))
         if not posts:
             return
         self.put(numbers.READER, views.reader(posts[0], 0))
@@ -396,6 +400,8 @@ class Hackaday(App):
             return self.tags_input(session, event)
         if page == numbers.ON_THIS_DAY:
             return self.list_input(session, page, event, self.on_this_day, self.on_this_day_screen)
+        if page == numbers.SOUNDBOARD:
+            return self.soundboard_input(session, event)
         return self.scroll_input(session, page, event)
 
     # Scrolling.
@@ -642,12 +648,47 @@ class Hackaday(App):
         return True
 
     async def on_open(self, session: int, page: int) -> None:
-        """Start a viewer's quiz when they open it."""
+        """Start a viewer's quiz when they open it; greet a podcast listener."""
+        if page == numbers.PODCAST:
+            welcome = next((clip for clip in self.clips if clip.name == "welcome"), None)
+            if welcome is not None:
+                self.play_clip(session, welcome, page=numbers.PODCAST)
         if page == numbers.QUIZ:
             viewer = self.viewer(session)
             if viewer.question is None:
                 self.next_question(viewer)
                 self.put(numbers.QUIZ, views.quiz(viewer.question, viewer.answers, None, viewer.score, self.best), session)
+
+    # The podcast's sound grabs.
+
+    def play_clip(self, session: int, clip: clips.Clip, *, page: int | None = None) -> None:
+        """Play a sound grab to one viewer, sending it the first time; bound to `page` when given."""
+        viewer = self.viewer(session)
+        if clip.handle not in viewer.clips_heard:
+            self.sound_object(session_hears(session), clip.handle, clip.rate, clip.samples)
+            viewer.clips_heard.add(clip.handle)
+        self.play(session_hears(session), SOUND_CHANNEL, clip.handle, gain=90, page=page)
+
+    def soundboard_input(self, session: int, event: Event) -> bool:
+        """Choose a grab with the arrows or the wheel; Enter or Space plays it."""
+        viewer = self.viewer(session)
+        chosen = viewer.chosen.get(numbers.SOUNDBOARD, 0)
+        playing = None
+        if not self.clips:
+            return False
+        if event.pressed_key("ArrowDown") or (event.kind == "wheel" and event.dy > 0):
+            chosen = min(len(self.clips) - 1, chosen + 1)
+        elif event.pressed_key("ArrowUp") or (event.kind == "wheel" and event.dy < 0):
+            chosen = max(0, chosen - 1)
+        elif event.pressed_key("Enter") or event.character == " ":
+            clip = self.clips[chosen]
+            self.play_clip(session, clip)
+            playing = clip.title
+        else:
+            return False
+        viewer.chosen[numbers.SOUNDBOARD] = chosen
+        self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, chosen, playing), session)
+        return True
 
     # The poll.
 

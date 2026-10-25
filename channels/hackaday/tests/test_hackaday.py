@@ -174,7 +174,7 @@ def published(channel: Recorder, page: int, owner: object) -> list[str]:
 
 @pytest.fixture
 def channel(tmp_path: Path) -> Recorder:
-    made = Recorder(tmp_path)
+    made = Recorder(tmp_path / "cache")
     made.publish_all()
     return made
 
@@ -258,3 +258,33 @@ def test_the_servers_figures_show_on_page_121(channel: Recorder) -> None:
     assert "242 Story 42" in text
     assert "showcase 2" in text
     assert published(channel, numbers.SERVER_STATS, "channel")[-1] == screen.tti(numbers.SERVER_STATS)
+
+
+def test_podcast_grabs_play_from_the_sound_board(tmp_path: Path) -> None:
+    import json  # noqa: PLC0415 - only this test writes a manifest
+    import wave  # noqa: PLC0415
+
+    sounds = tmp_path / "sounds"
+    (sounds / "neoteletext").mkdir(parents=True)
+    (sounds / "clips.json").write_text(
+        json.dumps([{"name": "welcome", "title": "Welcome to the Hackaday Podcast", "episode": "392"}, {"name": "bad", "title": "Bad"}])
+    )
+    with wave.open(str(sounds / "neoteletext" / "welcome.wav"), "wb") as sound:
+        sound.setnchannels(1)
+        sound.setsampwidth(2)
+        sound.setframerate(22_050)
+        sound.writeframes(bytes(22_050 * 2))
+    with wave.open(str(sounds / "neoteletext" / "bad.wav"), "wb") as sound:
+        sound.setnchannels(2)
+        sound.setsampwidth(2)
+        sound.setframerate(22_050)
+        sound.writeframes(bytes(400))
+    made = Recorder(tmp_path / "cache")
+    assert [clip.name for clip in made.clips] == ["welcome"], "a stereo clip is refused"
+    assert made.clips[0].seconds == 1.0
+    drive(made, key(9, "122", "Enter"), key(9, "122", "Enter"), {"type": "open", "session": 9, "page": "113"})
+    sounds_sent = [message for message in made.sent if message["type"] == "sound"]
+    assert [next(iter(set(message) & {"object", "play"})) for message in sounds_sent] == ["object", "play", "play", "play"], (
+        "sent once, played thrice"
+    )
+    assert sounds_sent[-1]["play"]["page"] == "113", "the welcome belongs to the podcast page"

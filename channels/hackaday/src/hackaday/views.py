@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from neoteletext_app.charset import codes
 from neoteletext_app.screen import COLUMNS, ECHO, FASTEXT_ROW, Attribute, Colour, Screen
@@ -34,6 +34,9 @@ from hackaday.layout import (
     wrap,
 )
 from hackaday.posts import OTHER_SECTION, SECTIONS, Post, threaded
+
+if TYPE_CHECKING:
+    from hackaday.clips import Clip
 
 #: Rows a story's text scrolls in, from `STORY_TEXT_ROW`.
 STORY_TEXT_ROW = 8
@@ -557,7 +560,7 @@ def about() -> Screen:
         (Colour.GREEN, "118 discussed   119 then and now"),
         (Colour.WHITE, "Long pages scroll: Page Up, Page Down,"),
         (Colour.WHITE, "the arrows, Home, End and the wheel."),
-        (Colour.GREEN, "121 behind the scenes: live figures"),
+        (Colour.GREEN, "121 behind the scenes 122 podcast sounds"),
         (Colour.MAGENTA, "Served by the NeoTeletext server (Rust)"),
         (Colour.MAGENTA, "from hackaday.com, by an app in Python."),
     ]
@@ -730,4 +733,33 @@ def server_stats(stats: dict[str, Any], titles: dict[int, str]) -> Screen:
             20, 0, Colour.MAGENTA, fit("Also watching: " + ", ".join(f"{folder} {count}" for folder, count in others.items()), TEXT_WIDTH)
         )
     screen.coloured(21, 0, Colour.GREEN, "A Rust server, a Python channel: live")
+    return screen
+
+
+def soundboard(clips: list[Clip], chosen: int, playing: str | None) -> Screen:
+    """Draw page 122: the Hackaday Podcast's sound grabs, played with Enter."""
+    screen = page(
+        "Podcast sounds",
+        Colour.MAGENTA,
+        [("Front", numbers.FRONT), ("Podcast", numbers.PODCAST), ("Behind", numbers.SERVER_STATS), ("Help", numbers.ABOUT)],
+    )
+    if not clips:
+        screen.centred(10, Colour.WHITE, "No sound grabs on this server")
+        return screen
+    screen.coloured(BODY_ROW, 0, Colour.CYAN, "Sound grabs from the Hackaday Podcast")
+    first = BODY_ROW + 2
+    rows = HINT_ROW - first - 1
+    top = max(0, min(chosen - rows // 2, len(clips) - rows))
+    for offset, clip in enumerate(clips[top : top + rows]):
+        row = first + offset
+        text = fit(f"{clip.title}", 30)
+        length = f"{clip.seconds:4.1f}s"
+        if top + offset == chosen:
+            band(screen, row, Colour.YELLOW, Colour.BLUE, f"{text:30s} {length}")
+        else:
+            screen.coloured(row, 0, Colour.WHITE, text)
+            screen.coloured(row, 33, Colour.CYAN, length)
+    if playing:
+        flashing(screen, HINT_ROW - 1, 0, Colour.GREEN, fit(f"Playing: {playing}", 34))
+    screen.coloured(HINT_ROW, 0, Colour.GREEN, "Up Down to choose, Enter to play")
     return screen
