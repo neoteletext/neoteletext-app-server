@@ -13,7 +13,7 @@ import asyncio
 import random
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,9 +23,9 @@ from neoteletext_app.screen import TITLE_LIMIT, Colour, Screen, tti
 from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
 from hackaday import clips, numbers, people, site, views
-from hackaday.fetch import Fetcher, FetchError
+from hackaday.fetch import FetchError
 from hackaday.layout import BAR_ATTRIBUTE_COLUMN, BODY_ROW, TEXT_WIDTH, last_top, page, thumb, top_at, wheel, wrap
-from hackaday.library import Library, now_utc
+from hackaday.library import DATABASE, Library, now_utc
 from hackaday.tools import ToolError, qr_tti
 
 if TYPE_CHECKING:
@@ -38,8 +38,9 @@ if TYPE_CHECKING:
 TICKER_EVERY_S = 7
 #: Clocks and countdowns are redrawn this often.
 MINUTE_S = 60
-#: The archive's lists are read again this often.
-ARCHIVE_EVERY_S = 6 * 3600
+#: The archive's lists are read again from the store this often: cheap,
+#: and the full download fills them as it goes.
+ARCHIVE_EVERY_S = 600
 #: Lines a wheel notch scrolls, as desktop browsers do, and a notch in the
 #: protocol's units (docs/applications.md section 2: 1/120ths of a line).
 WHEEL_LINES = 3
@@ -168,8 +169,8 @@ class Hackaday(App):
         super().__init__(pages, sections)
         self.placed = site.place([])
         self.people = found
-        self.library = Library(Fetcher(cache / "http"), cache / "pictures")
-        self.library.pictures.mkdir(parents=True, exist_ok=True)
+        cache.mkdir(parents=True, exist_ok=True)
+        self.library = Library.open(cache / DATABASE)
         self.library.on_change = self.changed
         self.library.on_news = self.news
         self.viewers: dict[int, Viewer] = {}
@@ -244,9 +245,21 @@ class Hackaday(App):
         self.ticker += 1
         self.put(numbers.FRONT, self.front_screen())
 
+    def figures_pages(self) -> list[Screen]:
+        """Draw page 108's sub-pages from the posts, the server's figures and the store."""
+        store = self.library.store
+        archive = {
+            "counts": store.counts(),
+            "total": self.library.total,
+            "backfill": store.state("backfill", {}),
+            "fetched": store.fetched_since((now_utc() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")),
+        }
+        return views.figures(self.posts, self.figures, self.pages, archive)
+
     def minute(self) -> None:
-        """Redraw what shows the time."""
+        """Redraw what shows the time, and the archive's figures."""
         now = now_utc()
+        self.put(numbers.FIGURES, self.figures_pages())
         self.put(numbers.FRONT, self.front_screen())
         self.put(numbers.CHALLENGE, views.challenge(self.entries, now, CHALLENGE_CLOSES))
         self.put(numbers.DOOM, views.doom(self.doom_ports, now))
@@ -269,9 +282,7 @@ class Hackaday(App):
             (numbers.LINKS_COLUMN, "Hackaday Links"),
             (numbers.PODCAST, "Hackaday Podcast Episode"),
         ):
-            if self.columns.get(number) is None:
-                found = [post for post in await self.library.search(words, 5) if post.title.startswith(words)]
-                self.columns[number] = found[0] if found else None
+            self.columns[number] = await self.library.latest_titled(words)
         self.publish_columns()
         await self.read_people()
         self.on_this_day = await self.library.on_this_day(now_utc())
@@ -338,7 +349,7 @@ class Hackaday(App):
         self.put(numbers.TAGS, self.tags_screen(numbers.TAGS, Viewer()))
         self.put(numbers.SEARCH, views.search("", [], 0, searching=False))
         self.put(numbers.TALKING, views.talking_points(posts, placed))
-        self.put(numbers.FIGURES, views.figures(posts, self.figures, self.pages))
+        self.put(numbers.FIGURES, self.figures_pages())
         self.put(numbers.COLUMNS, views.columns_index(posts, placed))
         self.publish_columns()
         self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, 0, None))
@@ -440,7 +451,7 @@ class Hackaday(App):
     async def on_stats(self, stats: dict[str, Any]) -> None:
         """Show the server's figures on page 108's last sub-page as they come."""
         self.figures = stats
-        self.put(numbers.FIGURES, views.figures(self.posts, stats, self.pages))
+        self.put(numbers.FIGURES, self.figures_pages())
 
     # Viewers.
 

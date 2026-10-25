@@ -769,9 +769,53 @@ def comments_wall_lines(posts: list[Post], placed: Placed) -> list[Line]:
     return lines or [Line(Colour.WHITE, "Reading the comments...")]
 
 
-def figures(posts: list[Post], stats: dict[str, Any], titles: dict[int, str]) -> list[Screen]:
-    """Answer page 108: "Statistics" (stories by magazine and hour), "Writers", and "Behind the scenes" (the server's figures)."""
-    return [statistics(posts), writers(posts), server_stats(stats, titles)]
+def figures(posts: list[Post], stats: dict[str, Any], titles: dict[int, str], archive: dict[str, Any] | None = None) -> list[Screen]:
+    """Answer page 108: "Statistics", "Writers", "Behind the scenes" (the server's figures) and "The archive" (the copy kept)."""
+    return [statistics(posts), writers(posts), server_stats(stats, titles), archive_figures(archive or {})]
+
+
+#: The full download's collections as the archive page names them, in its order (`sync.BACKFILL`).
+BACKFILL_NAMES = ("writers", "categories", "tags", "posts", "pages", "media records", "comments")
+
+
+def archive_figures(archive: dict[str, Any]) -> Screen:
+    """Draw page 108's last sub-page: what of Hackaday's archive is kept here, and what keeping it up to date costs."""
+    screen = page(
+        "The archive",
+        Colour.BLUE,
+        [("Front", numbers.FRONT), ("Search", numbers.SEARCH), ("Roulette", numbers.ROULETTE), ("Help", numbers.ABOUT)],
+    )
+    counts: dict[str, int] = archive.get("counts") or {}
+    rows = [
+        (Colour.YELLOW, f"Posts      {figure(counts.get('posts')):>9,} of {figure(archive.get('total')):,}"),
+        (Colour.WHITE, f"Comments   {figure(counts.get('comments')):>9,}"),
+        (Colour.WHITE, f"Tags+cats  {figure(counts.get('terms')):>9,}"),
+        (Colour.WHITE, f"Writers    {figure(counts.get('users')):>9,}"),
+        (Colour.WHITE, f"Media      {figure(counts.get('media')):>9,}"),
+        (Colour.WHITE, f"Pictures   {figure(counts.get('pictures')):>9,} made into pages"),
+    ]
+    for offset, (colour, text) in enumerate(rows):
+        screen.coloured(BODY_ROW + offset, 0, colour, fit(text, TEXT_WIDTH))
+    place: dict[str, Any] = archive.get("backfill") or {}
+    if place.get("done"):
+        progress = f"Whole archive read, {str(place.get('finished_at', ''))[:10]}"
+    else:
+        stage = figure(place.get("stage"))
+        name = BACKFILL_NAMES[stage] if stage < len(BACKFILL_NAMES) else ""
+        month = str(place.get("window") or "")[:7]
+        progress = f"Reading {name} {month} page {figure(place.get('page')) or 1}"
+    screen.coloured(BODY_ROW + 7, 0, Colour.CYAN, fit(progress, TEXT_WIDTH))
+    band(screen, 12, Colour.BLUE, Colour.YELLOW, "Asked of hackaday.com, 24 hours")
+    fetched: list[tuple[str, int, int]] = archive.get("fetched") or []
+    for offset, (kind, requests, wire) in enumerate(fetched[:6]):
+        screen.coloured(13 + offset, 0, Colour.WHITE, fit(kind, 12))
+        screen.coloured(13 + offset, 13, Colour.CYAN, f"{requests:>6,} asks")
+        screen.coloured(13 + offset, 27, Colour.GREEN, f"{amount(wire):>10}")
+    if fetched:
+        total = sum(wire for _, _, wire in fetched)
+        screen.coloured(20, 0, Colour.YELLOW, fit(f"In all {sum(n for _, n, _ in fetched):,} asks, {amount(total)}", TEXT_WIDTH))
+    screen.coloured(21, 0, Colour.GREEN, "All of it in SQLite, read from there")
+    return screen
 
 
 def talking_points(posts: list[Post], placed: Placed) -> list[Screen]:

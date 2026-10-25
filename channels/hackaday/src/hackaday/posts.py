@@ -1,20 +1,23 @@
-"""Hackaday's posts as the channel keeps them, from the WordPress REST API.
+"""Hackaday's posts as the channel shows them, from the store's copy of the WordPress REST API.
 
 The API separates a post's categories (a fixed set of about 100) from its
 tags (a long tail), which the RSS feed mixes (measured 25 October 2026).
-`_embed` brings the author, the terms and the lead picture in the same
-answer.
+The store names a post's writer, terms and lead picture from their own
+collections (`store.py`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hackaday import site
 from hackaday.html import Article, plain, read
 from hackaday.site import HOUSEKEEPING
+
+if TYPE_CHECKING:
+    from hackaday.store import StoredPost
 
 
 @dataclass(frozen=True)
@@ -60,28 +63,23 @@ def _date(text: str) -> datetime:
     return datetime.fromisoformat(text).replace(tzinfo=UTC)
 
 
-def post_of(raw: dict[str, Any]) -> Post | None:
-    """Answer a post from one REST API answer with `_embed`, or None when it is not one."""
+def post_of(stored: StoredPost) -> Post | None:
+    """Answer a post from the store, or None when it is not one."""
+    raw = stored.data
     try:
-        embedded = raw.get("_embedded") or {}
-        authors = embedded.get("author") or [{}]
-        terms = [term for group in embedded.get("wp:term") or [] for term in group]
-        media = (embedded.get("wp:featuredmedia") or [{}])[0] or {}
-        categories = [
-            plain(term["name"]) for term in terms if term.get("taxonomy") == "category" and term.get("name", "").lower() not in HOUSEKEEPING
-        ]
-        tags = [plain(term["name"]) for term in terms if term.get("taxonomy") == "post_tag"]
+        categories = [plain(name) for taxonomy, name in stored.terms if taxonomy == "category" and plain(name).lower() not in HOUSEKEEPING]
+        tags = [plain(name) for taxonomy, name in stored.terms if taxonomy == "post_tag"]
         return Post(
             id=int(raw["id"]),
             date=_date(raw["date_gmt"]),
             title=plain(raw["title"]["rendered"]),
             link=str(raw["link"]),
-            author=plain(authors[0].get("name") or "Hackaday"),
+            author=plain(stored.author or "Hackaday"),
             categories=categories,
             tags=tags,
             article=read(raw["content"]["rendered"]),
             excerpt=plain(raw.get("excerpt", {}).get("rendered", "")).removesuffix("...read more").removesuffix("read more").strip(),
-            picture_url=str(media.get("source_url") or raw.get("jetpack_featured_media_url") or ""),
+            picture_url=stored.picture_url,
         )
     except (KeyError, TypeError, ValueError):
         return None

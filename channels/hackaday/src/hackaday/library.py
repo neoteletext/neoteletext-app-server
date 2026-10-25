@@ -1,71 +1,81 @@
-"""What the channel knows of Hackaday, kept up to date in the background.
+"""What the channel knows of Hackaday: the store's copy of the whole archive, kept up to date.
 
-- The latest `LATEST` posts, with their authors, terms and lead pictures,
-  from the REST API; checked every `POSTS_EVERY_S`. A post not seen before
-  is news.
-- Each post's comments, the newest posts' more often.
-- Each post's lead picture as a teletext page, made once.
-- Lists from the whole archive (58,711 posts since 2004 on 25 October
-  2026): this date in past years, the first posts, searches, a random one.
+- The store (`store.py`) holds every post, comment, tag, category,
+  writer and media record the REST API publishes, and every request made.
+- The sync (`sync.py`) reads all of it once, then what changes, in the
+  background, a request at a time.
+- The channel shows the newest `LATEST` posts with their comments; every
+  list from the archive (this date in past years, the first posts, a tag's
+  posts, a writer's, searches, a random post) is read from the store.
+- Each shown post's lead picture is fetched once and made into a teletext
+  page once, both kept in the store.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from hackaday.fetch import Fetcher, FetchError, api
-from hackaday.html import plain
-from hackaday.posts import Comment, Post, comment_of, post_of
-from hackaday.tools import ToolError, picture_tti
+from hackaday.fetch import Fetcher, FetchError
+from hackaday.posts import Post, comment_of, post_of
+from hackaday.store import Store
+from hackaday.sync import Sync
+from hackaday.tools import PICTURE_LEVEL, ToolError, picture_tti
 
 if TYPE_CHECKING:
     import random
     from collections.abc import Awaitable, Callable
 
-#: Posts the channel holds: about a month's (300 posts were 21 September to
+    from hackaday.store import StoredPost
+
+#: Posts the channel shows: about a month's (300 posts were 21 September to
 #: 25 October 2026), enough to fill each subject magazine's 90 story pages
 #: no further than its busiest needs.
 LATEST = 300
-#: How often the newest posts are checked, in seconds: Hackaday posts
-#: about every three hours (8.9 a day, measured 13 to 25 October 2026).
-POSTS_EVERY_S = 300
-#: How often the newest posts' comments are read, and how many posts count as newest.
-NEW_COMMENTS_EVERY_S = 600
-NEWEST = 15
-#: How often every post's comments are read: a post more than a few days
-#: old is rarely commented on.
-ALL_COMMENTS_EVERY_S = 3 * 3600
-#: The most comments read for one post: all of them, in requests of a
-#: hundred, up to a bound (the most this fortnight was 99).
-MOST_COMMENTS = 500
-#: The REST API's most items a request (WordPress `per_page`).
-PAGE_SIZE = 100
-#: What the posts are asked for with.
-EMBED = "author,wp:featuredmedia,wp:term"
-#: The archive's first year.
-FIRST_YEAR = 2004
+#: The width pictures are asked for, in pixels: WordPress scales on
+#: request, and the converter needs no more for a page's mosaic cells.
+PICTURE_WIDTH = 400
+#: The store's file, in the channel's cache.
+DATABASE = "hackaday.sqlite"
+#: How long the sync waits when it has nothing to do, in seconds.
+IDLE_S = 5.0
+#: How long the picture maker waits when every shown picture is made, in seconds.
+PICTURES_IDLE_S = 30.0
 
 
 @dataclass
 class Library:
     """The channel's knowledge, and who to tell when it changes."""
 
+    store: Store
     fetcher: Fetcher
-    pictures: Path
     posts: list[Post] = field(default_factory=list)
     picture_pages: dict[int, str] = field(default_factory=dict)
-    total: int = 0
     on_change: Callable[[str], Awaitable[None]] | None = None
     on_news: Callable[[Post], Awaitable[None]] | None = None
+    # Posts made from the store, kept while their modification time and picture stand.
+    _made: dict[int, tuple[str, Post]] = field(default_factory=dict)
+    # Pictures that could not be made, not tried again until a restart.
+    _failed: set[str] = field(default_factory=set)
+
+    @classmethod
+    def open(cls, database: Path | str) -> Library:
+        """Open the library on its database, every request kept in it."""
+        library = cls(Store(database), Fetcher())
+        library.fetcher.on_fetch = library.store.log_fetch
+        return library
+
+    @property
+    def total(self) -> int:
+        """How many posts the archive has: as the API last said, or as many as are kept."""
+        return max(int(self.store.state("posts.total", 0)), self.store.post_count())
 
     def post(self, post_id: int) -> Post | None:
-        """Answer a post the channel holds."""
+        """Answer a post the channel shows."""
         return next((post for post in self.posts if post.id == post_id), None)
 
     async def changed(self, what: str) -> None:
@@ -73,141 +83,135 @@ class Library:
         if self.on_change is not None:
             await self.on_change(what)
 
-    async def load_posts(self, count: int = LATEST) -> list[Post]:
-        """Read the newest `count` posts, a hundred a request."""
-        found: list[Post] = []
-        for number in range(1, -(-count // PAGE_SIZE) + 1):
-            answer = await self.fetcher.get(api("posts", per_page=min(count, PAGE_SIZE), page=number, _embed=EMBED))
-            self.total = int(answer.headers.get("x-wp-total", "0") or 0)
-            raw = json.loads(answer.body)
-            found.extend(post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None)
-            if len(raw) < PAGE_SIZE:
-                break
-        return found[:count]
+    def made(self, stored: list[StoredPost]) -> list[Post]:
+        """Answer the store's posts as the channel shows them, each made once while it is unchanged."""
+        posts: list[Post] = []
+        for each in stored:
+            ident, modified = int(each.data["id"]), str(each.data.get("modified_gmt", ""))
+            kept = self._made.get(ident)
+            if kept is not None and kept[0] == modified and kept[1].picture_url == each.picture_url:
+                posts.append(kept[1])
+                continue
+            post = post_of(each)
+            if post is not None:
+                self._made[ident] = (modified, post)
+                posts.append(post)
+        return posts
 
-    async def refresh_posts(self) -> None:
-        """Bring the posts up to date, telling of each new one."""
-        fresh = await self.load_posts()
+    def load(self) -> list[Post]:
+        """Read the newest posts and their comments from the store; answer those not shown before, if any were."""
         known = {post.id for post in self.posts}
-        news = [post for post in fresh if post.id not in known] if known else []
-        kept = {post.id: post for post in self.posts}
-        for post in fresh:
-            old = kept.get(post.id)
-            if old is not None:
-                post.comments, post.comment_count = old.comments, old.comment_count
-        self.posts = sorted(fresh, key=lambda post: post.date, reverse=True)[:LATEST]
-        await self.changed("posts")
-        for post in sorted(news, key=lambda post: post.date):
-            if self.on_news is not None:
-                await self.on_news(post)
+        posts = self.made(self.store.latest(LATEST))
+        shown = {post.id for post in posts}
+        self._made = {ident: made for ident, made in self._made.items() if ident in shown}
+        self.posts = posts
+        self.load_comments()
+        self.picture_pages = {
+            post.id: page for post in posts if post.picture_url and (page := self.store.picture_page(post.picture_url)) is not None
+        }
+        return [post for post in posts if post.id not in known] if known else []
 
-    async def load_comments(self, post: Post) -> None:
-        """Read every one of a post's comments, a hundred a request, up to `MOST_COMMENTS`."""
-        comments: list[Comment] = []
-        total = 0
-        for number in range(1, MOST_COMMENTS // PAGE_SIZE + 1):
-            fields = "id,parent,author_name,date_gmt,content"
-            answer = await self.fetcher.get(api("comments", post=post.id, per_page=PAGE_SIZE, page=number, order="asc", _fields=fields))
-            raw: list[Any] = json.loads(answer.body)
-            comments.extend(comment for item in raw if isinstance(item, dict) and (comment := comment_of(item)) is not None)
-            total = int(answer.headers.get("x-wp-total", len(comments)) or 0)
-            if len(comments) >= total or len(raw) < PAGE_SIZE:
-                break
-        post.comments, post.comment_count = comments, max(total, len(comments))
+    def load_comments(self) -> None:
+        """Give each shown post its comments from the store."""
+        found = self.store.comments_of([post.id for post in self.posts])
+        for post in self.posts:
+            comments = [comment for raw in found.get(post.id, []) if (comment := comment_of(raw)) is not None]
+            post.comments, post.comment_count = comments, len(comments)
 
-    async def load_picture(self, post: Post) -> None:
-        """Make the post's lead picture into a teletext page, once; kept on disk."""
-        kept = self.pictures / f"{post.id}.tti"
-        if kept.exists():
-            self.picture_pages[post.id] = kept.read_text(encoding="latin-1")
-            return
-        if not post.picture_url:
-            return
-        answer = await self.fetcher.get(post.picture_url.split("?")[0] + "?w=400")
-        suffix = Path(post.picture_url.split("?")[0]).suffix or ".jpg"
-        page = await picture_tti(answer.body, suffix)
-        kept.write_text(page, encoding="latin-1")
-        self.picture_pages[post.id] = page
+    # The archive's lists, read from the store.
 
     async def on_this_day(self, today: datetime) -> list[Post]:
         """Answer one post from this date in each past year, newest year first."""
-        found: list[Post] = []
-        for year in range(today.year - 1, FIRST_YEAR - 1, -1):
-            try:
-                day = today.replace(year=year)
-            except ValueError:
-                continue
-            start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-            url = api("posts", after=start.isoformat(), before=(start + timedelta(days=1)).isoformat(), per_page=1, _embed=EMBED)
-            raw = await self.fetcher.json(url)
-            found.extend(post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None)
-        return found
+        return self.made(self.store.on_this_day(today.strftime("%m-%d"), today.strftime("%Y")))
 
     async def first_posts(self, count: int = 10) -> list[Post]:
         """Answer the archive's first posts."""
-        raw = await self.fetcher.json(api("posts", per_page=count, order="asc", _embed=EMBED))
-        return [post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None]
+        return self.made(self.store.first(count))
 
     async def search(self, words: str, count: int = 20) -> list[Post]:
-        """Answer the archive's posts for `words`."""
-        raw = await self.fetcher.json(api("posts", search=words[:80], per_page=count, _embed=EMBED))
-        return [post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None]
+        """Answer the archive's posts with every word of `words`, the best first."""
+        return self.made(self.store.search(words, count))
+
+    async def latest_titled(self, start: str) -> Post | None:
+        """Answer the newest post whose title starts with `start`: a column's latest edition."""
+        stored = self.store.latest_titled(start)
+        found = self.made([stored]) if stored is not None else []
+        return found[0] if found else None
 
     async def tagged(self, tag: str, count: int = 30) -> list[Post]:
-        """Answer the archive's posts with a tag, by its slug."""
-        tags = await self.fetcher.json(api("tags", slug=tag, _fields="id"))
-        if not tags:
-            return []
-        raw = await self.fetcher.json(api("posts", tags=tags[0]["id"], per_page=count, _embed=EMBED))
-        return [post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None]
+        """Answer the newest posts with a tag, by its slug."""
+        return self.made(self.store.tagged(tag, count))
 
     async def author(self, author: int, count: int = 3) -> tuple[int, list[str]]:
-        """Answer how many posts an author has written, and the titles of their latest."""
-        answer = await self.fetcher.get(api("posts", author=author, per_page=count, _fields="title"))
-        titles = [plain(item["title"]["rendered"]) for item in json.loads(answer.body) if isinstance(item, dict) and "title" in item]
-        return int(answer.headers.get("x-wp-total", "0") or 0), titles
+        """Answer how many posts a writer has, and the titles of their latest."""
+        total, latest = self.store.by_author(author, count)
+        return total, [post.title for post in self.made(latest)]
 
     async def random_post(self, generator: random.Random) -> Post | None:
         """Answer a post from anywhere in the archive."""
-        if not self.total:
-            return None
-        raw = await self.fetcher.json(api("posts", per_page=1, offset=generator.randrange(self.total), _embed=EMBED))
-        return next((post for item in raw if isinstance(item, dict) and (post := post_of(item)) is not None), None)
+        count = self.store.post_count()
+        stored = self.store.post_at(generator.randrange(count)) if count else None
+        found = self.made([stored]) if stored is not None else []
+        return found[0] if found else None
+
+    # Keeping up to date.
 
     async def run(self) -> None:
-        """Keep everything up to date until cancelled."""
-        loop = asyncio.get_running_loop()
-        next_posts = next_new_comments = next_all_comments = loop.time()
-        pictures_done: set[int] = set()
-        while True:
-            now = loop.time()
-            try:
-                if now >= next_posts:
-                    await self.refresh_posts()
-                    next_posts = now + POSTS_EVERY_S
-                if now >= next_new_comments:
-                    for post in self.posts[:NEWEST]:
-                        await self.load_comments(post)
-                    await self.changed("comments")
-                    next_new_comments = now + NEW_COMMENTS_EVERY_S
-                if now >= next_all_comments:
-                    for post in self.posts[NEWEST:]:
-                        await self.load_comments(post)
-                    await self.changed("comments")
-                    next_all_comments = now + ALL_COMMENTS_EVERY_S
-                waiting = [post for post in self.posts if post.id not in pictures_done]
-                if waiting:
-                    post = waiting[0]
-                    pictures_done.add(post.id)
-                    try:
-                        await self.load_picture(post)
-                        await self.changed("pictures")
-                    except (ToolError, FetchError) as error:
-                        print(f"hackaday: no picture for {post.id}: {error}", file=sys.stderr)  # noqa: T201
+        """Keep the store up to date and the channel told, and make the shown posts' pictures, until cancelled."""
+        self.load()
+        await self.changed("posts")
+        pictures = asyncio.ensure_future(self.make_pictures())
+        sync = Sync(self.store, self.fetcher)
+        try:
+            while True:
+                try:
+                    changes = await sync.step()
+                except FetchError as error:
+                    print(f"hackaday: {error}", file=sys.stderr)  # noqa: T201
                     continue
-            except FetchError as error:
-                print(f"hackaday: {error}", file=sys.stderr)  # noqa: T201
-            await asyncio.sleep(max(1.0, min(next_posts, next_new_comments, next_all_comments) - loop.time()))
+                if "posts" in changes.kinds:
+                    fresh = self.load()
+                    await self.changed("posts")
+                    for post in sorted(fresh, key=lambda post: post.date):
+                        if self.on_news is not None:
+                            await self.on_news(post)
+                elif "comments" in changes.kinds:
+                    self.load_comments()
+                    await self.changed("comments")
+                if sync.idle and not changes.kinds:
+                    await asyncio.sleep(IDLE_S)
+        finally:
+            pictures.cancel()
+
+    async def make_pictures(self) -> None:
+        """Make the shown posts' pictures into pages, one at a time, newest first."""
+        while True:
+            waiting = [
+                post
+                for post in self.posts
+                if post.picture_url and post.id not in self.picture_pages and post.picture_url not in self._failed
+            ]
+            if not waiting:
+                await asyncio.sleep(PICTURES_IDLE_S)
+                continue
+            post = waiting[0]
+            try:
+                await self.make_picture(post)
+            except (ToolError, FetchError) as error:
+                self._failed.add(post.picture_url)
+                print(f"hackaday: no picture for {post.id}: {error}", file=sys.stderr)  # noqa: T201
+                continue
+            await self.changed("pictures")
+
+    async def make_picture(self, post: Post) -> None:
+        """Make a post's picture into a page, fetching the file only if the store lacks the page."""
+        made = self.store.picture_page(post.picture_url)
+        if made is None:
+            answer = await self.fetcher.get(f"{post.picture_url.split('?')[0]}?w={PICTURE_WIDTH}", "picture")
+            suffix = Path(post.picture_url.split("?")[0]).suffix or ".jpg"
+            made = await picture_tti(answer.body, suffix)
+            self.store.put_picture(post.picture_url, answer.headers, answer.body, PICTURE_LEVEL, made)
+        self.picture_pages[post.id] = made
 
 
 def now_utc() -> datetime:

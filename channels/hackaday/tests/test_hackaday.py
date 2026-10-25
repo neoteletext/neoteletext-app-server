@@ -12,6 +12,7 @@ from hackaday import numbers, site, views
 from hackaday.channel import POLL_OPTIONS, SPLASH_S, Hackaday, Viewer
 from hackaday.layout import BODY_ROW, JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, headline, last_top, thumb, wrap
 from hackaday.posts import Comment, Post, comment_of, post_of, threaded
+from hackaday.store import StoredPost
 from neoteletext_app.screen import TITLE_LIMIT, Colour
 
 if TYPE_CHECKING:
@@ -22,8 +23,8 @@ if TYPE_CHECKING:
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 
 
-def raw_post(number: int, *, category: str = "Retrocomputing", tags: tuple[str, ...] = ("doom",), hours_ago: int = 0) -> dict[str, Any]:
-    """Answer a post as the REST API gives it with `_embed`."""
+def raw_post(number: int, *, hours_ago: int = 0) -> dict[str, Any]:
+    """Answer a post as the REST API gives it."""
     date = (NOW - timedelta(hours=hours_ago)).replace(tzinfo=None).isoformat()
     return {
         "id": number,
@@ -38,27 +39,34 @@ def raw_post(number: int, *, category: str = "Retrocomputing", tags: tuple[str, 
             )
         },
         "excerpt": {"rendered": "<p>The excerpt &hellip;read more</p>"},
-        "_embedded": {
-            "author": [{"name": "Writer A"}],
-            "wp:term": [
-                [{"taxonomy": "category", "name": category}, {"taxonomy": "category", "name": "Slider"}],
-                [{"taxonomy": "post_tag", "name": tag} for tag in tags],
-            ],
-            "wp:featuredmedia": [{"source_url": f"https://hackaday.com/wp-content/uploads/{number}.jpg"}],
-        },
+        "type": "post",
+        "status": "publish",
+        "modified_gmt": date,
+        "author": 1,
+        "featured_media": 0,
+        "categories": [],
+        "tags": [],
+        "jetpack_featured_media_url": f"https://hackaday.com/wp-content/uploads/{number}.jpg",
     }
+
+
+def stored(number: int, *, category: str = "Retrocomputing", tags: tuple[str, ...] = ("doom",), hours_ago: int = 0) -> StoredPost:
+    """Answer a post as the store gives it: its object, its writer, its terms (the site's own Slider among them) and its picture."""
+    raw = raw_post(number, hours_ago=hours_ago)
+    terms = [("category", category), ("category", "Slider"), *(("post_tag", tag) for tag in tags)]
+    return StoredPost(raw, "Writer A", terms, raw["jetpack_featured_media_url"])
 
 
 def posts(count: int = 12) -> list[Post]:
     """Answer `count` posts, newest first, in turns of two sections."""
     made = [
-        post_of(raw_post(number, category="Radio Hacks" if number % 2 else "Retrocomputing", hours_ago=number)) for number in range(count)
+        post_of(stored(number, category="Radio Hacks" if number % 2 else "Retrocomputing", hours_ago=number)) for number in range(count)
     ]
     return [post for post in made if post is not None]
 
 
 def test_a_post_reads_with_its_terms_text_links_and_videos() -> None:
-    post = post_of(raw_post(7, tags=("doom", "Does It Run Doom")))
+    post = post_of(stored(7, tags=("doom", "Does It Run Doom")))
     assert post is not None
     assert post.title == "Hack number 7 \u2013 with a \u201ctitle\u201d", "entities decoded; the page folds them when drawn"
     assert post.categories == ["Retrocomputing"], "the site's own Slider category is dropped"
@@ -72,7 +80,7 @@ def test_a_post_reads_with_its_terms_text_links_and_videos() -> None:
 
 
 def test_what_is_not_a_post_is_refused() -> None:
-    assert post_of({"id": 1}) is None
+    assert post_of(StoredPost({"id": 1}, "", [], "")) is None
     assert comment_of({"content": {}}) is None
 
 
@@ -103,13 +111,13 @@ def test_each_post_goes_to_the_magazine_its_labels_name_first() -> None:
     assert placed.page_of(held[2]) == 0x211
     assert placed.post_at(0x511) is held[3]
     assert placed.post_at(0x299) is None
-    column = post_of(raw_post(99, category="Hackaday Columns", tags=()))
+    column = post_of(stored(99, category="Hackaday Columns", tags=()))
     assert column is not None
     assert site.magazines_of(column)[0] is site.HOME, "a column that names no subject is magazine 1's"
-    both = post_of(raw_post(98, category="Security Hacks", tags=("retrocomputing",)))
+    both = post_of(stored(98, category="Security Hacks", tags=("retrocomputing",)))
     assert both is not None
     assert [mag.number for mag in site.magazines_of(both)] == [2, 7], "the Challenge's subject comes first"
-    nothing = post_of(raw_post(97, category="Slider", tags=()))
+    nothing = post_of(stored(97, category="Slider", tags=()))
     assert nothing is not None
     assert site.magazines_of(nothing)[0].number == site.CATCH_ALL
     assert placed.tag_pages(2) == [(0x204, "doom", 6)], "a magazine's busiest tag has its page"
@@ -434,7 +442,7 @@ def test_the_servers_figures_show_on_page_150(channel: Recorder) -> None:
         "channel": {"viewers": 4, "viewers_peak": 9, "viewers_total": 31, "opens": 120, "keys": 77, "most_opened": {"100": 50, "242": 12}},
     }
     drive(channel, stats)
-    screen = views.figures(channel.posts, stats, channel.pages)[-1]
+    screen = views.figures(channel.posts, stats, channel.pages)[2]
     text = "\n".join(screen.row_text(row) for row in range(25))
     assert "Peak 9, 31 visits" in text
     assert "3.0 MB" in text
@@ -442,7 +450,7 @@ def test_the_servers_figures_show_on_page_150(channel: Recorder) -> None:
     assert "242 Retro story 33" in text
     assert "showcase 2" in text
     assert band(screen) == "Behind the scenes"
-    assert published(channel, numbers.FIGURES, "channel")[-1].endswith(screen.tti(numbers.FIGURES).split("\n", 2)[2])
+    assert screen.tti(numbers.FIGURES).split("\n", 2)[2] in published(channel, numbers.FIGURES, "channel")[-1]
 
 
 def test_podcast_grabs_play_from_the_sound_board(tmp_path: Path) -> None:

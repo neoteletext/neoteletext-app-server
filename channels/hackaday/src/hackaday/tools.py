@@ -3,7 +3,7 @@
 - Pictures: the engine's `scripts/image-to-teletext.py` turns a post's lead
   picture into a Level 2.5 page of mosaics, its colours in the page's own
   X/26 and X/28 (`--no-objects`), about 14 s each (measured 25 October
-  2026). It is run once a post and its page kept on disk.
+  2026). It is run once a picture, its file and its page kept in the store.
 - QR codes: `neottx qr` writes a link as a QR code in a page's mosaics.
 
 `HACKADAY_CONVERTER` names the converter script, `NEOTTX` the program,
