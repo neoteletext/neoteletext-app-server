@@ -14,12 +14,14 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hackaday.download import Download, fetchers
 from hackaday.fetch import Fetcher, FetchError
 from hackaday.posts import Post, comment_of, post_of
 from hackaday.store import Store
@@ -41,6 +43,8 @@ LATEST = 300
 PICTURE_WIDTH = 400
 #: The store's file, in the channel's cache.
 DATABASE = "hackaday.sqlite"
+#: How long after a download that left pages unread another starts, in seconds.
+DOWNLOAD_AGAIN_S = 300
 #: How long the sync waits when it has nothing to do, in seconds.
 IDLE_S = 5.0
 #: How long the picture maker waits when every shown picture is made, in seconds.
@@ -161,6 +165,7 @@ class Library:
         self.load()
         await self.changed("posts")
         pictures = asyncio.ensure_future(self.make_pictures())
+        downloading = None if self.store.state("backfill", {}).get("done") else asyncio.ensure_future(self.download())
         sync = Sync(self.store, self.fetcher)
         try:
             while True:
@@ -182,6 +187,16 @@ class Library:
                     await asyncio.sleep(IDLE_S)
         finally:
             pictures.cancel()
+            if downloading is not None:
+                downloading.cancel()
+
+    async def download(self) -> None:
+        """Read the whole archive beside the polls, paced (`download.py`), until it is all read."""
+        for _ in itertools.count():
+            if await Download(self.store, fetchers(self.store.log_fetch)).run():
+                return
+            # Pages left unread are tried again after a pause, as many times as it takes.
+            await asyncio.sleep(DOWNLOAD_AGAIN_S)
 
     async def make_pictures(self) -> None:
         """Make the shown posts' pictures into pages, one at a time, newest first."""

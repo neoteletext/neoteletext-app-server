@@ -774,10 +774,6 @@ def figures(posts: list[Post], stats: dict[str, Any], titles: dict[int, str], ar
     return [statistics(posts), writers(posts), server_stats(stats, titles), archive_figures(archive or {})]
 
 
-#: The full download's collections as the archive page names them, in its order (`sync.BACKFILL`).
-BACKFILL_NAMES = ("writers", "categories", "tags", "posts", "pages", "media records", "comments")
-
-
 def archive_figures(archive: dict[str, Any]) -> Screen:
     """Draw page 108's last sub-page: what of Hackaday's archive is kept here, and what keeping it up to date costs."""
     screen = page(
@@ -797,13 +793,11 @@ def archive_figures(archive: dict[str, Any]) -> Screen:
     for offset, (colour, text) in enumerate(rows):
         screen.coloured(BODY_ROW + offset, 0, colour, fit(text, TEXT_WIDTH))
     place: dict[str, Any] = archive.get("backfill") or {}
+    reading: dict[str, Any] = archive.get("download") or {}
     if place.get("done"):
         progress = f"Whole archive read, {str(place.get('finished_at', ''))[:10]}"
     else:
-        stage = figure(place.get("stage"))
-        name = BACKFILL_NAMES[stage] if stage < len(BACKFILL_NAMES) else ""
-        month = str(place.get("window") or "")[:7]
-        progress = f"Reading {name} {month} page {figure(place.get('page')) or 1}"
+        progress = f"Reading it all: {figure(reading.get('read')):,} of {figure(reading.get('planned')):,} pages"
     screen.coloured(BODY_ROW + 7, 0, Colour.CYAN, fit(progress, TEXT_WIDTH))
     band(screen, 12, Colour.BLUE, Colour.YELLOW, "Asked of hackaday.com, 24 hours")
     fetched: list[tuple[str, int, int]] = archive.get("fetched") or []

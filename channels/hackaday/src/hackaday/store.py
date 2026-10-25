@@ -45,6 +45,17 @@ def now_text() -> str:
 
 
 @dataclass(frozen=True)
+class PageRead:
+    """A page of the full download, kept with what it read: its collection, month (or ''), number, the pages in all and its items."""
+
+    collection: str
+    month: str
+    page: int
+    total_pages: int
+    items: int
+
+
+@dataclass(frozen=True)
 class StoredPost:
     """A post as the channel reads it: its whole object, and the names its ids stand for."""
 
@@ -122,7 +133,7 @@ class Store:
 
     # Keeping what the API gave.
 
-    def put_posts(self, objects: Iterable[dict[str, Any]], state: tuple[str, Any] | None = None) -> list[int]:
+    def put_posts(self, objects: Iterable[dict[str, Any]], state: tuple[str, Any] | None = None, page: PageRead | None = None) -> list[int]:
         """Keep posts or pages whole, their terms and their search text; answer the ids that were new or changed."""
         rows = [
             (obj, plain(obj["title"]["rendered"]), article_text(obj.get("content", {}).get("rendered", "")))
@@ -151,9 +162,12 @@ class Store:
                 )
                 db.execute("INSERT OR REPLACE INTO posts_search (rowid, title, body) VALUES (?, ?, ?)", (ident, title, text))
             self._state(db, state)
+            self._page(db, page)
         return changed
 
-    def put_objects(self, table: str, objects: Iterable[dict[str, Any]], state: tuple[str, Any] | None = None) -> int:
+    def put_objects(
+        self, table: str, objects: Iterable[dict[str, Any]], state: tuple[str, Any] | None = None, page: PageRead | None = None
+    ) -> int:
         """Keep terms, users, media or comments whole; answer how many."""
         if table not in {"terms", "users", "media", "comments"}:
             message = f"no such table: {table}"
@@ -171,6 +185,7 @@ class Store:
                 )
                 kept += 1
             self._state(db, state)
+            self._page(db, page)
         return kept
 
     def mark_gone(self, table: str, ids: Iterable[int]) -> int:
@@ -186,6 +201,24 @@ class Store:
                     (now_text(), ident),
                 ).rowcount
         return marked
+
+    @staticmethod
+    def _page(db: sqlite3.Connection, page: PageRead | None) -> None:
+        if page is not None:
+            db.execute(
+                "INSERT OR REPLACE INTO download_pages (collection, month, page, total_pages, items, read_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (page.collection, page.month, page.page, page.total_pages, page.items, now_text()),
+            )
+
+    def downloaded(self) -> dict[tuple[str, str], tuple[int, set[int]]]:
+        """Answer the full download's pages read: for each collection and month, its pages in all and those read."""
+        found: dict[tuple[str, str], tuple[int, set[int]]] = {}
+        for row in self.db.execute("SELECT collection, month, page, total_pages FROM download_pages"):
+            key = (row["collection"], row["month"])
+            total, pages = found.get(key, (0, set()))
+            pages.add(row["page"])
+            found[key] = (max(total, row["total_pages"]), pages)
+        return found
 
     @staticmethod
     def _state(db: sqlite3.Connection, state: tuple[str, Any] | None) -> None:

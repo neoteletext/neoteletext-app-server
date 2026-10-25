@@ -252,6 +252,7 @@ class Hackaday(App):
             "counts": store.counts(),
             "total": self.library.total,
             "backfill": store.state("backfill", {}),
+            "download": store.state("download", {}),
             "fetched": store.fetched_since((now_utc() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")),
         }
         return views.figures(self.posts, self.figures, self.pages, archive)

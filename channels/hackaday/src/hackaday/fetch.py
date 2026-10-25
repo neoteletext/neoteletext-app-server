@@ -59,7 +59,12 @@ GZIP_WINDOW = 16 + zlib.MAX_WBITS
 
 
 class FetchError(Exception):
-    """A fetch that failed or was refused."""
+    """A fetch that failed or was refused; `retry_after` when the server said how long to wait, in seconds."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        """Say what failed, and how long the server asked to be left."""
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)
@@ -106,9 +111,10 @@ def unpacked(body: bytes, encoding: str) -> bytes:
 class Fetcher:
     """One polite client."""
 
-    def __init__(self, on_fetch: Callable[[Fetched], None] | None = None) -> None:
-        """Tell `on_fetch` of each request made."""
+    def __init__(self, on_fetch: Callable[[Fetched], None] | None = None, pause_s: float = PAUSE_S) -> None:
+        """Tell `on_fetch` of each request made; leave `pause_s` between this client's requests."""
         self.on_fetch = on_fetch
+        self.pause_s = pause_s
         self._connection: http.client.HTTPSConnection | None = None
         self._last = 0.0
         self._not_before = 0.0
@@ -124,7 +130,7 @@ class Fetcher:
             message = f"not {ORIGIN}: {url}"
             raise FetchError(message)
         async with self._lock:
-            wait = max(self._last + PAUSE_S, self._not_before) - time.monotonic()
+            wait = max(self._last + self.pause_s, self._not_before) - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
@@ -174,8 +180,10 @@ class Fetcher:
                 continue
             if answer.status in {TOO_MANY, UNAVAILABLE}:
                 retry = answer.headers.get("retry-after", "")
-                seconds = int(retry) if retry.isdigit() else FIRST_BACKOFF_S
-                self._not_before = time.monotonic() + min(LONGEST_BACKOFF_S, seconds)
+                seconds = min(LONGEST_BACKOFF_S, int(retry) if retry.isdigit() else FIRST_BACKOFF_S)
+                self._not_before = time.monotonic() + seconds
+                message = f"{answer.status} from {url}"
+                raise FetchError(message, retry_after=seconds)
             if answer.status not in {OK, NOT_MODIFIED}:
                 message = f"{answer.status} from {url}"
                 raise FetchError(message)

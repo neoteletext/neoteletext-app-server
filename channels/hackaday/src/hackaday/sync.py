@@ -21,10 +21,8 @@ no more than one:
    page at a time.
 5. Media records modified, every `MEDIA_EVERY_S`; the categories and the
    writers, every `TERMS_EVERY_S`.
-6. Otherwise, the next page of the full download (`BACKFILL`), which
-   keeps its place in the same transaction as what it read, so it goes on
-   where it stopped. A collection with dates is read a month at a time,
-   so no request asks the server to skip far (comments are 1.48 million).
+
+The full download is `download.py`'s, run beside these polls.
 
 Times are asked with `Z`: without a zone the API reads them as the site's
 own (California) time, and `after` and `modified_after` leave out the
@@ -38,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from hackaday.fetch import FetchError, api
+from hackaday.fetch import api
 
 if TYPE_CHECKING:
     from hackaday.fetch import Fetcher
@@ -63,17 +61,6 @@ OVERLAP = timedelta(minutes=10)
 #: comments, which reads the whole window's month (about 4,000 comments).
 MOST_POLL_PAGES = 20
 MOST_FIRST_COMMENT_PAGES = 100
-#: The full download's collections, in order: names first, so that posts
-#: find their writers and terms kept; each with whether it is read by month.
-BACKFILL: tuple[tuple[str, str, bool], ...] = (
-    ("users", "users", False),
-    ("categories", "terms", False),
-    ("tags", "terms", False),
-    ("posts", "posts", True),
-    ("pages", "posts", False),
-    ("media", "media", True),
-    ("comments", "comments", True),
-)
 #: The time form the API writes and is asked in.
 TIME_FORM = "%Y-%m-%dT%H:%M:%S"
 
@@ -144,8 +131,6 @@ class Sync:
             return changes
         if self.is_due("terms", TERMS_EVERY_S):
             await self.refresh_names()
-            return changes
-        if await self.backfill_step(changes):
             return changes
         await self.sweep_step(changes)
         return changes
@@ -319,50 +304,6 @@ class Sync:
                 if page >= total_pages(headers):
                     break
 
-    # The full download.
-
-    async def backfill_step(self, changes: Changes) -> bool:
-        """Read the next page of the full download; answer False when it is done."""
-        place: dict[str, Any] = self.store.state("backfill", {"stage": 0, "page": 1, "window": None})
-        if place.get("done"):
-            return False
-        stage = int(place["stage"])
-        collection, table, by_month = BACKFILL[stage]
-        query: dict[str, str | int] = {"per_page": PAGE_SIZE, "page": int(place["page"]), "orderby": "id", "order": "asc"}
-        if by_month:
-            if place.get("window") is None:
-                first, _ = await self.fetcher.json(api(collection, per_page=1, orderby="date", order="asc", _fields="date_gmt"), "backfill")
-                start = parse_time(first[0]["date_gmt"]) if first else datetime.now(UTC)
-                place = {**place, "window": zoned(start.replace(day=1, hour=0, minute=0, second=0))}
-                self.store.set_state("backfill", place)
-            start = datetime.strptime(str(place["window"]), TIME_FORM + "Z").replace(tzinfo=UTC)
-            # `after` leaves out the instant given: a second before the month takes in its first second.
-            query |= {"after": zoned(start - timedelta(seconds=1)), "before": zoned(month_after(start))}
-        found, headers = await self.fetcher.json(api(collection, **query), "backfill")
-        items = [item for item in found if isinstance(item, dict)]
-        place = self.next_place(place, by_month=by_month, finished=int(place["page"]) >= total_pages(headers))
-        if table == "posts":
-            self.store.put_posts(items, ("backfill", place))
-        else:
-            self.store.put_objects(table, items, ("backfill", place))
-        changes.kinds.add("archive")
-        return True
-
-    @staticmethod
-    def next_place(place: dict[str, Any], *, by_month: bool, finished: bool) -> dict[str, Any]:
-        """Answer the full download's place after a page: the next page, month or collection, or done."""
-        if not finished:
-            return {**place, "page": int(place["page"]) + 1}
-        if by_month:
-            start = datetime.strptime(str(place["window"]), TIME_FORM + "Z").replace(tzinfo=UTC)
-            following = month_after(start)
-            if following <= datetime.now(UTC):
-                return {**place, "page": 1, "window": zoned(following)}
-        stage = int(place["stage"]) + 1
-        if stage >= len(BACKFILL):
-            return {"stage": stage, "page": 1, "window": None, "done": True, "finished_at": zoned(datetime.now(UTC))}
-        return {"stage": stage, "page": 1, "window": None}
-
     # The sweep for posts that have gone.
 
     def sweeping(self) -> bool:
@@ -395,18 +336,3 @@ class Sync:
             self.store.set_state("sweep", {"finished_at": zoned(datetime.now(UTC))})
         else:
             self.store.set_state("sweep", {"page": page + 1, "after_id": last})
-
-
-async def run_until_done(sync: Sync) -> None:
-    """Step until the full download is done: the command line's use, without the channel."""
-    told = None
-    while not sync.store.state("backfill", {}).get("done"):
-        try:
-            await sync.step()
-        except FetchError as error:
-            print(f"hackaday: {error}", flush=True)  # noqa: T201 - the command line's progress
-        place = sync.store.state("backfill", {})
-        where = (place.get("stage"), place.get("window"))
-        if where != told:
-            told = where
-            print(f"hackaday: {place} {sync.store.counts()}", flush=True)  # noqa: T201 - the command line's progress

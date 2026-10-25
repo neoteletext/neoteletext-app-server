@@ -7,9 +7,10 @@ import math
 import urllib.parse
 from typing import TYPE_CHECKING, Any, cast
 
-import pytest
+from hackaday.download import COLLECTIONS, MOST_TRIES, Download, gap
+from hackaday.fetch import FetchError
 from hackaday.store import Store
-from hackaday.sync import BACKFILL, PAGE_SIZE, WINDOW, Changes, Sync
+from hackaday.sync import PAGE_SIZE, WINDOW, Changes, Sync
 
 if TYPE_CHECKING:
     from hackaday.fetch import Fetcher
@@ -22,7 +23,7 @@ class FakeWordPress:
     """The REST API's collections and the filters the sync uses, in memory; each request kept."""
 
     def __init__(self) -> None:
-        self.data: dict[str, list[dict[str, Any]]] = {name: [] for name, _, _ in BACKFILL}
+        self.data: dict[str, list[dict[str, Any]]] = {name: [] for name, _, _ in COLLECTIONS}
         self.asked: list[tuple[str, str, dict[str, str]]] = []
 
     async def json(self, url: str, kind: str) -> tuple[Any, dict[str, str]]:
@@ -112,24 +113,30 @@ def syncing(api: FakeWordPress, store: Store) -> Sync:
     return sync
 
 
-def download(sync: Sync, most_steps: int = 2_000) -> int:
-    async def run() -> int:
-        for step in range(most_steps):
-            if sync.store.state("backfill", {}).get("done"):
-                return step
-            await sync.step()
-        return most_steps
+class Flaky(FakeWordPress):
+    """A WordPress that refuses some requests: always, or once with a `Retry-After`."""
 
-    return asyncio.run(run())
+    def __init__(self, refuse: str, *, once: bool) -> None:
+        super().__init__()
+        self.refuse = refuse
+        self.once = once
+        self.refused = 0
+
+    async def json(self, url: str, kind: str) -> tuple[Any, dict[str, str]]:
+        if self.refuse in url and not (self.once and self.refused):
+            self.refused += 1
+            raise FetchError("503 from " + url, retry_after=0.01 if self.once else None)
+        return await super().json(url, kind)
 
 
-def test_the_whole_archive_is_read_once_and_where_it_stopped_it_goes_on() -> None:
+def download(api: FakeWordPress, store: Store) -> bool:
+    return asyncio.run(Download(store, [cast("Fetcher", api)] * 3, within_s=0).run())
+
+
+def test_the_whole_archive_is_read_by_many_at_once_without_paging_deep() -> None:
     api = archive()
     store = Store(":memory:")
-    first = syncing(api, store)
-    assert download(first, most_steps=6) == 6, "stopped part way"
-    steps = download(syncing(api, store))
-    assert steps < 2_000
+    assert download(api, store)
     tables = ("posts", "terms", "users", "media", "comments")
     kept = {table: {row[0] for row in store.db.execute(f"SELECT id FROM {table}")} for table in tables}  # noqa: S608 - fixed names
     assert kept["posts"] == {item["id"] for item in (*api.data["posts"], *api.data["pages"])}, "every post and page, the months' edges too"
@@ -137,9 +144,41 @@ def test_the_whole_archive_is_read_once_and_where_it_stopped_it_goes_on() -> Non
     assert kept["users"] == {1}
     assert kept["media"] == {500}
     assert kept["comments"] == {item["id"] for item in api.data["comments"]}
-    pages = [query for kind, _, query in api.asked if kind == "backfill" and "page" in query]
+    asked = [(collection, query) for kind, collection, query in api.asked if kind == "download"]
+    pages = [query for _, query in asked]
     assert max(int(query["page"]) for query in pages) <= math.ceil(250 / PAGE_SIZE), "no deep paging: a month at a time"
     assert all(query.get("after", "Z").endswith("Z") for query in pages), "times asked with their zone"
+    assert len(asked) == len({(collection, tuple(sorted(query.items()))) for collection, query in asked}), "no page read twice"
+    assert store.state("backfill")["done"]
+
+
+def test_a_download_stopped_goes_on_with_only_the_pages_it_had_not_read() -> None:
+    store = Store(":memory:")
+    failing = Flaky("tags?per_page=100&page=2", once=False)
+    failing.data = archive().data
+    assert not download(failing, store), "a page left unread"
+    assert failing.refused == MOST_TRIES
+    assert not store.state("backfill", {}).get("done")
+    api = archive()
+    assert download(api, store)
+    read = [query for kind, collection, query in api.asked if kind == "download"]
+    assert [(query["page"]) for query in read] == ["2"], "only the page it had not read"
+    assert store.state("backfill")["done"]
+
+
+def test_a_retry_after_holds_the_download_and_the_page_is_read() -> None:
+    store = Store(":memory:")
+    api = Flaky("comments?per_page=100&page=1", once=True)
+    api.data = archive().data
+    assert download(api, store)
+    assert api.refused == 1
+    assert store.comment_ids(1000) == {item["id"] for item in api.data["comments"]}
+
+
+def test_the_pace_ends_by_the_deadline() -> None:
+    assert gap(0.0, 10.0, 5) == 2.0
+    assert gap(12.0, 10.0, 5) == 0.0, "late: as fast as the workers go"
+    assert gap(0.0, 10.0, 0) == 10.0
 
 
 def test_only_new_and_edited_posts_are_fetched_whole() -> None:
@@ -188,7 +227,7 @@ def test_posts_that_have_gone_are_found_by_the_window_and_by_the_sweep() -> None
     api = archive()
     store = Store(":memory:")
     sync = syncing(api, store)
-    download(sync)
+    assert download(api, store)
     api.data["posts"] = [item for item in api.data["posts"] if item["id"] not in {2, 1005}]
     asyncio.run(sync.check_window(Changes()))
     asyncio.run(sync.sweep_step(Changes()))
@@ -197,10 +236,3 @@ def test_posts_that_have_gone_are_found_by_the_window_and_by_the_sweep() -> None
     gone = {row[0] for row in store.db.execute("SELECT id FROM posts WHERE gone_at IS NOT NULL")}
     assert gone == {2, 1005}
     assert not sync.sweeping(), "a sweep a week"
-
-
-@pytest.mark.parametrize("window", ["2005-01-01T00:00:00Z", "2005-12-01T00:00:00Z"])
-def test_a_month_ends_at_the_next(window: str) -> None:
-    place = Sync.next_place({"stage": 3, "page": 1, "window": window}, by_month=True, finished=True)
-    assert place["window"] in {"2005-02-01T00:00:00Z", "2006-01-01T00:00:00Z"}
-    assert place["page"] == 1
