@@ -17,9 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from neoteletext_app.app import App, Event, page_hears, prompt_at, session_hears
+from neoteletext_app.app import App, Event, page_hears, session_hears
 from neoteletext_app.charset import fold
-from neoteletext_app.screen import FASTEXT_ROW, TITLE_LIMIT, Colour, Screen, tti
+from neoteletext_app.screen import TITLE_LIMIT, Colour, Screen, tti
 from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
 from hackaday import clips, numbers, people, site, views
@@ -116,7 +116,6 @@ class Viewer:
     vote: int | None = None
     favourites: set[int] = field(default_factory=set)
     tags: dict[int, str] = field(default_factory=dict)
-    views: dict[int, str] = field(default_factory=dict)
     greeted: bool = False
     heard: set[int] = field(default_factory=set)
     clips_heard: set[int] = field(default_factory=set)
@@ -134,10 +133,8 @@ class Hackaday(App):
             numbers.POPULAR_TAGS: "Popular tags",
             numbers.TAGS: "Tags A to Z",
             numbers.SEARCH: "Search the archive",
-            numbers.DISCUSSED: "Most discussed",
-            numbers.COMMENTS_WALL: "Latest comments",
-            numbers.WRITERS: "Writers",
-            numbers.STATISTICS: "Statistics",
+            numbers.TALKING: "Talking points",
+            numbers.FIGURES: "Facts and figures",
             numbers.COLUMNS: "Columns",
             numbers.LINKS_COLUMN: "Hackaday Links",
             numbers.PODCAST: "Hackaday Podcast",
@@ -150,8 +147,7 @@ class Hackaday(App):
             numbers.QUIZ: "Guess the magazine",
             numbers.POLL: "Live poll",
             numbers.MINE: "My Hackaday",
-            numbers.SERVER_STATS: "Behind the scenes",
-            numbers.ABOUT: "How it works",
+            numbers.ABOUT: "Help",
         }
         sections: dict[int, str] = {}
         for mag in site.MAGAZINES:
@@ -294,20 +290,15 @@ class Hackaday(App):
         self.publish_people()
 
     def publish_columns(self) -> None:
-        """Publish the regular columns' latest editions."""
-        for number in COLUMN_TITLES:
-            self.put(number, self.column_screen(number, 0))
-
-    def column_screen(self, page: int, top: int) -> Screen:
-        """Draw a column's page from line `top`."""
-        title, colour = COLUMN_TITLES[page]
+        """Publish the regular columns' latest editions, a screen each a sub-page."""
         links: list[tuple[str, int | None]] = [
             ("Columns", numbers.COLUMNS),
             ("Security", numbers.SECURITY),
             ("Links", numbers.LINKS_COLUMN),
             ("Podcast", numbers.PODCAST),
         ]
-        return views.column_page(title, colour, self.columns.get(page), top, links)
+        for number, (title, colour) in COLUMN_TITLES.items():
+            self.put(number, views.column_pages(title, colour, self.columns.get(number), links))
 
     def publish_on_this_day(self) -> None:
         """Publish page 130's list for viewers who have not chosen."""
@@ -341,15 +332,13 @@ class Hackaday(App):
         self.placed = site.place(posts)
         placed = self.placed
         self.put(numbers.FRONT, self.front_screen())
-        self.put(numbers.HEADLINES, views.headlines(posts, placed, 0))
+        self.put(numbers.HEADLINES, views.headlines(posts, placed, now))
         self.put(numbers.MAGAZINES, views.magazines_index(placed))
         self.put(numbers.POPULAR_TAGS, views.popular_tags(posts, placed))
         self.put(numbers.TAGS, self.tags_screen(numbers.TAGS, Viewer()))
         self.put(numbers.SEARCH, views.search("", [], 0, searching=False))
-        self.put(numbers.DISCUSSED, views.discussed(posts, placed))
-        self.put(numbers.COMMENTS_WALL, views.comments_wall(posts, placed, 0))
-        self.put(numbers.WRITERS, views.writers(posts))
-        self.put(numbers.STATISTICS, views.statistics(posts))
+        self.put(numbers.TALKING, views.talking_points(posts, placed))
+        self.put(numbers.FIGURES, views.figures(posts, self.figures, self.pages))
         self.put(numbers.COLUMNS, views.columns_index(posts, placed))
         self.publish_columns()
         self.put(numbers.SOUNDBOARD, views.soundboard(self.clips, 0, None))
@@ -360,8 +349,7 @@ class Hackaday(App):
         self.put(numbers.QUIZ, views.quiz(None, [], None, (0, 0), self.best))
         self.put(numbers.POLL, views.poll(POLL_OPTIONS, self.votes, None, 0))
         self.put(numbers.MINE, views.mine(set(), 0, posts, placed))
-        self.put(numbers.SERVER_STATS, views.server_stats(self.figures, self.pages))
-        self.put(numbers.ABOUT, views.about())
+        self.put(numbers.ABOUT, views.help_pages())
         self.put(numbers.CHALLENGE, views.challenge(self.entries, now, CHALLENGE_CLOSES))
         self.put(numbers.DOOM, views.doom(self.doom_ports, now))
         for mag in site.SUBJECTS:
@@ -374,7 +362,7 @@ class Hackaday(App):
             for slot, post in enumerate(held):
                 self.publish_story(post, mag.story_page(slot))
         if posts:
-            self.put(numbers.READER, views.reader(posts[0], 0))
+            self.put(numbers.READER, views.reader_pages(posts[0]))
 
     def publish_magazine(self, mag: site.Magazine) -> None:
         """Publish a subject magazine's front, its list of stories, its tags and its tag pages, and title them."""
@@ -411,32 +399,12 @@ class Hackaday(App):
         following = held.index(post) + 1
         return mag.story_page(following) if following < len(held) else mag.front
 
-    def story_view(self, post: Post, page: int, view: str, top: int) -> list[Screen]:
-        """Draw story `page` as `view` shows it, from line `top` where it scrolls."""
-        mag = self.magazine_of_page(page) or site.HOME
-        following = self.next_story(page)
-        if view == views.PICTURE:
-            return [views.picture(post, mag, page, following, self.library.picture_pages.get(post.id))]
-        if view == views.COMMENTS:
-            return [views.comments(post, mag, page, following, top)]
-        if view == views.LINKS:
-            return self.links_screens(post, mag, page, following)
-        return [views.story(post, mag, page, following, top)]
-
     def publish_story(self, post: Post, page: int) -> None:
-        """Publish a story's shared page, its text; its other views are each viewer's own."""
-        self.put(page, self.story_view(post, page, views.STORY, 0))
+        """Publish a story's page: its text, picture, comments and links, each a sub-page (`views.story_pages`)."""
+        mag = self.magazine_of_page(page) or site.HOME
+        self.put(page, views.story_pages(post, mag, self.next_story(page), self.library.picture_pages.get(post.id), self.qr))
         if post.link not in self.qr:
             self.spawn(self.make_qr(post))
-
-    def links_screens(self, post: Post, mag: site.Magazine, page: int, following: int) -> list[Screen]:
-        """Draw a story's link pages: the article, then each video, as sub-pages."""
-        screens = [views.links_page(post, mag, page, following, self.qr.get(post.link), "The full story")]
-        screens.extend(
-            views.links_page(post, mag, page, following, self.qr.get(video), f"Video {number}")
-            for number, video in enumerate(post.article.videos[:3], start=1)
-        )
-        return screens
 
     async def make_qr(self, post: Post) -> None:
         """Make the QR codes of a story's links, then publish its link pages again."""
@@ -448,26 +416,19 @@ class Hackaday(App):
             except ToolError as error:
                 print(f"hackaday: no QR code for {target}: {error}", file=sys.stderr)  # noqa: T201
                 return
-        self.redraw_viewers_of(post, views.LINKS)
+        page = self.placed.page_of(post)
+        if page is not None:
+            self.publish_story(post, page)
 
     async def changed(self, what: str) -> None:
         """Publish again what the library's change shows."""
         if what == "pictures":
             for post in self.posts:
-                self.redraw_viewers_of(post, views.PICTURE)
+                page = self.placed.page_of(post)
+                if page is not None:
+                    self.publish_story(post, page)
             return
         self.publish_all()
-        for post in self.posts:
-            self.redraw_viewers_of(post, views.COMMENTS)
-
-    def redraw_viewers_of(self, post: Post, view: str) -> None:
-        """Draw again `post`'s `view` for each viewer looking at it."""
-        page = self.placed.page_of(post)
-        if page is None:
-            return
-        for session, viewer in self.viewers.items():
-            if viewer.views.get(page) == view:
-                self.put(page, self.story_view(post, page, view, viewer.tops.get(page, 0)), session)
 
     async def news(self, post: Post) -> None:
         """Announce a new post: the newsflash on the front page, and a chime for whoever is watching it."""
@@ -477,9 +438,9 @@ class Hackaday(App):
         self.play(page_hears(numbers.FRONT), SOUND_CHANNEL, CHIME, gain=70, page=numbers.FRONT)
 
     async def on_stats(self, stats: dict[str, Any]) -> None:
-        """Show the server's figures on page 121 as they come."""
+        """Show the server's figures on page 108's last sub-page as they come."""
         self.figures = stats
-        self.put(numbers.SERVER_STATS, views.server_stats(stats, self.pages))
+        self.put(numbers.FIGURES, views.figures(self.posts, stats, self.pages))
 
     # Viewers.
 
@@ -521,8 +482,6 @@ class Hackaday(App):
             return handler(session, event)
         if page == numbers.TAGS or self.is_tag_index(page):
             return self.tags_input(session, page, event)
-        if numbers.is_story(page) and self.placed.post_at(page) is not None:
-            return self.story_input(session, page, event)
         return self.scroll_input(session, page, event)
 
     def on_this_day_input(self, session: int, event: Event) -> bool:
@@ -560,33 +519,8 @@ class Hackaday(App):
 
     # Scrolling.
 
-    def scrolled(self, session: int, page: int, top: int) -> tuple[Screen, int] | None:  # noqa: PLR0911 - one answer per kind of page
-        """Answer `page` drawn from line `top`, and its last top line, if it scrolls."""
-        posts, placed = self.posts, self.placed
-        if numbers.is_story(page):
-            post = placed.post_at(page)
-            view = self.viewer(session).views.get(page, views.STORY)
-            if post is None or view in {views.PICTURE, views.LINKS}:
-                return None
-            total = len(views.comment_lines(post)) if view == views.COMMENTS else len(views.article_lines(post))
-            rows = views.LIST_ROWS if view == views.COMMENTS else views.STORY_ROWS
-            return self.story_view(post, page, view, top)[0], last_top(total, rows)
-        if page == numbers.HEADLINES:
-            return views.headlines(posts, placed, top), last_top(len(posts), views.LIST_ROWS)
-        if page == numbers.COLUMNS:
-            lines = len(views.headline_lines(views.column_posts(posts), placed))
-            return views.columns_index(posts, placed, top), last_top(lines, views.LIST_ROWS)
-        if page == numbers.COMMENTS_WALL:
-            return views.comments_wall(posts, placed, top), last_top(len(views.comments_wall_lines(posts, placed)), views.LIST_ROWS)
-        if page in COLUMN_TITLES:
-            column = self.columns.get(page)
-            lines = 3 + len(views.article_lines(column)) if column else 1
-            return self.column_screen(page, top), last_top(lines, views.LIST_ROWS)
-        if page == numbers.READER:
-            reading = self.viewer(session).reading
-            if reading is None:
-                return None
-            return views.reader(reading, top), last_top(len(views.article_lines(reading)), views.STORY_ROWS)
+    def scrolled(self, page: int, top: int) -> tuple[Screen, int] | None:
+        """Answer `page` drawn from line `top`, and its last top line, if it scrolls: only the magazines' lists do."""
         return self.scrolled_magazine(page, top)
 
     def scrolled_magazine(self, page: int, top: int) -> tuple[Screen, int] | None:
@@ -624,13 +558,6 @@ class Hackaday(App):
             viewer.wheel[page] = turned - lines * NOTCH
             return top + lines
         return None
-
-    def text_rows(self, session: int, page: int) -> tuple[int, int]:
-        """Answer the first row and the rows a scrolling page's text and scroll bar take."""
-        story_text = numbers.is_story(page) and self.viewer(session).views.get(page, views.STORY) == views.STORY
-        if page == numbers.READER or story_text:
-            return views.STORY_TEXT_ROW, views.STORY_ROWS
-        return BODY_ROW, views.LIST_ROWS
 
     @staticmethod
     def dragged(  # noqa: PLR0913 - the view's state and its place
@@ -673,11 +600,11 @@ class Hackaday(App):
         """Scroll a page that scrolls: a screen, a line, the ends, the wheel."""
         viewer = self.viewer(session)
         top = viewer.tops.get(page, 0)
-        drawn = self.scrolled(session, page, top)
+        drawn = self.scrolled(page, top)
         if drawn is None:
             return False
         _, last = drawn
-        first_row, rows = self.text_rows(session, page)
+        first_row, rows = BODY_ROW, views.LIST_ROWS
         if event.kind == "mouse":
             moved = self.dragged(viewer, page, event, top=top, total=last + rows, first_row=first_row, rows=rows)
         else:
@@ -687,49 +614,10 @@ class Hackaday(App):
         moved = max(0, min(last, moved))
         if moved != top:
             viewer.tops[page] = moved
-            drawn = self.scrolled(session, page, moved)
+            drawn = self.scrolled(page, moved)
             if drawn is not None:
                 self.put(page, drawn[0], session)
         return True
-
-    # A story's views.
-
-    def story_input(self, session: int, page: int, event: Event) -> bool:
-        """Choose a story's view, or the next story, with the coloured keys or a click on their prompts; scroll what scrolls."""
-        viewer = self.viewer(session)
-        view = viewer.views.get(page, views.STORY)
-        key = event.colour
-        if event.clicked and event.row == FASTEXT_ROW and view != views.PICTURE:
-            shown = self.shown(session, page)
-            key = None if shown is None else prompt_at(shown, event.column)
-        if key is None:
-            return self.scroll_input(session, page, event)
-        choice = views.story_choices(view)[key]
-        if choice == views.NEXT:
-            self.goto(session, self.next_story(page))
-            return True
-        self.show_view(session, page, choice)
-        return True
-
-    def show_view(self, session: int, page: int, view: str) -> None:
-        """Show a viewer one of story `page`'s views, from its top: the text is the channel's copy again."""
-        viewer = self.viewer(session)
-        viewer.views[page] = view
-        viewer.tops[page] = 0
-        viewer.grips.pop(page, None)
-        post = self.placed.post_at(page)
-        if view == views.STORY or post is None:
-            del viewer.views[page]
-            self.release(session, page)
-            self.published.pop((session, page), None)
-            return
-        self.put(page, self.story_view(post, page, view, 0), session)
-
-    async def on_leave(self, session: int, page: int) -> None:
-        """Put a story's text back for a viewer who leaves it, to find when they come back."""
-        viewer = self.viewers.get(session)
-        if viewer is not None and page in viewer.views:
-            self.show_view(session, page, views.STORY)
 
     # Lists to choose from.
 
@@ -794,10 +682,8 @@ class Hackaday(App):
         if found is not None:
             self.goto(session, found)
             return
-        viewer = self.viewer(session)
-        viewer.reading = post
-        viewer.tops[numbers.READER] = 0
-        self.put(numbers.READER, views.reader(post, 0), session)
+        self.viewer(session).reading = post
+        self.put(numbers.READER, views.reader_pages(post), session)
         self.goto(session, numbers.READER)
 
     # Search.
