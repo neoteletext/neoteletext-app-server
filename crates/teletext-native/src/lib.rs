@@ -24,4 +24,5 @@ pub mod connection;
 pub mod http;
 pub mod hub;
 pub mod pictures;
+pub mod stats;
 pub mod websocket;

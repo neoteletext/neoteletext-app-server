@@ -123,6 +123,9 @@ fn main() -> ExitCode {
                     Effect::Own { page, .. } => {
                         owned.insert(page);
                     }
+                    Effect::Disown { page, .. } => {
+                        owned.remove(&page);
+                    }
                     _ => {}
                 }
             }

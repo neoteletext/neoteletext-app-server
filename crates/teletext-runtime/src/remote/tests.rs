@@ -213,6 +213,8 @@ fn bad_lines_are_refused_and_reported() {
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":8000,"pcm":"***"}}"#, "not base64"),
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":12345,"pcm":"AAA="}}"#, "sound.object"),
         (br#"{"type":"pages","pages":[]}"#, "declared once"),
+        (br#"{"type":"title","page":"200","title":"Not ours"}"#, "200 was not declared"),
+        (br#"{"type":"title","page":"100","title":"a title that runs to more than thirty-two characters"}"#, "over 32"),
     ] {
         channel.from_application(0, line, 0);
         let effects = channel.take_effects();
@@ -220,4 +222,77 @@ fn bad_lines_are_refused_and_reported() {
         assert!(said.len() == 1 && said[0].contains(reason), "{}: {said:?}", String::from_utf8_lossy(line));
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Shared { .. } | Effect::Send { .. })), "nothing done");
     }
+}
+
+/// A page retitled names what it holds now in `contents.txt`.
+#[test]
+fn a_title_renames_a_page_in_the_contents() {
+    let mut channel = channel();
+    channel.take_effects();
+    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
+    let effects = channel.take_effects();
+    assert_eq!(logs(&effects), Vec::<String>::new());
+    assert_eq!(effects.iter().filter(|effect| **effect == Effect::Contents).count(), 1, "the host is told to serve the contents anew");
+    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
+    assert!(contents.contains("p\t300\tTiny Robot Arm...\n") && contents.contains("p\t100\tFront\n"), "{contents}");
+    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
+    assert!(!channel.take_effects().contains(&Effect::Contents), "the same title again changes nothing");
+}
+
+/// A viewer's own copy released, the channel's copy is theirs again: the
+/// host is told, and the shared page is sent to them at once.
+#[test]
+fn a_released_page_is_the_channels_again() {
+    let mut channel = channel();
+    channel.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,5,Everyone's\n"}"#, 0);
+    channel.opened(VIEWER, 0);
+    send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
+    send(&mut channel, &InputItem::Event(Event::Page(0x100)));
+    let own = alloc::format!(r#"{{"type":"publish","page":"100","owner":{VIEWER},"tti":"PN,10000\nOL,5,Yours alone\n"}}"#);
+    channel.from_application(0, own.as_bytes(), 0);
+    let effects = channel.take_effects();
+    assert!(effects.contains(&Effect::Own { session: VIEWER, page: 0x100 }));
+    let release = alloc::format!(r#"{{"type":"release","session":{VIEWER},"page":"100"}}"#);
+    channel.from_application(0, release.as_bytes(), 0);
+    let effects = channel.take_effects();
+    assert_eq!(logs(&effects), Vec::<String>::new());
+    assert!(effects.contains(&Effect::Disown { session: VIEWER, page: 0x100 }));
+    let pages = texts(&sent_to(&effects, VIEWER));
+    assert!(pages.iter().any(|(page, text)| *page == 0x100 && text.contains("Everyone's")), "{pages:?}");
+    channel.from_application(0, release.as_bytes(), 0);
+    assert!(!channel.take_effects().iter().any(|effect| matches!(effect, Effect::Disown { .. })), "a page not owned is not released twice");
+}
+
+/// A page that starts a section heads it in `contents.txt`, which names
+/// its magazine.
+#[test]
+fn a_section_heads_its_pages_in_the_contents() {
+    let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"200","title":"Retro front","section":"Retrocomputing"},{"page":"201","title":"Challenge"}]}"#).unwrap();
+    assert_eq!(pages[1].section.as_deref(), Some("Retrocomputing"));
+    let config = ChannelConfig { name: "test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
+    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
+    assert_eq!(contents, "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t200\tRetro front\np\t201\tChallenge\n");
+    assert!(declared_pages(br#"{"type":"pages","pages":[{"page":"200","section":"a section name that runs to more than thirty-two"}]}"#).is_err());
+}
+
+/// The channel counts viewers, what they open and press, and its lines,
+/// and never anything that says who a viewer is.
+#[test]
+fn the_channel_counts_what_happens() {
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    channel.opened(VIEWER + 1, 0);
+    send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    send(&mut channel, &InputItem::Text("a"));
+    channel.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\n"}"#, 0);
+    channel.closed(VIEWER + 1, 0);
+    let stats = channel.stats();
+    assert_eq!((stats.viewers, stats.viewers_peak, stats.viewers_total), (1, 2, 2));
+    assert_eq!(stats.most_opened(), [(0x300, 1)]);
+    assert_eq!((stats.inputs, stats.keys), (1, 1));
+    assert_eq!(stats.shared_published, 1);
+    assert_eq!(stats.lines_from_application, 1);
+    assert!(stats.lines_to_application >= 4, "start, joins, open, input and close went to it");
 }

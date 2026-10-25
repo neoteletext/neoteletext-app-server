@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError};
 use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
@@ -17,8 +17,11 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use teletext_runtime::layout::bundle;
+
 use crate::connection;
 use crate::hub::Hub;
+use crate::stats::{ServerStats, count};
 
 /// A whole response body.
 #[derive(Debug, Default)]
@@ -49,7 +52,12 @@ pub struct Routes {
     pub hubs: BTreeMap<String, Hub>,
     /// Sessions are numbered from here, never reused.
     pub sessions: AtomicU64,
+    /// The server's figures.
+    pub stats: Arc<ServerStats>,
 }
+
+/// Where the server's figures are served, beside the channels' folders.
+pub const STATS: &str = "stats.json";
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
@@ -60,8 +68,15 @@ const T42_TYPE: &str = "application/x-teletext-t42";
 pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let path = request.uri().path().trim_start_matches('/').to_owned();
     let (folder, file) = path.split_once('/').unwrap_or((path.as_str(), ""));
+    count(&routes.stats.requests);
     if folder.is_empty() {
         return listing(routes);
+    }
+    if folder == STATS && file.is_empty() {
+        let mut response = Response::new(Whole(Some(Bytes::from(routes.stats.document()))));
+        response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
     }
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
     if file == PUSH {
@@ -69,20 +84,21 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     }
     let (content_type, body): (&str, Arc<[u8]>) = match file {
         "channel.json" => ("application/json", Arc::clone(&hub.descriptor)),
-        "contents.txt" => ("text/plain", Arc::clone(&hub.contents)),
+        "contents.txt" => ("text/plain", Arc::clone(&hub.contents.read().unwrap_or_else(PoisonError::into_inner))),
         "index.t42" => {
-            let mut bytes = Vec::new();
-            for (_, frame) in hub.pages.all() {
-                bytes.extend_from_slice(&frame);
-            }
-            (T42_TYPE, bytes.into())
+            let frames = hub.pages.all();
+            (T42_TYPE, bundle(frames.iter().map(|(_, frame)| &frame[..])).into())
         }
         other => match page_of(other).and_then(|page| hub.pages.frame(page)) {
             Some(frame) => (T42_TYPE, frame),
             None => return status(StatusCode::NOT_FOUND),
         },
     };
-    file_response(&request, content_type, &body)
+    let response = file_response(&request, content_type, &body);
+    if response.status() == StatusCode::NOT_MODIFIED {
+        count(&routes.stats.not_modified);
+    }
+    response
 }
 
 /// A file, or 304 when the client holds it already.

@@ -82,6 +82,16 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
+    /// The pointer moved over a cell: in `MOUSE_DRAG` while a button is
+    /// held, in `MOUSE_ALL` always (INPUT.md section 6.4).
+    Moved {
+        /// The buttons held, a bit each: 1 left, 2 middle, 4 right.
+        buttons: u8,
+        /// The cell's column.
+        column: u32,
+        /// The cell's row.
+        row: u32,
+    },
     /// The wheel turned over a cell, in `MOUSE_BUTTONS` (INPUT.md section
     /// 5.4): in 1/120ths of a line, positive right and down.
     Wheel {
@@ -110,7 +120,10 @@ impl<'a> Input<'a> {
         match *item {
             Item::Text(text) => Some(Self::Text(text)),
             Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), text: key.text, base: key.base }),
-            Item::Event(Event::Mouse(mouse)) if mouse.action != MouseAction::Move => {
+            Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Move => {
+                Some(Self::Moved { buttons: mouse.button, column: mouse.at.column, row: mouse.at.row })
+            }
+            Item::Event(Event::Mouse(mouse)) => {
                 Some(Self::Mouse { pressed: mouse.action == MouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
             Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),

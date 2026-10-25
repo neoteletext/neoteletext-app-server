@@ -14,6 +14,12 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::apps::{FromApplication, Link};
+use crate::stats::{ServerStats, count};
+
+/// How often a channel's counts are recorded and sent to its application,
+/// in seconds: often enough for a live figure on a page, rarely enough to
+/// cost nothing.
+pub const STATS_EVERY_S: u64 = 10;
 
 /// How many changes the log keeps: a connection further behind than this
 /// is sent every shared page again, which is the same as catching up.
@@ -57,6 +63,9 @@ pub enum Outbound {
     /// The connection owns this page from now on: the shared page of
     /// that number is not sent to it.
     Own(u16),
+    /// The connection no longer owns this page: the shared page of that
+    /// number is sent to it again.
+    Disown(u16),
     /// Close the connection.
     Close,
 }
@@ -112,36 +121,48 @@ impl Pages {
 pub struct Hub {
     /// The channel's folder.
     pub folder: String,
-    /// Its descriptor and contents, which do not change.
+    /// Its descriptor, which does not change.
     pub descriptor: Arc<[u8]>,
-    /// Its contents file.
-    pub contents: Arc<[u8]>,
+    /// Its contents file, made again when a page is retitled.
+    pub contents: Arc<RwLock<Arc<[u8]>>>,
     /// Its shared pages.
     pub pages: Arc<Pages>,
     /// The latest generation: every connection watches it.
     pub generation: watch::Receiver<u64>,
     /// Its task's commands.
     pub commands: mpsc::Sender<Command>,
+    /// The server's figures, which every connection adds to.
+    pub stats: Arc<ServerStats>,
 }
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
 /// zero; `link`, for a channel whose application is a program of its own,
 /// carries that program's lines (`docs/applications.md`).
 #[must_use]
-pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Link>) -> Hub {
+pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>) -> Hub {
     let now = move || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     channel.start(now());
     let descriptor: Arc<[u8]> = channel.resource("channel.json").map(|resource| resource.body).unwrap_or_default().into();
-    let contents: Arc<[u8]> = channel.resource("contents.txt").map(|resource| resource.body).unwrap_or_default().into();
+    let contents = Arc::new(RwLock::new(contents_of(&channel)));
     let pages = Arc::new(Pages::default());
     let (generation_sender, generation) = watch::channel(0_u64);
     let (commands, mut queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, contents, pages: Arc::clone(&pages), generation, commands };
+    let hub = Hub {
+        folder: folder.to_owned(),
+        descriptor,
+        contents: Arc::clone(&contents),
+        pages: Arc::clone(&pages),
+        generation,
+        commands,
+        stats: Arc::clone(&stats),
+    };
+    let folder = folder.to_owned();
     tokio::spawn(async move {
         let mut outboxes: BTreeMap<SessionId, mpsc::Sender<Outbound>> = BTreeMap::new();
         let mut current = 0_u64;
         let (mut from_application, to_application) = link.map_or((None, None), |link| (Some(link.from), Some(link.to)));
         let mut dropped = Dropped::default();
+        let mut figures = tokio::time::interval(Duration::from_secs(STATS_EVERY_S));
         let mut sink = Sink {
             pages: &pages,
             generation: &generation_sender,
@@ -150,7 +171,7 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
             to_application: to_application.as_ref(),
             dropped: &mut dropped,
         };
-        sink.apply(channel.take_effects());
+        sink.apply(channel.take_effects(), &channel, &contents);
         loop {
             let wake = channel.next_wake().and_then(|at| start.checked_add(Duration::from_millis(at)));
             let event = tokio::select! {
@@ -168,6 +189,7 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                     Event::Application(arrived)
                 }
                 () = sleep_until(wake) => Event::Deadline,
+                _ = figures.tick() => Event::Figures,
             };
             match event {
                 Event::Command(Command::Opened { session, outbox }) => {
@@ -180,8 +202,18 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                     channel.closed(session, now());
                 }
                 Event::Application(FromApplication::Line(text)) => channel.from_application(0, &text, now()),
-                Event::Application(FromApplication::Restarted) => channel.restarted(0, now()),
+                Event::Application(FromApplication::Restarted) => {
+                    count(&stats.restarts);
+                    channel.restarted(0, now());
+                }
                 Event::Deadline => channel.deadline(now()),
+                Event::Figures => {
+                    stats.record(&folder, channel.stats());
+                    if let Some(to) = to_application.as_ref() {
+                        // A figure missed is sent again in ten seconds.
+                        let _ = to.try_send(stats.line(channel.stats()));
+                    }
+                }
             }
             let mut sink = Sink {
                 pages: &pages,
@@ -191,10 +223,15 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                 to_application: to_application.as_ref(),
                 dropped: &mut dropped,
             };
-            sink.apply(channel.take_effects());
+            sink.apply(channel.take_effects(), &channel, &contents);
         }
     });
     hub
+}
+
+/// The channel's `contents.txt`.
+fn contents_of(channel: &Channel) -> Arc<[u8]> {
+    channel.resource("contents.txt").map(|resource| resource.body).unwrap_or_default().into()
 }
 
 /// What woke the channel's task.
@@ -202,6 +239,7 @@ enum Event {
     Command(Command),
     Application(FromApplication),
     Deadline,
+    Figures,
 }
 
 /// The next line from the program, or never when there is none.
@@ -239,17 +277,20 @@ struct Sink<'a> {
 impl Sink<'_> {
     /// Carries out the channel's effects: a shared page into the table and
     /// the log, once; what is one session's own into its queue; a line for
-    /// the program into its queue.
-    fn apply(&mut self, effects: Vec<Effect>) {
+    /// the program into its queue; and `contents.txt` made again from
+    /// `channel` when a page was retitled.
+    fn apply(&mut self, effects: Vec<Effect>, channel: &Channel, contents: &RwLock<Arc<[u8]>>) {
         let mut changed = false;
         for effect in effects {
             match effect {
+                Effect::Contents => *contents.write().unwrap_or_else(PoisonError::into_inner) = contents_of(channel),
                 Effect::Shared { page, frame } => {
                     *self.current = self.current.saturating_add(1);
                     self.pages.set(page, frame, *self.current);
                     changed = true;
                 }
                 Effect::Own { session, page } => send(self.outboxes, session, Outbound::Own(page)),
+                Effect::Disown { session, page } => send(self.outboxes, session, Outbound::Disown(page)),
                 Effect::Send { session, bytes } => send(self.outboxes, session, Outbound::Bytes(bytes)),
                 Effect::Close { session } => send(self.outboxes, session, Outbound::Close),
                 Effect::ToApplication { line, .. } => {
@@ -277,3 +318,6 @@ fn send(outboxes: &BTreeMap<SessionId, mpsc::Sender<Outbound>>, session: Session
         let _ = outbox.try_send(outbound);
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -12,8 +12,8 @@
 #                             release tests, licences and advisories,
 #                             unused dependencies, fuzzing, and the Linux
 #                             build and tests on $TELETEXT_LINUX_HOST
-# Both gates run the TypeScript stage (scripts/typescript.sh) for the
-# channels' programs and their kit.
+# Both gates run the Python stage (check_python) and the TypeScript stage
+# (scripts/typescript.sh) for the channels' programs and their kits.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -99,6 +99,23 @@ check_workspace() {
     cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail --no-tests=warn
 }
 
+# The Python side (docs/applications.md section 5): the kit and the
+# channels written in Python, their tools at the versions uv.lock pins.
+PYTHON_PATHS=(kits/python channels/hackaday pyproject.toml uv.lock)
+check_python() {
+    step "Python: format, lint, types and tests, with uv.lock's tools"
+    command -v uv >/dev/null || fail "uv is needed for the Python checks"
+    local folders=() folder
+    for folder in kits/python channels/*/; do
+        [[ -f "$folder/pyproject.toml" ]] && folders+=("${folder%/}")
+    done
+    uv sync --frozen --quiet
+    uv run --frozen ruff format --check --quiet "${folders[@]}"
+    uv run --frozen ruff check --quiet "${folders[@]}"
+    uv run --frozen mypy "${folders[@]}"
+    uv run --frozen pytest --quiet "${folders[@]}"
+}
+
 # Paths with changes that are not staged, or files git does not track,
 # under any of the given paths.
 unstaged_under() {
@@ -127,10 +144,11 @@ commit_gate() {
         step "nothing staged"
         return
     fi
-    local code=no typescript=no path
+    local code=no python=no typescript=no path
     while IFS= read -r path; do
         case "$path" in
         crates/* | fuzz/* | scripts/* | .githooks/* | Cargo.toml | Cargo.lock | rust-toolchain.toml | clippy.toml | rustfmt.toml | deny.toml) code=yes ;;
+        kits/python/* | channels/hackaday/* | pyproject.toml | uv.lock) python=yes ;;
         esac
         case "$path" in
         kits/* | channels/* | channels.json | package.json | package-lock.json | tsconfig.json | scripts/* | .githooks/*) typescript=yes ;;
@@ -144,6 +162,13 @@ commit_gate() {
         [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
 $loose"
         check_workspace
+    fi
+    if [[ "$python" == yes ]]; then
+        local loose
+        loose="$(unstaged_under "${PYTHON_PATHS[@]}")"
+        [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
+$loose"
+        check_python
     fi
     if [[ "$typescript" == yes ]]; then
         local loose
@@ -213,6 +238,7 @@ full_gate() {
 $loose"
 
     check_workspace
+    check_python
     check_typescript
     step "documentation tests"
     cargo test --quiet --workspace --doc

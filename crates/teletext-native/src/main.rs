@@ -39,12 +39,15 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use teletext_native::http::{PUSH, Routes, answer};
+use teletext_native::stats::ServerStats;
 use teletext_native::{apps, hub, pictures};
 use teletext_runtime::{Channel, ChannelConfig, Remote};
 use tokio::net::TcpListener;
 
 /// Where the server listens unless told otherwise.
 const LISTEN: &str = "0.0.0.0:8090";
+/// How often the figures go to the log, in seconds.
+const LOG_EVERY_S: u64 = 60;
 /// The origin viewers reach it at unless told otherwise.
 const ORIGIN: &str = "http://127.0.0.1:8090";
 
@@ -108,12 +111,13 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
     let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |since| u64::try_from(since.as_nanos() & u128::from(u64::MAX)).unwrap_or(1));
     let push = push_origin(&arguments.origin);
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
+    let stats = Arc::new(ServerStats::default());
     let mut hubs = BTreeMap::new();
     for spec in teletext_showcase::channels(&pictures) {
         let config =
             ChannelConfig { name: spec.name.to_owned(), push_address: format!("{push}/{}/{PUSH}", spec.folder), initial_page: 0x100, epoch_at_start_ms };
         let channel = Channel::new(config, spec.applications, seed ^ u64::try_from(spec.folder.len()).unwrap_or(0));
-        hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start, None));
+        hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start, None, Arc::clone(&stats)));
     }
     for spec in arguments.channels.as_deref().map(apps::read_channels).transpose()?.unwrap_or_default() {
         if hubs.contains_key(&spec.folder) {
@@ -123,11 +127,20 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         let config = ChannelConfig { name: spec.name.clone(), push_address: format!("{push}/{folder}/{PUSH}"), initial_page: 0x100, epoch_at_start_ms };
         let (pages, link) = apps::start(spec).await?;
         let channel = Channel::new(config, vec![Box::new(Remote::new(pages))], seed);
-        hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link)));
+        hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats)));
     }
     let listener = TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?;
     eprintln!("teletext-server: {} pictures; serving {} at {}/", pictures.len(), hubs.keys().cloned().collect::<Vec<_>>().join(", "), arguments.origin);
-    let routes = Arc::new(Routes { hubs, sessions: AtomicU64::new(1) });
+    let routes = Arc::new(Routes { hubs, sessions: AtomicU64::new(1), stats: Arc::clone(&stats) });
+    // The figures at a glance in the log, once a minute.
+    tokio::spawn(async move {
+        let mut minute = tokio::time::interval(std::time::Duration::from_secs(LOG_EVERY_S));
+        minute.tick().await;
+        loop {
+            minute.tick().await;
+            eprintln!("teletext-server: {}", stats.summary());
+        }
+    });
     loop {
         let Ok((stream, _)) = listener.accept().await else { continue };
         let _ = stream.set_nodelay(true);

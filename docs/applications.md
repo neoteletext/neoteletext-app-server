@@ -23,6 +23,7 @@ How a channel's application, a program in any language, talks to the server. It 
 | `leave` | `session`, `page` | The viewer left it |
 | `input` | `session`, `page`, `event` | Input on the page open, from INPUT.md |
 | `close` | `session` | The viewer went: forget the session |
+| `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7, for a page to show |
 
 `session` is a whole number, never reused. `page` is three hexadecimal digits, `"100"` to `"8FF"`.
 
@@ -32,7 +33,7 @@ How a channel's application, a program in any language, talks to the server. It 
 |---|---|
 | `text` | `text`: whole characters typed |
 | `key` | `action` (`press`, `repeat`, `release`), `key`: a W3C `KeyboardEvent.key` name such as `ArrowUp`, `PageDown`, `F1`, `ColorF0Red`, or the character of a character key; `text` and `base` when the page's modes ask for them (INPUT.md sections 5.6 and 6) |
-| `mouse` | `pressed`, `button` (0 left, 1 middle, 2 right), `column`, `row`; only on a page whose modes include `MOUSE_BUTTONS` |
+| `mouse` | `action` (`press`, `release`, `move`), `column`, `row`; on a press or release `pressed` and `button` (0 left, 1 middle, 2 right); on a move `buttons`, those held, a bit each (1 left, 2 middle, 4 right). Presses and releases only on a page whose modes include `MOUSE_BUTTONS`; moves while a button is held in `MOUSE_DRAG`, and always in `MOUSE_ALL` (INPUT.md section 6.4) |
 | `wheel` | `dx`, `dy` in 1/120ths of a line (down positive), `column`, `row`; also in `MOUSE_BUTTONS` |
 | `paste` | `text` |
 | `focus`, `blur` | The keys came to the page or left it |
@@ -49,6 +50,8 @@ Which keys reach the program: while the browser sends keys to the channel, every
 
 At most 800 pages, each once; a title at most 32 characters, without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
 
+A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 32 characters, which a receiver shows as the name of the page's magazine.
+
 ### 3.2 `publish`
 
 ```json
@@ -61,7 +64,7 @@ At most 800 pages, each once; a title at most 32 characters, without control cha
   - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
   - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
-  - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 8 is `MOUSE_BUTTONS`, 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`).
+  - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`, 8 `MOUSE_BUTTONS`, 16 `MOUSE_DRAG`, 32 `MOUSE_ALL`).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
 
@@ -86,7 +89,23 @@ The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to
 | `stop` | `channel`, `fade_ms` | A command |
 | `gain` | `channel`, `gain`, `fade_ms` | A command |
 
-### 3.5 `log`
+### 3.5 `title`
+
+```json
+{"type":"title","page":"201","title":"A Robot Arm From Bits Of Wo..."}
+```
+
+Gives one of the program's pages a new title, as `pages` does, for what the page holds now: `contents.txt` lists it from then on.
+
+### 3.6 `release`
+
+```json
+{"type":"release","session":7,"page":"100"}
+```
+
+Drops the session's own copy of a page: from now on it sees the channel's copy, as every viewer does, and is sent it at once. For a page shown to one viewer for a while, such as a greeting.
+
+### 3.7 `log`
 
 ```json
 {"type":"log","text":"fetched 7 posts"}
@@ -96,7 +115,7 @@ A line for the server's log.
 
 ## 4. Pages and sessions
 
-- A session's own copy of a page replaces the channel's for that viewer from its first `publish`, until the session ends.
+- A session's own copy of a page replaces the channel's for that viewer from its first `publish`, until the session ends or the program releases it (section 3.6).
 - A program keeps each session's state itself and forgets it on `close` (`SERVER.md` section 8.4).
 - The server keeps each page's latest copy. A program publishes again only when the page changes. A shared page's change costs the same whatever the number of viewers (decision 7).
 
@@ -117,3 +136,22 @@ The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
 ```
 
 `teletext-server --channels channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder.
+
+## 7. Figures
+
+The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` at the server's root holds the same for every channel; the log has a one-line summary each minute.
+
+- **`server`:**
+  - `uptime_s`;
+  - `connections`, `connections_peak` and `connections_total`;
+  - `messages_sent` and `bytes_sent` (WebSocket);
+  - `requests` and `not_modified` (HTTP; answered from the client's `ETag`);
+  - `restarts` (of programs);
+  - `memory_kb` (resident, where the system says; -1 elsewhere);
+  - `channels`, and `viewers` by channel folder.
+- **`channel`:**
+  - `viewers`, `viewers_peak` and `viewers_total`;
+  - `opens`, and `most_opened`: ten page numbers with how often each was opened;
+  - `inputs` and `keys`;
+  - `shared_published` and `own_published`;
+  - `gotos`, `sound_records`, `lines_to_application` and `lines_from_application`.
