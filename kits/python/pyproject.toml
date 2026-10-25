@@ -1,0 +1,10 @@
+[project]
+name = "neoteletext-app"
+version = "0.1.0"
+description = "The thin Python kit for NeoTeletext channel applications (docs/applications.md)"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.12"]
+build-backend = "uv_build"
