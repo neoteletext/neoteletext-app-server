@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+# `cargo run -p teletext-native` runs the server.
+default-run = "teletext-server"
 
 [[bin]]
 name = "teletext-server"
