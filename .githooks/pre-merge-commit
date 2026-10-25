@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# A merge commit is checked as any commit is: git runs this hook, not
+# pre-commit, when a merge creates its commit.
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" commit
