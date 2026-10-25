@@ -183,7 +183,10 @@ $loose"
 check_linux() {
     step "Linux on $linux_host: Clippy and tests, Rust and TypeScript"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
+    # A Python environment and its caches are this machine's, built for its
+    # system; uv makes the host's own.
     rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts --exclude node_modules \
+        --exclude .venv --exclude __pycache__ --exclude .mypy_cache --exclude .ruff_cache --exclude .pytest_cache \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
@@ -197,9 +200,11 @@ check_linux() {
         config="export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.file://\$HOME/teletext-server-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine;"
     fi
     # rustup installs the toolchain rust-toolchain.toml pins if the host
-    # does not have it yet.
+    # does not have it yet. uv is in ~/.local/bin, which a command over ssh
+    # does not have on its path; the end-to-end test starts channels.json's
+    # Hackaday with it, as the deployed service does (scripts/deploy.sh).
     # shellcheck disable=SC2029 # the engine is expanded here on purpose
-    ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install; $config
+    ssh "$linux_host" "set -e; . ~/.cargo/env; export PATH=\$HOME/.local/bin:\$PATH; cd teletext-server-check; rustup toolchain install; $config
         cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings && scripts/typescript.sh"
 }
