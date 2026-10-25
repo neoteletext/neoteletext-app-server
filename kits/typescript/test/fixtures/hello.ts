@@ -1,20 +1,28 @@
 // A small channel for the server's end-to-end test
 // (crates/teletext-native/tests/typescript_channel.rs): pages drawn with
 // the kit, with control codes, the English set's own signs, mosaics,
-// Fastext and sub-pages, so the test can check the server reads the TTI
-// the kit writes as it was drawn.
+// Fastext, links to a sub-page and sub-pages, so the test can check the
+// server reads the TTI the kit writes as it was drawn.
 
 import { runChannel } from "../../src/channel.ts";
-import { Colour, CursorFlag, Mode, Screen, Sixels, SIXELS_ACROSS, SIXELS_DOWN } from "../../src/screen.ts";
+import { packedLinksLine } from "../../src/packed-links.ts";
+import { Colour, CursorFlag, Mode, Screen, Sixels, SIXELS_ACROSS, SIXELS_DOWN, decimalSubcode } from "../../src/screen.ts";
 
 /** The pages the test reads. */
 const INDEX = 0x100;
 const CAROUSEL = 0x101;
 const RAW = 0x102;
+const SUBPAGE_LINK = 0x103;
 /** A page in TTI as a converter writes it, with lines the kit never writes (DE, PS). */
 const RAW_TTI = "DE,Raw\nPN,10200\nSC,0000\nPS,8000\nOL,1,\u001bBRaw\nFL,100,8FF,8FF,8FF,8FF,100\n";
 /** The carousel's sub-pages. */
 const SUBPAGES = [1, 2] as const;
+/** A page whose red link names the carousel's second sub-page, which only a packed OL,27 line can say. */
+const SUBPAGE_LINK_TTI = `PN,10300\nSC,0000\n${packedLinksLine(
+  SUBPAGE_LINK,
+  [{ page: CAROUSEL, subcode: decimalSubcode(2) }, null, null, null, null, { page: INDEX, subcode: null }],
+  true,
+)}\nOL,1,Links\n`;
 
 function index(): Screen {
   const screen = new Screen();
@@ -49,6 +57,7 @@ await runChannel([
       { page: INDEX, title: "Kit index" },
       { page: CAROUSEL, title: "Kit carousel" },
       { page: RAW, title: "Kit raw" },
+      { page: SUBPAGE_LINK, title: "Kit sub-page link" },
     ],
     start: (context) => {
       context.publish("channel", INDEX, index());
@@ -58,6 +67,7 @@ await runChannel([
         SUBPAGES.map((number) => ({ screen: subpage(number), subpage: number })),
       );
       context.publishTti("channel", RAW, RAW_TTI);
+      context.publishTti("channel", SUBPAGE_LINK, SUBPAGE_LINK_TTI);
     },
   },
 ]);
