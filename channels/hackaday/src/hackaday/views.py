@@ -777,6 +777,25 @@ def person_page(index: int) -> int:
     return numbers.PEOPLE + 1 + index
 
 
+#: The lines a profile's biography may take.
+BIO_LINES = 2
+
+
+def two_lines(text: str) -> list[str]:
+    """Answer `text` in at most two lines: whole sentences when they fit, else cut with a mark."""
+    lines = wrap(text, TEXT_WIDTH)
+    if len(lines) <= BIO_LINES:
+        return lines
+    sentences = text.split(". ")
+    for count in range(len(sentences) - 1, 0, -1):
+        shorter = ". ".join(sentences[:count]).rstrip(".") + "."
+        if len(wrap(shorter, TEXT_WIDTH)) <= BIO_LINES:
+            return wrap(shorter, TEXT_WIDTH)
+    kept = lines[:BIO_LINES]
+    kept[-1] = fit(kept[-1] + " ..", TEXT_WIDTH)
+    return kept
+
+
 def people_index(people: list[Person]) -> Screen:
     """Draw page 140: the people of Hackaday, each with their page."""
     screen = page(
@@ -815,7 +834,7 @@ def profile(person: Person, index: int, count: int) -> Screen:
     screen.double_height(PORTRAIT_LAST_ROW + 1, 1, Colour.YELLOW, person.name)
     screen.coloured(PORTRAIT_LAST_ROW + 3, 0, Colour.CYAN, fit(f"{person.title}. {person.podcast}", TEXT_WIDTH))
     detail = person.bio or (f"Latest: {person.latest[0]}" if person.latest else "")
-    for offset, line in enumerate(wrap(detail, TEXT_WIDTH)[:2]):
+    for offset, line in enumerate(two_lines(detail)):
         screen.coloured(PORTRAIT_LAST_ROW + 4 + offset, 0, Colour.WHITE, line)
     if person.posts:
         screen.coloured(PORTRAIT_LAST_ROW + 6, 0, Colour.GREEN, f"{person.posts} posts on Hackaday")

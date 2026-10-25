@@ -341,3 +341,16 @@ def test_each_person_has_a_page_and_says_hello(tmp_path: Path) -> None:
     drive(made, {"type": "open", "session": 3, "page": "141"}, {"type": "open", "session": 3, "page": "142"})
     plays = [message["play"] for message in made.sent if message["type"] == "sound" and "play" in message]
     assert [play["page"] for play in plays] == ["141"], "Ada says hello on her page; Bo has no clip on this server"
+
+
+def test_a_long_biography_ends_on_a_whole_sentence_or_a_mark() -> None:
+    assert views.two_lines("Short.") == ["Short."]
+    long_one = (
+        "Tom was weaned on the flickering light of the MS-DOS prompt. "
+        "But he went on and on and on about things for a very long while after that."
+    )
+    assert views.two_lines(long_one) == ["Tom was weaned on the flickering light", "of the MS-DOS prompt."]
+    endless = " ".join(["word"] * 40)
+    cut = views.two_lines(endless)
+    assert len(cut) == 2
+    assert cut[-1].endswith("..")
