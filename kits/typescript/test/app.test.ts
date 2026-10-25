@@ -184,3 +184,15 @@ test("the line loop hands on each valid line, reports each bad one, and ends wit
   assert.match(errors[0] ?? "", /protocol 2/);
   assert.match(errors[1] ?? "", /not JSON/);
 });
+
+test("TTI written elsewhere is published as it is, if it is ASCII and whole", () => {
+  const { app, lines } = written();
+  app.declare([{ page: 0x601, title: "Picture" }]);
+  const picture = "DE,Picture\nPN,10000\nSC,0000\nPS,8000\nOL,1,\u001bBx\nPN,10001\nOL,1,y\n";
+  app.publishTti("channel", 0x601, picture);
+  assert.deepEqual(lines[1], { type: "publish", page: "601", owner: "channel", tti: picture });
+  assert.throws(() => app.publishTti("channel", 0x601, "PN,10000\nOL,1,\u008dx\n"), /ASCII/, "the 8-bit form of a control code");
+  assert.throws(() => app.publishTti("channel", 0x601, "OL,1,x\n"), /PN/);
+  assert.throws(() => app.publishTti("channel", 0x601, "PN,10000\n".repeat(65)), /PN/);
+  assert.throws(() => app.publishTti("channel", 0x602, picture), /not declared/);
+});

@@ -13,6 +13,7 @@
 import { App, type Owner, type PageDeclaration, type ServerEvents, type Streams, processStreams, serveLines } from "./app.ts";
 import type { Input } from "./input.ts";
 import { Navigation, type PageKeys } from "./navigation.ts";
+import { readTti } from "./read-tti.ts";
 import { type FastextLinks, NO_LINKS, type Screen, type Subpage, pageText } from "./screen.ts";
 import type { Audience, SoundMember } from "./sound.ts";
 
@@ -126,6 +127,13 @@ export class Context {
   publishSubpages(owner: Owner, page: number, subpages: readonly Subpage[]): void {
     this.#host.app.publish(owner, page, subpages);
     this.#host.published(owner, page, subpages[0]?.screen.fastextLinks() ?? NO_LINKS);
+  }
+
+  /** Publishes a page from TTI written elsewhere, such as a converted picture's file ({@link App.publishTti}). */
+  publishTti(owner: Owner, page: number, text: string): void {
+    this.#host.app.publishTti(owner, page, text);
+    const links = readTti(text)[0]?.links ?? [];
+    this.#host.published(owner, page, [links[0] ?? null, links[1] ?? null, links[2] ?? null, links[3] ?? null]);
   }
 
   /** Sends the session's viewer to `page` (INPUT.md section 7.1). */

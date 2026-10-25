@@ -1,6 +1,8 @@
-// TTI read back as the server's reader takes what Screen.toTti writes,
-// for tests: each sub-page's rows, links, cursor and modes. It reads only
-// the lines the kit writes; the server reads TTI with the engine's reader.
+// TTI read back as the server's reader takes what Screen.toTti writes:
+// each sub-page's rows, links, cursor and modes, for tests and for the
+// Fastext links of a page published from TTI. It reads the PN, OL, FL,
+// CU and IM lines in the escape form and ignores every other line; the
+// server reads TTI with the engine's reader.
 
 import { COLUMNS, type Cursor, ROWS, SPACE } from "./screen.ts";
 

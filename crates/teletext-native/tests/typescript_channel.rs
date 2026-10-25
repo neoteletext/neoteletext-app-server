@@ -3,9 +3,10 @@
 //! file naming `kits/typescript/test/fixtures/hello.ts`, serves the pages
 //! the program publishes, read back over HTTP as the engine's packets. It
 //! checks the kit's TTI against the server's reader, which only the server
-//! has: control codes, the English set's signs, mosaics, Fastext links and
-//! sub-pages. It also serves the repository's own `channels.json`, whose
-//! showcase is TypeScript.
+//! has: control codes, the English set's signs, mosaics, Fastext links,
+//! the cursor and input modes, sub-pages, and TTI written elsewhere. It
+//! also serves the repository's own `channels.json`, whose showcase is
+//! TypeScript.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -159,6 +160,9 @@ fn the_server_serves_what_a_typescript_program_publishes() {
     let carousel = received(&fetch(&address, "/kit/101.t42"));
     assert_eq!(carousel.iter().map(|page| page.subcode).collect::<Vec<_>>(), [1, 2], "two sub-pages, numbered as published");
     assert_eq!(carousel[1].row(1), padded(b"\x07Sub-page 2"));
+
+    let raw = received(&fetch(&address, "/kit/102.t42"));
+    assert_eq!(raw[0].row(1), padded(b"\x02Raw"), "TTI published as it was written");
 
     let contents = String::from_utf8(fetch(&address, "/kit/contents.txt")).unwrap();
     assert!(contents.contains("Kit index") && contents.contains("Kit carousel"), "{contents}");

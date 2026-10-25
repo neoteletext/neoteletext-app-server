@@ -204,3 +204,17 @@ test("random numbers are the runtime's xorshift64*", () => {
     assert.ok(random.below(3) < 3);
   }
 });
+
+test("a page published from TTI keeps its Fastext links for the coloured keys", () => {
+  const harness = new Harness([
+    {
+      pages: () => [{ page: 0x601, title: "Picture" }],
+      start: (context) => context.publishTti("channel", 0x601, "PN,60101\nOL,1,x\nFL,602,8FF,8FF,600,8FF,100\nOL,26,@ABC\n"),
+    },
+  ]);
+  harness.join(1, 0x601);
+  harness.press(1, Key.Red);
+  harness.press(1, Key.Blue);
+  assert.deepEqual(harness.gotos(1), [0x602, 0x600]);
+  assert.deepEqual(harness.errors, []);
+});

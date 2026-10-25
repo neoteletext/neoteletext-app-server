@@ -28,6 +28,10 @@ const NEWLINE = 0x0a;
 /** The return a line may end with before its newline. */
 const RETURN = "\r";
 const CONTROL_CHARACTER = /\p{Cc}/u;
+/** Seven-bit text: what a TTI text may hold. */
+const ASCII = /^[\u0000-\u007f]*$/u;
+/** The line that starts each sub-page of a TTI text. */
+const PAGE_NUMBER_LINE = "PN,";
 
 /** Who a publication belongs to: the channel's one shared copy, or one session's own (SERVER.md section 7.3). */
 export type Owner = "channel" | number;
@@ -193,6 +197,31 @@ export class App {
       throw new RangeError(`publish: a sub-page is 0 to ${LAST_SUBPAGE}`);
     }
     this.#send({ type: "publish", page: pageText(page), owner, tti: tti(page, subpages) });
+  }
+
+  /**
+   * Publishes `page` from TTI written elsewhere, such as a converted
+   * picture's file: every sub-page from its PN line, which the server
+   * addresses to `page` whatever the line says. The text must be ASCII,
+   * control codes in the escape form: the protocol carries it as a JSON
+   * string, and a byte of the 8-bit form (0x80 to 0x9F) would arrive as
+   * two bytes of UTF-8.
+   */
+  publishTti(owner: Owner, page: number, text: string): void {
+    if (!this.#pages.has(page)) {
+      throw new RangeError(`publish: ${pageText(page)} was not declared`);
+    }
+    if (owner !== "channel" && !isSession(owner)) {
+      throw new RangeError(`publish: owner is "channel" or a session, not ${String(owner)}`);
+    }
+    if (!ASCII.test(text) || text.length > LONGEST_LINE) {
+      throw new RangeError("publish: TTI is ASCII, control codes escaped, within the line's bound");
+    }
+    const subpages = text.split("\n").filter((line) => line.startsWith(PAGE_NUMBER_LINE)).length;
+    if (subpages === 0 || subpages > MOST_SUBPAGES) {
+      throw new RangeError(`publish: 1 to ${MOST_SUBPAGES} sub-pages, each from a PN line`);
+    }
+    this.#send({ type: "publish", page: pageText(page), owner, tti: text });
   }
 
   /** Sends the session's viewer to `page` (INPUT.md section 7.1, REQ-INT-113). */
