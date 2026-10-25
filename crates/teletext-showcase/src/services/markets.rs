@@ -109,7 +109,7 @@ impl Instrument {
     }
 
     /// One step of the walk with `random` below [`STEP_CHOICES`]: a move
-    /// of up to [`STEP_BASIS_POINTS`] either way, pulled back towards the
+    /// of up to `STEP_BASIS_POINTS` either way, pulled back towards the
     /// start, and kept between the floor and the ceiling.
     pub fn walk(&mut self, random: u32) {
         let moved = i64::from(random.min(STEP_CHOICES.saturating_sub(1))).saturating_sub(STEP_BASIS_POINTS);

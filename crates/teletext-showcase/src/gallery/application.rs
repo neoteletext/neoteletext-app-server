@@ -122,7 +122,7 @@ pub struct Gallery {
 impl Gallery {
     /// A gallery called `title` of `groups`, laid out by `plan`; its menu
     /// names `elsewhere`, the collections on channels of their own and
-    /// their sizes. A picture without a level of [`levels::LEVELS`] is
+    /// their sizes. A picture without a level of `levels::LEVELS` is
     /// left out, as are pictures beyond the plan's last page.
     #[must_use]
     pub fn new(title: &'static str, plan: Plan, groups: &[(Group, Vec<&Picture>)], elsewhere: Vec<(Collection, usize)>) -> Self {

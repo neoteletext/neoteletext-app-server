@@ -212,7 +212,7 @@ pub fn temperature(day: Forecast, minute: u64) -> i64 {
 /// expected temperature.
 #[derive(Debug, Default)]
 pub struct Weather {
-    /// Each town's drift in degrees, within [`DRIFT_LIMIT`].
+    /// Each town's drift in degrees, within `DRIFT_LIMIT`.
     pub drift: [i64; TOWNS.len()],
 }
 

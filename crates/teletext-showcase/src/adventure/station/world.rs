@@ -1,6 +1,6 @@
 //! Station Zero's world: fourteen rooms on two decks, the things in them
 //! and the ways between. Descriptions are marked up for
-//! [`super::super::text`]: a span in braces is highlighted.
+//! `super::super::text`: a span in braces is highlighted.
 
 /// A room.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
