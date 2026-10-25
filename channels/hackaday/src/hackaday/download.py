@@ -23,6 +23,7 @@ import asyncio
 import math
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -226,8 +227,14 @@ class Download:
 
 
 def fetchers(on_fetch: Callable[[Fetched], None] | None, count: int = WORKERS) -> list[Fetcher]:
-    """Answer a client for each worker, with no pause of its own: the pacer spaces them."""
-    return [Fetcher(on_fetch, pause_s=0.0) for _ in range(count)]
+    """Answer a client for each worker, with no pause of its own (the pacer spaces them) and a thread each.
+
+    The default pool behind `asyncio.to_thread` holds `min(32, CPUs + 4)`
+    threads (24 on the host), which held the download to 24 requests in
+    flight however many workers it had (measured 26 October 2026).
+    """
+    threads = ThreadPoolExecutor(max_workers=count, thread_name_prefix="download")
+    return [Fetcher(on_fetch, pause_s=0.0, threads=threads) for _ in range(count)]
 
 
 def main() -> None:

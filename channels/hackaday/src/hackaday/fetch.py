@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from concurrent.futures import Executor
 
 #: The only origin fetched.
 ORIGIN = "https://hackaday.com/"
@@ -111,10 +112,13 @@ def unpacked(body: bytes, encoding: str) -> bytes:
 class Fetcher:
     """One polite client."""
 
-    def __init__(self, on_fetch: Callable[[Fetched], None] | None = None, pause_s: float = PAUSE_S) -> None:
-        """Tell `on_fetch` of each request made; leave `pause_s` between this client's requests."""
+    def __init__(
+        self, on_fetch: Callable[[Fetched], None] | None = None, pause_s: float = PAUSE_S, threads: Executor | None = None
+    ) -> None:
+        """Tell `on_fetch` of each request made; leave `pause_s` between this client's requests; wait in `threads`, or the default pool."""
         self.on_fetch = on_fetch
         self.pause_s = pause_s
+        self.threads = threads
         self._connection: http.client.HTTPSConnection | None = None
         self._last = 0.0
         self._not_before = 0.0
@@ -134,7 +138,7 @@ class Fetcher:
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
-                answer = await asyncio.to_thread(self._get, url, kind, headers or {})
+                answer = await asyncio.get_running_loop().run_in_executor(self.threads, self._get, url, kind, headers or {})
             except FetchError:
                 self._failures += 1
                 backoff = min(LONGEST_BACKOFF_S, FIRST_BACKOFF_S**self._failures)
