@@ -19,6 +19,7 @@
     clippy::unimplemented
 )]
 
+pub mod apps;
 pub mod connection;
 pub mod http;
 pub mod hub;

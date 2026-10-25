@@ -13,6 +13,8 @@ use teletext_runtime::{Channel, Effect, SessionId};
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
+use crate::apps::{FromApplication, Link};
+
 /// How many changes the log keeps: a connection further behind than this
 /// is sent every shared page again, which is the same as catching up.
 const LOG_CAPACITY: usize = 4_096;
@@ -123,9 +125,10 @@ pub struct Hub {
 }
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
-/// zero.
+/// zero; `link`, for a channel whose application is a program of its own,
+/// carries that program's lines (`docs/applications.md`).
 #[must_use]
-pub fn spawn(folder: &str, mut channel: Channel, start: Instant) -> Hub {
+pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Link>) -> Hub {
     let now = move || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     channel.start(now());
     let descriptor: Arc<[u8]> = channel.resource("channel.json").map(|resource| resource.body).unwrap_or_default().into();
@@ -137,56 +140,132 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant) -> Hub {
     tokio::spawn(async move {
         let mut outboxes: BTreeMap<SessionId, mpsc::Sender<Outbound>> = BTreeMap::new();
         let mut current = 0_u64;
-        apply(channel.take_effects(), &pages, &generation_sender, &mut current, &outboxes);
+        let (mut from_application, to_application) = link.map_or((None, None), |link| (Some(link.from), Some(link.to)));
+        let mut dropped = Dropped::default();
+        let mut sink = Sink {
+            pages: &pages,
+            generation: &generation_sender,
+            current: &mut current,
+            outboxes: &outboxes,
+            to_application: to_application.as_ref(),
+            dropped: &mut dropped,
+        };
+        sink.apply(channel.take_effects());
         loop {
             let wake = channel.next_wake().and_then(|at| start.checked_add(Duration::from_millis(at)));
-            let command = match wake {
-                Some(at) => tokio::select! {
-                    command = queue.recv() => command,
-                    () = tokio::time::sleep_until(at) => {
-                        channel.deadline(now());
-                        apply(channel.take_effects(), &pages, &generation_sender, &mut current, &outboxes);
-                        continue;
-                    }
+            let event = tokio::select! {
+                command = queue.recv() => match command {
+                    Some(command) => Event::Command(command),
+                    None => break,
                 },
-                None => queue.recv().await,
+                arrived = next_line(from_application.as_mut()) => {
+                    let Some(arrived) = arrived else {
+                        // The program's supervisor ended: the channel goes
+                        // on with its pages as last published.
+                        from_application = None;
+                        continue;
+                    };
+                    Event::Application(arrived)
+                }
+                () = sleep_until(wake) => Event::Deadline,
             };
-            let Some(command) = command else { break };
-            match command {
-                Command::Opened { session, outbox } => {
+            match event {
+                Event::Command(Command::Opened { session, outbox }) => {
                     outboxes.insert(session, outbox);
                     channel.opened(session, now());
                 }
-                Command::Received { session, bytes } => channel.received(session, &bytes, now()),
-                Command::Closed { session } => {
+                Event::Command(Command::Received { session, bytes }) => channel.received(session, &bytes, now()),
+                Event::Command(Command::Closed { session }) => {
                     outboxes.remove(&session);
                     channel.closed(session, now());
                 }
+                Event::Application(FromApplication::Line(text)) => channel.from_application(0, &text, now()),
+                Event::Application(FromApplication::Restarted) => channel.restarted(0, now()),
+                Event::Deadline => channel.deadline(now()),
             }
-            apply(channel.take_effects(), &pages, &generation_sender, &mut current, &outboxes);
+            let mut sink = Sink {
+                pages: &pages,
+                generation: &generation_sender,
+                current: &mut current,
+                outboxes: &outboxes,
+                to_application: to_application.as_ref(),
+                dropped: &mut dropped,
+            };
+            sink.apply(channel.take_effects());
         }
     });
     hub
 }
 
-/// Carries out the channel's effects: a shared page into the table and the
-/// log, once; what is one session's own into its queue.
-fn apply(effects: Vec<Effect>, pages: &Pages, generation: &watch::Sender<u64>, current: &mut u64, outboxes: &BTreeMap<SessionId, mpsc::Sender<Outbound>>) {
-    let mut changed = false;
-    for effect in effects {
-        match effect {
-            Effect::Shared { page, frame } => {
-                *current = current.saturating_add(1);
-                pages.set(page, frame, *current);
-                changed = true;
-            }
-            Effect::Own { session, page } => send(outboxes, session, Outbound::Own(page)),
-            Effect::Send { session, bytes } => send(outboxes, session, Outbound::Bytes(bytes)),
-            Effect::Close { session } => send(outboxes, session, Outbound::Close),
-        }
+/// What woke the channel's task.
+enum Event {
+    Command(Command),
+    Application(FromApplication),
+    Deadline,
+}
+
+/// The next line from the program, or never when there is none.
+async fn next_line(from: Option<&mut mpsc::Receiver<FromApplication>>) -> Option<FromApplication> {
+    match from {
+        Some(from) => from.recv().await,
+        None => std::future::pending().await,
     }
-    if changed {
-        generation.send_replace(*current);
+}
+
+/// Sleeps until `at`, or forever.
+async fn sleep_until(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Lines for the program dropped because it fell behind: reported once
+/// for the first, then at each power of two, so a stuck program cannot
+/// flood the log.
+#[derive(Debug, Default)]
+struct Dropped(u64);
+
+/// Where the channel's effects go.
+struct Sink<'a> {
+    pages: &'a Pages,
+    generation: &'a watch::Sender<u64>,
+    current: &'a mut u64,
+    outboxes: &'a BTreeMap<SessionId, mpsc::Sender<Outbound>>,
+    to_application: Option<&'a mpsc::Sender<Vec<u8>>>,
+    dropped: &'a mut Dropped,
+}
+
+impl Sink<'_> {
+    /// Carries out the channel's effects: a shared page into the table and
+    /// the log, once; what is one session's own into its queue; a line for
+    /// the program into its queue.
+    fn apply(&mut self, effects: Vec<Effect>) {
+        let mut changed = false;
+        for effect in effects {
+            match effect {
+                Effect::Shared { page, frame } => {
+                    *self.current = self.current.saturating_add(1);
+                    self.pages.set(page, frame, *self.current);
+                    changed = true;
+                }
+                Effect::Own { session, page } => send(self.outboxes, session, Outbound::Own(page)),
+                Effect::Send { session, bytes } => send(self.outboxes, session, Outbound::Bytes(bytes)),
+                Effect::Close { session } => send(self.outboxes, session, Outbound::Close),
+                Effect::ToApplication { line, .. } => {
+                    if self.to_application.is_some_and(|to| to.try_send(line).is_err()) {
+                        self.dropped.0 = self.dropped.0.saturating_add(1);
+                        if self.dropped.0.is_power_of_two() {
+                            eprintln!("teletext-server: the application is behind: {} lines for it dropped", self.dropped.0);
+                        }
+                    }
+                }
+                Effect::Log { text } => eprintln!("teletext-server: {text}"),
+            }
+        }
+        if changed {
+            self.generation.send_replace(*self.current);
+        }
     }
 }
 

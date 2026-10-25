@@ -60,6 +60,10 @@ pub(crate) enum Action {
     Goto { session: SessionId, page: u16 },
     /// Call `wake` at this time.
     WakeAt(u64),
+    /// A line for the application's process (`docs/applications.md`).
+    Message(Vec<u8>),
+    /// Something for the server's operator to read.
+    Log(String),
 }
 
 /// The application's view of the runtime during one call.
@@ -118,6 +122,17 @@ impl Context<'_> {
         self.wake_at(at);
     }
 
+    /// Sends a line to the application's process: what a [`crate::Remote`]
+    /// answers the channel's calls with.
+    pub(crate) fn message(&mut self, line: Vec<u8>) {
+        self.actions.push(Action::Message(line));
+    }
+
+    /// Reports `text` to the server's operator, as the host logs.
+    pub fn log(&mut self, text: &str) {
+        self.actions.push(Action::Log(String::from(text)));
+    }
+
     /// A pseudo-random number, from the seed the host gave the channel
     /// (xorshift64*, Vigna 2016): for games, never for secrets.
     pub fn random(&mut self) -> u32 {
@@ -162,4 +177,8 @@ pub trait Application: Send {
 
     /// The session ended: forget it.
     fn ended(&mut self, _session: SessionId, _context: &mut Context<'_>) {}
+
+    /// A line from the application's own process, for an application that
+    /// runs in one (a [`crate::Remote`]).
+    fn process_line(&mut self, _line: &[u8], _context: &mut Context<'_>) {}
 }

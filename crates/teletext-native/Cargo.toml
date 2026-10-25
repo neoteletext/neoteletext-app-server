@@ -25,7 +25,7 @@ teletext-showcase.workspace = true
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true
 neoteletext-input.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process"] }
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 

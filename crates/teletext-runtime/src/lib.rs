@@ -33,13 +33,16 @@ pub mod application;
 pub mod channel;
 pub mod frame;
 pub mod input;
+pub mod json;
 pub mod layout;
+pub mod remote;
 pub mod screen;
 mod session;
 
 pub use application::{Application, Audience, Context, Owner, PageEntry};
 pub use channel::{Channel, ChannelConfig, Effect, SessionId};
 pub use input::{Input, Named};
+pub use remote::Remote;
 pub use screen::{Colour, Screen};
 
 /// The engine's packet, 42 bytes on the wire (EN 300 706 clause 7.1).

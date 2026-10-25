@@ -1,14 +1,16 @@
 //! `teletext-server`: the NeoTeletext server on Linux, macOS and Windows.
 //!
 //! ```text
-//! teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER]
+//! teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER] [--channels FILE]
 //! ```
 //!
 //! `--listen` is where it accepts connections (`0.0.0.0:8090` by
 //! default); `--origin` is the address viewers reach it at, which each
 //! channel's push WebSocket is named on (the engine requires the push
 //! address on the channel's own origin); `--pictures` is the folder of the
-//! showcase's converted pictures (decision 6).
+//! showcase's converted pictures (decision 6); `--channels` is a file of
+//! channels whose applications are programs of their own, in any language
+//! (`docs/applications.md`).
 
 #![forbid(unsafe_code)]
 // No panicking constructs: everything here reads what clients send
@@ -37,8 +39,8 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use teletext_native::http::{PUSH, Routes, answer};
-use teletext_native::{hub, pictures};
-use teletext_runtime::{Channel, ChannelConfig};
+use teletext_native::{apps, hub, pictures};
+use teletext_runtime::{Channel, ChannelConfig, Remote};
 use tokio::net::TcpListener;
 
 /// Where the server listens unless told otherwise.
@@ -50,10 +52,11 @@ struct Arguments {
     listen: String,
     origin: String,
     pictures: Option<PathBuf>,
+    channels: Option<PathBuf>,
 }
 
 fn arguments() -> Result<Arguments, String> {
-    let mut parsed = Arguments { listen: LISTEN.to_owned(), origin: ORIGIN.to_owned(), pictures: None };
+    let mut parsed = Arguments { listen: LISTEN.to_owned(), origin: ORIGIN.to_owned(), pictures: None, channels: None };
     let mut list = std::env::args().skip(1);
     while let Some(argument) = list.next() {
         let mut value = || list.next().ok_or_else(|| format!("{argument} needs a value"));
@@ -61,7 +64,12 @@ fn arguments() -> Result<Arguments, String> {
             "--listen" => parsed.listen = value()?,
             "--origin" => value()?.trim_end_matches('/').clone_into(&mut parsed.origin),
             "--pictures" => parsed.pictures = Some(PathBuf::from(value()?)),
-            other => return Err(format!("unknown argument {other}; usage: teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER]")),
+            "--channels" => parsed.channels = Some(PathBuf::from(value()?)),
+            other => {
+                return Err(format!(
+                    "unknown argument {other}; usage: teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER] [--channels FILE]"
+                ));
+            }
         }
     }
     Ok(parsed)
@@ -105,7 +113,17 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         let config =
             ChannelConfig { name: spec.name.to_owned(), push_address: format!("{push}/{}/{PUSH}", spec.folder), initial_page: 0x100, epoch_at_start_ms };
         let channel = Channel::new(config, spec.applications, seed ^ u64::try_from(spec.folder.len()).unwrap_or(0));
-        hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start));
+        hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start, None));
+    }
+    for spec in arguments.channels.as_deref().map(apps::read_channels).transpose()?.unwrap_or_default() {
+        if hubs.contains_key(&spec.folder) {
+            return Err(format!("{} is already a channel", spec.folder));
+        }
+        let folder = spec.folder.clone();
+        let config = ChannelConfig { name: spec.name.clone(), push_address: format!("{push}/{folder}/{PUSH}"), initial_page: 0x100, epoch_at_start_ms };
+        let (pages, link) = apps::start(spec).await?;
+        let channel = Channel::new(config, vec![Box::new(Remote::new(pages))], seed);
+        hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link)));
     }
     let listener = TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?;
     eprintln!("teletext-server: {} pictures; serving {} at {}/", pictures.len(), hubs.keys().cloned().collect::<Vec<_>>().join(", "), arguments.origin);

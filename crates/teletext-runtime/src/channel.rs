@@ -85,6 +85,18 @@ pub enum Effect {
         /// The session.
         session: SessionId,
     },
+    /// A line for an application's process (`docs/applications.md`).
+    ToApplication {
+        /// The application, by its place in the channel.
+        application: usize,
+        /// The line, with its newline.
+        line: Vec<u8>,
+    },
+    /// Something for the server's operator to read.
+    Log {
+        /// What happened.
+        text: String,
+    },
 }
 
 /// A page as the channel keeps it: encoded, with what the cursor and mode
@@ -212,6 +224,18 @@ impl Channel {
                 self.call(index, now, |application, context| application.wake(context));
             }
         }
+    }
+
+    /// A line from the process of application `application` (its place
+    /// in the channel), without its newline.
+    pub fn from_application(&mut self, application: usize, line: &[u8], now: u64) {
+        self.call(application, now, |hosted, context| hosted.process_line(line, context));
+    }
+
+    /// Application `application`'s process started again after it ended:
+    /// it is told to start, and publishes its pages afresh.
+    pub fn restarted(&mut self, application: usize, now: u64) {
+        self.call(application, now, |hosted, context| hosted.start(context));
     }
 
     /// When the channel next needs [`Channel::deadline`].
@@ -361,6 +385,8 @@ impl Channel {
                     hosted.wake = Some(hosted.wake.map_or(at, |wake| wake.min(at)));
                 }
             }
+            Action::Message(line) => self.effects.push(Effect::ToApplication { application: index, line }),
+            Action::Log(text) => self.effects.push(Effect::Log { text: alloc::format!("{}: {text}", self.config.name) }),
         }
     }
 
