@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from neoteletext_app.app import App, Event, page_hears, session_hears
 from neoteletext_app.screen import Colour, Screen, tti
@@ -117,6 +117,7 @@ class Hackaday(App):
             numbers.DISCUSSED: "Most discussed",
             numbers.THEN_AND_NOW: "Then and now",
             numbers.ABOUT: "How it works",
+            numbers.SERVER_STATS: "Behind the scenes",
             numbers.READER: "From the archive",
         }
         for index, name in enumerate(views.section_names()):
@@ -141,6 +142,7 @@ class Hackaday(App):
         self.first_posts: list[Post] = []
         self.columns: dict[int, Post | None] = {numbers.SECURITY: None, numbers.LINKS_COLUMN: None, numbers.PODCAST: None}
         self.votes = [0] * len(POLL_OPTIONS)
+        self.figures: dict[str, Any] = {}
         self.best = 0
         self.sounds = sounds()
         self.random = random.Random()  # noqa: S311 - a game's choices, not a secret
@@ -295,6 +297,7 @@ class Hackaday(App):
         self.put(numbers.DISCUSSED, views.discussed(posts))
         self.put(numbers.THEN_AND_NOW, views.then_and_now(self.first_posts, posts))
         self.put(numbers.ABOUT, views.about())
+        self.put(numbers.SERVER_STATS, views.server_stats(self.figures, self.pages))
         if not posts:
             return
         self.put(numbers.READER, views.reader(posts[0], 0))
@@ -349,6 +352,11 @@ class Hackaday(App):
         self.put(numbers.FRONT, views.front(self.posts, now_utc(), self.ticker))
         self.sound_object(page_hears(numbers.FRONT), CHIME, RATE, self.sounds[CHIME])
         self.play(page_hears(numbers.FRONT), SOUND_CHANNEL, CHIME, gain=70, page=numbers.FRONT)
+
+    async def on_stats(self, stats: dict[str, Any]) -> None:
+        """Show the server's figures on page 121 as they come."""
+        self.figures = stats
+        self.put(numbers.SERVER_STATS, views.server_stats(stats, self.pages))
 
     # Viewers.
 

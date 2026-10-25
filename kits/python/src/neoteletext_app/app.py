@@ -156,6 +156,9 @@ class App:
     async def on_close(self, session: int) -> None:
         """Forget a viewer who went."""
 
+    async def on_stats(self, stats: dict[str, Any]) -> None:
+        """Take the server's figures, sent every 10 seconds (docs/applications.md section 7)."""
+
     # What an application does.
 
     def publish(self, page: int, screens: Screen | list[Screen], owner: Owner = "channel") -> None:
@@ -232,6 +235,8 @@ class App:
                 print(f"neoteletext_app: protocol {message.get('protocol')}, this kit speaks {PROTOCOL}", file=sys.stderr)  # noqa: T201
             self.epoch_ms = int(message.get("epoch_ms", 0))
             await self.on_start()
+        elif kind == "stats":
+            await self.on_stats(message)
         elif isinstance(session, int):
             await self.receive_for(session, kind, message)
 

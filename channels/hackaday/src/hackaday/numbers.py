@@ -30,6 +30,8 @@ COMMENTS_WALL = 0x117
 DISCUSSED = 0x118
 THEN_AND_NOW = 0x119
 ABOUT = 0x120
+#: The server's own figures, live.
+SERVER_STATS = 0x121
 #: The first section page; each section follows.
 FIRST_SECTION = 0x130
 #: The archive reader: any post, each viewer's own.

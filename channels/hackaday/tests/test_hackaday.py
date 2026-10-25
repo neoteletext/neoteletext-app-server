@@ -235,3 +235,26 @@ def test_my_hackaday_stars_sections(channel: Recorder) -> None:
     drive(channel, key(6, "115", "ArrowDown"), key(6, "115", "Enter"))
     assert channel.viewers[6].favourites == {"Radio"}
     assert Viewer().favourites == set()
+
+
+def test_the_servers_figures_show_on_page_121(channel: Recorder) -> None:
+    stats = {
+        "type": "stats",
+        "server": {
+            "uptime_s": 3_725,
+            "bytes_sent": 3 * 1024 * 1024,
+            "messages_sent": 900,
+            "memory_kb": 20_480,
+            "viewers": {"hackaday": 4, "showcase": 2},
+        },
+        "channel": {"viewers": 4, "viewers_peak": 9, "viewers_total": 31, "opens": 120, "keys": 77, "most_opened": {"100": 50, "242": 12}},
+    }
+    drive(channel, stats)
+    screen = views.server_stats(stats, channel.pages)
+    text = "\n".join(screen.row_text(row) for row in range(25))
+    assert "Peak 9, 31 visits" in text
+    assert "3.0 MB" in text
+    assert "1h 02m, memory 20.0 MB" in text
+    assert "242 Story 42" in text
+    assert "showcase 2" in text
+    assert published(channel, numbers.SERVER_STATS, "channel")[-1] == screen.tti(numbers.SERVER_STATS)

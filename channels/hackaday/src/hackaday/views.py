@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from neoteletext_app.charset import codes
 from neoteletext_app.screen import COLUMNS, ECHO, FASTEXT_ROW, Attribute, Colour, Screen
@@ -556,6 +557,7 @@ def about() -> Screen:
         (Colour.GREEN, "118 discussed   119 then and now"),
         (Colour.WHITE, "Long pages scroll: Page Up, Page Down,"),
         (Colour.WHITE, "the arrows, Home, End and the wheel."),
+        (Colour.GREEN, "121 behind the scenes: live figures"),
         (Colour.MAGENTA, "Served by the NeoTeletext server (Rust)"),
         (Colour.MAGENTA, "from hackaday.com, by an app in Python."),
     ]
@@ -668,4 +670,64 @@ def search(typed: str, results: list[Post], chosen: int, *, searching: bool) -> 
         screen.coloured(BODY_ROW + 4, 0, Colour.WHITE, "Searching...")
     elif typed and not results:
         screen.coloured(BODY_ROW + 4, 0, Colour.WHITE, "Type words and press Enter")
+    return screen
+
+
+def figure(value: object) -> int:
+    """Answer a figure from the server's `stats`, or 0 when it is missing."""
+    return value if isinstance(value, int) else 0
+
+
+def amount(value: int) -> str:
+    """Answer a count of bytes as a reader says it."""
+    for unit, size in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if value >= size:
+            return f"{value / size:.1f} {unit}"
+    return f"{value} B"
+
+
+def server_stats(stats: dict[str, Any], titles: dict[int, str]) -> Screen:
+    """Draw page 121: the Rust server's own figures, live (docs/applications.md section 7)."""
+    screen = page(
+        "Behind the scenes",
+        Colour.BLUE,
+        [("Front", numbers.FRONT), ("Stats", numbers.STATISTICS), ("Poll", numbers.POLL), ("Help", numbers.ABOUT)],
+    )
+    server = stats.get("server") or {}
+    channel = stats.get("channel") or {}
+    if not server:
+        screen.centred(10, Colour.WHITE, "Waiting for the server's figures...")
+        return screen
+    viewers = figure(channel.get("viewers"))
+    screen.coloured(BODY_ROW, 0, Colour.YELLOW, "WATCHING")
+    screen.coloured(BODY_ROW + 1, 0, Colour.YELLOW, "HACKADAY NOW")
+    big_text(screen, BODY_ROW, 16, f"{min(viewers, 9999)}", Colour.GREEN)
+    uptime = figure(server.get("uptime_s"))
+    memory_kb = figure(server.get("memory_kb"))
+    memory = amount(memory_kb * 1024) if memory_kb > 0 else "n/a"
+    rows = [
+        (Colour.CYAN, f"Peak {figure(channel.get('viewers_peak'))}, {figure(channel.get('viewers_total'))} visits since start"),
+        (Colour.WHITE, f"Pages opened {figure(channel.get('opens'))}, keys {figure(channel.get('keys'))}"),
+        (Colour.WHITE, f"Pages drawn {figure(channel.get('shared_published'))} shared, {figure(channel.get('own_published'))} own"),
+        (Colour.WHITE, f"Sent {amount(figure(server.get('bytes_sent')))} in {figure(server.get('messages_sent'))} messages"),
+        (Colour.WHITE, f"Server up {uptime // 3600}h {uptime % 3600 // 60:02d}m, memory {memory}"),
+    ]
+    for offset, (colour, text) in enumerate(rows):
+        screen.coloured(BODY_ROW + 3 + offset, 0, colour, fit(text, TEXT_WIDTH))
+    band(screen, 12, Colour.BLUE, Colour.YELLOW, "Most opened pages")
+    most = channel.get("most_opened") or {}
+    for offset, (number, opens) in enumerate(list(most.items())[:6]):
+        try:
+            title = titles.get(int(number, 16), "")
+        except ValueError:
+            continue
+        screen.coloured(13 + offset, 0, Colour.YELLOW, number)
+        screen.coloured(13 + offset, NUMBER_WIDTH, Colour.WHITE, fit(title, 26))
+        screen.coloured(13 + offset, 32, Colour.CYAN, f"{figure(opens):6d}")
+    others = {folder: figure(count) for folder, count in (server.get("viewers") or {}).items() if folder != "hackaday"}
+    if others:
+        screen.coloured(
+            20, 0, Colour.MAGENTA, fit("Also watching: " + ", ".join(f"{folder} {count}" for folder, count in others.items()), TEXT_WIDTH)
+        )
+    screen.coloured(21, 0, Colour.GREEN, "A Rust server, a Python channel: live")
     return screen
