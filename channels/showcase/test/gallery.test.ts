@@ -2,10 +2,16 @@
 // built from pictures of the real folder's shape, their pages read back
 // from the TTI they publish, and the captions' folding, wrapping and
 // cutting; then what the TypeScript port adds: the levels' TTI, the
-// menu's folders and page selection.
+// menu's folders, page selection, and the collections' own programs and
+// their channels.json entries.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { COLUMNS, Key, ROWS, packedLinksLine } from "../../../kits/typescript/src/kit.ts";
 import { Harness, type ReadPage, readTti } from "../../../kits/typescript/src/testing.ts";
@@ -16,6 +22,10 @@ import { COLLECTIONS, MENU } from "../src/gallery/pages.ts";
 import { TITLE_CHARACTERS, contentsTitle, creditLines, cut, fold, wrap } from "../src/gallery/text.ts";
 import { LEVELS, type Picture } from "../src/pictures.ts";
 
+/** The showcase's folder, where channels.json starts each program. */
+const SHOWCASE = join(dirname(fileURLToPath(import.meta.url)), "..");
+/** The repository, which holds channels.json. */
+const REPOSITORY = join(SHOWCASE, "..", "..");
 /** The most pages a channel declares, the engine's limit, and the most pages and sub-pages a channel's store holds. */
 const MOST_PAGES = 800;
 const MOST_STORED = 1024;
@@ -322,4 +332,43 @@ test("digits and the coloured keys select pages from the galleries", () => {
   harness.press(1, Key.F3);
   assert.deepEqual(harness.gotos(1), [0x690, 0x602, 0x695, 0x600], "next, the credit's page and the menu");
   assert.deepEqual(harness.errors, []);
+});
+
+test("channels.json starts each collection's program at its folder, beside the showcase", () => {
+  const file = JSON.parse(readFileSync(join(REPOSITORY, "channels.json"), "utf8")) as { channels: { folder: string; name: string; command: string[]; directory: string }[] };
+  for (const { key, folder: name, channel } of COLLECTIONS) {
+    const entry = file.channels.find((candidate) => candidate.folder === name);
+    assert.ok(entry !== undefined, `${name} is in channels.json`);
+    assert.equal(entry.name, channel);
+    assert.equal(entry.directory, "channels/showcase");
+    assert.deepEqual(entry.command.slice(0, 2), ["node", "src/collection.ts"]);
+    assert.equal(entry.command[entry.command.indexOf("--collection") + 1], key);
+    assert.ok(entry.command.includes("--pictures"));
+  }
+});
+
+test("a collection's program declares its index, with pictures or without", () => {
+  const pictures = mkdtempSync(join(tmpdir(), "gallery-collection-"));
+  try {
+    writeFileSync(join(pictures, "captions.tsv"), "a001\ta\tA cat · Ada · CC BY 4.0\n");
+    writeFileSync(join(pictures, "a001_l15.tti"), tti("l15"));
+    const start = '{"type":"start","protocol":1,"epoch_ms":0}\n';
+    const run = (folderName: string, key: string): { type: string; pages?: { page: string; title: string }[]; page?: string }[] => {
+      const result = spawnSync(process.execPath, ["src/collection.ts", "--pictures", folderName, "--collection", key], { cwd: SHOWCASE, input: start, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { type: string });
+    };
+    const art = run(pictures, "art");
+    assert.deepEqual(art[0]?.pages?.map(({ page }) => page), ["100", "101", "800"]);
+    assert.deepEqual(art.slice(1).map(({ page }) => page), ["100", "101", "800"], "every page published at start");
+    const people = run(pictures, "people");
+    assert.deepEqual(people[0]?.pages, [{ page: "100", title: "People" }], "a collection without pictures still has its index");
+    const refused = spawnSync(process.execPath, ["src/collection.ts", "--collection", "nothing"], { cwd: SHOWCASE, input: start, encoding: "utf8" });
+    assert.notEqual(refused.status, 0, "an unknown collection is refused");
+  } finally {
+    rmSync(pictures, { recursive: true });
+  }
 });

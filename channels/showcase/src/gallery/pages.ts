@@ -20,7 +20,7 @@ export const SHOWCASE_GROUPS: readonly Group[] = [
 
 /** A collection served as a channel of its own: its name, its folder, the channel's name and its group. */
 export interface Collection {
-  /** The collection's name, and the Rust server's folder for it. */
+  /** The collection's name, which src/collection.ts is given with --collection, and the Rust server's folder for it. */
   readonly key: string;
   /** The folder the channel is served at: the key with "-ts" while the Rust server still serves the key itself (PORTING.md section 3.6). */
   readonly folder: string;

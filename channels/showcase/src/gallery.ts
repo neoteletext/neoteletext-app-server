@@ -2,10 +2,11 @@
 // showcase channel (pages 600 to 699) your examples and the sci-fi
 // sprites, a page that compares the levels and their credits; and a
 // channel of its own for each larger collection (characters, art, people,
-// travel, game art). Every picture is one page whose sub-pages are its
-// Levels 1.5, 2.5 and 3.5, and every caption, with its attribution, is on
-// the gallery's credits pages (decision 6). The pages are shared and
-// static: they are published once, at start.
+// travel, game art), each a program of its own (collection.ts). Every
+// picture is one page whose sub-pages are its Levels 1.5, 2.5 and 3.5,
+// and every caption, with its attribution, is on the gallery's credits
+// pages (decision 6). The pages are shared and static: they are
+// published once, at start.
 
 import type { Area, Section } from "./area.ts";
 import { COLLECTION_PLAN, Gallery, SHOWCASE_PLAN } from "./gallery/application.ts";
