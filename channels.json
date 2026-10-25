@@ -1,3 +1,3 @@
 {"channels":[
-  {"folder":"hackaday","name":"Hackaday","command":["uv","run","--frozen","python","-m","hackaday"],"directory":"channels/hackaday"}
+  {"folder":"hackaday","name":"Hackaday","command":["uv","run","--frozen","--no-dev","python","-m","hackaday"],"directory":"channels/hackaday"}
 ]}
