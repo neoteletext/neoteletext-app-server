@@ -109,8 +109,15 @@ unstaged_under() {
 # The paths of the TypeScript stage: the kit, the channels' programs, the
 # channels file and Node's tools.
 readonly TYPESCRIPT_PATHS=(kits channels channels.json package.json package-lock.json tsconfig.json scripts .githooks)
+# The Rust test that runs the server with a TypeScript program and reads
+# back the pages it publishes, so a change to the kit is checked against
+# the server's TTI reader.
+readonly TYPESCRIPT_SERVER_TEST="typescript_channel"
+
 check_typescript() {
     scripts/typescript.sh
+    step "the server serves a TypeScript program's pages"
+    cargo nextest run --package teletext-native --test "$TYPESCRIPT_SERVER_TEST" --hide-progress-bar --status-level fail --final-status-level fail
 }
 
 commit_gate() {
