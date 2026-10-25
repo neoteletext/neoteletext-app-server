@@ -327,6 +327,24 @@ def test_a_viewer_arriving_sees_the_emblem_for_two_seconds(channel: Recorder) ->
     assert len(published(channel, 0x100, 7)) == 1, "once a visit"
 
 
+def test_the_roulette_wheel_turns_then_lands_on_its_post(channel: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(channel_module, "SPIN_STEPS_S", (0.0, 0.0, 0.0))
+    landed = channel.posts[3]
+
+    async def random_post(_generator: object) -> Post:
+        return landed
+
+    monkeypatch.setattr(channel.library, "random_post", random_post)
+    drive(channel, {"type": "open", "session": 4, "page": "131"})
+    asyncio.run(channel.spin(4))
+    frames = published(channel, 0x131, 4)
+    assert len(frames) == 4, "a frame a step, then the post"
+    assert len(set(frames[:3])) == 3, "the wheel moves on each step"
+    assert "SPIN" in frames[0]
+    assert channel.viewers[4].roulette is landed
+    assert "SPIN" not in frames[-1]
+
+
 def test_the_poll_counts_one_vote_each(channel: Recorder) -> None:
     drive(channel, key(1, "141", "ArrowDown"), key(1, "141", "Enter"), key(1, "141", "Enter"), key(2, "141", "Enter"))
     assert channel.votes[:2] == [1, 1]

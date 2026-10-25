@@ -9,6 +9,7 @@ through a cell would paint the track beside it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from neoteletext_app.charset import codes
@@ -154,6 +155,28 @@ def scroll(screen: Screen, lines: list[Line], top: int, first_row: int, rows: in
         inside = start <= cell < start + length
         screen.code(first_row + cell, BAR_ATTRIBUTE_COLUMN, (Colour.WHITE if inside else Colour.BLUE).mosaic)
         screen.code(first_row + cell, BAR_COLUMN, FULL_BLOCK if inside else LEFT_LINE)
+
+
+#: A roulette wheel's segments, and their colours in turn round it.
+WHEEL_SEGMENTS = 12
+WHEEL_COLOURS = (Colour.RED, Colour.YELLOW, Colour.GREEN, Colour.CYAN, Colour.BLUE, Colour.MAGENTA)
+#: Its radius in rows and in columns: a cell is 12 by 20 pixels as the
+#: browser draws it, so 8 columns (96 pixels) across is about 5 rows (100
+#: pixels) down, and the wheel is round.
+WHEEL_ROWS = 5
+WHEEL_COLUMNS = 8
+
+
+def wheel(screen: Screen, row: int, column: int, lit: int) -> None:
+    """Draw a roulette wheel centred on `row`, `column`: a ring of coloured blocks, block `lit` white."""
+    for segment in range(WHEEL_SEGMENTS):
+        angle = 2 * math.pi * segment / WHEEL_SEGMENTS
+        at_row = row - round(WHEEL_ROWS * math.cos(angle))
+        at_column = column + round(WHEEL_COLUMNS * math.sin(angle))
+        colour = Colour.WHITE if segment == lit % WHEEL_SEGMENTS else WHEEL_COLOURS[segment % len(WHEEL_COLOURS)]
+        # Two cells a segment, so a 12-pixel cell does not look like a slit.
+        screen.code(at_row, at_column - 1, colour.mosaic)
+        screen.codes(at_row, at_column, [FULL_BLOCK, FULL_BLOCK])
 
 
 def last_top(total: int, rows: int) -> int:

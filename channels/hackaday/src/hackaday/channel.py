@@ -24,7 +24,7 @@ from neoteletext_app.sound import RATE, chime, noise, sequence, tone
 
 from hackaday import clips, numbers, people, site, views
 from hackaday.fetch import Fetcher, FetchError
-from hackaday.layout import BAR_ATTRIBUTE_COLUMN, BODY_ROW, TEXT_WIDTH, flashing, last_top, page, thumb, top_at, wrap
+from hackaday.layout import BAR_ATTRIBUTE_COLUMN, BODY_ROW, TEXT_WIDTH, last_top, page, thumb, top_at, wheel, wrap
 from hackaday.library import Library, now_utc
 from hackaday.tools import ToolError, qr_tti
 
@@ -65,6 +65,10 @@ COLUMN_TITLES = {
 }
 #: How long a viewer arriving at page 100 sees the whole-page emblem, in seconds.
 SPLASH_S = 2.0
+#: The spin's steps, each the wait before the next: quick, then slowing
+#: to a stop, about two and a half seconds in all, while the archive is
+#: asked for its post.
+SPIN_STEPS_S = (*(0.06,) * 10, 0.08, 0.1, 0.13, 0.17, 0.22, 0.28, 0.35, 0.45)
 #: How long a person's page shows before they say their name, in seconds:
 #: time to see who it is first.
 NAME_DELAY_S = 2.0
@@ -758,16 +762,22 @@ class Hackaday(App):
 
     # Roulette.
 
-    def roulette_screen(self, post: Post | None, *, spinning: bool = False) -> Screen:
-        """Draw page 106: a random post from the whole archive."""
+    def roulette_screen(self, post: Post | None, *, spinning: int | None = None) -> Screen:
+        """Draw page 131: a random post from the whole archive.
+
+        While it spins, the wheel at step `spinning`, `post` a title flicking past.
+        """
         screen = page(
             "Hack roulette",
             Colour.RED,
             [("Front", numbers.FRONT), ("Archive", numbers.ON_THIS_DAY), ("Search", numbers.SEARCH), ("DOOM", numbers.DOOM)],
         )
         screen.coloured(BODY_ROW, 0, Colour.CYAN, f"One of {self.library.total or 58711} hacks since 2004")
-        if spinning:
-            flashing(screen, 10, 12, Colour.YELLOW, "SPINNING...")
+        if spinning is not None:
+            wheel(screen, 10, 19, spinning)
+            screen.coloured(10, 16, Colour.YELLOW, "SPIN")
+            if post is not None:
+                views.put_headline(screen, 17, post.title, colour=Colour.CYAN)
         elif post is None:
             screen.centred(10, Colour.YELLOW, "Press Space to spin the wheel")
         else:
@@ -783,7 +793,7 @@ class Hackaday(App):
         """Space spins; Enter reads what came up."""
         viewer = self.viewer(session)
         if event.character == " ":
-            self.put(numbers.ROULETTE, self.roulette_screen(viewer.roulette, spinning=True), session)
+            self.put(numbers.ROULETTE, self.roulette_screen(None, spinning=0), session)
             self.hear(session, SPIN)
             self.spawn(self.spin(session))
             return True
@@ -793,15 +803,25 @@ class Hackaday(App):
         return False
 
     async def spin(self, session: int) -> None:
-        """Find a random post for the viewer."""
+        """Turn the wheel for the viewer, titles flicking past, while the archive finds a post; it lands on that."""
+        found = asyncio.ensure_future(self.library.random_post(self.random))
+        for step, wait in enumerate(SPIN_STEPS_S):
+            if session not in self.viewers:
+                found.cancel()
+                return
+            passing = self.random.choice(self.posts) if self.posts else None
+            self.put(numbers.ROULETTE, self.roulette_screen(passing, spinning=step), session)
+            await asyncio.sleep(wait)
         try:
-            post = await self.library.random_post(self.random)
+            post = await found
         except FetchError as error:
             print(f"hackaday: roulette: {error}", file=sys.stderr)  # noqa: T201
             post = None
         if session in self.viewers:
             self.viewer(session).roulette = post
             self.put(numbers.ROULETTE, self.roulette_screen(post), session)
+            if post is not None:
+                self.hear(session, RIGHT)
 
     # The quiz.
 
