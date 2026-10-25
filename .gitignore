@@ -10,3 +10,4 @@ fuzz/coverage/
 *.pem
 *.key
 *.bak*
+node_modules/

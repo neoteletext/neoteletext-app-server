@@ -1,0 +1,14 @@
+{
+  "name": "teletext-server-applications",
+  "description": "The server's channel applications in TypeScript and their reference kit (docs/applications.md section 5)",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}

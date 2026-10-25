@@ -12,6 +12,8 @@
 #                             release tests, licences and advisories,
 #                             unused dependencies, fuzzing, and the Linux
 #                             build and tests on $TELETEXT_LINUX_HOST
+# Both gates run the TypeScript stage (scripts/typescript.sh) for the
+# channels' programs and their kit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -104,6 +106,13 @@ unstaged_under() {
     git ls-files --others --exclude-standard -- "$@"
 }
 
+# The paths of the TypeScript stage: the kit, the channels' programs, the
+# channels file and Node's tools.
+readonly TYPESCRIPT_PATHS=(kits channels channels.json package.json package-lock.json tsconfig.json scripts .githooks)
+check_typescript() {
+    scripts/typescript.sh
+}
+
 commit_gate() {
     local staged
     staged="$(git diff --cached --name-only)"
@@ -111,10 +120,13 @@ commit_gate() {
         step "nothing staged"
         return
     fi
-    local code=no path
+    local code=no typescript=no path
     while IFS= read -r path; do
         case "$path" in
         crates/* | fuzz/* | scripts/* | .githooks/* | Cargo.toml | Cargo.lock | rust-toolchain.toml | clippy.toml | rustfmt.toml | deny.toml) code=yes ;;
+        esac
+        case "$path" in
+        kits/* | channels/* | channels.json | package.json | package-lock.json | tsconfig.json | scripts/* | .githooks/*) typescript=yes ;;
         esac
     done <<<"$staged"
     # What is checked must be what is committed: no unstaged edit or
@@ -126,13 +138,20 @@ commit_gate() {
 $loose"
         check_workspace
     fi
+    if [[ "$typescript" == yes ]]; then
+        local loose
+        loose="$(unstaged_under "${TYPESCRIPT_PATHS[@]}")"
+        [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
+$loose"
+        check_typescript
+    fi
     return 0
 }
 
 check_linux() {
-    step "Linux on $linux_host: Clippy and tests"
+    step "Linux on $linux_host: Clippy and tests, Rust and TypeScript"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
-    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
+    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts --exclude node_modules \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
@@ -150,7 +169,7 @@ check_linux() {
     # shellcheck disable=SC2029 # the engine is expanded here on purpose
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install; $config
         cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
-            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings"
+            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings && scripts/typescript.sh"
 }
 
 check_fuzz() {
@@ -187,6 +206,7 @@ full_gate() {
 $loose"
 
     check_workspace
+    check_typescript
     step "documentation tests"
     cargo test --quiet --workspace --doc
     step "documentation builds, warnings as errors"
