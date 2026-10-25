@@ -34,8 +34,9 @@ pub const PROTOCOL: i64 = 1;
 pub const MOST_SUBPAGES: usize = 64;
 /// The most pages an application may declare.
 pub const MOST_PAGES: usize = 800;
-/// The longest page title (the engine's `contents.txt` rule).
-const TITLE_LIMIT: usize = 32;
+/// The longest page title: the engine's `contents.txt` rule (its
+/// REQ-WEB-025, decision E.120).
+const TITLE_LIMIT: usize = neoteletext_web::contents::MAX_TITLE;
 /// A command's operations (the engine's `audio.md` section 4.4).
 const PLAY: u8 = 1;
 /// Stop.
@@ -88,7 +89,7 @@ pub fn declared_pages(line: &[u8]) -> Result<Vec<PageEntry>, Refusal> {
     Ok(entries)
 }
 
-/// A page's title, none being empty: at most 32 characters, none a control.
+/// A page's title, none being empty: at most [`TITLE_LIMIT`] characters, none a control.
 fn title_of(value: Option<&Value>, number: u16) -> Result<&str, Refusal> {
     let title = value.and_then(Value::text).unwrap_or("");
     if title.chars().count() > TITLE_LIMIT || title.chars().any(char::is_control) {

@@ -12,7 +12,7 @@ from hackaday import numbers, site, views
 from hackaday.channel import POLL_OPTIONS, SPLASH_S, Hackaday, Viewer
 from hackaday.layout import JOLLY_WRENCHER, JOLLY_WRENCHER_LARGE, headline, last_top, thumb, wrap
 from hackaday.posts import Comment, Post, comment_of, post_of, threaded
-from neoteletext_app.screen import Colour
+from neoteletext_app.screen import TITLE_LIMIT, Colour
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -296,12 +296,16 @@ def test_a_storys_keys_and_prompts_show_its_views_and_the_next(channel: Recorder
 def test_story_pages_are_titled_with_their_posts(channel: Recorder) -> None:
     titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
     assert titles["210"] == 'Hack number 0 - with a "title"'
-    long = "A title of a post that runs to well past what the contents holds"
+    long = "A title of a post that runs to well past what the contents once held"
     channel.library.posts[1].title = long
     channel.publish_all()
     titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
-    assert titles["510"] == long[:29].rstrip() + "...", titles["510"]
-    assert len(titles["510"]) <= 32
+    assert titles["510"] == long, "a whole headline: the receiver fits it to its room"
+    channel.library.posts[1].title = "word " * 40
+    channel.publish_all()
+    titles = {message["page"]: message["title"] for message in channel.sent if message["type"] == "title"}
+    assert titles["510"].endswith("...")
+    assert len(titles["510"]) <= TITLE_LIMIT
     assert titles["204"] == "doom (6)", "a tag page is titled by its tag"
     assert "205" not in titles, "a tag page without a tag keeps the title it was declared with"
     assert published(channel, 0x205, "channel") == [], "and is not published, so no list shows it"

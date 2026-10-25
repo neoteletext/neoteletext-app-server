@@ -78,12 +78,15 @@ fn sent_to(effects: &[Effect], session: SessionId) -> Vec<u8> {
 fn a_declaration_names_the_pages_and_nothing_else_passes() {
     let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"8FF"}]}"#).unwrap();
     assert_eq!(pages.iter().map(|entry| entry.number).collect::<Vec<_>>(), [0x100, 0x8FF]);
+    let too_long_pages = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
+    let whole = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT));
+    assert!(declared_pages(whole.as_bytes()).is_ok(), "a title of the engine's longest");
     for bad in [
         &br#"{"type":"publish"}"#[..],
         br#"{"type":"pages","pages":[{"page":"099"}]}"#,
         br#"{"type":"pages","pages":[{"page":"900"}]}"#,
         br#"{"type":"pages","pages":[{"page":"100"},{"page":"100"}]}"#,
-        br#"{"type":"pages","pages":[{"page":"100","title":"a title that runs to more than thirty-two characters"}]}"#,
+        too_long_pages.as_bytes(),
         br#"{"type":"pages","pages":[{"page":100}]}"#,
         b"not json",
     ] {
@@ -202,6 +205,7 @@ fn goto_sends_the_viewer_on() {
 fn bad_lines_are_refused_and_reported() {
     let mut channel = channel();
     channel.take_effects();
+    let too_long_title = alloc::format!(r#"{{"type":"title","page":"100","title":"{}"}}"#, "x".repeat(TITLE_LIMIT + 1));
     for (line, reason) in [
         (&b"{not json"[..], "not JSON"),
         (br#"{"type":"publish","page":"200","owner":"channel","tti":"PN,20000\n"}"#, "200 was not declared"),
@@ -214,7 +218,7 @@ fn bad_lines_are_refused_and_reported() {
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":12345,"pcm":"AAA="}}"#, "sound.object"),
         (br#"{"type":"pages","pages":[]}"#, "declared once"),
         (br#"{"type":"title","page":"200","title":"Not ours"}"#, "200 was not declared"),
-        (br#"{"type":"title","page":"100","title":"a title that runs to more than thirty-two characters"}"#, "over 32"),
+        (too_long_title.as_bytes(), "over 120"),
     ] {
         channel.from_application(0, line, 0);
         let effects = channel.take_effects();
@@ -289,7 +293,8 @@ fn a_section_heads_its_pages_in_the_contents() {
     );
     channel.from_application(0, br#"{"type":"publish","page":"201","owner":"channel","tti":"PN,20100\nOL,1,Again\n"}"#, 0);
     assert!(!channel.take_effects().contains(&Effect::Contents), "published again, the contents are the same");
-    assert!(declared_pages(br#"{"type":"pages","pages":[{"page":"200","section":"a section name that runs to more than thirty-two"}]}"#).is_err());
+    let too_long = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"200","section":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
+    assert!(declared_pages(too_long.as_bytes()).is_err());
 }
 
 /// The channel counts viewers, what they open and press, and its lines,

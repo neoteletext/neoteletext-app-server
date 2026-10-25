@@ -22,7 +22,7 @@ pub struct Resource {
 /// T42's media type (the engine's `requirements/web.md`).
 pub const T42_TYPE: &str = "application/x-teletext-t42";
 /// The longest title `contents.txt` keeps (the engine's contents rule).
-const TITLE_CHARACTERS: usize = 32;
+const TITLE_CHARACTERS: usize = neoteletext_web::contents::MAX_TITLE;
 
 impl Channel {
     /// The channel's file `name`, or none.

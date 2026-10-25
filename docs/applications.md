@@ -48,9 +48,9 @@ Which keys reach the program: while the browser sends keys to the channel, every
 {"type":"pages","pages":[{"page":"100","title":"Front page"},{"page":"101","title":"News"}]}
 ```
 
-At most 800 pages, each once; a title at most 32 characters, without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
+At most 800 pages, each once; a title at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
 
-A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 32 characters, which a receiver shows as the name of the page's magazine.
+A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
 
 ### 3.2 `publish`
 

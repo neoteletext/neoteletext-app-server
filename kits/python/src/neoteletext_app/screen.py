@@ -43,8 +43,9 @@ NO_LINK = 0x8FF
 ECHO = 1
 MASKED = 2
 BLOCK = 4
-#: The longest page title (docs/applications.md section 3.1).
-TITLE_LIMIT = 32
+#: The longest page title (docs/applications.md section 3.1): the engine's
+#: `contents::MAX_TITLE` (its decision E.120), which the server checks.
+TITLE_LIMIT = 120
 #: The input modes a page may ask for (INPUT.md section 6): clicks and the
 #: wheel; moves while a button is held, as well; every move, as well.
 MOUSE_BUTTONS = 8
