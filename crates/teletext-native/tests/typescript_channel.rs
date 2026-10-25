@@ -4,7 +4,8 @@
 //! the program publishes, read back over HTTP as the engine's packets. It
 //! checks the kit's TTI against the server's reader, which only the server
 //! has: control codes, the English set's signs, mosaics, Fastext links and
-//! sub-pages.
+//! sub-pages. It also serves the repository's own `channels.json`, whose
+//! showcase is TypeScript.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -161,4 +162,14 @@ fn the_server_serves_what_a_typescript_program_publishes() {
 
     let contents = String::from_utf8(fetch(&address, "/kit/contents.txt")).unwrap();
     assert!(contents.contains("Kit index") && contents.contains("Kit carousel"), "{contents}");
+}
+
+/// The repository's own channels file serves the TypeScript showcase, as
+/// `cargo run -p teletext-native -- --channels channels.json` does.
+#[test]
+fn the_channels_file_serves_the_typescript_showcase() {
+    let (_server, address) = serve(&repository().join("channels.json"));
+    let index = received(&fetch(&address, "/showcase-ts/100.t42"));
+    let title = String::from_utf8_lossy(&index[0].row(1)).into_owned();
+    assert!(title.contains("NeoTeletext showcase"), "{title:?}");
 }

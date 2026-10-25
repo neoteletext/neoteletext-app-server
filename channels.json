@@ -1,0 +1,3 @@
+{"channels":[
+  {"folder":"showcase-ts","name":"NeoTeletext showcase (TypeScript)","command":["node","src/main.ts"],"directory":"channels/showcase"}
+]}
