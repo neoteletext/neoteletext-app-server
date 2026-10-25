@@ -159,7 +159,7 @@ function chosen(shown: Node, input: Input): number | undefined {
   if (input.kind === "key" && !isCharacterKey(input.key) && pressed(input, input.key)) {
     const found = CHOICE_KEYS.findIndex(([functionKey, remote]) => input.key === functionKey || input.key === remote);
     place = found === -1 ? undefined : found;
-  } else if (input.kind === "mouse" && input.pressed && input.button === Button.Left) {
+  } else if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
     if (input.row === FASTEXT_ROW) {
       place = labelAt(labels(shown), input.column);
     } else {

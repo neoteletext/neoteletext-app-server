@@ -155,7 +155,7 @@ export class Paint {
     const canvas = this.#canvas(session);
     let effect: Effect | null = null;
     if (input.kind === "mouse") {
-      effect = input.pressed ? canvas.press(input.button, input.column, input.row) : null;
+      effect = input.action === "press" ? canvas.press(input.button, input.column, input.row) : null;
     } else {
       const typed = character(input);
       if (typed === "c" || typed === "C") {

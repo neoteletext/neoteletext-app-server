@@ -288,7 +288,7 @@ export class LongRead implements Application {
       reader.wheel = Math.trunc((turned % NOTCH) / WHEEL_LINES);
       return moved === 0 ? null : { by: moved };
     }
-    if (input.kind === "mouse" && input.pressed && input.button === Button.Left) {
+    if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
       const { column, row } = input;
       if (row === FASTEXT_ROW) {
         const links = navigation(LONG_READ);

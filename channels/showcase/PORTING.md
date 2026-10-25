@@ -131,7 +131,8 @@ Text measured for layout (centring, right-aligning) is measured in codes, `engli
 type Input =
   | { kind: "text"; text } | { kind: "paste"; text }
   | { kind: "key"; action: "press" | "repeat" | "release"; key; text?; base? }
-  | { kind: "mouse"; pressed; button; column; row }
+  | { kind: "mouse"; action: "press" | "release"; button; column; row }
+  | { kind: "mouse"; action: "move"; buttons; column; row }
   | { kind: "wheel"; dx; dy; column; row }
   | { kind: "focus" } | { kind: "blur" };
 ```
@@ -141,7 +142,8 @@ type Input =
 | `input.pressed(Named::Up)` | `pressed(input, Key.Up)` |
 | `input.released(Named::Enter)` | `released(input, Key.Enter)` |
 | `input.character()` | `character(input)` (one code point, or undefined) |
-| `Input::Mouse { pressed: true, button, column, row }` | `input.kind === "mouse" && input.pressed`, `Button.Left` 0, `Button.Middle` 1, `Button.Right` 2 |
+| `Input::Mouse { pressed: true, button, column, row }` | `input.kind === "mouse" && input.action === "press"`, `Button.Left` 0, `Button.Middle` 1, `Button.Right` 2; `clicked(input)` for a press of the left button |
+| `Input::Moved { buttons, column, row }` | `input.kind === "mouse" && input.action === "move"`, `input.buttons` a bit each: `Held.Left` 1, `Held.Middle` 2, `Held.Right` 4; sent in `Mode.MouseDrag` while a button is held, in `Mode.MouseAll` always |
 | `Input::Wheel { dy, .. }` | `input.kind === "wheel"`, `input.dy` (1/120ths of a line) |
 | `Named::Character(c)` | `input.kind === "key" && isCharacterKey(input.key)`; the key is the character |
 | `Named::Other(code)` | the key's W3C name: `Key.F1` to `Key.F4`, `Key.Red` (`ColorF0Red`), `Key.Green`, `Key.Yellow`, `Key.Blue`, or any other name from the engine's `crates/neoteletext-input/src/names.rs` (code n is the n-th name there: 92 to 95 are the colour keys) |
@@ -228,7 +230,7 @@ Port every Rust test of the area into `test/<area>.test.ts` (several files if th
 |---|---|
 | `Harness::new(applications(&[]))` | `new Harness(area.applications([]))`; options `{ epochMs, seed }`, by default 0 and the Rust harness's seed 7 |
 | `join(s, page)`, `open(s, page)` | the same; `close(s)` for `channel.closed(s, now)` |
-| `type_text(s, text)`, `press(s, "Name")`, `click(s, button, column, row)`, `wheel(s, dy, column, row)` | `typeText`, `press`, `click`, `wheel`; also `paste`, `key(s, name, action)`, `send(s, input)` |
+| `type_text(s, text)`, `press(s, "Name")`, `click(s, button, column, row)`, `wheel(s, dy, column, row)` | `typeText`, `press`, `click`, `wheel`; also `paste`, `key(s, name, action)`, `mouse(s, "press" \| "release", button, column, row)`, `move(s, buttons, column, row)`, `send(s, input)` |
 | `advance(by)` (one deadline if due) | `advance(by)`; `runUntil(t)` wakes at every time asked, as the services tests' `run` does |
 | `shared(page)`, `own(s, page)` (rows of the last sub-page) | the same; `sharedPages(page)` and `ownPages(s, page)` give every sub-page with its links, `fastextRow`, cursor and modes |
 | `cursor(s)` | `cursor(s)`: row, column, width, flags of the page the session is at; the acknowledged count is the server's and is not seen here |

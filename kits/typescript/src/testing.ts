@@ -132,9 +132,18 @@ export class Harness {
 
   /** Presses and releases a mouse button on a cell. */
   click(session: number, button: number, column: number, row: number): void {
-    for (const down of [true, false]) {
-      this.send(session, { kind: "mouse", pressed: down, button, column, row });
-    }
+    this.mouse(session, "press", button, column, row);
+    this.mouse(session, "release", button, column, row);
+  }
+
+  /** Presses or releases a mouse button on a cell. */
+  mouse(session: number, action: "press" | "release", button: number, column: number, row: number): void {
+    this.send(session, { kind: "mouse", action, button, column, row });
+  }
+
+  /** Moves the pointer onto a cell with `buttons` held ({@link Held}). */
+  move(session: number, buttons: number, column: number, row: number): void {
+    this.send(session, { kind: "mouse", action: "move", buttons, column, row });
   }
 
   /** A left click. */

@@ -101,7 +101,7 @@ function crownPageShown(harness: Harness, act: () => void): string {
 
 /** A press of the left button on a cell, without its release. */
 function click(harness: Harness, column: number, at: number): void {
-  harness.send(VIEWER, { kind: "mouse", pressed: true, button: Button.Left, column, row: at });
+  harness.mouse(VIEWER, "press", Button.Left, column, at);
 }
 
 // The whole story is one page: before choosing a viewer sees the first

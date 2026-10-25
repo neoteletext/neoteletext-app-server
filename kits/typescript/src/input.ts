@@ -38,7 +38,9 @@ export type Input =
   /** A key pressed, repeating or released; `text` in ALL_KEYS, `base` in BASE_KEY (INPUT.md sections 5.6 and 6). */
   | { readonly kind: "key"; readonly action: KeyAction; readonly key: string; readonly text?: string; readonly base?: string }
   /** A mouse button pressed or released on a cell, in MOUSE_BUTTONS. */
-  | { readonly kind: "mouse"; readonly pressed: boolean; readonly button: number; readonly column: number; readonly row: number }
+  | { readonly kind: "mouse"; readonly action: "press" | "release"; readonly button: number; readonly column: number; readonly row: number }
+  /** The pointer moved onto a cell: in MOUSE_DRAG while a button is held, in MOUSE_ALL always; `buttons` are those held, a bit each ({@link Held}). */
+  | { readonly kind: "mouse"; readonly action: "move"; readonly buttons: number; readonly column: number; readonly row: number }
   /** The wheel turned over a cell, in 1/120ths of a line, positive right and down. */
   | { readonly kind: "wheel"; readonly dx: number; readonly dy: number; readonly column: number; readonly row: number }
   /** A paste: data, never keystrokes. */
@@ -52,6 +54,10 @@ export type Input =
 export const Button = { Left: 0, Middle: 1, Right: 2 } as const;
 /** The highest button number INPUT.md section 5.4 sends. */
 const LAST_BUTTON = Button.Right;
+/** The buttons a move says are held, a bit each (docs/applications.md section 2). */
+export const Held = { Left: 1 << Button.Left, Middle: 1 << Button.Middle, Right: 1 << Button.Right } as const;
+/** Every button held at once. */
+const ALL_HELD = Held.Left | Held.Middle | Held.Right;
 /** The longest text one event may carry: the server's line bound (docs/applications.md section 1). */
 const LONGEST_TEXT = 16 * 1024 * 1024;
 /** The longest key name INPUT.md section 5.6 has ("BrowserFavorites" and the like), with room. */
@@ -74,6 +80,11 @@ export function pressed(input: Input, key: string): boolean {
 /** Whether this is a release of `key`. */
 export function released(input: Input, key: string): boolean {
   return input.kind === "key" && input.action === "release" && input.key === key;
+}
+
+/** Whether this is the main button pressed: a click, in MOUSE_BUTTONS. */
+export function clicked(input: Input): boolean {
+  return input.kind === "mouse" && input.action === "press" && input.button === Button.Left;
 }
 
 /** The character this input typed, if it typed exactly one: text of one character, or a character key's press. */
@@ -133,14 +144,21 @@ export function readInput(value: unknown): Input | string {
       return { kind: "key", action, key, ...(typed === undefined ? {} : { text: typed }), ...(base === undefined ? {} : { base }) };
     }
     case "mouse": {
-      const button = whole(value, "button", 0, LAST_BUTTON);
+      const action = value["action"];
       const column = whole(value, "column", 0, LARGEST_COORDINATE);
       const row = whole(value, "row", 0, LARGEST_COORDINATE);
-      const down = value["pressed"];
-      if (button === undefined || column === undefined || row === undefined || typeof down !== "boolean") {
-        return "event: a mouse event needs pressed, button, column and row";
+      if (column === undefined || row === undefined) {
+        return "event: a mouse event needs a column and a row";
       }
-      return { kind: "mouse", pressed: down, button, column, row };
+      if (action === "move") {
+        const buttons = whole(value, "buttons", 0, ALL_HELD);
+        return buttons === undefined ? "event: a move needs the buttons held" : { kind: "mouse", action, buttons, column, row };
+      }
+      const button = whole(value, "button", 0, LAST_BUTTON);
+      if ((action !== "press" && action !== "release") || button === undefined) {
+        return "event: a mouse event needs an action, press, release or move, and a press or release a button";
+      }
+      return { kind: "mouse", action, button, column, row };
     }
     case "wheel": {
       const dx = whole(value, "dx", -LARGEST_TURN, LARGEST_TURN);

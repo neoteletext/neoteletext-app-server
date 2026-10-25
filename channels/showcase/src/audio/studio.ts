@@ -206,7 +206,10 @@ export class Studio implements Application {
         return true;
       }
       case "mouse": {
-        if (!input.pressed) {
+        if (input.action === "move") {
+          return false;
+        }
+        if (input.action === "release") {
           const wasHeld = held.mouse !== null;
           held.mouse = null;
           return wasHeld;
@@ -233,7 +236,7 @@ export class Studio implements Application {
 
   #board(session: number, input: Input, context: Context): boolean {
     let button: number | undefined;
-    if (input.kind === "mouse" && input.pressed && input.button === Button.Left) {
+    if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
       button = board.buttonAt(input.column, input.row);
     } else {
       const typed = character(input);
@@ -262,7 +265,7 @@ export class Studio implements Application {
       machine.go(move[1], move[2]);
     } else if (pressed(input, Key.Enter)) {
       machine.playing = !machine.playing;
-    } else if (input.kind === "mouse" && input.pressed && input.button === Button.Left) {
+    } else if (input.kind === "mouse" && input.action === "press" && input.button === Button.Left) {
       const place = drums.stepAtCell(input.column, input.row);
       if (place === undefined) {
         return false;

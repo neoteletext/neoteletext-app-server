@@ -75,7 +75,8 @@ test("everything else is the page's", () => {
     key(Key.PageDown),
     key(Key.Enter),
     { kind: "paste", text: "123" },
-    { kind: "mouse", pressed: true, button: 0, column: 1, row: 24 },
+    { kind: "mouse", action: "press", button: 0, column: 1, row: 24 },
+    { kind: "mouse", action: "move", buttons: 1, column: 1, row: 24 },
     { kind: "focus" },
   ] satisfies Input[]) {
     assert.deepEqual(navigation.take(1, input, {}, LINKS), { taken: false }, JSON.stringify(input));

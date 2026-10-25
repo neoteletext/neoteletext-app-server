@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Input, Key, character, decimalDigit, pressed, readInput, released } from "../src/input.ts";
+import { Button, Held, type Input, Key, character, clicked, decimalDigit, pressed, readInput, released } from "../src/input.ts";
 
 test("every kind of event the server writes is read", () => {
   assert.deepEqual(readInput({ kind: "text", text: "hi" }), { kind: "text", text: "hi" });
@@ -14,12 +14,26 @@ test("every kind of event the server writes is read", () => {
     text: "A",
     base: "a",
   });
-  assert.deepEqual(readInput({ kind: "mouse", pressed: true, button: 2, column: 39, row: 24 }), {
+  assert.deepEqual(readInput({ kind: "mouse", action: "press", pressed: true, button: 2, column: 39, row: 24 }), {
     kind: "mouse",
-    pressed: true,
+    action: "press",
     button: 2,
     column: 39,
     row: 24,
+  });
+  assert.deepEqual(readInput({ kind: "mouse", action: "release", pressed: false, button: 0, column: 0, row: 0 }), {
+    kind: "mouse",
+    action: "release",
+    button: 0,
+    column: 0,
+    row: 0,
+  });
+  assert.deepEqual(readInput({ kind: "mouse", action: "move", buttons: Held.Left | Held.Right, column: 39, row: 12 }), {
+    kind: "mouse",
+    action: "move",
+    buttons: 5,
+    column: 39,
+    row: 12,
   });
   assert.deepEqual(readInput({ kind: "wheel", dx: 0, dy: -120, column: 1, row: 2 }), { kind: "wheel", dx: 0, dy: -120, column: 1, row: 2 });
   assert.deepEqual(readInput({ kind: "focus" }), { kind: "focus" });
@@ -37,9 +51,13 @@ test("an event that is not whole is refused, with the reason", () => {
     { kind: "key", action: "press", key: "" },
     { kind: "key", action: "press", key: "a", text: 1 },
     { kind: "key", action: "press", key: "x".repeat(65) },
-    { kind: "mouse", pressed: "yes", button: 0, column: 0, row: 0 },
-    { kind: "mouse", pressed: true, button: 3, column: 0, row: 0 },
-    { kind: "mouse", pressed: true, button: 0, column: -1, row: 0 },
+    { kind: "mouse", pressed: true, button: 0, column: 0, row: 0 },
+    { kind: "mouse", action: "hold", button: 0, column: 0, row: 0 },
+    { kind: "mouse", action: "press", column: 0, row: 0 },
+    { kind: "mouse", action: "press", button: 3, column: 0, row: 0 },
+    { kind: "mouse", action: "press", button: 0, column: -1, row: 0 },
+    { kind: "mouse", action: "move", column: 0, row: 0 },
+    { kind: "mouse", action: "move", buttons: 8, column: 0, row: 0 },
     { kind: "wheel", dx: 0.5, dy: 0, column: 0, row: 0 },
     { kind: "telepathy" },
   ]) {
@@ -77,4 +95,12 @@ test("the decimal digits of every script are 0 to 9 (INPUT.md section 5.7 rule 8
   for (const notADigit of ["a", "/", ":", "½", "Ⅳ", "²", "ٟ", "\u0000"]) {
     assert.equal(decimalDigit(notADigit), undefined, notADigit);
   }
+});
+
+test("a click is the main button pressed, and only that", () => {
+  assert.ok(clicked({ kind: "mouse", action: "press", button: Button.Left, column: 0, row: 0 }));
+  assert.ok(!clicked({ kind: "mouse", action: "release", button: Button.Left, column: 0, row: 0 }));
+  assert.ok(!clicked({ kind: "mouse", action: "press", button: Button.Right, column: 0, row: 0 }));
+  assert.ok(!clicked({ kind: "mouse", action: "move", buttons: Held.Left, column: 0, row: 0 }));
+  assert.ok(!clicked({ kind: "key", action: "press", key: Key.Enter }));
 });
