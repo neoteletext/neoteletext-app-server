@@ -33,7 +33,7 @@ How a channel's application, a program in any language, talks to the server. It 
 |---|---|
 | `text` | `text`: whole characters typed |
 | `key` | `action` (`press`, `repeat`, `release`), `key`: a W3C `KeyboardEvent.key` name such as `ArrowUp`, `PageDown`, `F1`, `ColorF0Red`, or the character of a character key; `text` and `base` when the page's modes ask for them (INPUT.md sections 5.6 and 6) |
-| `mouse` | `pressed`, `button` (0 left, 1 middle, 2 right), `column`, `row`; only on a page whose modes include `MOUSE_BUTTONS` |
+| `mouse` | `action` (`press`, `release`, `move`), `column`, `row`; on a press or release `pressed` and `button` (0 left, 1 middle, 2 right); on a move `buttons`, those held, a bit each (1 left, 2 middle, 4 right). Presses and releases only on a page whose modes include `MOUSE_BUTTONS`; moves while a button is held in `MOUSE_DRAG`, and always in `MOUSE_ALL` (INPUT.md section 6.4) |
 | `wheel` | `dx`, `dy` in 1/120ths of a line (down positive), `column`, `row`; also in `MOUSE_BUTTONS` |
 | `paste` | `text` |
 | `focus`, `blur` | The keys came to the page or left it |
@@ -62,7 +62,7 @@ At most 800 pages, each once; a title at most 32 characters, without control cha
   - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
   - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
-  - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 8 is `MOUSE_BUTTONS`, 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`).
+  - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`, 8 `MOUSE_BUTTONS`, 16 `MOUSE_DRAG`, 32 `MOUSE_ALL`).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
 
@@ -87,7 +87,15 @@ The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to
 | `stop` | `channel`, `fade_ms` | A command |
 | `gain` | `channel`, `gain`, `fade_ms` | A command |
 
-### 3.5 `log`
+### 3.5 `title`
+
+```json
+{"type":"title","page":"201","title":"A Robot Arm From Bits Of Wo..."}
+```
+
+Gives one of the program's pages a new title, as `pages` does, for what the page holds now: `contents.txt` lists it from then on.
+
+### 3.6 `log`
 
 ```json
 {"type":"log","text":"fetched 7 posts"}

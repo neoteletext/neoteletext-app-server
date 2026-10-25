@@ -69,16 +69,22 @@ pub fn declared_pages(line: &[u8]) -> Result<Vec<PageEntry>, Refusal> {
     let mut entries: Vec<PageEntry> = Vec::new();
     for item in items {
         let number = page_number(item.get("page")).ok_or("pages: a page is a number such as \"100\"")?;
-        let title = item.get("title").and_then(Value::text).unwrap_or("");
-        if title.chars().count() > TITLE_LIMIT || title.chars().any(char::is_control) {
-            return Err(format!("pages: the title of {number:03X} is over {TITLE_LIMIT} characters or has controls"));
-        }
+        let title = title_of(item.get("title"), number)?;
         if entries.iter().any(|entry| entry.number == number) {
             return Err(format!("pages: {number:03X} twice"));
         }
         entries.push(PageEntry::new(number, title));
     }
     Ok(entries)
+}
+
+/// A page's title, none being empty: at most 32 characters, none a control.
+fn title_of(value: Option<&Value>, number: u16) -> Result<&str, Refusal> {
+    let title = value.and_then(Value::text).unwrap_or("");
+    if title.chars().count() > TITLE_LIMIT || title.chars().any(char::is_control) {
+        return Err(format!("the title of {number:03X} is over {TITLE_LIMIT} characters or has controls"));
+    }
+    Ok(title)
 }
 
 /// A page number as the protocol writes it: hexadecimal text, `"100"` to
@@ -129,6 +135,14 @@ impl Remote {
                 Ok(())
             }
             Some("sound") => self.sound(&value, context),
+            Some("title") => {
+                let number = page_number(value.get("page")).ok_or("title: a page such as \"100\" is needed")?;
+                if !self.serves(number) {
+                    return Err(format!("title: {number:03X} was not declared"));
+                }
+                context.retitle(number, title_of(value.get("title"), number)?);
+                Ok(())
+            }
             Some("log") => {
                 context.log(value.get("text").and_then(Value::text).unwrap_or(""));
                 Ok(())
@@ -352,6 +366,14 @@ fn event(input: &Input<'_>) -> Writer {
                 .text("kind", "mouse")
                 .boolean("pressed", pressed)
                 .integer("button", i64::from(button))
+                .integer("column", i64::from(column))
+                .integer("row", i64::from(row));
+        }
+        Input::Moved { buttons, column, row } => {
+            event
+                .text("kind", "mouse")
+                .text("action", "move")
+                .integer("buttons", i64::from(buttons))
                 .integer("column", i64::from(column))
                 .integer("row", i64::from(row));
         }

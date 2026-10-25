@@ -58,6 +58,8 @@ pub(crate) enum Action {
     Records { audience: Audience, records: Vec<Vec<u8>> },
     /// Send the session's viewer to a page.
     Goto { session: SessionId, page: u16 },
+    /// Give one of the application's pages a new title, for `contents.txt`.
+    Title { number: u16, title: String },
     /// Call `wake` at this time.
     WakeAt(u64),
     /// A line for the application's process (`docs/applications.md`).
@@ -109,6 +111,12 @@ impl Context<'_> {
     /// may (INPUT.md section 7.1, REQ-INT-113).
     pub fn goto(&mut self, session: SessionId, page: u16) {
         self.actions.push(Action::Goto { session, page });
+    }
+
+    /// Gives `number`, one of the application's own pages, a new title:
+    /// one about what the page holds now.
+    pub fn retitle(&mut self, number: u16, title: &str) {
+        self.actions.push(Action::Title { number, title: String::from(title) });
     }
 
     /// Asks for `wake` at `at`, in milliseconds.

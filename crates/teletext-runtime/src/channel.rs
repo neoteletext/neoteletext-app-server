@@ -409,6 +409,12 @@ impl Channel {
                     self.effects.push(Effect::Send { session, bytes: Arc::from(&packet.bytes[..]) });
                 }
             }
+            Action::Title { number, title } => {
+                let entry = self.applications.get_mut(index).and_then(|hosted| hosted.pages.iter_mut().find(|entry| entry.number == number));
+                if let Some(entry) = entry {
+                    entry.title = title;
+                }
+            }
             Action::WakeAt(at) => {
                 if let Some(hosted) = self.applications.get_mut(index) {
                     hosted.wake = Some(hosted.wake.map_or(at, |wake| wake.min(at)));

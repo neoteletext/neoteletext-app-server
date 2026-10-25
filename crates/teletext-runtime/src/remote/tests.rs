@@ -213,6 +213,8 @@ fn bad_lines_are_refused_and_reported() {
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":8000,"pcm":"***"}}"#, "not base64"),
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":12345,"pcm":"AAA="}}"#, "sound.object"),
         (br#"{"type":"pages","pages":[]}"#, "declared once"),
+        (br#"{"type":"title","page":"200","title":"Not ours"}"#, "200 was not declared"),
+        (br#"{"type":"title","page":"100","title":"a title that runs to more than thirty-two characters"}"#, "over 32"),
     ] {
         channel.from_application(0, line, 0);
         let effects = channel.take_effects();
@@ -220,6 +222,17 @@ fn bad_lines_are_refused_and_reported() {
         assert!(said.len() == 1 && said[0].contains(reason), "{}: {said:?}", String::from_utf8_lossy(line));
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Shared { .. } | Effect::Send { .. })), "nothing done");
     }
+}
+
+/// A page retitled names what it holds now in `contents.txt`.
+#[test]
+fn a_title_renames_a_page_in_the_contents() {
+    let mut channel = channel();
+    channel.take_effects();
+    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
+    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
+    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
+    assert!(contents.contains("p\t300\tTiny Robot Arm...\n") && contents.contains("p\t100\tFront\n"), "{contents}");
 }
 
 /// The channel counts viewers, what they open and press, and its lines,
