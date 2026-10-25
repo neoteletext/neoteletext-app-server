@@ -19,7 +19,7 @@ use neoteletext_formats::page::{CursorLine, PageFile};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
-use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, COMPOSE, CURSOR_CAP, ECHO_CAP, KEY_RELEASE, MOUSE_BUTTONS, PAGE_CAP};
+use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, COMPOSE, CURSOR_CAP, ECHO_CAP, KEY_RELEASE, MOUSE_ALL, MOUSE_BUTTONS, MOUSE_DRAG, PAGE_CAP};
 
 use crate::application::{Action, Application, Audience, Context, Owner, PageEntry};
 use crate::frame::page_frame;
@@ -37,7 +37,7 @@ const SERVICE: u8 = 0;
 /// What the channel uses of what a receiver offers in HELLO: every mode
 /// its pages may ask for, since a page's mode not agreed in WELCOME is
 /// masked off (INPUT.md section 6).
-const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_RELEASE | BASE_KEY | MOUSE_BUTTONS | COMPOSE;
+const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_RELEASE | BASE_KEY | MOUSE_BUTTONS | MOUSE_DRAG | MOUSE_ALL | COMPOSE;
 
 /// A channel's description, for `channel.json`.
 #[derive(Clone, Debug)]

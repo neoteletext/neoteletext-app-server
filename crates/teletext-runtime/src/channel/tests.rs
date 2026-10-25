@@ -6,7 +6,7 @@ use neoteletext_audio::idl::FRAGMENT_DATA;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_input::cursor::ECHO;
 use neoteletext_input::event::write;
-use neoteletext_input::modes::{ALL_CAPS, KEY_RELEASE};
+use neoteletext_input::modes::{ALL_CAPS, ALL_MODES, KEY_RELEASE, MOUSE_ALL, MOUSE_BUTTONS, MOUSE_DRAG};
 use neoteletext_input::modes::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::session::Session as Receiver;
 
@@ -104,7 +104,7 @@ fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     let mut channel = channel();
     channel.opened(1, 0);
     // The browser's offer (its core/src/typing.rs).
-    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES);
     let hello = receiver.open(0, None);
     let Event::Hello { caps, .. } = hello else { panic!("HELLO") };
     assert_eq!(caps & ALL_CAPS, caps);
@@ -113,6 +113,8 @@ fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     let (kind, version, agreed) = first_control(&packets).unwrap();
     assert_eq!(kind, 1, "WELCOME");
     assert_eq!(receiver.welcome(version, agreed), Ok(()), "the receiver accepts the WELCOME");
+    let mouse = MOUSE_BUTTONS | MOUSE_DRAG | MOUSE_ALL;
+    assert_eq!(agreed & mouse, mouse, "every mouse mode a page may ask for, so a page's drags are not masked off");
 
     channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
     let packets = sent(&channel.take_effects(), 1);
@@ -185,7 +187,7 @@ fn a_page_gone_to_is_named_until_it_is_open() {
     let mut channel = Channel::new(config, alloc::vec![Box::new(Mover)], 7);
     channel.start(0);
     channel.opened(1, 0);
-    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES);
     channel.received(1, &message(&Item::Event(receiver.open(0, None))), 0);
     channel.received(1, &message(&Item::Event(Event::Page(0x250))), 0);
     channel.take_effects();
