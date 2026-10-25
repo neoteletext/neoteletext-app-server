@@ -4,6 +4,9 @@
 use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction};
 use neoteletext_input::keys;
 
+#[cfg(test)]
+mod tests;
+
 /// A key by name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[allow(missing_docs, reason = "the keys name themselves")]
@@ -79,6 +82,18 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
+    /// The wheel turned over a cell, in `MOUSE_BUTTONS` (INPUT.md section
+    /// 5.4): in 1/120ths of a line, positive right and down.
+    Wheel {
+        /// Across.
+        dx: i32,
+        /// Down.
+        dy: i32,
+        /// The cell's column.
+        column: u32,
+        /// The cell's row.
+        row: u32,
+    },
     /// A paste: data, never keystrokes.
     Paste(&'a str),
     /// The receiver has the focus.
@@ -98,6 +113,7 @@ impl<'a> Input<'a> {
             Item::Event(Event::Mouse(mouse)) if mouse.action != MouseAction::Move => {
                 Some(Self::Mouse { pressed: mouse.action == MouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
+            Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),
             Item::Event(Event::Paste(text)) => Some(Self::Paste(text)),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
