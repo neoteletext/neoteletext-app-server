@@ -41,7 +41,7 @@ function topOf(rows: Rows): number {
 }
 
 function opened(): Harness {
-  const harness = new Harness(services.applications());
+  const harness = new Harness(services.applications([]));
   harness.join(READER, LONG_READ);
   return harness;
 }

@@ -9,6 +9,7 @@ import type { Area, Section } from "./area.ts";
 import { Index } from "./index-page.ts";
 import { interactive } from "./interactive.ts";
 import type { Application } from "./kit.ts";
+import type { Picture } from "./pictures.ts";
 import { services } from "./services.ts";
 
 /** The areas, in the index's order: the Rust showcase's, as each is ported (games, adventure, audio and gallery to come). */
@@ -19,7 +20,7 @@ export function sections(areas: readonly Area[] = AREAS): Section[] {
   return areas.flatMap((area) => area.sections());
 }
 
-/** The channel's applications: the index first, then each area's, made afresh. */
-export function applications(areas: readonly Area[] = AREAS): Application[] {
-  return [new Index(sections(areas)), ...areas.flatMap((area) => area.applications())];
+/** The channel's applications: the index first, then each area's, made afresh, given the pictures. */
+export function applications(areas: readonly Area[] = AREAS, pictures: readonly Picture[] = []): Application[] {
+  return [new Index(sections(areas)), ...areas.flatMap((area) => area.applications(pictures))];
 }

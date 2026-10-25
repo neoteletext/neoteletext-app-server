@@ -23,7 +23,7 @@ const RIGHT = 2;
 const SPACE = 0x20;
 
 function area(): Harness {
-  return new Harness(interactive.applications());
+  return new Harness(interactive.applications([]));
 }
 
 test("the form echoes, masks and greets", () => {

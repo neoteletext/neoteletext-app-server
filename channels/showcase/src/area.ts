@@ -3,6 +3,7 @@
 // appear on the index.
 
 import type { Application } from "./kit.ts";
+import type { Picture } from "./pictures.ts";
 
 /** A section of the index: its first page, its name and what it holds, in a few words. */
 export interface Section {
@@ -15,6 +16,6 @@ export interface Section {
 export interface Area {
   /** Its entries in the index. */
   sections(): readonly Section[];
-  /** Its applications, each made afresh, with nothing typed, posted or played yet. */
-  applications(): readonly Application[];
+  /** Its applications, each made afresh, with nothing typed, posted or played yet; `pictures` are the converted pictures, none when the folder is not given. */
+  applications(pictures: readonly Picture[]): readonly Application[];
 }

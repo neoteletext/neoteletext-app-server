@@ -39,7 +39,7 @@ const SOME_TIME = MIDNIGHT + (14 * 3_600 + 3 * 60 + 22) * 1_000;
 const HOUR_MS = 3_600 * 1_000;
 
 function channel(epochMs: number): Harness {
-  return new Harness(services.applications(), { epochMs });
+  return new Harness(services.applications([]), { epochMs });
 }
 
 /** The latest shared TTI of each page among `lines`. */
