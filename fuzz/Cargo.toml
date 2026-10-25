@@ -1,0 +1,39 @@
+[package]
+name = "teletext-fuzz"
+description = "Fuzz targets of every reader of outside input (requirement 2.6)"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace, so the fuzzing compiler builds it apart.
+[workspace]
+members = ["."]
+
+[dependencies]
+# libFuzzer's bindings, as the engine and the browser pin them (MIT OR
+# Apache-2.0).
+libfuzzer-sys = "=0.4.13"
+teletext-runtime = { path = "../crates/teletext-runtime" }
+teletext-showcase = { path = "../crates/teletext-showcase" }
+teletext-native = { path = "../crates/teletext-native" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "websocket_reader"
+path = "fuzz_targets/websocket_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "channel_input"
+path = "fuzz_targets/channel_input.rs"
+test = false
+doc = false
+bench = false
