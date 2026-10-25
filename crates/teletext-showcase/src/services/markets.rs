@@ -224,7 +224,11 @@ fn line(screen: &mut Screen, row: usize, instrument: &Instrument) {
     let level = decimal(instrument.value);
     let pad = LEVEL_WIDTH.saturating_sub(level.len());
     screen.coloured(row, LEVEL_COLUMN.saturating_add(pad), Colour::Yellow, &level);
-    let (arrow, colour) = match instrument.value.cmp(&instrument.previous) {
+    // The arrow agrees with the change beside it, since the start, as a
+    // markets page's arrows do; the last step alone made a red arrow sit
+    // beside a rise.
+    let change = instrument.change();
+    let (arrow, colour) = match change.cmp(&0) {
         core::cmp::Ordering::Greater => (Some(UP), Colour::Green),
         core::cmp::Ordering::Less => (Some(DOWN), Colour::Red),
         core::cmp::Ordering::Equal => (None, Colour::White),
@@ -237,7 +241,6 @@ fn line(screen: &mut Screen, row: usize, instrument: &Instrument) {
         // first, and Separated Graphics after it, which is set-at.
         screen.codes(row, ARROW_COLUMN, &[colour.mosaic(), attribute::SEPARATED]);
     }
-    let change = instrument.change();
     let sign = if change > 0 { "+" } else { "" };
     let change_colour = match change.cmp(&0) {
         core::cmp::Ordering::Greater => Colour::Green,
