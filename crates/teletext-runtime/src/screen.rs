@@ -232,7 +232,10 @@ impl Screen {
         for (row, codes) in self.rows.iter().enumerate() {
             page.set_row(row, codes);
         }
-        let links = [self.fastext[0], self.fastext[1], self.fastext[2], self.fastext[3], self.index];
+        // X/27/0's links 0 to 3 are the coloured keys and link 5 the Index
+        // key; link 4 is not a viewer link (EN 300 706 Annex H, as the
+        // engine's viewer reads them, REQ-NAV-003).
+        let links = [self.fastext[0], self.fastext[1], self.fastext[2], self.fastext[3], None, self.index];
         if links.iter().any(Option::is_some) {
             // The link control byte's bit 4 shows row 24, where the
             // Fastext prompts are (EN 300 706 Table 14); without it the
