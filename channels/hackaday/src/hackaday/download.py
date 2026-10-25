@@ -49,9 +49,10 @@ COLLECTIONS: tuple[tuple[str, str, bool], ...] = (
 )
 #: How long the whole download is paced to take, in seconds: the owner's 70 minutes.
 DOWNLOAD_WITHIN_S = 70 * 60
-#: The most requests in flight: enough to keep the pace while a comment page
-#: takes 4 s (about 4.4 a second needs about 18).
-WORKERS = 24
+#: The most requests in flight. A comment page took Hackaday 4 s alone and
+#: about 10 s with 24 in flight (measured 26 October 2026), about 2.4 pages
+#: a second; the owner's deadline needs more.
+WORKERS = 48
 #: How often a page that fails is tried before it is left for the next run.
 MOST_TRIES = 5
 #: How often the progress is kept for page 108, in pages read.
