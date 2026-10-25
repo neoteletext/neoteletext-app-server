@@ -5,7 +5,8 @@
 # address viewers reach it at (http://192.168.0.166:8090 by default),
 # which each channel's push WebSocket is named on. The source and the
 # engine's history go to the host, it builds there, the pictures
-# (decision 6: never in git) are copied beside it, and the service is
+# (decision 6: never in git) are copied into its tmp/pictures, where
+# channels.json has the showcase's programs read them, and the service is
 # restarted.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -30,7 +31,10 @@ engine_rev="$(sed -n 's/^neoteletext-core = .* rev = "\([0-9a-f]*\)".*/\1/p' Car
 rsync -a --delete --exclude target --exclude tools --exclude .git --exclude tmp \
     --exclude 'channels/*/cache' --exclude .venv --exclude node_modules --exclude __pycache__ ./ "$host:teletext-server/"
 rsync -a --delete "${engine#file://}/.git/" "$host:teletext-server-engine.git/"
-rsync -a --delete tmp/pictures/ "$host:teletext-server-pictures/"
+# tmp is left out of the source's copy above, which therefore keeps it;
+# rsync makes only the last folder of a destination.
+ssh "$host" mkdir -p teletext-server/tmp
+rsync -a --delete tmp/pictures/ "$host:teletext-server/tmp/pictures/"
 
 # shellcheck disable=SC2029 # expanded here on purpose
 ssh "$host" "set -e; . ~/.cargo/env; cd teletext-server; rustup toolchain install >/dev/null
@@ -53,7 +57,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=UV=%h/.local/bin/uv
 Environment=NEOTTX=%h/teletext-server-engine-tools/target/release/neottx
 Environment=HACKADAY_CONVERTER=%h/teletext-server-engine-tools/scripts/image-to-teletext.py
-ExecStart=%h/teletext-server/target/release/teletext-server --listen $listen --origin $origin --pictures %h/teletext-server-pictures --channels %h/teletext-server/channels.json
+ExecStart=%h/teletext-server/target/release/teletext-server --listen $listen --origin $origin --channels %h/teletext-server/channels.json
 Restart=on-failure
 LimitNOFILE=$open_files
 

@@ -103,4 +103,4 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Reason:** DEVELOPMENT.md section 8.
 - **Source:** Decision 3.
 - **Verification:** Check: the full gate's fuzzing step.
-- **State:** Met, 25 October 2026: `websocket_reader` (the server's WebSocket frames, in any pieces) and `channel_input` (a channel of every showcase application, two sessions' input streams with time passing); each ran 20 seconds clean (906,063 and 1,132 runs). `channel_input` is slow, since each run builds every application with its sound library.
+- **State:** Met, 25 October 2026: `websocket_reader` (the server's WebSocket frames, in any pieces) and `channel_input` (a channel whose application is a program, the runtime's `Remote`, as every channel's is since the Rust showcase was removed: two sessions' input streams and the program's lines, with time passing); each ran 20 seconds clean (906,063 runs; `channel_input` 447,006 runs in its new form).

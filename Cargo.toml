@@ -17,7 +17,6 @@ publish = false
 # in a decision (docs/architecture.md section 2).
 [workspace.dependencies]
 teletext-runtime = { path = "crates/teletext-runtime", default-features = false }
-teletext-showcase = { path = "crates/teletext-showcase", default-features = false }
 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input

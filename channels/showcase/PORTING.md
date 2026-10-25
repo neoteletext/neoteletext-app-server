@@ -1,6 +1,6 @@
 # Porting an area of the showcase to TypeScript
 
-The owner decided the server is Rust and the showcase is TypeScript, a separate program speaking `docs/applications.md`. `crates/teletext-showcase` (Rust) was ported area by area into `channels/showcase` (this folder), page for page and behaviour for behaviour, with its tests ported too. Every area is ported: `common.rs`, `index.rs`, `sound.rs`, `services/` (101 to 110), `interactive/` (200 to 207), `games/` (300 to 305), `adventure/` (400 to 402), `audio/` (500 to 504) and `gallery/` (600 to 699, and the collections' own channels). The Rust showcase stays until it is removed in a step of its own; do not delete or change it meanwhile.
+The owner decided the server is Rust and the showcase is TypeScript, a separate program speaking `docs/applications.md`. `crates/teletext-showcase` (Rust) was ported area by area into `channels/showcase` (this folder), page for page and behaviour for behaviour, with its tests ported too. Every area is ported: `common.rs`, `index.rs`, `sound.rs`, `services/` (101 to 110), `interactive/` (200 to 207), `games/` (300 to 305), `adventure/` (400 to 402), `audio/` (500 to 504) and `gallery/` (600 to 699, and the collections' own channels). Once every area was ported the Rust showcase was removed (25 October 2026), with the server's in-process channels, `crates/teletext-native/src/pictures.rs` and `teletext-pages`; the TypeScript programs serve its folders. It is in git at commit `4e1f51b`: a path of the removed Rust, here or in a source's comment, is a path there (`git show 4e1f51b:crates/teletext-showcase/src/services/long_read.rs`).
 
 This file is all you need besides the Rust area you port. Read section 1 to 3 before writing code, and section 7 before committing.
 
@@ -196,10 +196,10 @@ interface Picture { name: string; caption: string; group: string; levels: readon
 - **The collections' own channels** (`gallery::channels`: characters, art, people, travel, game art) are separate programs, one entry each in the root `channels.json`, each with its index at page 100:
 
   ```json
-  {"folder":"characters-ts","name":"NeoTeletext characters","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","characters"],"directory":"channels/showcase"}
+  {"folder":"characters","name":"NeoTeletext characters","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","characters"],"directory":"channels/showcase"}
   ```
 
-  `src/collection.ts` runs `runChannel([new Gallery(...)])` for the collection named; a collection without pictures should still declare its index, since the server starts every program in the file. Use `-ts` folders while the Rust server still serves `characters` and the rest itself (`--channels` refuses a folder that is already a channel), and show those folders on the showcase gallery's menu, which names each collection's folder.
+  `src/collection.ts` runs `runChannel([new Gallery(...)])` for the collection named; a collection without pictures should still declare its index, since the server starts every program in the file. A collection's folder is its name, the Rust showcase's folder for it, which the showcase gallery's menu names.
 
 ## 4. Porting the arithmetic exactly
 
@@ -255,11 +255,11 @@ The harness does not follow a goto: open the page yourself, as the Rust tests do
 - Once: `scripts/typescript.sh` installs the pinned tools (`npm ci`, no install scripts) and runs the whole TypeScript stage: Node 22.18 or later, `tsc`, every test.
 - While working: `node_modules/.bin/tsc -p tsconfig.json` (type check, the repository root's `tsconfig.json`), `node --test 'channels/**/*.test.ts'`, or one file, `node --test channels/showcase/test/games.test.ts`.
 - The server end to end: `cargo nextest run -p teletext-native --test typescript_channel` (after `. scripts/tools.sh` in bash), which also serves the root `channels.json`.
-- By hand: `cargo run -p teletext-native -- --channels channels.json`, then the browser at `http://127.0.0.1:8090/showcase-ts/`. The program alone: `printf '{"type":"start","protocol":1,"epoch_ms":0}\n' | node channels/showcase/src/main.ts` prints its lines.
+- By hand: `cargo run -p teletext-native -- --channels channels.json`, then the browser at `http://127.0.0.1:8090/showcase/`. The program alone: `printf '{"type":"start","protocol":1,"epoch_ms":0}\n' | node channels/showcase/src/main.ts` prints its lines.
 
 ### 6.3 Proving the port is exact
 
-The services and the input area were checked byte for byte against the Rust, and this is how; do it for your area before you commit, and never commit the Rust half:
+The services and the input area were checked byte for byte against the Rust, and this is how. The Rust is now in git only, at `4e1f51b`: to repeat it, check that commit out in a worktree of its own and never commit the Rust half.
 
 1. Add a temporary `#[cfg(test)] mod parity;` to `crates/teletext-showcase/src/lib.rs` and a `src/parity.rs` with a test that builds a `Channel` (or the crate's `testing::Harness`) of your area's applications, seed 7 and a fixed `epoch_at_start_ms`, starts it, runs a script of joins, typing, keys and clicks, and writes every shared page's rows (`testing::pages_in`, rows 1 to 24 in hexadecimal) and the session pages and cursors you care about to the file named by an environment variable. Run it with `cargo nextest run -p teletext-showcase <test name>`.
 2. Write the same script in a TypeScript file in your scratch folder against `Harness` with `{ seed: 7n, epochMs }`, printing the same format (`readTti` for the rows).

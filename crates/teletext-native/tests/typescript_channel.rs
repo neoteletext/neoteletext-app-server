@@ -180,16 +180,17 @@ fn the_server_serves_what_a_typescript_program_publishes() {
 }
 
 /// The repository's own channels file serves the TypeScript showcase, and
-/// each picture collection's program on a channel of its own, as
-/// `cargo run -p teletext-native -- --channels channels.json` does.
+/// each picture collection's program on a channel of its own, at the
+/// folders the Rust showcase had, as `cargo run -p teletext-native --
+/// --channels channels.json` does.
 #[test]
 fn the_channels_file_serves_the_typescript_showcase() {
     let (_server, address) = serve(&repository().join("channels.json"));
-    let index = received(&fetch(&address, "/showcase-ts/100.t42"));
+    let index = received(&fetch(&address, "/showcase/100.t42"));
     let title = String::from_utf8_lossy(&index[0].row(1)).into_owned();
     assert!(title.contains("NeoTeletext showcase"), "{title:?}");
     // With pictures or without, each collection has its index.
-    let collection = received(&fetch(&address, "/characters-ts/100.t42"));
+    let collection = received(&fetch(&address, "/characters/100.t42"));
     let title = String::from_utf8_lossy(&collection[0].row(1)).into_owned();
     assert!(title.contains("Characters"), "{title:?}");
 }

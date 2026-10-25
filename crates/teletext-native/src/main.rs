@@ -1,15 +1,14 @@
 //! `teletext-server`: the NeoTeletext server on Linux, macOS and Windows.
 //!
 //! ```text
-//! teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER] [--channels FILE]
+//! teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE]
 //! ```
 //!
 //! `--listen` is where it accepts connections (`0.0.0.0:8090` by
 //! default); `--origin` is the address viewers reach it at, which each
 //! channel's push WebSocket is named on (the engine requires the push
-//! address on the channel's own origin); `--pictures` is the folder of the
-//! showcase's converted pictures (decision 6); `--channels` is a file of
-//! channels whose applications are programs of their own, in any language
+//! address on the channel's own origin); `--channels` is the file of the
+//! channels it serves, each a program of its own, in any language
 //! (`docs/applications.md`).
 
 #![forbid(unsafe_code)]
@@ -40,7 +39,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use teletext_native::http::{PUSH, Routes, answer};
 use teletext_native::stats::ServerStats;
-use teletext_native::{apps, hub, pictures};
+use teletext_native::{apps, hub};
 use teletext_runtime::{Channel, ChannelConfig, Remote};
 use tokio::net::TcpListener;
 
@@ -54,24 +53,20 @@ const ORIGIN: &str = "http://127.0.0.1:8090";
 struct Arguments {
     listen: String,
     origin: String,
-    pictures: Option<PathBuf>,
     channels: Option<PathBuf>,
 }
 
 fn arguments() -> Result<Arguments, String> {
-    let mut parsed = Arguments { listen: LISTEN.to_owned(), origin: ORIGIN.to_owned(), pictures: None, channels: None };
+    let mut parsed = Arguments { listen: LISTEN.to_owned(), origin: ORIGIN.to_owned(), channels: None };
     let mut list = std::env::args().skip(1);
     while let Some(argument) = list.next() {
         let mut value = || list.next().ok_or_else(|| format!("{argument} needs a value"));
         match argument.as_str() {
             "--listen" => parsed.listen = value()?,
             "--origin" => value()?.trim_end_matches('/').clone_into(&mut parsed.origin),
-            "--pictures" => parsed.pictures = Some(PathBuf::from(value()?)),
             "--channels" => parsed.channels = Some(PathBuf::from(value()?)),
             other => {
-                return Err(format!(
-                    "unknown argument {other}; usage: teletext-server [--listen ADDRESS] [--origin URL] [--pictures FOLDER] [--channels FILE]"
-                ));
+                return Err(format!("unknown argument {other}; usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE]"));
             }
         }
     }
@@ -106,19 +101,13 @@ fn main() -> ExitCode {
 
 async fn serve(arguments: Arguments) -> Result<(), String> {
     let start = tokio::time::Instant::now();
-    let pictures = arguments.pictures.as_deref().map(pictures::load).unwrap_or_default();
-    // The games' randomness: the time is enough, nothing here is a secret.
+    // The channels' randomness, for their games: the time is enough,
+    // nothing here is a secret.
     let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |since| u64::try_from(since.as_nanos() & u128::from(u64::MAX)).unwrap_or(1));
     let push = push_origin(&arguments.origin);
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let stats = Arc::new(ServerStats::default());
     let mut hubs = BTreeMap::new();
-    for spec in teletext_showcase::channels(&pictures) {
-        let config =
-            ChannelConfig { name: spec.name.to_owned(), push_address: format!("{push}/{}/{PUSH}", spec.folder), initial_page: 0x100, epoch_at_start_ms };
-        let channel = Channel::new(config, spec.applications, seed ^ u64::try_from(spec.folder.len()).unwrap_or(0));
-        hubs.insert(spec.folder.to_owned(), hub::spawn(spec.folder, channel, start, None, Arc::clone(&stats)));
-    }
     for spec in arguments.channels.as_deref().map(apps::read_channels).transpose()?.unwrap_or_default() {
         if hubs.contains_key(&spec.folder) {
             return Err(format!("{} is already a channel", spec.folder));
@@ -130,7 +119,7 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats)));
     }
     let listener = TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?;
-    eprintln!("teletext-server: {} pictures; serving {} at {}/", pictures.len(), hubs.keys().cloned().collect::<Vec<_>>().join(", "), arguments.origin);
+    eprintln!("teletext-server: serving {} at {}/", hubs.keys().cloned().collect::<Vec<_>>().join(", "), arguments.origin);
     let routes = Arc::new(Routes { hubs, sessions: AtomicU64::new(1), stats: Arc::clone(&stats) });
     // The figures at a glance in the log, once a minute.
     tokio::spawn(async move {

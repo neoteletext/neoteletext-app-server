@@ -304,7 +304,6 @@ dependencies = [
  "libfuzzer-sys",
  "teletext-native",
  "teletext-runtime",
- "teletext-showcase",
 ]
 
 [[package]]
@@ -314,10 +313,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "neoteletext-core",
- "neoteletext-input",
  "neoteletext-web",
  "teletext-runtime",
- "teletext-showcase",
  "tokio",
 ]
 
@@ -330,17 +327,6 @@ dependencies = [
  "neoteletext-formats",
  "neoteletext-input",
  "neoteletext-web",
-]
-
-[[package]]
-name = "teletext-showcase"
-version = "0.1.0"
-dependencies = [
- "neoteletext-audio",
- "neoteletext-core",
- "neoteletext-formats",
- "neoteletext-input",
- "teletext-runtime",
 ]
 
 [[package]]

@@ -11,5 +11,4 @@ What is owed, and why, as `~/devel/neoteletext-common/DEVELOPMENT.md` section 2.
 
 - **Applications cannot see the capabilities agreed in WELCOME**, so the form page (201) shows what it asks for, not what was agreed. The runtime could pass the agreed set to `opened`.
 - **No overlay rows on a shared page for one session** (`SERVER.md` section 7.3): a viewer's typing on the guestbook goes to a page of its own (207), and the poll cannot show a viewer their own vote. The runtime needs an overlay of a session's rows over a channel page.
-- **`teletext-pages` sends all `--type` text before any `--press`** for a page, so a preview cannot show Tab between fields.
 - **The engine's live audio encoder restarts its IMA ADPCM step size at every `live_records` call**, costing 2 to 7 dB at each restart (measured by the sound pages' builder). The radio encodes each tick's blocks in one call; a live encoder that keeps its state between calls is an engine change, for the owner under the engine's process (decision 1: the engine's scope is unchanged). The browser's reference podcast, which encodes one block a call, pays it on every block.

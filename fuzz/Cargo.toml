@@ -18,7 +18,6 @@ members = ["."]
 # Apache-2.0).
 libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
-teletext-showcase = { path = "../crates/teletext-showcase" }
 teletext-native = { path = "../crates/teletext-native" }
 
 [profile.release]

@@ -17,16 +17,10 @@ path = "src/main.rs"
 name = "teletext-load"
 path = "src/bin/teletext-load.rs"
 
-[[bin]]
-name = "teletext-pages"
-path = "src/bin/teletext-pages.rs"
-
 [dependencies]
 teletext-runtime.workspace = true
-teletext-showcase.workspace = true
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true
-neoteletext-input.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process"] }
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }

@@ -18,25 +18,21 @@ export const SHOWCASE_GROUPS: readonly Group[] = [
   { letter: "s", name: "Sci-fi sprites", short: "Sprites" },
 ];
 
-/** A collection served as a channel of its own: its name, its folder, the channel's name and its group. */
+/** A collection served as a channel of its own: its name, the channel's name and its group. */
 export interface Collection {
-  /** The collection's name, which src/collection.ts is given with --collection, and the Rust server's folder for it. */
+  /** The collection's name: what src/collection.ts is given with --collection, and the folder its channel is served at. */
   readonly key: string;
-  /** The folder the channel is served at: the key with "-ts" while the Rust server still serves the key itself (PORTING.md section 3.6). */
-  readonly folder: string;
   /** The channel's name. */
   readonly channel: string;
   /** Its pictures. */
   readonly group: Group;
 }
 
-/** The folder of a collection's TypeScript channel, beside the Rust server's own of the same key. */
-const FOLDER_SUFFIX = "-ts";
 /** A collection's Fastext label for its first picture. */
 const FIRST = "First";
 
 function collection(key: string, channel: string, letter: string, name: string): Collection {
-  return { key, folder: `${key}${FOLDER_SUFFIX}`, channel, group: { letter, name, short: FIRST } };
+  return { key, channel, group: { letter, name, short: FIRST } };
 }
 
 /**

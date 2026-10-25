@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { COLUMNS, Key, ROWS, packedLinksLine } from "../../../kits/typescript/src/kit.ts";
 import { Harness, type ReadPage, readTti } from "../../../kits/typescript/src/testing.ts";
 import { collection, gallery, ofGroup, showcase } from "../src/gallery.ts";
-import { CREDITS_SUBPAGES, type Gallery, pageNumber } from "../src/gallery/application.ts";
+import { CREDITS_SUBPAGES, FOLDER_COLUMN, type Gallery, pageNumber } from "../src/gallery/application.ts";
 import { read, subpages } from "../src/gallery/levels.ts";
 import { COLLECTIONS, MENU } from "../src/gallery/pages.ts";
 import { TITLE_CHARACTERS, contentsTitle, creditLines, cut, fold, wrap } from "../src/gallery/text.ts";
@@ -242,7 +242,7 @@ test("the collections have channels of their own with an index at 100", () => {
   assert.equal(at(pages, 0x100)[0]?.links[0], 0x101);
   assert.ok(pages.has(0x321) && !pages.has(0x322) && pages.has(0x800));
   const menu = textOf(at(byNumber(showcase(pictures)), 0x600));
-  assert.ok(menu.includes("Characters") && menu.includes("221 pictures") && menu.includes("characters-ts"), menu);
+  assert.ok(menu.includes("Characters") && menu.includes("221 pictures") && menu.includes("characters"), menu);
 });
 
 test("a channel publishes the pages once at start", () => {
@@ -312,12 +312,16 @@ test("a level keeps its own lines but for its number, sub-code and links, and it
 test("the menu names each collection's channel by its folder, within the row", () => {
   const screen = at(byNumber(showcase(folder())), 0x600)[0];
   assert.ok(screen !== undefined);
-  const folders = COLLECTIONS.map(({ folder: name }) => name);
-  assert.ok(folders.every((name) => name.endsWith("-ts")), "the Rust server still serves the plain names");
+  assert.deepEqual(
+    COLLECTIONS.map(({ key }) => key),
+    ["characters", "art", "people", "travel", "gameart"],
+    "the folders the Rust showcase served them at",
+  );
   const lines = Array.from({ length: ROWS }, (_, number) => row(screen, number));
-  for (const name of ["characters-ts", "art-ts"]) {
-    const line = lines.find((text) => text.includes(name));
-    assert.ok(line !== undefined && line.length === COLUMNS && line.trimEnd().endsWith(name), `${name} whole on its row`);
+  for (const name of ["characters", "art"]) {
+    const line = lines.find((text) => text.trimEnd().endsWith(name) && text.includes("pictures"));
+    assert.ok(line !== undefined && line.length === COLUMNS, `${name} whole on its row`);
+    assert.equal(line.indexOf(name, FOLDER_COLUMN), FOLDER_COLUMN + 1, `${name} after its colour at column ${FOLDER_COLUMN}`);
   }
 });
 
@@ -336,9 +340,9 @@ test("digits and the coloured keys select pages from the galleries", () => {
 
 test("channels.json starts each collection's program at its folder, beside the showcase", () => {
   const file = JSON.parse(readFileSync(join(REPOSITORY, "channels.json"), "utf8")) as { channels: { folder: string; name: string; command: string[]; directory: string }[] };
-  for (const { key, folder: name, channel } of COLLECTIONS) {
-    const entry = file.channels.find((candidate) => candidate.folder === name);
-    assert.ok(entry !== undefined, `${name} is in channels.json`);
+  for (const { key, channel } of COLLECTIONS) {
+    const entry = file.channels.find((candidate) => candidate.folder === key);
+    assert.ok(entry !== undefined, `${key} is in channels.json`);
     assert.equal(entry.name, channel);
     assert.equal(entry.directory, "channels/showcase");
     assert.deepEqual(entry.command.slice(0, 2), ["node", "src/collection.ts"]);

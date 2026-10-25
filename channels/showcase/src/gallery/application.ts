@@ -8,7 +8,7 @@ import { page } from "../common.ts";
 import { type Application, COLUMNS, Colour, type Context, FIRST_PAGE, type PageEntry, type PageLink, type Screen, tti } from "../kit.ts";
 import type { Picture } from "../pictures.ts";
 import { link, subpageOf, subpages } from "./levels.ts";
-import type { Collection, Group } from "./pages.ts";
+import { COLLECTIONS, type Collection, type Group } from "./pages.ts";
 import { TITLE_CHARACTERS, contentsTitle, creditLines, cut } from "./text.ts";
 
 /** Where a gallery's pages are, as decimal page numbers: contents.txt names decimal pages only. */
@@ -65,8 +65,12 @@ const TEXT_COLUMN = 0;
 const NAME_COLUMN = 8;
 /** The showcase menu's list of the other channels: the count, then the folder. */
 const COUNT_COLUMN = 13;
-/** Where the Rust menu put the folder, which the widest of today's folder names would overrun. */
-const RUST_FOLDER_COLUMN = 27;
+/** The showcase menu's column of each collection's folder, after its count, as the Rust showcase had it. */
+export const FOLDER_COLUMN = 27;
+// Each folder is named whole on its row, after its colour attribute.
+if (COLLECTIONS.some(({ key }) => FOLDER_COLUMN + 1 + [...key].length > COLUMNS)) {
+  throw new Error("every collection's folder fits after the menu's folder column");
+}
 /** The digits of a credits entry's page number. */
 const ENTRY_NUMBER_DIGITS = 3;
 
@@ -117,7 +121,6 @@ export class Gallery implements Application {
   readonly #spans: Span[] = [];
   readonly #credits: Credits[];
   readonly #elsewhere: readonly Elsewhere[];
-  readonly #folderColumn: number;
 
   /**
    * A gallery called `title` of `groups`, laid out by `plan`; its menu
@@ -129,9 +132,6 @@ export class Gallery implements Application {
     this.#title = title;
     this.#plan = plan;
     this.#elsewhere = elsewhere;
-    // The folder names go after their counts, but never past the row's end.
-    const widest = Math.max(0, ...elsewhere.map(({ collection }) => [...collection.folder].length));
-    this.#folderColumn = Math.min(RUST_FOLDER_COLUMN, COLUMNS - 1 - widest);
     let number = plan.firstPicture;
     for (const { group, members } of groups) {
       const first = number;
@@ -218,7 +218,7 @@ export class Gallery implements Application {
         row += 1;
         screen.coloured(row, TEXT_COLUMN, Colour.White, collection.group.name);
         screen.coloured(row, COUNT_COLUMN, Colour.Cyan, `${count} pictures`);
-        screen.coloured(row, this.#folderColumn, Colour.Yellow, collection.folder);
+        screen.coloured(row, FOLDER_COLUMN, Colour.Yellow, collection.key);
       }
     }
     return screen;
