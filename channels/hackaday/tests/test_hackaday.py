@@ -160,7 +160,7 @@ def test_every_page_draws_in_the_page() -> None:
         assert all(len(row) == 40 and all(code < 0x80 for code in row) for row in screen.rows)
         assert screen.tti(0x100).startswith("PN,10000\n")
     front = screens[0]
-    assert "HACKADAY" in front.row_text(1)
+    assert "H A C K A D A Y" in front.row_text(1), "double width, a letter to every other cell"
     assert "NEWSFLASH" in front.row_text(views.NEWSFLASH_ROW), "the newest post is news for a while"
     assert "200 Retro" in front.row_text(14), "the magazines, each with its page"
     assert "510" in front.row_text(18), "the latest, each with its page"

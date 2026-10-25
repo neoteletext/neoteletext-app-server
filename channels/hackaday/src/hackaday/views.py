@@ -107,10 +107,12 @@ def front(posts: list[Post], placed: Placed, now: datetime, ticker: int, closes:
             ("Challenge", numbers.CHALLENGE),
         ],
     )
-    # The title band is the emblem's.
+    # The title band is the emblem's. The name is double width, not double
+    # height: double height takes the row below across the whole page,
+    # which would hide the emblem's second row.
     screen.rows[1] = bytearray([0x20] * COLUMNS)
     emblem(screen, 1, 1, Colour.WHITE)
-    screen.double_height(1, 16, Colour.YELLOW, "HACKADAY")
+    screen.double_width(1, 16, Colour.YELLOW, "HACKADAY")
     screen.coloured(3, 16, Colour.WHITE, "fresh hacks every day")
     screen.coloured(4, 16, Colour.CYAN, now.strftime("%a %d %b %Y"))
     if not posts:
