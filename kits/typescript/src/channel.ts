@@ -11,7 +11,7 @@
 // or by Fastext; on a page that asks for the mouse, a click the page does
 // not take follows the prompt or the page number it is on.
 
-import { App, type Owner, type PageDeclaration, type ServerEvents, type Streams, processStreams, serveLines } from "./app.ts";
+import { App, type Owner, type PageDeclaration, type ServerEvents, type ServerStats, type Streams, processStreams, serveLines } from "./app.ts";
 import { type Input, clicked } from "./input.ts";
 import { Navigation, type PageKeys, type PageView, clickedLink } from "./navigation.ts";
 import { readTti } from "./read-tti.ts";
@@ -49,6 +49,8 @@ export interface Application {
   wake?(context: Context): void;
   /** The session ended: forget it. */
   ended?(session: number, context: Context): void;
+  /** The server's figures, every 10 seconds (docs/applications.md section 7), for a page to show. */
+  stats?(stats: ServerStats, context: Context): void;
 }
 
 /** A page not yet published: nothing to click on, no links. */
@@ -158,6 +160,11 @@ export class Context {
   /** Sends the session's viewer to `page` (INPUT.md section 7.1). */
   goto(session: number, page: number): void {
     this.#host.app.goto(session, page);
+  }
+
+  /** The title `contents.txt` lists one of the channel's pages under now, if it has the page. */
+  titleOf(page: number): string | undefined {
+    return this.#host.app.titleOf(page);
   }
 
   /** Gives `page` a new title in the channel's contents, for what it holds now (docs/applications.md section 3.5). */
@@ -336,6 +343,11 @@ export class Channel implements ServerEvents {
     this.#applications.forEach((_, index) => this.#call(index, (application, context) => application.ended?.(session, context)));
   }
 
+  /** The server's figures came: every application may show them. */
+  stats(stats: ServerStats): void {
+    this.#applications.forEach((_, index) => this.#call(index, (application, context) => application.stats?.(stats, context)));
+  }
+
   /** When the channel next needs {@link Channel.deadline}, by its clock. */
   nextWake(): number | null {
     const wakes = this.#wakes.filter((wake): wake is number => wake !== null);
@@ -430,6 +442,7 @@ export async function runChannel(applications: readonly Application[], options: 
     leave: (session, page) => then(() => channel.leave(session, page)),
     input: (session, page, input) => then(() => channel.input(session, page, input)),
     close: (session) => then(() => channel.close(session)),
+    stats: (stats) => then(() => channel.stats(stats)),
   };
   await serveLines(events, streams);
   clearTimeout(timer);

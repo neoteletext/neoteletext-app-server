@@ -4,7 +4,7 @@
 // server would read them: each page's TTI decoded into its rows, links,
 // cursor and modes. It mirrors crates/teletext-showcase/src/testing.rs.
 
-import { App } from "./app.ts";
+import { App, type ServerStats } from "./app.ts";
 import { type Application, Channel, type Clock } from "./channel.ts";
 import { Button, type Input, type KeyAction } from "./input.ts";
 import { type ReadPage, type Rows, readTti } from "./read-tti.ts";
@@ -149,6 +149,11 @@ export class Harness {
   /** A left click. */
   clickLeft(session: number, column: number, row: number): void {
     this.click(session, Button.Left, column, row);
+  }
+
+  /** The server's figures arrive, as they do every 10 seconds. */
+  stats(stats: ServerStats): void {
+    this.channel.stats(stats);
   }
 
   /** Turns the wheel over a cell: `dy` in 1/120ths of a line, down positive. */

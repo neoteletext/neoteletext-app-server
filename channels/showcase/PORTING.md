@@ -75,8 +75,11 @@ interface Application {
   input?(session: number, page: number, input: Input, context: Context): boolean | void;
   wake?(context: Context): void;
   ended?(session: number, context: Context): void;
+  stats?(stats: ServerStats, context: Context): void;
 }
 ```
+
+`stats` is the server's figures every 10 seconds (docs/applications.md section 7), `{ server, channel }`, each an object of whole numbers; read one with `figure(stats.server, "uptime_s")` (0 when missing) and an object of them with `figuresIn(stats.channel, "most_opened")` (largest first). `context.titleOf(page)` names any of the channel's pages as `contents.txt` does.
 
 A Rust `impl Application for X` becomes `class X implements Application`; unused methods are left out. Titles are at most 32 characters without controls (checked at the declaration). Session state lives in a `Map<number, State>` and is deleted in `ended`, as the Rust `BTreeMap` is.
 

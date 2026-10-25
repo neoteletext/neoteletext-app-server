@@ -1,8 +1,8 @@
 // A channel's program as the server runs it (docs/applications.md): one
 // JSON object a line on standard input and output, the pages declared in
 // the first line, then the server's `start`, `join`, `open`, `leave`,
-// `input` and `close`, and the program's `publish`, `goto`, `sound`,
-// `title`, `release` and `log`. Standard output carries protocol lines and nothing else; anything
+// `input`, `close` and `stats`, and the program's `publish`, `goto`,
+// `sound`, `title`, `release` and `log`. Standard output carries protocol lines and nothing else; anything
 // for a person goes to standard error, which the server logs.
 //
 // Everything the server sends is checked whole before it is acted on, and
@@ -49,6 +49,41 @@ function isTitle(text: string): boolean {
   return [...text].length <= LONGEST_TITLE && !CONTROL_CHARACTER.test(text);
 }
 
+/** One object of the server's figures: each name a whole number, or an object of them, such as `most_opened`. */
+export type Figures = Readonly<Record<string, unknown>>;
+
+/** The server's figures, sent every 10 seconds (docs/applications.md section 7): its own, and this channel's. */
+export interface ServerStats {
+  readonly server: Figures;
+  readonly channel: Figures;
+}
+
+/** The figure `name` of `figures`: a whole number, or 0 where it is missing or is not one. */
+export function figure(figures: Figures, name: string): number {
+  const value = figures[name];
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : 0;
+}
+
+/**
+ * The figures of the object `name` of `figures`, such as `most_opened`'s
+ * pages or `viewers`' channels, the largest first and equal ones by name,
+ * as the server ranks the pages: a parsed object puts names that look
+ * like whole numbers ("110") first, so the order it was written in is lost.
+ */
+export function figuresIn(figures: Figures, name: string): [string, number][] {
+  const value = figures[name];
+  if (!isObject(value)) {
+    return [];
+  }
+  return Object.entries(value)
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isSafeInteger(entry[1]))
+    .sort(([oneName, one], [twoName, two]) => two - one || (oneName < twoName ? -1 : oneName > twoName ? 1 : 0));
+}
+
+function isObject(value: unknown): value is Figures {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** A message from the server, checked. */
 export type ServerMessage =
   | { readonly type: "start"; readonly protocol: number; readonly epochMs: number }
@@ -56,7 +91,8 @@ export type ServerMessage =
   | { readonly type: "open"; readonly session: number; readonly page: number }
   | { readonly type: "leave"; readonly session: number; readonly page: number }
   | { readonly type: "input"; readonly session: number; readonly page: number; readonly input: Input }
-  | { readonly type: "close"; readonly session: number };
+  | { readonly type: "close"; readonly session: number }
+  | { readonly type: "stats"; readonly stats: ServerStats };
 
 /** What the program does with each of the server's messages. */
 export interface ServerEvents {
@@ -66,6 +102,7 @@ export interface ServerEvents {
   leave(session: number, page: number): void;
   input(session: number, page: number, input: Input): void;
   close(session: number): void;
+  stats(stats: ServerStats): void;
 }
 
 /** Whether `value` is a session as the protocol writes it: a whole number. */
@@ -101,6 +138,11 @@ export function readMessage(line: string): ServerMessage | string {
       return "start: protocol and epoch_ms are whole numbers";
     }
     return { type, protocol, epochMs };
+  }
+  if (type === "stats") {
+    const server = fields["server"];
+    const channel = fields["channel"];
+    return isObject(server) && isObject(channel) ? { type, stats: { server, channel } } : "stats: server and channel are objects";
   }
   if (type !== "join" && type !== "close" && type !== "open" && type !== "leave" && type !== "input") {
     return `unknown type ${JSON.stringify(type) ?? "undefined"}`;
@@ -143,6 +185,9 @@ export function dispatch(message: ServerMessage, events: ServerEvents): void {
       return;
     case "close":
       events.close(message.session);
+      return;
+    case "stats":
+      events.stats(message.stats);
       return;
   }
 }

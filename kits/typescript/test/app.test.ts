@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
-import { App, LONGEST_LINE, LineSplitter, type ServerEvents, readMessage, serveLines } from "../src/app.ts";
+import { App, LONGEST_LINE, LineSplitter, type ServerEvents, figure, figuresIn, readMessage, serveLines } from "../src/app.ts";
 import { Colour, Screen } from "../src/screen.ts";
 
 test("each of the server's messages is read whole", () => {
@@ -17,6 +17,32 @@ test("each of the server's messages is read whole", () => {
     input: { kind: "text", text: "hi" },
   });
   assert.deepEqual(readMessage('{"type":"close","session":0}'), { type: "close", session: 0 });
+  assert.deepEqual(readMessage('{"type":"stats","server":{"uptime_s":10},"channel":{"most_opened":{"110":3}}}'), {
+    type: "stats",
+    stats: { server: { uptime_s: 10 }, channel: { most_opened: { "110": 3 } } },
+  });
+});
+
+test("the server's figures are read as whole numbers, and what is not one is none", () => {
+  const figures = JSON.parse(
+    '{"viewers":3,"memory_kb":-1,"half":1.5,"text":"7","most_opened":{"1A0":4,"110":4,"100":2,"200":5,"bad":"x"}}',
+  ) as Record<string, unknown>;
+  assert.equal(figure(figures, "viewers"), 3);
+  assert.equal(figure(figures, "memory_kb"), -1, "the server's none, kept");
+  assert.equal(figure(figures, "half"), 0);
+  assert.equal(figure(figures, "text"), 0);
+  assert.equal(figure(figures, "missing"), 0);
+  assert.deepEqual(
+    figuresIn(figures, "most_opened"),
+    [
+      ["200", 5],
+      ["110", 4],
+      ["1A0", 4],
+      ["100", 2],
+    ],
+    "the most first, as the server ranks them, though the parsed object put 100, 110 and 200 first",
+  );
+  assert.deepEqual(figuresIn(figures, "viewers"), [], "not an object");
 });
 
 test("a line that is not a whole, valid message is refused with the reason", () => {
@@ -37,6 +63,8 @@ test("a line that is not a whole, valid message is refused with the reason", () 
     '{"type":"open","session":1,"page":256}',
     '{"type":"input","session":1,"page":"100","event":{"kind":"key"}}',
     '{"type":"tick","session":1}',
+    '{"type":"stats","server":{}}',
+    '{"type":"stats","server":[],"channel":{}}',
     "{}",
   ]) {
     assert.equal(typeof readMessage(bad), "string", bad);
@@ -210,13 +238,15 @@ test("the line loop hands on each valid line, reports each bad one, and ends wit
     leave: (session, page) => heard.push(`leave ${session} ${page.toString(16)}`),
     input: (session, page, event) => heard.push(`input ${session} ${page.toString(16)} ${event.kind}`),
     close: (session) => heard.push(`close ${session}`),
+    stats: (stats) => heard.push(`stats ${figure(stats.server, "uptime_s")}`),
   };
   const served = serveLines(events, { input, output: () => assert.fail("nothing is written"), errors: (text) => errors.push(text) });
   input.write('{"type":"start","protocol":2,"epoch_ms":5}\n{"type":"join","session":1}\nnonsense\n');
   input.write('{"type":"open","session":1,"page":"100"}\n{"type":"input","session":1,"page":"100","event":{"kind":"focus"}}\n');
+  input.write('{"type":"stats","server":{"uptime_s":10},"channel":{"viewers":1}}\n');
   input.end('{"type":"leave","session":1,"page":"100"}\n{"type":"close","session":1}');
   await served;
-  assert.deepEqual(heard, ["start 5", "join 1", "open 1 100", "input 1 100 focus", "leave 1 100", "close 1"]);
+  assert.deepEqual(heard, ["start 5", "join 1", "open 1 100", "input 1 100 focus", "stats 10", "leave 1 100", "close 1"]);
   assert.equal(errors.length, 2);
   assert.match(errors[0] ?? "", /protocol 2/);
   assert.match(errors[1] ?? "", /not JSON/);

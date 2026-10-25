@@ -194,6 +194,18 @@ test("a click the page does not take follows the prompt or page number it is on"
   assert.deepEqual(harness.gotos(1).slice(2), [0x100], "a page published from TTI, its rows read back");
 });
 
+test("the server's figures reach every application, which may name the channel's pages", () => {
+  const shown: string[] = [];
+  const figures = (name: string): Application => ({
+    pages: () => [{ page: name === "one" ? 0x100 : 0x150, title: name }],
+    start: () => undefined,
+    stats: (stats, context) => shown.push(`${name} ${String(stats.channel["viewers"])} ${context.titleOf(0x150) ?? "none"} ${context.titleOf(0x151) ?? "none"}`),
+  });
+  const harness = new Harness([figures("one"), figures("two")]);
+  harness.stats({ server: {}, channel: { viewers: 4 } });
+  assert.deepEqual(shown, ["one 4 two none", "two 4 two none"]);
+});
+
 test("each application wakes when it asked, the earliest asked for winning", () => {
   const woken: string[] = [];
   const clock = (name: string, first: number, every: number): Application => ({
