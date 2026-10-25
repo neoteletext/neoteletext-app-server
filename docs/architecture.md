@@ -104,7 +104,7 @@ Not yet imported. When the first crate needs it, every `neoteletext-*` dependenc
   - **Live services (101 to 109):** news, weather, world clock, markets, server clock, sport, TV guide, about, teletext facts.
   - **Input (200 to 207):** form, guestbook, live poll, quiz, calculator, mouse paint.
   - **Action games (300 to 305):** invaders with the sci-fi sprites, snake, breakout, cave flyer, a shared hall of fame.
-  - **Adventures (400 to 438):** Station Zero, typed; The Lost Crown, by Fastext.
+  - **Adventures (400 to 402):** one page a game, each viewer's own: Station Zero, typed; The Lost Crown, on the coloured keys.
   - **Sound (500 to 504):** a live radio stream for every listener, piano, sound board, drum machine.
   - **Galleries (600 to 695):** your examples and the sci-fi sprites at Levels 1.5, 2.5 and 3.5, with credits; and channels for the characters, art, people, travel and game art.
 

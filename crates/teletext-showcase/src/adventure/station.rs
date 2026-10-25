@@ -80,7 +80,7 @@ const _: () = assert!(REPLY_ROW + REPLY_ROWS <= COMMAND_ROW, "the reply ends abo
 const _: () = assert!(NARROW_WIDTH + 1 < PICTURE_COLUMN - 2, "the description stops short of the picture's attributes");
 
 /// The page's Fastext links.
-const FASTEXT: [(&str, Option<u16>); 4] = [("Menu", Some(super::MENU)), ("Crown", Some(super::crown::START)), ("", None), ("Index", Some(INDEX))];
+const FASTEXT: [(&str, Option<u16>); 4] = [("Menu", Some(super::MENU)), ("Crown", Some(super::crown::PAGE)), ("", None), ("Index", Some(INDEX))];
 
 /// One viewer: their game and the command they are typing.
 struct Player {

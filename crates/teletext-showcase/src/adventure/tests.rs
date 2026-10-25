@@ -1,6 +1,7 @@
 //! Tests of the adventures, driving a channel as a receiver would: the
 //! pages it publishes, the commands typed into Station Zero and what
-//! they change, a game played to its end, and The Lost Crown's links.
+//! they change, a game played to its end, and The Lost Crown played on
+//! its one page.
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
@@ -14,7 +15,7 @@ use neoteletext_input::modes::{ALL_MODES, CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use teletext_runtime::{Channel, ChannelConfig, Effect, SessionId};
 
 use super::art::{self, Art};
-use super::crown::story::{CROSSROADS, Ending, NODES};
+use super::crown::story::{CROSSROADS, Ending, Id, Leads, NODES, Node};
 use super::crown::{self, pictures as crown_pictures};
 use super::station::world::{self, ROOMS};
 use super::station::{
@@ -166,14 +167,8 @@ fn last(bytes: &[u8], page: u16) -> Received {
     pages_in(bytes).into_iter().rev().find(|received| received.number == page).unwrap()
 }
 
-/// The page numbers of the story.
-fn story_pages() -> BTreeSet<u16> {
-    NODES.iter().map(|node| node.page).collect()
-}
-
-/// Every page is published once, shared, at the start: the menu, the
-/// game's page before anyone types, and every node of the story
-/// (decision 7).
+/// Every page is published once, shared, at the start: the menu, and
+/// each game's one page as it is before the viewer plays (decision 7).
 #[test]
 fn every_page_is_published_once_and_shared() {
     let harness = Harness::new();
@@ -183,9 +178,7 @@ fn every_page_is_published_once_and_shared() {
             *counts.entry(*page).or_default() += 1;
         }
     }
-    let mut expected: BTreeSet<u16> = story_pages();
-    expected.insert(MENU);
-    expected.insert(station::PAGE);
+    let expected = BTreeSet::from([MENU, station::PAGE, crown::PAGE]);
     assert_eq!(counts.keys().copied().collect::<BTreeSet<u16>>(), expected);
     assert!(counts.values().all(|&count| count == 1), "each page once: {counts:?}");
     assert!(harness.started.iter().all(|effect| matches!(effect, Effect::Shared { .. })), "nothing for any viewer at the start");
@@ -396,51 +389,135 @@ fn the_station_map_joins_up() {
     assert_eq!(seen.len(), ROOMS.len());
 }
 
-/// Every Fastext link of the story leads to a node or the menu, every
+/// Every choice of the story leads to a node or out to the menu, every
 /// node can be reached from the first, every ending leads back to the
-/// start, and the published pages carry exactly those links.
+/// start, and every node's id is its place.
 #[test]
-fn every_fastext_link_leads_to_a_node() {
-    let pages = story_pages();
+fn the_story_joins_up() {
     assert!((20..=30).contains(&NODES.len()), "{} nodes", NODES.len());
+    for (place, node) in NODES.iter().enumerate() {
+        assert_eq!(usize::from(node.id.0), place, "{}'s id is its place", node.title);
+    }
+    assert_eq!(NODES.first().map(|node| node.id), Some(CROSSROADS), "the story starts at its first node");
     let mut reached = BTreeSet::new();
     let mut queue = alloc::vec![CROSSROADS];
-    while let Some(page) = queue.pop() {
-        if !reached.insert(page) {
+    while let Some(id) = queue.pop() {
+        if !reached.insert(id) {
             continue;
         }
-        let node = NODES.iter().find(|node| node.page == page).unwrap();
-        assert!(!node.choices.is_empty() && node.choices.len() <= 4, "{page:03X}");
+        let node = crown::node(id).unwrap();
+        assert!(!node.choices.is_empty() && node.choices.len() <= 4, "{}", node.title);
         for choice in node.choices {
-            assert!(pages.contains(&choice.to) || choice.to == MENU, "{page:03X} leads to {:03X}", choice.to);
+            match choice.to {
+                Leads::Node(next) => {
+                    assert!(crown::node(next).is_some(), "{} leads to {next:?}", node.title);
+                    queue.push(next);
+                }
+                Leads::Page(page) => assert_eq!(page, MENU, "{} leaves only for the menu", node.title),
+            }
             assert!(choice.label.chars().count() <= 9, "{:?} fits its Fastext slot", choice.label);
             assert!(choice.text.chars().count() <= 36, "{:?} fits its row", choice.text);
-            if pages.contains(&choice.to) {
-                queue.push(choice.to);
-            }
         }
         if node.ending != Ending::Not {
-            assert!(node.choices.iter().any(|choice| choice.to == CROSSROADS), "{page:03X} leads back to the start");
+            assert!(node.choices.iter().any(|choice| choice.to == Leads::Node(CROSSROADS)), "{} leads back to the start", node.title);
         }
     }
-    assert_eq!(reached, pages, "every node is reached");
+    let every: BTreeSet<Id> = NODES.iter().map(|node| node.id).collect();
+    assert_eq!(reached, every, "every node is reached");
     let endings = |ending: Ending| NODES.iter().filter(|node| node.ending == ending).count();
     assert!(endings(Ending::Won) >= 2 && endings(Ending::Lost) >= 3, "several endings");
+}
 
-    let harness = Harness::new();
-    let mut checked = 0_usize;
-    for effect in &harness.started {
-        let Effect::Shared { page, frame } = effect else { continue };
-        let Some(node) = NODES.iter().find(|node| node.page == *page) else { continue };
-        let received = last(frame, *page);
-        let mut expected: Vec<Option<u16>> = node.choices.iter().map(|choice| Some(choice.to)).collect();
-        expected.resize(4, None);
-        expected.push(Some(crate::index::INDEX));
-        assert_eq!(received.links.get(..5).map(<[Option<u16>]>::to_vec), Some(expected), "{page:03X}'s links");
-        assert!(received.text().contains(node.title), "{page:03X} shows its title");
-        checked += 1;
+/// The page as `session` was last sent it.
+fn crown_page(bytes: &[u8]) -> Received {
+    let pages = pages_in(bytes);
+    assert!(pages.iter().all(|page| page.number == crown::PAGE), "the story never leaves its page");
+    pages.into_iter().last().unwrap()
+}
+
+/// The node a choice of `id` leads to.
+fn after(id: Id, choice: usize) -> &'static Node {
+    match NODES[usize::from(id.0)].choices[choice].to {
+        Leads::Node(next) => crown::node(next).unwrap(),
+        Leads::Page(page) => panic!("choice {choice} leaves for {page:03X}"),
     }
-    assert_eq!(checked, NODES.len());
+}
+
+/// A mouse press of the left button on a cell.
+fn click(column: u32, row: u32) -> InputItem<'static> {
+    use neoteletext_input::event::{Mouse, MouseAction, Point};
+    InputItem::Event(Event::Mouse(Mouse { action: MouseAction::Press, button: 0, at: Point { column, row, pixels: None, mods: 0 } }))
+}
+
+/// The whole story is one page: before choosing a viewer sees the first
+/// node, shared, with the choices' prompts but no links; each way of
+/// choosing (function key, remote colour key, letter, a click on a choice
+/// or its prompt) draws the next node on the same page, for that viewer
+/// alone.
+#[test]
+fn the_story_is_played_on_its_one_page() {
+    let mut harness = Harness::new();
+    let first = harness.join(VIEWER, crown::PAGE);
+    let first = crown_page(&first);
+    assert!(first.text().contains(NODES[0].title));
+    assert_eq!(first.links.get(..4), Some(&[None; 4][..]), "the choices are the page's, not links");
+    assert!(first.row(24).contains(NODES[0].choices[0].label), "row 24 prompts the choices");
+
+    // Green: the second choice.
+    let mut at = after(CROSSROADS, 1);
+    let page = crown_page(&harness.key(VIEWER, "F2"));
+    assert!(page.text().contains(at.title), "F2 chose {}", at.title);
+
+    // The other viewer is still at the crossroads, on their own page.
+    let other = crown_page(&harness.join(OTHER, crown::PAGE));
+    assert!(other.text().contains(NODES[0].title));
+
+    // A remote's red key, then the letter of yellow or a click.
+    let next = after(at.id, 0);
+    let page = crown_page(&harness.key(VIEWER, "ColorF0Red"));
+    assert!(page.text().contains(next.title), "the remote's red chose {}", next.title);
+    at = next;
+    let next = after(at.id, 0);
+    let page = crown_page(&harness.send(VIEWER, &InputItem::Text("r")));
+    assert!(page.text().contains(next.title), "r chose {}", next.title);
+    at = next;
+    let row = if at.ending == Ending::Not { crown::CHOICE_ROW } else { crown::ENDING_CHOICE_ROW };
+    let next = after(at.id, 0);
+    let page = crown_page(&harness.send(VIEWER, &click(10, u32::try_from(row).unwrap())));
+    assert!(page.text().contains(next.title), "a click on the first choice chose {}", next.title);
+    at = next;
+    let (start, end) = crate::common::label_columns([at.choices[0].label, "", "", ""])[0].unwrap();
+    assert!(end > start);
+    let next = after(at.id, 0);
+    let page = crown_page(&harness.send(VIEWER, &click(u32::try_from(end - 1).unwrap(), 24)));
+    assert!(page.text().contains(next.title), "a click on the red prompt chose {}", next.title);
+}
+
+/// At an ending, "Menu" sends the viewer to the menu and begins the story
+/// again for their next visit; "Again" begins it on the page.
+#[test]
+fn an_ending_leads_back_to_the_start_or_the_menu() {
+    let mut harness = Harness::new();
+    harness.join(VIEWER, crown::PAGE);
+    // Always the first choice, to an ending.
+    let mut at = &NODES[0];
+    let mut steps = 0;
+    while at.ending == Ending::Not {
+        let index = at.choices.iter().position(|choice| matches!(choice.to, Leads::Node(_))).unwrap();
+        at = after(at.id, index);
+        let page = crown_page(&harness.key(VIEWER, ["F1", "F2", "F3", "F4"][index]));
+        assert!(page.text().contains(at.title));
+        steps += 1;
+        assert!(steps < NODES.len(), "the first choices reach an ending");
+    }
+    assert!(at.choices.len() < 4);
+    assert!(pages_in(&harness.key(VIEWER, "F4")).is_empty(), "a key with no choice behind it changes nothing");
+    let again = at.choices.iter().position(|choice| choice.to == Leads::Node(CROSSROADS)).unwrap();
+    let menu = at.choices.iter().position(|choice| choice.to == Leads::Page(MENU)).unwrap();
+    let bytes = harness.key(VIEWER, ["F1", "F2", "F3", "F4"][menu]);
+    assert!(cursors(&bytes).iter().any(|cursor| cursor.page == MENU), "sent to the menu");
+    assert!(crown_page(&bytes).text().contains(NODES[0].title), "the story begins again");
+    assert_ne!(again, menu);
 }
 
 /// Every node's text fits the rows it is given.
@@ -448,8 +525,8 @@ fn every_fastext_link_leads_to_a_node() {
 fn the_storys_text_fits_the_page() {
     for node in NODES {
         let placed: usize = wrap(node.text, &|_| crown::TEXT_WIDTH, crown::TEXT_ROWS).iter().map(Vec::len).sum();
-        assert_eq!(placed, words(node.text).len(), "{:03X} does not fit: {}", node.page, node.text);
-        assert!(node.title.chars().count() <= 36, "{:03X}'s title", node.page);
+        assert_eq!(placed, words(node.text).len(), "{} does not fit: {}", node.title, node.text);
+        assert!(node.title.chars().count() <= 36, "{}'s title", node.title);
     }
 }
 

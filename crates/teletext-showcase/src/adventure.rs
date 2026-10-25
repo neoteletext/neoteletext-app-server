@@ -1,6 +1,7 @@
 //! Adventure games (pages 400 to 499): the menu (400), Station Zero, a
 //! typed text adventure that is each viewer's own (401), and The Lost
-//! Crown, a Fastext story of shared pages (410 to 438).
+//! Crown, a story told on the coloured keys, each viewer's place their own
+//! (402).
 
 mod art;
 pub mod crown;
@@ -53,13 +54,13 @@ struct Entry {
 /// The menu's entries.
 const ENTRIES: [Entry; 2] = [
     Entry { page: station::PAGE, name: "Station Zero", about: ["A typed adventure in space:", "fourteen rooms, one way home"] },
-    Entry { page: crown::START, name: "The Lost Crown", about: ["A Fastext quest for a crown:", "eight endings, coloured keys"] },
+    Entry { page: crown::PAGE, name: "The Lost Crown", about: ["A Fastext quest for a crown:", "eight endings, coloured keys"] },
 ];
 
 /// This area's applications.
 #[must_use]
 pub fn applications(_pictures: &[Picture]) -> Vec<Box<dyn Application>> {
-    alloc::vec![Box::new(Menu), Box::new(station::Station::new()), Box::new(crown::Crown)]
+    alloc::vec![Box::new(Menu), Box::new(station::Station::new()), Box::new(crown::Crown::default())]
 }
 
 /// This area's entries in the index.
@@ -75,7 +76,7 @@ pub struct Menu;
 /// The menu's page.
 #[must_use]
 pub fn menu() -> Screen {
-    let mut screen = common::page("Adventures", BAND, [("Station", Some(station::PAGE)), ("Crown", Some(crown::START)), ("", None), ("Index", Some(INDEX))]);
+    let mut screen = common::page("Adventures", BAND, [("Station", Some(station::PAGE)), ("Crown", Some(crown::PAGE)), ("", None), ("Index", Some(INDEX))]);
     crown::pictures::CASTLE.draw(&mut screen, PICTURE_ROW, PICTURE_COLUMN);
     let mut row = FIRST_ENTRY_ROW;
     for entry in &ENTRIES {
