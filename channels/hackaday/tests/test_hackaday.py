@@ -293,7 +293,7 @@ def test_story_pages_are_titled_with_their_posts(channel: Recorder) -> None:
     assert len(titles["510"]) <= 32
     assert titles["204"] == "doom (6)", "a tag page is titled by its tag"
     assert "205" not in titles, "a tag page without a tag keeps the title it was declared with"
-    assert channel.pages[0x205] == "Retro: tag 2"
+    assert published(channel, 0x205, "channel") == [], "and is not published, so no list shows it"
 
 
 def test_the_magazines_are_named_in_the_contents(channel: Recorder) -> None:

@@ -228,6 +228,10 @@ fn bad_lines_are_refused_and_reported() {
 #[test]
 fn a_title_renames_a_page_in_the_contents() {
     let mut channel = channel();
+    for page in ["100", "300"] {
+        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
+        channel.from_application(0, line.as_bytes(), 0);
+    }
     channel.take_effects();
     channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
     let effects = channel.take_effects();
@@ -270,9 +274,21 @@ fn a_section_heads_its_pages_in_the_contents() {
     let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"200","title":"Retro front","section":"Retrocomputing"},{"page":"201","title":"Challenge"}]}"#).unwrap();
     assert_eq!(pages[1].section.as_deref(), Some("Retrocomputing"));
     let config = ChannelConfig { name: "test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
-    let channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
-    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
-    assert_eq!(contents, "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t200\tRetro front\np\t201\tChallenge\n");
+    let mut channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
+    let contents = |channel: &Channel| String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
+    assert_eq!(contents(&channel), "s\ttest\n", "nothing published, nothing listed");
+    for page in ["100", "201"] {
+        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
+        channel.from_application(0, line.as_bytes(), 0);
+        assert!(channel.take_effects().contains(&Effect::Contents), "a page published for the first time is listed");
+    }
+    assert_eq!(
+        contents(&channel),
+        "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t201\tChallenge\n",
+        "200, not published, is left out; its section heads the next listed"
+    );
+    channel.from_application(0, br#"{"type":"publish","page":"201","owner":"channel","tti":"PN,20100\nOL,1,Again\n"}"#, 0);
+    assert!(!channel.take_effects().contains(&Effect::Contents), "published again, the contents are the same");
     assert!(declared_pages(br#"{"type":"pages","pages":[{"page":"200","section":"a section name that runs to more than thirty-two"}]}"#).is_err());
 }
 

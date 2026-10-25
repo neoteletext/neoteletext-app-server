@@ -189,6 +189,12 @@ impl Channel {
         self.applications.iter().flat_map(|hosted| hosted.pages.iter())
     }
 
+    /// Whether the channel has published `page` for every viewer.
+    #[must_use]
+    pub fn is_shared(&self, page: u16) -> bool {
+        self.shared.contains_key(&page)
+    }
+
     /// The shared pages' frames, in page order.
     pub fn shared_frames(&self) -> impl Iterator<Item = (u16, &Arc<[u8]>)> {
         self.shared.iter().map(|(&page, held)| (page, &held.frame))
@@ -396,7 +402,10 @@ impl Channel {
                 count(&mut self.stats.shared_published);
                 let held = Held::of(&subpages);
                 self.effects.push(Effect::Shared { page: number, frame: Arc::clone(&held.frame) });
-                self.shared.insert(number, held);
+                // A page published for the first time is listed from now on.
+                if self.shared.insert(number, held).is_none() {
+                    self.effects.push(Effect::Contents);
+                }
             }
             Action::Publish { owner: Owner::Session(session), number, subpages } => {
                 let Some(state) = self.sessions.get_mut(&session) else { return };

@@ -13,7 +13,14 @@ async fn a_retitled_page_is_served_in_the_contents() {
     let (to, _heard) = mpsc::channel(16);
     let hub = spawn("test", channel, Instant::now(), Some(Link { from, to }), Arc::new(ServerStats::default()));
     let served = || String::from_utf8(hub.contents.read().unwrap().to_vec()).unwrap();
-    assert!(served().contains("p\t200\tStory 1\n"));
+    lines.send(FromApplication::Line(br#"{"type":"publish","page":"200","owner":"channel","tti":"PN,20000\nOL,1,A robot arm\n"}"#.to_vec())).await.unwrap();
+    let published = tokio::time::timeout(Duration::from_secs(10), async {
+        while !served().contains("p\t200\tStory 1\n") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(published.is_ok(), "listed once published: {}", served());
     lines.send(FromApplication::Line(br#"{"type":"title","page":"200","title":"A robot arm"}"#.to_vec())).await.unwrap();
     let retitled = tokio::time::timeout(Duration::from_secs(10), async {
         while !served().contains("p\t200\tA robot arm\n") {

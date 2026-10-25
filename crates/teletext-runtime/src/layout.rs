@@ -52,11 +52,18 @@ impl Channel {
 
     fn contents(&self) -> String {
         let mut text = format!("s\t{}\n", plain(&self.config().name));
+        // Only what there is to read: a page declared but not yet
+        // published, such as a story slot no post fills, is left out, and a
+        // section's heading goes before the first of its pages listed.
+        let mut heading: Option<&str> = None;
         for entry in self.entries() {
+            if let Some(section) = &entry.section {
+                heading = Some(section);
+            }
             // contents.txt names decimal pages only.
             let number = format!("{:03X}", entry.number);
-            if number.bytes().all(|digit| digit.is_ascii_digit()) {
-                if let Some(section) = &entry.section {
+            if self.is_shared(entry.number) && number.bytes().all(|digit| digit.is_ascii_digit()) {
+                if let Some(section) = heading.take() {
                     let _ = writeln!(text, "s\t{}", plain(section));
                 }
                 let _ = writeln!(text, "p\t{number}\t{}", plain(&entry.title));

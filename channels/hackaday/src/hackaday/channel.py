@@ -378,13 +378,11 @@ class Hackaday(App):
         tagged = placed.tag_pages(mag.number)
         for place in range(numbers.TAG_PAGES):
             number = numbers.page(mag.number, numbers.FIRST_TAG + place)
+            # A place with no tag is left unpublished, so it is not listed.
             if place < len(tagged):
                 _, tag, count = tagged[place]
                 self.title(number, shortened(f"{tag} ({count})"))
                 self.put(number, views.tag_page(mag, tag, self.posts, placed, 0))
-            else:
-                self.title(number, f"{mag.short}: tag {place + 1}")
-                self.put(number, views.tag_page(mag, "none yet", [], placed, 0))
 
     def magazine_of_page(self, page: int) -> site.Magazine | None:
         """Answer the magazine a page is in."""

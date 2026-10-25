@@ -181,7 +181,10 @@ fn every_page_is_published_once_and_shared() {
     let expected = BTreeSet::from([MENU, station::PAGE, crown::PAGE]);
     assert_eq!(counts.keys().copied().collect::<BTreeSet<u16>>(), expected);
     assert!(counts.values().all(|&count| count == 1), "each page once: {counts:?}");
-    assert!(harness.started.iter().all(|effect| matches!(effect, Effect::Shared { .. })), "nothing for any viewer at the start");
+    assert!(
+        harness.started.iter().all(|effect| matches!(effect, Effect::Shared { .. } | Effect::Contents)),
+        "nothing for any viewer at the start: shared pages, and the contents listing them"
+    );
 }
 
 /// Opening the game makes it the viewer's own page, with the cursor on
