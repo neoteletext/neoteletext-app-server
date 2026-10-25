@@ -5,6 +5,7 @@
 // in crates/teletext-showcase, is registered here when it is ported; see
 // PORTING.md.
 
+import { adventure } from "./adventure.ts";
 import type { Area, Section } from "./area.ts";
 import { Index } from "./index-page.ts";
 import { interactive } from "./interactive.ts";
@@ -12,8 +13,8 @@ import type { Application } from "./kit.ts";
 import type { Picture } from "./pictures.ts";
 import { services } from "./services.ts";
 
-/** The areas, in the index's order: the Rust showcase's, as each is ported (games, adventure, audio and gallery to come). */
-export const AREAS: readonly Area[] = [services, interactive];
+/** The areas, in the index's order: the Rust showcase's, as each is ported (games, audio and gallery to come). */
+export const AREAS: readonly Area[] = [services, interactive, adventure];
 
 /** Every area's sections, in order. */
 export function sections(areas: readonly Area[] = AREAS): Section[] {
