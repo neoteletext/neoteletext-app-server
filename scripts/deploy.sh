@@ -8,8 +8,11 @@
 # engine's history go to the host, it builds there; the channels'
 # repository (decision 12; TELETEXT_CHANNELS, ~/devel/neoteletext-server-channels
 # by default) goes beside it, the pictures (decision 6: never in git) into
-# its tmp/pictures, where its channels.json has the showcase's programs
-# read them, and the service is restarted with that channels.json.
+# its tmp/pictures, where its channels.json has the demo channels read
+# them; each channel's repository of its own that channels.json names
+# (a directory "../<repository>", decisions 14 and 16) goes beside it too,
+# from beside the channels' repository here; and the service is restarted
+# with that channels.json.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,6 +31,22 @@ engine_rev="$(sed -n 's/^neoteletext-core = .* rev = "\([0-9a-f]*\)".*/\1/p' Car
 channels="${TELETEXT_CHANNELS:-$HOME/devel/neoteletext-server-channels}"
 [[ -f "$channels/channels.json" ]] || { echo "$channels has no channels.json; TELETEXT_CHANNELS names the channels' repository" >&2; exit 1; }
 [[ -f "$channels/tmp/pictures/captions.tsv" ]] || (cd "$channels" && python3 -I scripts/pictures.py)
+# The channels in repositories of their own: each directory of channels.json
+# that names a folder beside the channels' repository, by its name alone.
+own_repositories=()
+while IFS= read -r repository; do
+    own_repositories+=("$repository")
+done < <(python3 -I - "$channels/channels.json" <<'PY'
+import json, re, sys
+for channel in json.load(open(sys.argv[1]))["channels"]:
+    found = re.fullmatch(r"\.\./([A-Za-z0-9_-]+)/?", channel.get("directory", ""))
+    if found:
+        print(found.group(1))
+PY
+)
+for repository in "${own_repositories[@]+"${own_repositories[@]}"}"; do
+    [[ -f "$channels/../$repository/package-lock.json" ]] || { echo "channels.json names $repository, which is not beside $channels" >&2; exit 1; }
+done
 
 # Once, on the first deploy since decision 12: the Hackaday channel's
 # archive, which took a day to download, moves from the server's folder to
@@ -46,6 +65,9 @@ rsync -a --delete --exclude target --exclude tools --exclude .git --exclude tmp 
 rsync -a --delete --exclude .git --exclude tmp --exclude 'hackaday/cache' --exclude 'hackaday/sounds' --exclude 'hackaday/people' \
     --exclude .venv --exclude node_modules --exclude __pycache__ --exclude .mypy_cache --exclude .ruff_cache --exclude .pytest_cache \
     "$channels/" "$host:neoteletext-server-channels/"
+for repository in "${own_repositories[@]+"${own_repositories[@]}"}"; do
+    rsync -a --delete --exclude .git --exclude tmp --exclude node_modules "$channels/../$repository/" "$host:$repository/"
+done
 rsync -a --delete "${engine#file://}/.git/" "$host:teletext-server-engine.git/"
 # tmp is left out of the source's copy above, which therefore keeps it;
 # rsync makes only the last folder of a destination.
@@ -62,8 +84,8 @@ ssh "$host" "set -e; . ~/.cargo/env; cd teletext-server; rustup toolchain instal
     git -C ~/teletext-server-engine-tools checkout --quiet --detach $engine_rev
     (cd ~/teletext-server-engine-tools && rustup toolchain install >/dev/null && cargo build --quiet --release --locked -p neoteletext-cli)
     (cd ~/neoteletext-server-channels && ~/.local/bin/uv sync --quiet --frozen --no-dev)
-    # The TypeScript channels' libraries, released into the channels' vendor/ (decision 13).
-    (cd ~/neoteletext-server-channels && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent)
+    # Each TypeScript channel, in a repository of its own, on the libraries in its vendor/ (decisions 13 and 16).
+    for repository in ${own_repositories[*]+${own_repositories[*]}}; do (cd ~/\$repository && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent); done
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/teletext-server.service <<UNIT
 [Unit]
@@ -88,4 +110,7 @@ UNIT
     sleep 2
     systemctl --user --no-pager status teletext-server | head -5
     journalctl --user -u teletext-server --no-pager -n 3 -o cat"
-echo "deployed: $origin/showcase/ and $origin/hackaday/"
+python3 -I - "$channels/channels.json" "$origin" <<'PY'
+import json, sys
+print("deployed:", *(f"{sys.argv[2]}/{channel['folder']}/" for channel in json.load(open(sys.argv[1]))["channels"]))
+PY

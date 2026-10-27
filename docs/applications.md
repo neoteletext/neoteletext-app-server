@@ -122,7 +122,7 @@ A line for the server's log.
 
 ## 5. Kits
 
-The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The channels and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13), and the Hackaday channel in TypeScript is a repository of its own (decision 14).
+The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The channels file, the old Hackaday channel in Python and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13); and each TypeScript channel is a repository of its own beside it: `neoteletext-server-channel-hackaday` (decision 14), `-demosite` and `-uicomponentsdemo` (decision 16).
 
 - **TypeScript** (`neottx-server-ts-protocol`, in `~/devel/neottx-server-ts-protocol`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), the TTI writer, sounds, and the line loop. The component library over it, `neottx-server-ts-ui-components`, is in `~/devel/neottx-server-ts-ui-components`.
 - **Python** (`kits/python`): the same, thinner.
@@ -131,12 +131,12 @@ The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
 
 ```json
 {"channels":[
-  {"folder":"hackaday","name":"Hackaday","command":["uv","run","--frozen","python","-m","hackaday"],"directory":"hackaday"},
-  {"folder":"showcase","name":"NeoTeletext showcase","command":["node","src/main.ts"],"directory":"showcase"}
+  {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts"],"directory":"../neoteletext-server-channel-hackaday"},
+  {"folder":"oldhackaday","name":"Hackaday (old)","command":["uv","run","--frozen","--no-dev","python","-m","hackaday"],"directory":"hackaday"}
 ]}
 ```
 
-`teletext-server --channels ~/devel/neoteletext-server-channels/channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder.
+`teletext-server --channels ~/devel/neoteletext-server-channels/channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder, so `../<repository>` names a channel's repository beside the channels'.
 
 ## 7. Figures
 
