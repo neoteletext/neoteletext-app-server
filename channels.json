@@ -5,5 +5,6 @@
   {"folder":"art","name":"NeoTeletext art","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","art"],"directory":"channels/showcase"},
   {"folder":"people","name":"NeoTeletext people","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","people"],"directory":"channels/showcase"},
   {"folder":"travel","name":"NeoTeletext travel","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","travel"],"directory":"channels/showcase"},
-  {"folder":"gameart","name":"NeoTeletext game art","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","gameart"],"directory":"channels/showcase"}
+  {"folder":"gameart","name":"NeoTeletext game art","command":["node","src/collection.ts","--pictures","../../tmp/pictures","--collection","gameart"],"directory":"channels/showcase"},
+  {"folder":"kitchensink","name":"NeoTeletext kitchensink","command":["node","src/main.ts","--pictures","../../tmp/pictures"],"directory":"channels/kitchensink"}
 ]}
