@@ -196,3 +196,29 @@ fn a_page_gone_to_is_named_until_it_is_open() {
     let pages: Vec<u16> = cursors(&sent(&channel.take_effects(), 1)).iter().map(|cursor| cursor.page).collect();
     assert_eq!(pages.last(), Some(&0x300));
 }
+
+/// A program started again is told of the viewers it had: each session's
+/// own copy of its page is dropped and drawn again by the new program, and
+/// a viewer elsewhere is joined but not opened. Before, the viewers kept
+/// the old program's pages until they left them.
+#[test]
+fn a_restarted_program_is_told_of_its_viewers() {
+    let mut channel = channel();
+    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    for session in [1, 2] {
+        channel.opened(session, 0);
+        channel.received(session, &message(&Item::Event(receiver.open(0, None))), 0);
+    }
+    channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
+    channel.take_effects();
+    channel.restarted(0, 0);
+    let effects = channel.take_effects();
+    let place = |wanted: &Effect| effects.iter().position(|effect| effect == wanted);
+    let disowned = place(&Effect::Disown { session: 1, page: ECHO_PAGE }).expect("the old program's page is dropped");
+    let owned = place(&Effect::Own { session: 1, page: ECHO_PAGE }).expect("the new program draws it again");
+    assert!(disowned < owned, "{effects:?}");
+    assert!(
+        !effects.iter().any(|effect| matches!(effect, Effect::Own { session: 2, .. } | Effect::Disown { session: 2, .. })),
+        "the viewer of another page is only joined: {effects:?}"
+    );
+}

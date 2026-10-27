@@ -8,7 +8,7 @@ How a channel's application, a program in any language, talks to the server. It 
 - **One program serves every viewer** of its channel, multiplexed by session (`SERVER.md` section 7.1).
 - **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB, on the program's standard input and output. Standard error goes to the server's log.
 - **The first line the program writes declares its pages** (section 3.1), within 30 seconds. The server then sends `start`.
-- **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s. Its channel pages stay as last published meanwhile. When it is running again it declares its pages again and is sent `start`, and publishes afresh.
+- **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more after declaring its pages was ended, not failing, and is started again at once. Its channel pages stay as last published meanwhile. When it is running again it declares its pages again and is sent `start`, and publishes afresh. Each viewer's own copies of its pages are dropped, and it is sent `join` for every viewer connected and `open` for each viewer on one of its pages, so it draws them again.
 - **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (`SERVER.md` section 7.5).
 - **Every line the program sends is checked whole** and refused whole when it is not valid, with the reason in the server's log. Nothing of a refused line is acted on.
 - **Timers are the program's own:** it has a clock, so the protocol has no `tick`.

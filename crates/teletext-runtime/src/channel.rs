@@ -258,9 +258,27 @@ impl Channel {
     }
 
     /// Application `application`'s process started again after it ended:
-    /// it is told to start, and publishes its pages afresh.
+    /// it is told to start, and publishes its pages afresh. What it drew
+    /// for each viewer ended with it, so each session's own copies of its
+    /// pages are dropped, and it is told of every viewer and the page each
+    /// has open, as if they had just come.
     pub fn restarted(&mut self, application: usize, now: u64) {
         self.call(application, now, |hosted, context| hosted.start(context));
+        let owners = &self.owners;
+        let mine = |page: &u16| owners.get(page) == Some(&application);
+        let stale: Vec<(SessionId, u16)> =
+            self.sessions.iter().flat_map(|(&session, state)| state.own.keys().filter(|page| mine(page)).map(move |&page| (session, page))).collect();
+        let viewers: Vec<(SessionId, Option<u16>)> =
+            self.sessions.iter().map(|(&session, state)| (session, Some(state.page).filter(|page| mine(page)))).collect();
+        for (session, page) in stale {
+            self.act(application, Action::Release { session, page });
+        }
+        for (session, page) in viewers {
+            self.call(application, now, |hosted, context| hosted.joined(session, context));
+            if let Some(page) = page {
+                self.call(application, now, |hosted, context| hosted.opened(session, page, context));
+            }
+        }
     }
 
     /// When the channel next needs [`Channel::deadline`].

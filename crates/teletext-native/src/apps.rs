@@ -32,6 +32,10 @@ const DECLARE_WITHIN: Duration = Duration::from_secs(30);
 const FIRST_PAUSE: Duration = Duration::from_secs(1);
 /// The longest pause before a restart.
 pub const LONGEST_PAUSE: Duration = Duration::from_secs(30);
+/// A program that ran this long after declaring its pages was ended, not
+/// failing: it starts again at once, as when its author saves a change.
+/// One that keeps ending sooner starts at most this often or more slowly.
+const STEADY: Duration = Duration::from_secs(5);
 
 /// One channel of the channels file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,7 +115,7 @@ pub async fn start(spec: ChannelSpec) -> Result<(Vec<PageEntry>, Link), String> 
         let mut declared = Some(declared);
         let mut pause = FIRST_PAUSE;
         loop {
-            let ended = match launch(&spec) {
+            let (ended, ran) = match launch(&spec) {
                 Ok((mut child, stdin, mut stdout)) => match declare(&spec, &mut stdout).await {
                     Ok(pages) => {
                         match declared.take() {
@@ -125,24 +129,28 @@ pub async fn start(spec: ChannelSpec) -> Result<(Vec<PageEntry>, Link), String> 
                             }
                         }
                         pause = FIRST_PAUSE;
+                        let began = tokio::time::Instant::now();
                         let reason = relay(stdin, stdout, &arrived, &mut outgoing).await;
                         let _ = child.kill().await;
-                        reason
+                        (reason, began.elapsed())
                     }
                     Err(error) => {
                         let _ = child.kill().await;
-                        error
+                        (error, Duration::ZERO)
                     }
                 },
-                Err(error) => error,
+                Err(error) => (error, Duration::ZERO),
             };
             if let Some(declared) = declared.take() {
                 let _ = declared.send(Err(ended));
                 return;
             }
-            eprintln!("teletext-server: {}: the application ended ({ended}); starting it again in {} s", spec.folder, pause.as_secs());
-            tokio::time::sleep(pause).await;
-            pause = pause.saturating_mul(2).min(LONGEST_PAUSE);
+            let wait = pause_after(ran, pause);
+            eprintln!("teletext-server: {}: the application ended ({ended}); starting it again in {} ms", spec.folder, wait.as_millis());
+            tokio::time::sleep(wait).await;
+            if !wait.is_zero() {
+                pause = pause.saturating_mul(2).min(LONGEST_PAUSE);
+            }
             if arrived.is_closed() {
                 return;
             }
@@ -150,6 +158,12 @@ pub async fn start(spec: ChannelSpec) -> Result<(Vec<PageEntry>, Link), String> 
     });
     let pages = declaration.await.map_err(|_| format!("{folder}: the application's supervisor ended"))?.map_err(|error| format!("{folder}: {error}"))?;
     Ok((pages, Link { from, to }))
+}
+
+/// The pause before starting a program again that ran `ran` after
+/// declaring its pages: none after a steady run, else the back-off's.
+fn pause_after(ran: Duration, pause: Duration) -> Duration {
+    if ran >= STEADY { Duration::ZERO } else { pause }
 }
 
 fn launch(spec: &ChannelSpec) -> Result<(Child, ChildStdin, BufReader<ChildStdout>), String> {

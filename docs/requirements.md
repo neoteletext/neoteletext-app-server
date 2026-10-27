@@ -104,3 +104,13 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Source:** Decision 3.
 - **Verification:** Check: the full gate's fuzzing step.
 - **State:** Met, 25 October 2026: `websocket_reader` (the server's WebSocket frames, in any pieces) and `channel_input` (a channel whose application is a program, the runtime's `Remote`, as every channel's is since the Rust showcase was removed: two sessions' input streams and the program's lines, with time passing); each ran 20 seconds clean (906,063 runs; `channel_input` 447,006 runs in its new form).
+
+## 4. Channels' programs
+
+### Requirement 4.1: A program started again picks up its viewers
+- **Statement:** A channel's program that ran 5 seconds or more after declaring its pages, and then ended, must be started again at once; one that ends sooner keeps the back-off of 1, 2, 4 … 30 seconds. When it is running again it must be sent `join` for every viewer connected and `open` for each viewer on one of its pages, and each viewer's own copies of its pages must be dropped, so it draws them afresh (`docs/applications.md` section 1).
+- **Reason:** The owner, 27 October 2026, on fast iteration: a program restarted as its author saves a change must show the change to the viewer already on the page, without a reload and without waiting; a program that crashed gets its viewers back the same way.
+- **Source:** The owner's request for fast iteration, 27 October 2026.
+- **Verification:** Tests: a restarted program is told of its viewers and redraws each one's own page; a steady program starts again at once and a failing one waits.
+- **State:** Met, 27 October 2026: `a_restarted_program_is_told_of_its_viewers`, `a_steady_program_starts_again_at_once_and_a_failing_one_waits`; by hand, a saved change showed in the browser in 1.3 to 2 seconds.
+

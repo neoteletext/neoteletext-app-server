@@ -83,3 +83,13 @@ async fn a_program_must_declare_its_pages_first() {
     let error = start(ChannelSpec { command: vec!["/no/such/program".to_owned()], ..refuse("") }).await.unwrap_err();
     assert!(error.contains("cannot start"), "{error}");
 }
+
+/// A program that ran steadily was ended on purpose, as when its author
+/// saves a change: it starts again at once. One that ends soon after
+/// starting keeps the back-off, so a failing program cannot spin.
+#[test]
+fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
+    assert_eq!(pause_after(STEADY, FIRST_PAUSE), Duration::ZERO);
+    assert_eq!(pause_after(STEADY.saturating_sub(Duration::from_millis(1)), FIRST_PAUSE), FIRST_PAUSE);
+    assert_eq!(pause_after(Duration::ZERO, LONGEST_PAUSE), LONGEST_PAUSE);
+}
