@@ -27,5 +27,5 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": false
   },
-  "include": ["kits/typescript/src", "kits/typescript/test", "channels/*/src", "channels/*/test"]
+  "include": ["kits/typescript/src", "kits/typescript/test", "kits/typescript-components/src", "channels/*/src", "channels/*/test"]
 }
