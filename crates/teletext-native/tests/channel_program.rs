@@ -1,12 +1,14 @@
-//! The server with a channel whose program is TypeScript on the reference
-//! kit (`docs/applications.md`): the real binary, started with a channels
-//! file naming `kits/typescript/test/fixtures/hello.ts`, serves the pages
-//! the program publishes, read back over HTTP as the engine's packets. It
-//! checks the kit's TTI against the server's reader, which only the server
-//! has: control codes, the English set's signs, mosaics, Fastext links,
-//! the cursor, sub-pages, links to a sub-page, TTI
-//! written elsewhere, and a section and a new title in `contents.txt`. It also serves the repository's own `channels.json`,
-//! whose showcase is TypeScript.
+//! The server with a channel's program (`docs/applications.md`): the real
+//! binary, started with a channels file naming a program that replays
+//! `fixtures/kit-channel.jsonl`, serves the pages the program publishes,
+//! read back over HTTP as the engine's packets. The lines are those the
+//! TypeScript kit's fixture channel writes (neoteletext-server-channels'
+//! `kits/typescript/test/fixtures/hello.jsonl`, which that repository's
+//! test checks the kit still writes; the two files must stay the same), so
+//! this checks the kit's TTI against the server's reader, which only the
+//! server has: control codes, the English set's signs, mosaics, Fastext
+//! links, the cursor, sub-pages, links to a sub-page, TTI written
+//! elsewhere, and a section and a new title in `contents.txt`.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -17,8 +19,8 @@ use std::time::{Duration, Instant};
 use neoteletext_core::consts::{COLUMNS, PACKET_BYTES};
 use neoteletext_core::packet::{Decoded, Packet, decode};
 
-/// How long the server and the program have to start: a first `node` run
-/// and the declaration's own 30 s limit fit well inside it.
+/// How long the server and the program have to start: the declaration's
+/// own 30 s limit fits well inside it.
 const STARTING: Duration = Duration::from_secs(60);
 /// Between tries while it starts.
 const RETRY: Duration = Duration::from_millis(100);
@@ -36,8 +38,13 @@ impl Drop for Server {
     }
 }
 
-fn repository() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+/// Replays the fixture as a program does: the first line, its pages, then,
+/// once the server sends `start`, the rest; then it reads to the end of its
+/// input, as a program does until the server ends.
+const REPLAY: &str = r#"head -n 1 "$0"; read -r _; tail -n +2 "$0"; exec cat >/dev/null"#;
+
+fn fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kit-channel.jsonl").canonicalize().unwrap()
 }
 
 /// A port nothing listens on now.
@@ -130,18 +137,16 @@ fn padded(codes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn the_server_serves_what_a_typescript_program_publishes() {
-    let repository = repository();
-    let folder = std::env::temp_dir().join(format!("teletext-typescript-channel-{}", std::process::id()));
+fn the_server_serves_what_a_program_publishes() {
+    let folder = std::env::temp_dir().join(format!("teletext-channel-program-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     let channels = folder.join("channels.json");
-    let fixture = repository.join("kits/typescript/test/fixtures/hello.ts");
     std::fs::write(
         &channels,
         format!(
-            r#"{{"channels":[{{"folder":"kit","name":"Kit","command":["node",{fixture:?}],"directory":{repository:?}}}]}}"#,
-            fixture = fixture.display().to_string(),
-            repository = repository.display().to_string()
+            r#"{{"channels":[{{"folder":"kit","name":"Kit","command":["sh","-c",{REPLAY:?},{fixture:?}],"directory":{folder:?}}}]}}"#,
+            fixture = fixture().display().to_string(),
+            folder = folder.display().to_string()
         ),
     )
     .unwrap();
@@ -177,20 +182,4 @@ fn the_server_serves_what_a_typescript_program_publishes() {
     assert!(contents.contains("Kit index") && contents.contains("Kit carousel"), "{contents}");
     assert!(contents.contains("p\t102\tKit raw, retitled\n") && !contents.contains("\tKit raw\n"), "the page's new title: {contents}");
     assert!(contents.contains("s\tKit links\np\t103\tKit sub-page link\n"), "the section page 103 starts: {contents}");
-}
-
-/// The repository's own channels file serves the TypeScript showcase, and
-/// each picture collection's program on a channel of its own, at the
-/// folders the Rust showcase had, as `cargo run -p teletext-native --
-/// --channels channels.json` does.
-#[test]
-fn the_channels_file_serves_the_typescript_showcase() {
-    let (_server, address) = serve(&repository().join("channels.json"));
-    let index = received(&fetch(&address, "/showcase/100.t42"));
-    let title = String::from_utf8_lossy(&index[0].row(1)).into_owned();
-    assert!(title.contains("NeoTeletext showcase"), "{title:?}");
-    // With pictures or without, each collection has its index.
-    let collection = received(&fetch(&address, "/characters/100.t42"));
-    let title = String::from_utf8_lossy(&collection[0].row(1)).into_owned();
-    assert!(title.contains("Characters"), "{title:?}");
 }

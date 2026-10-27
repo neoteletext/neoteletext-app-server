@@ -122,7 +122,7 @@ A line for the server's log.
 
 ## 5. Kits
 
-The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
+The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The kits and the channels built on them are in their own repository, `~/devel/neoteletext-server-channels` (decision 12).
 
 - **TypeScript** (`kits/typescript`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), the TTI writer, sounds, and the line loop.
 - **Python** (`kits/python`): the same, thinner.
@@ -131,12 +131,12 @@ The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
 
 ```json
 {"channels":[
-  {"folder":"hackaday","name":"Hackaday","command":["uv","run","--frozen","python","-m","hackaday"],"directory":"channels/hackaday"},
-  {"folder":"showcase","name":"NeoTeletext showcase","command":["node","src/main.ts"],"directory":"channels/showcase"}
+  {"folder":"hackaday","name":"Hackaday","command":["uv","run","--frozen","python","-m","hackaday"],"directory":"hackaday"},
+  {"folder":"showcase","name":"NeoTeletext showcase","command":["node","src/main.ts"],"directory":"showcase"}
 ]}
 ```
 
-`teletext-server --channels channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder.
+`teletext-server --channels ~/devel/neoteletext-server-channels/channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder.
 
 ## 7. Figures
 

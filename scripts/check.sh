@@ -12,8 +12,8 @@
 #                             release tests, licences and advisories,
 #                             unused dependencies, fuzzing, and the Linux
 #                             build and tests on $TELETEXT_LINUX_HOST
-# Both gates run the Python stage (check_python) and the TypeScript stage
-# (scripts/typescript.sh) for the channels' programs and their kits.
+# The channels' programs and their kits have their own gates, in
+# ~/devel/neoteletext-server-channels (decision 12).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -99,42 +99,11 @@ check_workspace() {
     cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail --no-tests=warn
 }
 
-# The Python side (docs/applications.md section 5): the kit and the
-# channels written in Python, their tools at the versions uv.lock pins.
-PYTHON_PATHS=(kits/python channels/hackaday pyproject.toml uv.lock)
-check_python() {
-    step "Python: format, lint, types and tests, with uv.lock's tools"
-    command -v uv >/dev/null || fail "uv is needed for the Python checks"
-    local folders=() folder
-    for folder in kits/python channels/*/; do
-        [[ -f "$folder/pyproject.toml" ]] && folders+=("${folder%/}")
-    done
-    uv sync --frozen --quiet
-    uv run --frozen ruff format --check --quiet "${folders[@]}"
-    uv run --frozen ruff check --quiet "${folders[@]}"
-    uv run --frozen mypy "${folders[@]}"
-    uv run --frozen pytest --quiet "${folders[@]}"
-}
-
 # Paths with changes that are not staged, or files git does not track,
 # under any of the given paths.
 unstaged_under() {
     git diff --name-only -- "$@"
     git ls-files --others --exclude-standard -- "$@"
-}
-
-# The paths of the TypeScript stage: the kit, the channels' programs, the
-# channels file and Node's tools.
-readonly TYPESCRIPT_PATHS=(kits channels channels.json package.json package-lock.json tsconfig.json scripts .githooks)
-# The Rust test that runs the server with a TypeScript program and reads
-# back the pages it publishes, so a change to the kit is checked against
-# the server's TTI reader.
-readonly TYPESCRIPT_SERVER_TEST="typescript_channel"
-
-check_typescript() {
-    scripts/typescript.sh
-    step "the server serves a TypeScript program's pages"
-    cargo nextest run --package teletext-native --test "$TYPESCRIPT_SERVER_TEST" --hide-progress-bar --status-level fail --final-status-level fail
 }
 
 commit_gate() {
@@ -144,14 +113,10 @@ commit_gate() {
         step "nothing staged"
         return
     fi
-    local code=no python=no typescript=no path
+    local code=no path
     while IFS= read -r path; do
         case "$path" in
         crates/* | fuzz/* | scripts/* | .githooks/* | Cargo.toml | Cargo.lock | rust-toolchain.toml | clippy.toml | rustfmt.toml | deny.toml) code=yes ;;
-        kits/python/* | channels/hackaday/* | pyproject.toml | uv.lock) python=yes ;;
-        esac
-        case "$path" in
-        kits/* | channels/* | channels.json | package.json | package-lock.json | tsconfig.json | scripts/* | .githooks/*) typescript=yes ;;
         esac
     done <<<"$staged"
     # What is checked must be what is committed: no unstaged edit or
@@ -163,30 +128,13 @@ commit_gate() {
 $loose"
         check_workspace
     fi
-    if [[ "$python" == yes ]]; then
-        local loose
-        loose="$(unstaged_under "${PYTHON_PATHS[@]}")"
-        [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
-$loose"
-        check_python
-    fi
-    if [[ "$typescript" == yes ]]; then
-        local loose
-        loose="$(unstaged_under "${TYPESCRIPT_PATHS[@]}")"
-        [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
-$loose"
-        check_typescript
-    fi
     return 0
 }
 
 check_linux() {
-    step "Linux on $linux_host: Clippy and tests, Rust and TypeScript"
+    step "Linux on $linux_host: Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
-    # A Python environment and its caches are this machine's, built for its
-    # system; uv makes the host's own.
-    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts --exclude node_modules \
-        --exclude .venv --exclude __pycache__ --exclude .mypy_cache --exclude .ruff_cache --exclude .pytest_cache \
+    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on a repository on this machine; its
     # history goes to the host, and git there reads it in place of this
@@ -200,13 +148,11 @@ check_linux() {
         config="export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.file://\$HOME/teletext-server-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine;"
     fi
     # rustup installs the toolchain rust-toolchain.toml pins if the host
-    # does not have it yet. uv is in ~/.local/bin, which a command over ssh
-    # does not have on its path; the end-to-end test starts channels.json's
-    # Hackaday with it, as the deployed service does (scripts/deploy.sh).
+    # does not have it yet.
     # shellcheck disable=SC2029 # the engine is expanded here on purpose
-    ssh "$linux_host" "set -e; . ~/.cargo/env; export PATH=\$HOME/.local/bin:\$PATH; cd teletext-server-check; rustup toolchain install; $config
+    ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install; $config
         cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
-            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings && scripts/typescript.sh"
+            && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings"
 }
 
 check_fuzz() {
@@ -243,8 +189,6 @@ full_gate() {
 $loose"
 
     check_workspace
-    check_python
-    check_typescript
     step "documentation tests"
     cargo test --quiet --workspace --doc
     step "documentation builds, warnings as errors"
