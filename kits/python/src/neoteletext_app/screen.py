@@ -43,8 +43,9 @@ NO_LINK = 0x8FF
 ECHO = 1
 MASKED = 2
 BLOCK = 4
-#: The longest page title (docs/applications.md section 3.1).
-TITLE_LIMIT = 32
+#: The longest page title (docs/applications.md section 3.1): the engine's
+#: `contents::MAX_TITLE` (its decision E.120), which the server checks.
+TITLE_LIMIT = 120
 #: The lowest and highest page (EN 300 706 clause 3.1).
 FIRST_PAGE = 0x100
 LAST_PAGE = 0x8FF
@@ -86,6 +87,9 @@ class Attribute(IntEnum):
     START_BOX = 0x0B
     NORMAL_HEIGHT = 0x0C
     DOUBLE_HEIGHT = 0x0D
+    #: Level 2.5 and 3.5: wide letters on this row alone, where double
+    #: height would take the row below.
+    DOUBLE_WIDTH = 0x0E
     CONCEAL = 0x18
     CONTIGUOUS = 0x19
     SEPARATED = 0x1A
@@ -155,6 +159,15 @@ class Screen:
         """Write `text` in double height: it covers `row` and the row below, which stays empty."""
         self.codes(row, column, [Attribute.DOUBLE_HEIGHT, colour.text])
         self.text(row, column + 2, text)
+
+    def double_width(self, row: int, column: int, colour: Colour, text: str) -> None:
+        """Write `text` in double width: each letter two cells wide, on `row` alone (Level 2.5).
+
+        A wide letter covers the cell after it, so the letters go in every
+        other cell (EN 300 706 clause 12.2).
+        """
+        self.codes(row, column, [colour.text, Attribute.DOUBLE_WIDTH])
+        self.text(row, column + 2, " ".join(text))
 
     def background(self, row: int, column: int, colour: Colour) -> None:
         """Start a background of `colour` from `column`: the colour, then New Background."""

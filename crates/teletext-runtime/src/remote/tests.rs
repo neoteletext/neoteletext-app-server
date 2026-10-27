@@ -78,12 +78,15 @@ fn sent_to(effects: &[Effect], session: SessionId) -> Vec<u8> {
 fn a_declaration_names_the_pages_and_nothing_else_passes() {
     let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"8FF"}]}"#).unwrap();
     assert_eq!(pages.iter().map(|entry| entry.number).collect::<Vec<_>>(), [0x100, 0x8FF]);
+    let too_long_pages = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
+    let whole = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT));
+    assert!(declared_pages(whole.as_bytes()).is_ok(), "a title of the engine's longest");
     for bad in [
         &br#"{"type":"publish"}"#[..],
         br#"{"type":"pages","pages":[{"page":"099"}]}"#,
         br#"{"type":"pages","pages":[{"page":"900"}]}"#,
         br#"{"type":"pages","pages":[{"page":"100"},{"page":"100"}]}"#,
-        br#"{"type":"pages","pages":[{"page":"100","title":"a title that runs to more than thirty-two characters"}]}"#,
+        too_long_pages.as_bytes(),
         br#"{"type":"pages","pages":[{"page":100}]}"#,
         b"not json",
     ] {
@@ -110,6 +113,11 @@ fn a_published_tti_page_is_the_channels() {
     let pages = texts(&frame);
     assert_eq!(pages.len(), 1);
     assert!(pages[0].1.contains("HACKADAY") && pages[0].1.contains("Fresh hacks every day"), "{:?}", pages[0].1);
+    let header = frame.chunks(PACKET_BYTES).find_map(|chunk| match decode(&Packet { bytes: chunk.try_into().ok()? }) {
+        Ok(Decoded::Header(header)) => Some(header.display.iter().map(|&byte| char::from(byte & 0x7F)).collect::<String>()),
+        _ => None,
+    });
+    assert_eq!(header.as_deref(), Some("TEST     100 Thu 01 Jan 00:00/01"), "the service's header, as an inserter writes it");
 }
 
 /// A page's controls (INPUT.md section 7.3) reach the browser: the packed
@@ -231,6 +239,7 @@ fn goto_sends_the_viewer_on() {
 fn bad_lines_are_refused_and_reported() {
     let mut channel = channel();
     channel.take_effects();
+    let too_long_title = alloc::format!(r#"{{"type":"title","page":"100","title":"{}"}}"#, "x".repeat(TITLE_LIMIT + 1));
     for (line, reason) in [
         (&b"{not json"[..], "not JSON"),
         (br#"{"type":"publish","page":"200","owner":"channel","tti":"PN,20000\n"}"#, "200 was not declared"),
@@ -243,7 +252,7 @@ fn bad_lines_are_refused_and_reported() {
         (br#"{"type":"sound","to":{"page":"100"},"object":{"handle":1,"rate":12345,"pcm":"AAA="}}"#, "sound.object"),
         (br#"{"type":"pages","pages":[]}"#, "declared once"),
         (br#"{"type":"title","page":"200","title":"Not ours"}"#, "200 was not declared"),
-        (br#"{"type":"title","page":"100","title":"a title that runs to more than thirty-two characters"}"#, "over 32"),
+        (too_long_title.as_bytes(), "over 120"),
     ] {
         channel.from_application(0, line, 0);
         let effects = channel.take_effects();
@@ -257,6 +266,10 @@ fn bad_lines_are_refused_and_reported() {
 #[test]
 fn a_title_renames_a_page_in_the_contents() {
     let mut channel = channel();
+    for page in ["100", "300"] {
+        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
+        channel.from_application(0, line.as_bytes(), 0);
+    }
     channel.take_effects();
     channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
     let effects = channel.take_effects();
@@ -299,10 +312,23 @@ fn a_section_heads_its_pages_in_the_contents() {
     let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"200","title":"Retro front","section":"Retrocomputing"},{"page":"201","title":"Challenge"}]}"#).unwrap();
     assert_eq!(pages[1].section.as_deref(), Some("Retrocomputing"));
     let config = ChannelConfig { name: "test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
-    let channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
-    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
-    assert_eq!(contents, "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t200\tRetro front\np\t201\tChallenge\n");
-    assert!(declared_pages(br#"{"type":"pages","pages":[{"page":"200","section":"a section name that runs to more than thirty-two"}]}"#).is_err());
+    let mut channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
+    let contents = |channel: &Channel| String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
+    assert_eq!(contents(&channel), "s\ttest\n", "nothing published, nothing listed");
+    for page in ["100", "201"] {
+        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
+        channel.from_application(0, line.as_bytes(), 0);
+        assert!(channel.take_effects().contains(&Effect::Contents), "a page published for the first time is listed");
+    }
+    assert_eq!(
+        contents(&channel),
+        "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t201\tChallenge\n",
+        "200, not published, is left out; its section heads the next listed"
+    );
+    channel.from_application(0, br#"{"type":"publish","page":"201","owner":"channel","tti":"PN,20100\nOL,1,Again\n"}"#, 0);
+    assert!(!channel.take_effects().contains(&Effect::Contents), "published again, the contents are the same");
+    let too_long = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"200","section":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
+    assert!(declared_pages(too_long.as_bytes()).is_err());
 }
 
 /// The channel counts viewers, what they open and press, and its lines,

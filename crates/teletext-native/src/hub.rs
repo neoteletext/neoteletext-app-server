@@ -20,6 +20,9 @@ use crate::stats::{ServerStats, count};
 /// in seconds: often enough for a live figure on a page, rarely enough to
 /// cost nothing.
 pub const STATS_EVERY_S: u64 = 10;
+/// How often each viewer is sent a time-filling header: a clock shows
+/// seconds (EN 300 706 clause 9.3.1, the engine's decision E.121).
+pub const CLOCK_EVERY_S: u64 = 1;
 
 /// How many changes the log keeps: a connection further behind than this
 /// is sent every shared page again, which is the same as catching up.
@@ -163,6 +166,10 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
         let (mut from_application, to_application) = link.map_or((None, None), |link| (Some(link.from), Some(link.to)));
         let mut dropped = Dropped::default();
         let mut figures = tokio::time::interval(Duration::from_secs(STATS_EVERY_S));
+        // A time-filling header each second keeps every viewer's clock
+        // (the runtime's `header.rs`); a tick missed is not made up.
+        let mut clock = tokio::time::interval(Duration::from_secs(CLOCK_EVERY_S));
+        clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut sink = Sink {
             pages: &pages,
             generation: &generation_sender,
@@ -190,6 +197,7 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                 }
                 () = sleep_until(wake) => Event::Deadline,
                 _ = figures.tick() => Event::Figures,
+                _ = clock.tick() => Event::Clock,
             };
             match event {
                 Event::Command(Command::Opened { session, outbox }) => {
@@ -207,6 +215,12 @@ pub fn spawn(folder: &str, mut channel: Channel, start: Instant, link: Option<Li
                     channel.restarted(0, now());
                 }
                 Event::Deadline => channel.deadline(now()),
+                Event::Clock => {
+                    let header = channel.time_filling(now());
+                    for outbox in outboxes.values() {
+                        let _ = outbox.try_send(Outbound::Bytes(Arc::clone(&header)));
+                    }
+                }
                 Event::Figures => {
                     stats.record(&folder, channel.stats());
                     if let Some(to) = to_application.as_ref() {
@@ -240,6 +254,7 @@ enum Event {
     Application(FromApplication),
     Deadline,
     Figures,
+    Clock,
 }
 
 /// The next line from the program, or never when there is none.

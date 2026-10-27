@@ -2,7 +2,8 @@
 
 `people/people.json` names them, with each one's author number on
 hackaday.com, a title, a line from their own author biography, the
-podcast clip in which they say their name, and their portrait: their own
+podcast clip in which they say their name, their hackaday.io profile (its
+address, tagline, place, joining date and projects), and their portrait: their own
 avatar from the site, made once into a Level 2.5 page by the engine's
 converter (rows 1 to 16) and kept out of git with the clips. Someone with
 no avatar is shown the Jolly Wrencher instead.
@@ -33,6 +34,15 @@ class Person:
     portrait: str | None
     posts: int = 0
     latest: list[str] = field(default_factory=list)
+    io_url: str = ""
+    io_tagline: str = ""
+    io_location: str = ""
+    io_joined: str = ""
+    io_projects: list[str] = field(default_factory=list)
+
+
+#: The most hackaday.io projects kept for a person.
+MOST_PROJECTS = 8
 
 
 def load(folder: Path) -> list[Person]:
@@ -54,6 +64,11 @@ def load(folder: Path) -> list[Person]:
                     bio=str(entry.get("bio", "")),
                     clip=str(entry.get("clip", "")),
                     portrait=portrait,
+                    io_url=str((entry.get("io") or {}).get("url", "")),
+                    io_tagline=str((entry.get("io") or {}).get("tagline", "")),
+                    io_location=str((entry.get("io") or {}).get("location", "")),
+                    io_joined=str((entry.get("io") or {}).get("joined", "")),
+                    io_projects=[str(project) for project in (entry.get("io") or {}).get("projects", [])][:MOST_PROJECTS],
                 )
             )
         except (KeyError, ValueError, OSError) as error:

@@ -13,9 +13,15 @@ Making takes). In each subject magazine:
   This Week in Security, DOOM watch);
 - N02 lists every story it holds; N03 lists its tags;
 - N04 to N09 are its six most used tags, each a page of its stories;
-- N10 to N99 are its stories, newest first. A story's picture, comments
-  and links are views of the story's own page, chosen with the coloured
-  keys, so a story is one number.
+- N10 to N99 are its stories, newest first.
+
+A page is one thing, and its sub-pages are its parts, each named in its
+band (row 1) so that a receiver lists them by name: a story is "Story 1/n"
+and on, "Picture", "Comments 1/m" and on, "Links" and a page for each
+video; headlines (101) are a sub-page a day; the columns (110) one a
+series; talking points (106), facts and figures (108), then and now (132),
+help (190) and each person's page are their parts. Only a list to choose
+from scrolls: a magazine's stories and its tag pages.
 
 A post goes to the first magazine, in `RULES`' order, that one of its
 categories or tags names: the Retrocomputing Challenge's subject first.

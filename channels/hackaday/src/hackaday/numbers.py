@@ -14,10 +14,11 @@ MAGAZINES = 0x102
 POPULAR_TAGS = 0x103
 TAGS = 0x104
 SEARCH = 0x105
-DISCUSSED = 0x106
-COMMENTS_WALL = 0x107
-WRITERS = 0x108
-STATISTICS = 0x109
+#: Most discussed, then the latest comments, as sub-pages.
+TALKING = 0x106
+#: The stories by magazine, the writers and the server's own figures, as
+#: sub-pages.
+FIGURES = 0x108
 COLUMNS = 0x110
 LINKS_COLUMN = 0x111
 PODCAST = 0x112
@@ -32,8 +33,6 @@ READER = 0x133
 QUIZ = 0x140
 POLL = 0x141
 MINE = 0x142
-#: The server's own figures, live.
-SERVER_STATS = 0x150
 ABOUT = 0x190
 #: Magazine 1's stories: columns and news that name no subject, 160 to 189.
 HOME_FIRST_STORY = 60

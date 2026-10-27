@@ -17,7 +17,7 @@ How a channel's application, a program in any language, talks to the server. It 
 
 | `type` | Fields | When |
 |---|---|---|
-| `start` | `protocol` (1), `epoch_ms` | The program is to publish its channel pages |
+| `start` | `protocol` (1), `epoch_ms`; to come (decision 10): `standard`, the standard's maxima, and `budgets`, the server's | The program is to publish its channel pages |
 | `join` | `session` | A viewer connected |
 | `open` | `session`, `page` | The viewer opened one of the program's pages |
 | `leave` | `session`, `page` | The viewer left it |
@@ -49,9 +49,9 @@ What reaches the program: while the browser sends keys to the channel, every eve
 {"type":"pages","pages":[{"page":"100","title":"Front page"},{"page":"101","title":"News"}]}
 ```
 
-At most 800 pages, each once; a title at most 32 characters, without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
+At most 800 pages, each once; a title at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
 
-A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 32 characters, which a receiver shows as the name of the page's magazine.
+A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
 
 ### 3.2 `publish`
 
@@ -61,12 +61,13 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
 
 - **`owner`** is `"channel"`, one shared copy sent to every viewer, encoded once; or a session number, that viewer's own copy of the page from now on (`SERVER.md` section 7.3).
 - **`tti`** is the page in TTI, the engine's page format (`neoteletext-engine` REQ-INP-013), read by the engine's TTI reader:
-  - `PN,mppss`: starts each sub-page. The page number comes from `page`; the sub-page from `ss`. At most 64 sub-pages.
+  - `PN,mppss`: starts each sub-page. The page number comes from `page`; the sub-page from `ss`. At most 64 sub-pages. *To change (decision 10, not built):* up to 8,190, each named by `SC` with its four-digit sub-code, a publication putting only the sub-pages it carries and `remove` ending others; the bound comes from `start`.
   - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
   - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
+- The server writes row 0's header itself, as a teletext inserter does (EN 300 706 clause 9.3.1): the channel's name, the page's number, the date and the time, UTC, such as `HACKADAY 100 Mon 26 Oct 23:15/42`; what a program writes in columns 8 to 39 of row 0 is replaced. It also sends every viewer a time-filling header each second, so the clock on a page that does not change keeps time (the engine's decision E.121). Columns 0 to 7 are the receiver's.
 
 ### 3.3 `goto`
 

@@ -9,6 +9,7 @@ through a cell would paint the track beside it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from neoteletext_app.charset import codes
@@ -91,6 +92,29 @@ def wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+#: The most lines a headline takes, everywhere on the channel.
+HEADLINE_LINES = 2
+#: What ends a headline cut short, in characters the English set has.
+HEADLINE_CUT = "..."
+
+
+def headline(title: str, width: int) -> list[str]:
+    """Answer a post's title as the channel shows it everywhere: on one or two lines of `width`.
+
+    It is cut, with an ellipsis, only when it would run past two.
+    """
+    lines = wrap(title, width)
+    if len(lines) <= HEADLINE_LINES:
+        return lines
+    kept = lines[:HEADLINE_LINES]
+    last = kept[-1]
+    while last and len(codes(f"{last}{HEADLINE_CUT}")) > width:
+        # Whole words first; a single word too long loses letters.
+        last = last.rsplit(" ", 1)[0] if " " in last else last[:-1]
+    kept[-1] = f"{last.rstrip()}{HEADLINE_CUT}"
+    return kept
+
+
 @dataclass(frozen=True)
 class Line:
     """A line of a scrolling text: its colour and words."""
@@ -108,11 +132,15 @@ def thumb(top: int, total: int, track: int, shown: int) -> tuple[int, int]:
     return round((track - length) * min(top, last_top) / last_top), length
 
 
-def top_at(start: int, total: int, rows: int) -> int:
-    """Answer the first line shown when the scroll bar's block is dragged to start at cell `start`: `thumb` turned round."""
-    _, length = thumb(0, total, rows, rows)
+def top_at(start: int, total: int, rows: int, shown: int | None = None) -> int:
+    """Answer the first line or item shown when the scroll bar's block is dragged to start at cell `start`: `thumb` turned round.
+
+    `shown` is how many lines or items fit, `rows` when each takes a row.
+    """
+    shown = rows if shown is None else shown
+    _, length = thumb(0, total, rows, shown)
     room = rows - length
-    most = last_top(total, rows)
+    most = max(0, total - shown)
     if room <= 0 or most <= 0:
         return 0
     return max(0, min(most, round(start * most / room)))
@@ -125,11 +153,41 @@ def scroll(screen: Screen, lines: list[Line], top: int, first_row: int, rows: in
             screen.coloured(first_row + offset, 0, line.colour, line.text)
     if len(lines) <= rows:
         return
-    start, length = thumb(top, len(lines), rows, rows)
+    scroll_bar(screen, first_row, rows, thumb(top, len(lines), rows, rows))
+
+
+def scroll_bar(screen: Screen, first_row: int, rows: int, block: tuple[int, int]) -> None:
+    """Draw a scroll bar of whole cells down the last column, its `block` (first cell, length) white.
+
+    Every drag is sent to the page, so the bar can be pulled.
+    """
+    start, length = block
     for cell in range(rows):
         inside = start <= cell < start + length
         screen.code(first_row + cell, BAR_ATTRIBUTE_COLUMN, (Colour.WHITE if inside else Colour.BLUE).mosaic)
         screen.code(first_row + cell, BAR_COLUMN, FULL_BLOCK if inside else LEFT_LINE)
+
+
+#: A roulette wheel's segments, and their colours in turn round it.
+WHEEL_SEGMENTS = 12
+WHEEL_COLOURS = (Colour.RED, Colour.YELLOW, Colour.GREEN, Colour.CYAN, Colour.BLUE, Colour.MAGENTA)
+#: Its radius in rows and in columns: a cell is 12 by 20 pixels as the
+#: browser draws it, so 8 columns (96 pixels) across is about 5 rows (100
+#: pixels) down, and the wheel is round.
+WHEEL_ROWS = 5
+WHEEL_COLUMNS = 8
+
+
+def wheel(screen: Screen, row: int, column: int, lit: int) -> None:
+    """Draw a roulette wheel centred on `row`, `column`: a ring of coloured blocks, block `lit` white."""
+    for segment in range(WHEEL_SEGMENTS):
+        angle = 2 * math.pi * segment / WHEEL_SEGMENTS
+        at_row = row - round(WHEEL_ROWS * math.cos(angle))
+        at_column = column + round(WHEEL_COLUMNS * math.sin(angle))
+        colour = Colour.WHITE if segment == lit % WHEEL_SEGMENTS else WHEEL_COLOURS[segment % len(WHEEL_COLOURS)]
+        # Two cells a segment, so a 12-pixel cell does not look like a slit.
+        screen.code(at_row, at_column - 1, colour.mosaic)
+        screen.codes(at_row, at_column, [FULL_BLOCK, FULL_BLOCK])
 
 
 def last_top(total: int, rows: int) -> int:

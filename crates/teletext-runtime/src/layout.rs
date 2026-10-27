@@ -22,7 +22,7 @@ pub struct Resource {
 /// T42's media type (the engine's `requirements/web.md`).
 pub const T42_TYPE: &str = "application/x-teletext-t42";
 /// The longest title `contents.txt` keeps (the engine's contents rule).
-const TITLE_CHARACTERS: usize = 32;
+const TITLE_CHARACTERS: usize = neoteletext_web::contents::MAX_TITLE;
 
 impl Channel {
     /// The channel's file `name`, or none.
@@ -52,11 +52,18 @@ impl Channel {
 
     fn contents(&self) -> String {
         let mut text = format!("s\t{}\n", plain(&self.config().name));
+        // Only what there is to read: a page declared but not yet
+        // published, such as a story slot no post fills, is left out, and a
+        // section's heading goes before the first of its pages listed.
+        let mut heading: Option<&str> = None;
         for entry in self.entries() {
+            if let Some(section) = &entry.section {
+                heading = Some(section);
+            }
             // contents.txt names decimal pages only.
             let number = format!("{:03X}", entry.number);
-            if number.bytes().all(|digit| digit.is_ascii_digit()) {
-                if let Some(section) = &entry.section {
+            if self.is_shared(entry.number) && number.bytes().all(|digit| digit.is_ascii_digit()) {
+                if let Some(section) = heading.take() {
                     let _ = writeln!(text, "s\t{}", plain(section));
                 }
                 let _ = writeln!(text, "p\t{number}\t{}", plain(&entry.title));
