@@ -718,8 +718,9 @@ class Hackaday(App):
         """Type words; Enter searches the archive; the arrows choose a result; Enter on it reads it."""
         viewer = self.viewer(session)
         chosen = viewer.chosen.get(numbers.SEARCH, 0)
-        if event.kind in {"text", "paste"}:
-            viewer.typed = (viewer.typed + event.text)[:LONGEST_SEARCH]
+        text = event.text if event.kind == "paste" else event.typed
+        if text:
+            viewer.typed = (viewer.typed + text)[:LONGEST_SEARCH]
         elif event.pressed_key("Backspace"):
             viewer.typed = viewer.typed[:-1]
         elif event.pressed_key("Enter"):

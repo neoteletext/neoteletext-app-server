@@ -12,9 +12,9 @@
 //   sixels. A cell has one foreground colour (EN 300 706 clause 12.2), so a
 //   block that ended part-way through a cell would paint that cell's track
 //   white too; the block moves by whole cells. A click above or below the
-//   block moves a screen; a press on the block grips it, and the page asks
-//   for MOUSE_DRAG, so the pointer's moves with the button held pull it
-//   and the release lets go.
+//   block moves a screen; a press on the block grips it, the pointer's
+//   moves with the button held pull it (every move arrives, INPUT.md
+//   section 6.3) and the release lets go.
 // - Fastext: the services' links. The page takes the mouse, so the
 //   receiver sends a click on a prompt here, and the kit follows it.
 
@@ -28,7 +28,6 @@ import {
   type Context,
   type Input,
   Key,
-  Mode,
   type PageEntry,
   SIXELS_ACROSS,
   SIXELS_DOWN,
@@ -237,7 +236,6 @@ export function topAt(start: number, total: number): number {
 /** The page with the article from line `top`. */
 export function draw(all: readonly Line[], top: number): Screen {
   const screen = page(TITLE, BAND, navigation(LONG_READ));
-  screen.modes(Mode.MouseButtons | Mode.MouseDrag);
   const first = Math.min(top, lastTop(all.length));
   all.slice(first, first + VIEW_ROWS).forEach((line, offset) => {
     if (line.text.length > 0) {

@@ -3,9 +3,9 @@
 // included (section 9.1), so the receiver selects nothing. On a page that
 // has no use of its own for them, three digits go to that page and the
 // coloured keys follow the page's own Fastext links, as a television's
-// remote does. A page that asks for the mouse is sent its own clicks
-// (section 6.4), so a click the page does not take follows what it is on,
-// as the browser would: a Fastext prompt in row 24, or a page number.
+// remote does. Every page is sent its own clicks (section 6.3), so a
+// click the page does not take follows what it is on, as the browser
+// would: a Fastext prompt in row 24, or a page number.
 
 import { type Input, Key, decimalDigit, isCharacterKey } from "./input.ts";
 import { Colour, type FastextLinks, ROWS, isPageNumber, textColour } from "./screen.ts";
@@ -143,7 +143,8 @@ export class Navigation {
       }
       return { taken: true, goto };
     }
-    if (input.kind === "key" && isCharacterKey(input.key)) {
+    // A digit's key, or the keypad's, whose text is its digit (INPUT.md section 5.7 rule 8).
+    if (input.kind === "key" && (isCharacterKey(input.key) || input.text !== undefined)) {
       const digit = decimalDigit(input.text ?? input.key);
       if (digit === undefined) {
         return NOT_TAKEN;

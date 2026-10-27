@@ -241,7 +241,7 @@ def test_the_scroll_bar_is_pulled_and_pages_on_either_side(channel: Recorder) ->
     channel.library.posts[0].article.blocks *= 10
     channel.publish_all()
     total = len(views.article_lines(channel.posts[0]))
-    assert "IM,16" in published(channel, 0x210, "channel")[-1], "a page with a scroll bar asks for drags"
+    assert "\nIM," not in published(channel, 0x210, "channel")[-1], "a page with a scroll bar asks for nothing: every drag is sent"
     first, rows = views.STORY_TEXT_ROW, views.STORY_ROWS
     _, length = thumb(0, total, rows, rows)
     drive(
@@ -343,6 +343,15 @@ def test_search_takes_typing_but_colour_keys_still_leave(channel: Recorder) -> N
     )
     assert channel.viewers[4].typed == "210", "digits typed into the search are not a page number"
     assert [message["page"] for message in channel.sent if message["type"] == "goto"] == ["100"]
+
+
+def test_search_takes_typing_from_the_keys(channel: Recorder) -> None:
+    def typed_key(character: str, action: str) -> dict[str, Any]:
+        event = {"kind": "key", "action": action, "key": character} | ({"text": character} if action == "press" else {})
+        return {"type": "input", "session": 4, "page": "105", "event": event}
+
+    drive(channel, *(typed_key(character, action) for character in "doom" for action in ("press", "release")))
+    assert channel.viewers[4].typed == "doom", "each key's press with its text types; its release does not"
 
 
 def test_digits_select_a_page_on_a_page_that_does_not_take_them(channel: Recorder) -> None:

@@ -9,14 +9,14 @@ This file is all you need besides the Rust area you port. Read section 1 to 3 be
 ```
 kits/typescript/src/       the reference kit (docs/applications.md section 5)
   kit.ts                   everything below but testing, in one import
-  screen.ts                Screen, Sixels, colours, attributes, cursor flags, modes, TTI writer
+  screen.ts                Screen, Sixels, colours, attributes, cursor flags, TTI writer
   english.ts               text to the English G0 set (EN 300 706 Table 36)
   input.ts                 Input events, Key names, pressed/released/character, decimalDigit
   channel.ts               Application, Context, Channel, Random, runChannel
   navigation.ts            page selection by digits and colour keys (INPUT.md section 9.4)
   sound.ts                 sound members (object, live, blocks, play, stop, gain), pcmBase64
   app.ts                   the protocol: App (declare, publish, publishTti, goto, sound, log), line loop
-  read-tti.ts              reads back the TTI the kit writes (rows, links and their sub-codes, cursor, modes)
+  read-tti.ts              reads back the TTI the kit writes (rows, links and their sub-codes, cursor)
   packed-links.ts          X/27/0 links that name a sub-page, as a packed OL,27 line, and read back
   testing.ts               Harness: drives a channel as the server does, for tests
 channels/showcase/
@@ -109,12 +109,12 @@ A session's own copy of a page replaces the channel's for that viewer from its f
 | `codes`, `code`, `text`, `coloured`, `centred`, `fill`, `at`, `row`, `header`, `background` | the same names |
 | `double_height`, `row_text`, `index_link` | `doubleHeight`, `rowText`, `indexLink` |
 | `fastext([Some(0x101), None, ..])` | `fastext([0x101, null, null, null])` |
-| `cursor(row, column, width, flags)`, `modes(m)` | the same; read back with `cursorLine()`, `inputModes()`, `fastextLinks()`, `index()` |
+| `cursor(row, column, width, flags)` | the same; read back with `cursorLine()`, `fastextLinks()`, `index()` |
 | `PageFile.fastext_row_24 = true` | `screen.showFastextRow()` (a page with any link shows row 24 anyway) |
 | `Colour::Red`, `.text()`, `.mosaic()` | `Colour.Red`, `textColour(c)`, `mosaicColour(c)` |
 | `attribute::NEW_BACKGROUND` | `Attribute.NewBackground` (and `Flash`, `Steady`, `NormalHeight`, `DoubleHeight`, `Conceal`, `Contiguous`, `Separated`, `BlackBackground`, `HoldMosaics`, `ReleaseMosaics`) |
 | `neoteletext_input::cursor::{ECHO, MASKED, BLOCK}` | `CursorFlag.Echo`, `.Masked`, `.Block` |
-| `modes::{ALL_KEYS, KEY_RELEASE, BASE_KEY, MOUSE_BUTTONS, ..}` | `Mode.AllKeys`, `.KeyRelease`, `.BaseKey`, `.MouseButtons`, `.MouseDrag`, `.MouseAll`, `.MousePixels`, `.Compose` |
+| `modes::{ALL_KEYS, KEY_RELEASE, BASE_KEY, MOUSE_BUTTONS, ..}` | nothing: the modes were withdrawn on 27 October 2026 and every event is sent (INPUT.md section 6.3); drop the call |
 | `COLUMNS`, `ROWS`, `SIXELS_ACROSS`, `SIXELS_DOWN`, `SPACE`, `HEADER_TEXT_COLUMN` | the same |
 | `Sixels::new(w, h)`, `set`, `get`, `clear`, `cell`, `draw` | the same; `size()` is the fields `width` and `height` |
 | `format!("{:03X}", page)` | `pageText(page)` |
@@ -148,22 +148,23 @@ type Input =
 | `input.released(Named::Enter)` | `released(input, Key.Enter)` |
 | `input.character()` | `character(input)` (one code point, or undefined) |
 | `Input::Mouse { pressed: true, button, column, row }` | `input.kind === "mouse" && input.action === "press"`, `Button.Left` 0, `Button.Middle` 1, `Button.Right` 2; `clicked(input)` for a press of the left button |
-| `Input::Moved { buttons, column, row }` | `input.kind === "mouse" && input.action === "move"`, `input.buttons` a bit each: `Held.Left` 1, `Held.Middle` 2, `Held.Right` 4; sent in `Mode.MouseDrag` while a button is held, in `Mode.MouseAll` always |
+| `Input::Moved { buttons, column, row }` | `input.kind === "mouse" && input.action === "move"`, `input.buttons` a bit each: `Held.Left` 1, `Held.Middle` 2, `Held.Right` 4; every move over the page is sent, a button held or not |
 | `Input::Wheel { dy, .. }` | `input.kind === "wheel"`, `input.dy` (1/120ths of a line) |
 | `Named::Character(c)` | `input.kind === "key" && isCharacterKey(input.key)`; the key is the character |
 | `Named::Other(code)` | the key's W3C name: `Key.F1` to `Key.F4`, `Key.Red` (`ColorF0Red`), `Key.Green`, `Key.Yellow`, `Key.Blue`, or any other name from the engine's `crates/neoteletext-input/src/names.rs` (code n is the n-th name there: 92 to 95 are the colour keys) |
-| `base` (`BASE_KEY`) | `input.base`, a string |
+| `base` | `input.base`, a string, when it differs from the key |
+| typed text | `typed(input)`: a key's press or repeat carries its `text`, raw text what came from no key (a phone, an input method); `character(input)` when it is one character |
 
 Key names in `Key`: `Up` `Down` `Left` `Right` (the `Arrow…` names), `Enter`, `Escape`, `Backspace`, `Delete`, `Tab`, `Home`, `End`, `PageUp`, `PageDown`, `F1`–`F4`, `Red`, `Green`, `Yellow`, `Blue`. Any other name is a plain string.
 
 **Page selection is the kit's default, and it is new behaviour.** While keys go to a channel every key goes (INPUT.md section 9.1), so on every page the kit takes three digits (of any script, `decimalDigit`) and goes to that page of the channel if the channel has it (the first digit a magazine, 1 to 8), and takes F1–F4 and the coloured keys and follows the page's own Fastext links, as the viewer sees them (the session's own copy if it has one). The Rust showcase never did this. A page that uses digits or colour keys itself must say so in its `PageEntry`, or it never receives them:
 
-- `ownsDigits: true` for a page that takes typed text or numbers (Station Zero, 401, typed; the sound board's number keys, 503; any page whose Rust input reads digits or text). In `ALL_KEYS` a digit arrives as a key press whose key is the digit, and is taken the same way.
+- `ownsDigits: true` for a page that takes typed text or numbers (Station Zero, 401, typed; the sound board's number keys, 503; any page whose Rust input reads digits or text). A digit arrives as a key press whose key (or, on the keypad, whose text) is the digit, and is taken the same way.
 - `ownsColourKeys: true` for a page that acts on F1–F4 or the colour keys (The Lost Crown, 402: `IMPLEMENTATION-LOG.md` row 5).
 
 Everything else (letters, arrows, the mouse, paste) always reaches the application.
 
-**Clicks are followed too.** A page whose modes include `Mode.MouseButtons` is sent its own clicks (INPUT.md section 6.4), so the browser follows none of its links. A left click that `input` does not answer `true` to is followed by the kit, as the browser would: on row 24 the link of the Fastext prompt under it (a prompt runs from its colour code to the next colour code), elsewhere a page number of three digits standing alone under it (`clickedLink`, `promptLink`, `promptAt`, `numberAt` in `navigation.ts`, the Python kit's functions). A page that takes the mouse answers `true` for every click it acts on, and need not handle its own Fastext prompts. Write a test that digits and colour keys navigate where the page does not use them, as `test/services.test.ts` and `test/interactive.test.ts` do at their ends.
+**Clicks are followed too.** Every page is sent its own clicks (INPUT.md section 6.3), so the browser follows none of its links. A left click that `input` does not answer `true` to is followed by the kit, as the browser would: on row 24 the link of the Fastext prompt under it (a prompt runs from its colour code to the next colour code), elsewhere a page number of three digits standing alone under it (`clickedLink`, `promptLink`, `promptAt`, `numberAt` in `navigation.ts`, the Python kit's functions). A page that takes the mouse answers `true` for every click it acts on, and need not handle its own Fastext prompts. Write a test that digits and colour keys navigate where the page does not use them, as `test/services.test.ts` and `test/interactive.test.ts` do at their ends.
 
 ### 3.5 Sound
 
@@ -237,12 +238,12 @@ Port every Rust test of the area into `test/<area>.test.ts` (several files if th
 |---|---|
 | `Harness::new(applications(&[]))` | `new Harness(area.applications([]))`; options `{ epochMs, seed }`, by default 0 and the Rust harness's seed 7 |
 | `join(s, page)`, `open(s, page)` | the same; `close(s)` for `channel.closed(s, now)` |
-| `type_text(s, text)`, `press(s, "Name")`, `click(s, button, column, row)`, `wheel(s, dy, column, row)` | `typeText`, `press`, `click`, `wheel`; also `paste`, `key(s, name, action)`, `mouse(s, "press" \| "release", button, column, row)`, `move(s, buttons, column, row)`, `send(s, input)` |
+| `type_text(s, text)`, `press(s, "Name")`, `click(s, button, column, row)`, `wheel(s, dy, column, row)` | `typeText` (raw text), `press`, `click`, `wheel`; also `typeKeys(s, text)` (each character a key's press with its text, then its release, as the browser types), `paste`, `key(s, name, action)`, `mouse(s, "press" \| "release", button, column, row)`, `move(s, buttons, column, row)`, `send(s, input)` |
 | `advance(by)` (one deadline if due) | `advance(by)`; `runUntil(t)` wakes at every time asked, as the services tests' `run` does |
-| `shared(page)`, `own(s, page)` (rows of the last sub-page) | the same; `sharedPages(page)` and `ownPages(s, page)` give every sub-page with its links, `fastextRow`, cursor and modes |
+| `shared(page)`, `own(s, page)` (rows of the last sub-page) | the same; `sharedPages(page)` and `ownPages(s, page)` give every sub-page with its links, `fastextRow` and cursor |
 | `cursor(s)` | `cursor(s)`: row, column, width, flags of the page the session is at; the acknowledged count is the server's and is not seen here |
 | `cursor_pages(s)` | `gotos(s)`, the pages the session was sent to |
-| `page_modes(s)` | `pageModes(s)` |
+| `page_modes(s)` | nothing: a page has no modes |
 | `shared_publications(page)` | `sharedPublications(page)` |
 | `text(rows, row)`, `row_of`, `shows` | `text`, `rowOf`, `shows` |
 | sounds sent | `sounds(s)`, the sound lines for the session, parsed |

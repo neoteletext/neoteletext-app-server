@@ -1,13 +1,13 @@
 use super::*;
 use crate::{Channel, ChannelConfig, Effect, Packet};
 use alloc::boxed::Box;
-use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES, PACKET_ENHANCEMENT};
 use neoteletext_core::packet::{Decoded, decode};
+use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::event::{Event, Item as InputItem, Key, KeyCode, write};
-use neoteletext_input::modes::{ALL_MODES, CURSOR_CAP, ECHO_CAP, MOUSE_BUTTONS, PAGE_CAP};
 
-/// What the browser offers in HELLO.
-const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_MODES;
+/// What the browser offers in HELLO: its capabilities (INPUT.md section 6.2).
+const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
 
 const VIEWER: SessionId = 4;
 
@@ -112,6 +112,35 @@ fn a_published_tti_page_is_the_channels() {
     assert!(pages[0].1.contains("HACKADAY") && pages[0].1.contains("Fresh hacks every day"), "{:?}", pages[0].1);
 }
 
+/// A page's controls (INPUT.md section 7.3) reach the browser: the packed
+/// `OL,26` line the TypeScript kit writes for four buttons on row 20 is
+/// sent in the page's frame as packet X/26, its triplets Hamming 24/18
+/// coded as the section's example gives them.
+#[test]
+fn a_published_pages_controls_are_its_packet_26() {
+    /// The section's example: Set Active Position row 20, controls at
+    /// columns 1, 11, 21 and 31 nine cells wide, then the Termination Marker.
+    const EXPECTED: [u8; 18] = [0x60, 0x93, 0x80, 0x8f, 0x94, 0x89, 0xdd, 0x94, 0x09, 0x24, 0x95, 0x89, 0x76, 0x95, 0x09, 0x74, 0x7f, 0x87];
+    // What the kit's `enhancementLines` writes for them, as its JSON line carries it, DEL unescaped:
+    // designation code 0, six triplets, and Termination Markers filling the packet's thirteen.
+    let packed = alloc::format!("@|D@AeDKeDUeD_eD{}", "\u{7f}\u{7f}C".repeat(8));
+    let mut channel = channel();
+    channel.take_effects();
+    let line = alloc::format!(r#"{{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,20,\u001bFbuttons\nOL,26,{packed}\n"}}"#);
+    channel.from_application(0, line.as_bytes(), 0);
+    let effects = channel.take_effects();
+    assert!(logs(&effects).is_empty(), "{:?}", logs(&effects));
+    let frame = effects.iter().find_map(|effect| if let Effect::Shared { page: 0x100, frame } = effect { Some(frame.clone()) } else { None }).unwrap();
+    let enhancements: Vec<[u8; DATA_BYTES]> = frame
+        .chunks(PACKET_BYTES)
+        .filter_map(|chunk| chunk.try_into().ok().map(|bytes| Packet { bytes }))
+        .filter(|packet| neoteletext_core::packet::decode_address(packet).is_ok_and(|address| address.number == PACKET_ENHANCEMENT))
+        .map(|packet| packet.data())
+        .collect();
+    assert_eq!(enhancements.len(), 1);
+    assert_eq!(enhancements[0][1..=EXPECTED.len()], EXPECTED);
+}
+
 /// What a viewer does reaches the application as lines; its answer for one
 /// session is that session's page alone.
 #[test]
@@ -136,7 +165,7 @@ fn a_viewers_input_reaches_the_application_and_its_answer_is_theirs() {
     );
     assert_eq!(told[3].get("session").and_then(Value::integer), Some(4));
 
-    let own = alloc::format!(r#"{{"type":"publish","page":"300","owner":{VIEWER},"tti":"PN,30000\nOL,5,Your game\nIM,{MOUSE_BUTTONS}\n"}}"#);
+    let own = alloc::format!(r#"{{"type":"publish","page":"300","owner":{VIEWER},"tti":"PN,30000\nOL,5,Your game\n"}}"#);
     channel.from_application(0, own.as_bytes(), 0);
     let effects = channel.take_effects();
     assert!(logs(&effects).is_empty(), "{:?}", logs(&effects));
@@ -317,4 +346,25 @@ fn mouse_events_name_their_action() {
     assert_eq!(actions, [Some("press"), Some("move"), Some("release")]);
     let pressed: Vec<Option<bool>> = told.iter().map(|line| line.get("event").and_then(|event| event.get("pressed")).and_then(Value::boolean)).collect();
     assert_eq!(pressed, [Some(true), None, Some(false)]);
+}
+
+/// A hover reaches the program owning the open page as an input event of
+/// kind `hover`, the control's first cell with it (docs/applications.md
+/// section 2), entered and then left, as the browser sends them while keys
+/// go to the channel (INPUT.md section 5.4).
+#[test]
+fn a_hover_reaches_the_program_as_enter_and_leave() {
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    channel.take_effects();
+    send(&mut channel, &InputItem::Event(Event::Hover { leave: false, column: 2, row: 20 }));
+    send(&mut channel, &InputItem::Event(Event::Hover { leave: true, column: 2, row: 20 }));
+    let told = lines(&channel.take_effects());
+    let wanted = [
+        r#"{"type":"input","session":4,"page":"300","event":{"kind":"hover","action":"enter","entered":true,"column":2,"row":20}}"#,
+        r#"{"type":"input","session":4,"page":"300","event":{"kind":"hover","action":"leave","entered":false,"column":2,"row":20}}"#,
+    ];
+    assert_eq!(told, wanted.map(|line| json::parse(line.as_bytes()).unwrap()));
 }

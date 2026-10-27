@@ -7,9 +7,9 @@ A subclass of `App` overrides the handlers it needs and calls `publish`,
 `goto`, the sound methods and `log`. Page selection is the kit's default
 (INPUT.md section 9.4): on a page whose `on_input` does not take a key,
 three digits go to that page and the coloured keys follow the page's own
-Fastext links. A page that asks for the mouse is sent its own clicks (INPUT.md
-section 6.4), so a click there that `on_input` does not take follows what it
-is on, as the browser would: a Fastext prompt in row 24, or a page number.
+Fastext links. Every page is sent its own clicks (INPUT.md section 6.3), so a
+click there that `on_input` does not take follows what it is on, as the
+browser would: a Fastext prompt in row 24, or a page number.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import sys
+import unicodedata
 from array import array
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -68,7 +69,12 @@ def page_hears(page: int) -> Hearer:
 
 @dataclass(frozen=True)
 class Event:
-    """One input event on a page (docs/applications.md section 2)."""
+    """One input event on a page (docs/applications.md section 2).
+
+    A hover (`kind` "hover") is the pointer coming onto one of the page's
+    controls (`action` "enter", `entered` true) or going off it ("leave"),
+    at the control's first cell, `column` and `row` (INPUT.md section 5.4).
+    """
 
     kind: str
     text: str = ""
@@ -76,6 +82,7 @@ class Event:
     key: str = ""
     base: str = ""
     pressed: bool = False
+    entered: bool = False
     button: int = 0
     buttons: int = 0
     column: int = 0
@@ -102,6 +109,7 @@ class Event:
             key=text("key"),
             base=text("base"),
             pressed=value.get("pressed") is True,
+            entered=value.get("entered") is True,
             button=number("button"),
             buttons=number("buttons"),
             column=number("column"),
@@ -120,13 +128,26 @@ class Event:
         return self.kind == "key" and self.action in {"press", "repeat"} and self.key in names
 
     @property
-    def character(self) -> str | None:
-        """The one character this event typed, if it typed one."""
-        if self.kind == "text" and len(self.text) == 1:
-            return self.text
-        if self.kind == "key" and self.action in {"press", "repeat"} and len(self.key) == 1:
-            return self.text or self.key
+    def typed(self) -> str | None:
+        """The text this event typed, if any (INPUT.md section 6.3).
+
+        Typing comes two ways: a key's press or repeat carries the text it
+        produced, and raw text what no key did, an input method's or a
+        phone's. A release types nothing, nor a key whose text is a control
+        character (Enter, Tab); a paste is data, never typing.
+        """
+        if self.kind == "text":
+            return self.text or None
+        if self.kind == "key" and self.action in {"press", "repeat"} and self.text:
+            control = any(unicodedata.category(character) == "Cc" for character in self.text)
+            return None if control else self.text
         return None
+
+    @property
+    def character(self) -> str | None:
+        """The one character this event typed, if it typed one; a key that produced no text (Control and a letter) types nothing."""
+        typed = self.typed
+        return typed if typed is not None and len(typed) == 1 else None
 
     @property
     def colour(self) -> int | None:

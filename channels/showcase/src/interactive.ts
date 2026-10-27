@@ -83,30 +83,36 @@ export class Interactive implements Application {
     }
   }
 
-  /** Answers whether the page took `input`. Only the paint page asks for the mouse, so only its clicks can be the kit's to follow. */
+  /**
+   * Answers whether the page took `input`. Every page is sent its clicks
+   * (INPUT.md section 6.3), but only the paint page uses the mouse: on the
+   * others a click is the kit's to follow, to the prompt or page number
+   * under it.
+   */
   input(session: number, page: number, input: Input, context: Context): boolean {
     switch (page) {
       case FORM:
         this.#form.input(session, input, this.#sounds, context);
-        return true;
+        break;
       case GUESTBOOK:
       case SIGN:
         this.#guestbook.input(session, page, input, this.#sounds, context);
-        return true;
+        break;
       case POLL:
         this.#poll.input(session, input, this.#sounds, context);
-        return true;
+        break;
       case QUIZ:
         this.#quiz.input(session, input, this.#sounds, context);
-        return true;
+        break;
       case CALCULATOR:
         this.#calculator.input(session, input, this.#sounds, context);
-        return true;
+        break;
       case PAINT:
         return this.#paint.input(session, input, this.#sounds, context);
       default:
         return false;
     }
+    return input.kind !== "mouse";
   }
 
   wake(context: Context): void {

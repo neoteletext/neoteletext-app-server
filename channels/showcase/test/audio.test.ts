@@ -303,7 +303,7 @@ test("digits play on the board and select pages elsewhere", () => {
     harness.send(1, { kind: "key", action: "press", key: digit, base: digit });
     harness.send(1, { kind: "key", action: "release", key: digit, base: digit });
   }
-  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS], "the piano's digit keys in ALL_KEYS");
+  assert.deepEqual(harness.gotos(1), [PIANO, DRUMS], "the piano's digit keys, which arrive as key presses");
   harness.open(1, DRUMS);
   harness.typeText(1, "503");
   assert.deepEqual(harness.gotos(1), [PIANO, DRUMS, BOARD], "nor does the drum machine");

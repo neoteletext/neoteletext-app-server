@@ -4,7 +4,7 @@
 //! the program publishes, read back over HTTP as the engine's packets. It
 //! checks the kit's TTI against the server's reader, which only the server
 //! has: control codes, the English set's signs, mosaics, Fastext links,
-//! the cursor and input modes, sub-pages, links to a sub-page, TTI
+//! the cursor, sub-pages, links to a sub-page, TTI
 //! written elsewhere, and a section and a new title in `contents.txt`. It also serves the repository's own `channels.json`,
 //! whose showcase is TypeScript.
 

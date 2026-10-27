@@ -6,7 +6,7 @@
 // (crates/teletext-showcase/src/adventure/station.rs).
 
 import { INDEX, type Prompts, page } from "../common.ts";
-import { type Application, COLUMNS, Colour, type Context, CursorFlag, type Input, Key, type PageEntry, type Screen, englishCodes, pressed, textColour } from "../kit.ts";
+import { type Application, COLUMNS, Colour, type Context, CursorFlag, type Input, Key, type PageEntry, type Screen, englishCodes, pressed, textColour, typed } from "../kit.ts";
 import { Effect, Sounds } from "../sound.ts";
 import { CROWN, MENU, STATION } from "./pages.ts";
 import { Event, Game, MAX_COMMAND, Tone } from "./station/game.ts";
@@ -175,9 +175,10 @@ export class Station implements Application {
       this.#players.set(session, player);
     }
     let event: Event | undefined;
-    if (input.kind === "text" || input.kind === "paste") {
-      const [typed, ended] = typeInto(player.typed, input.text);
-      player.typed = typed;
+    const text = input.kind === "paste" ? input.text : typed(input);
+    if (text !== undefined) {
+      const [line, ended] = typeInto(player.typed, text);
+      player.typed = line;
       if (ended) {
         event = player.game.command(player.typed);
         player.typed = "";

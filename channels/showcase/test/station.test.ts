@@ -67,6 +67,16 @@ test("the game is the viewer's own with a cursor after the typing", () => {
   assert.ok(!row(cleared, COMMAND_ROW).includes("lo"), `Escape clears the line: ${row(cleared, COMMAND_ROW)}`);
 });
 
+// Typing on the keyboard comes as each key's press with its text
+// (INPUT.md section 6.3), and its releases type nothing.
+test("the game takes typing from the keys", () => {
+  const harness = station();
+  harness.join(VIEWER, STATION);
+  harness.typeKeys(VIEWER, "loo");
+  const page = harness.own(VIEWER, STATION);
+  assert.ok(row(page, COMMAND_ROW).includes("> loo "), `the keys typed on the command line: ${row(page, COMMAND_ROW)}`);
+});
+
 // Commands move the player and change what the page shows; each viewer's
 // game is their own.
 test("commands move the player and each viewer has their own game", () => {

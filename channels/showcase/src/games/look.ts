@@ -3,7 +3,7 @@
 // pages (crates/teletext-showcase/src/games/look.rs).
 
 import { FASTEXT_ROW, INDEX, page } from "../common.ts";
-import { Attribute, COLUMNS, Colour, Mode, SIXELS_ACROSS, SIXELS_DOWN, SPACE, type Screen, pageText } from "../kit.ts";
+import { Attribute, COLUMNS, Colour, SIXELS_ACROSS, SIXELS_DOWN, SPACE, type Screen, pageText } from "../kit.ts";
 import { Canvas } from "./canvas.ts";
 import { BREAKOUT, CAVE, GAMES, Game, HALL, INVADERS, MENU, SNAKE, nameOf, pageOf } from "./pages.ts";
 import type { Sprite } from "./sprites.ts";
@@ -62,9 +62,9 @@ function next(game: Game): Game {
 }
 
 /**
- * A game page's frame: the house header, title band and Fastext row,
- * asking for every key and its release, which held arrows need (INPUT.md
- * section 6.3, ALL_KEYS and KEY_RELEASE). No cursor: nothing is typed.
+ * A game page's frame: the house header, title band and Fastext row.
+ * Every key and its release arrive, which held arrows need (INPUT.md
+ * section 6.3). No cursor: nothing is typed.
  */
 export function gamePage(game: Game): Screen {
   const following = next(game);
@@ -74,7 +74,6 @@ export function gamePage(game: Game): Screen {
     ["Scores", HALL],
     ["Index", INDEX],
   ]);
-  screen.modes(Mode.AllKeys | Mode.KeyRelease);
   return screen;
 }
 

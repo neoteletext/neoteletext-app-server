@@ -1,8 +1,7 @@
 // Page 201: a form of two fields, a name and a masked one, each viewer's
 // own (crates/teletext-showcase/src/interactive/form.rs). It shows what
 // the page asks of the receiver: the cursor record's flags and width,
-// which turn the receiver's echo on (INPUT.md section 7.1), and the page's
-// input modes.
+// which turn the receiver's echo on (INPUT.md section 7.1).
 
 import { INDEX, page } from "../common.ts";
 import { Colour, type Context, CursorFlag, type Input, type Screen } from "../kit.ts";
@@ -104,8 +103,6 @@ class State {
     screen.coloured(10, NOTE_COLUMN, Colour.Cyan, "What this page asks of the receiver");
     screen.coloured(11, NOTE_COLUMN, Colour.White, "Cursor:");
     screen.coloured(11, VALUE_COLUMN, Colour.Yellow, `${flagNames}, width ${field.room()}`);
-    screen.coloured(12, NOTE_COLUMN, Colour.White, "Page modes:");
-    screen.coloured(12, VALUE_COLUMN, Colour.Yellow, "none: text and keys");
     screen.coloured(13, NOTE_COLUMN, Colour.White, "Accepted:");
     screen.coloured(13, VALUE_COLUMN, Colour.Yellow, `${this.typed} characters`);
     screen.coloured(14, NOTE_COLUMN, Colour.Green, "Your keys echo at once in amber; the");

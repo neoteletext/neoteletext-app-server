@@ -92,7 +92,7 @@ Not yet imported. When the first crate needs it, every `neoteletext-*` dependenc
 
 - The repository and its process (decision 3), 25 October 2026.
 - `teletext-runtime` (decision 2): a channel as a state machine, with no input or output.
-  - It speaks what the browser speaks today: the engine's channel layout, pages as T42 page frames, and INPUT.md version 2 with WELCOME, page modes and cursor records.
+  - It speaks what the browser speaks today: the engine's channel layout, pages as T42 page frames, and INPUT.md version 2 with WELCOME and cursor records (no input modes since 27 October 2026, INPUT.md section 6.3).
   - Applications are state machines in the server's process; the `Remote` one stands for a program of its own (decision 8), which every channel now is.
   - Shared pages are published once; a session's own pages go to it alone.
 - `teletext-native`: the native host on tokio and hyper.

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Button, Colour, Held, Mode, mosaicColour } from "../../../kits/typescript/src/kit.ts";
+import { Button, Colour, Held, mosaicColour } from "../../../kits/typescript/src/kit.ts";
 import { Harness, type Rows, text } from "../../../kits/typescript/src/testing.ts";
 import { FASTEXT_ROW, labelColumns, labels } from "../src/common.ts";
 import { services } from "../src/services.ts";
@@ -71,7 +71,6 @@ test("the keys scroll each reader's own page", () => {
   const shared = harness.shared(LONG_READ);
   assert.equal(topOf(shared), 0);
   assert.ok(text(shared, POSITION_ROW).includes(`Lines 1-${VIEW_ROWS} of ${lines().length}`));
-  assert.equal(harness.pageModes(READER), Mode.MouseButtons | Mode.MouseDrag, "the page takes clicks, the wheel and drags");
 
   const screen = VIEW_ROWS - 1;
   harness.press(READER, "PageDown");

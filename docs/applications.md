@@ -31,14 +31,15 @@ How a channel's application, a program in any language, talks to the server. It 
 
 | `kind` | Fields |
 |---|---|
-| `text` | `text`: whole characters typed |
-| `key` | `action` (`press`, `repeat`, `release`), `key`: a W3C `KeyboardEvent.key` name such as `ArrowUp`, `PageDown`, `F1`, `ColorF0Red`, or the character of a character key; `text` and `base` when the page's modes ask for them (INPUT.md sections 5.6 and 6) |
-| `mouse` | `action` (`press`, `release`, `move`), `column`, `row`; on a press or release `pressed` and `button` (0 left, 1 middle, 2 right); on a move `buttons`, those held, a bit each (1 left, 2 middle, 4 right). Presses and releases only on a page whose modes include `MOUSE_BUTTONS`; moves while a button is held in `MOUSE_DRAG`, and always in `MOUSE_ALL` (INPUT.md section 6.4) |
-| `wheel` | `dx`, `dy` in 1/120ths of a line (down positive), `column`, `row`; also in `MOUSE_BUTTONS` |
+| `text` | `text`: whole characters that came from no key: an input method's committed text, or a phone's (INPUT.md section 5.3) |
+| `key` | `action` (`press`, `repeat`, `release`), `key`: a W3C `KeyboardEvent.key` name such as `ArrowUp`, `PageDown`, `F1`, `ColorF0Red`, or the character of a character key; `text` when the key produced text, `base` when it differs from `key` (INPUT.md section 5.5). Every press, repeat and release is sent, the keys that only modify or lock and the dead key included: a program that types takes `text` from presses and repeats, and ignores releases for typing |
+| `mouse` | `action` (`press`, `release`, `move`), `column`, `row`; on a press or release `pressed` and `button` (0 left, 1 middle, 2 right); on a move `buttons`, those held, a bit each (1 left, 2 middle, 4 right). Every press and release over the page, and every move over it, a button held or not (INPUT.md section 6.3) |
+| `wheel` | `dx`, `dy` in 1/120ths of a line (down positive), `column`, `row`, while the pointer is over the page |
+| `hover` | `action` (`enter`, `leave`), `entered` (true on `enter`), `column`, `row`: the pointer came onto one of the page's controls or went off it, and the cell is the control's first, its top-left, as the page declares it (INPUT.md sections 5.4 and 7.3). Moving from one control to the next is a `leave`, then an `enter`. The browser draws the control's look under the pointer itself; a program uses a hover for anything else, such as saying on the page what the control does. One whose page has changed since may find no control there now, and ignores it |
 | `paste` | `text` |
 | `focus`, `blur` | The keys came to the page or left it |
 
-Which keys reach the program: while the browser sends keys to the channel, every key goes, digits and colour keys included (INPUT.md section 9.1). A program selects pages for the viewer itself: three digits or the coloured keys on a page that has no other use for them answer with `goto` (INPUT.md section 9.4).
+What reaches the program: while the browser sends keys to the channel, every event goes, every key, digits and colour keys included, every click and move over the page, and every hover of a control (INPUT.md sections 6.3 and 9.1). There are no input modes to ask for (withdrawn on 27 October 2026): a program ignores what it does not use. A program selects pages for the viewer itself: three digits or the coloured keys on a page that has no other use for them answer with `goto` (INPUT.md section 9.4).
 
 ## 3. Program to server
 
@@ -64,7 +65,6 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
   - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
   - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
-  - `IM,modes`: the page's input modes, decimal (INPUT.md section 6: 1 `ALL_KEYS`, 2 `KEY_RELEASE`, 4 `BASE_KEY`, 8 `MOUSE_BUTTONS`, 16 `MOUSE_DRAG`, 32 `MOUSE_ALL`).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
 

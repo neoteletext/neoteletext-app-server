@@ -7,7 +7,7 @@
 // (crates/teletext-showcase/src/adventure/crown.rs).
 
 import { FASTEXT_ROW, type Prompts, labelAt, page } from "../common.ts";
-import { type Application, Button, COLUMNS, Colour, type Context, type Input, Key, Mode, type PageEntry, type Screen, character, isCharacterKey, mosaicColour, pressed, textColour } from "../kit.ts";
+import { type Application, Button, COLUMNS, Colour, type Context, type Input, Key, type PageEntry, type Screen, character, isCharacterKey, mosaicColour, pressed, textColour } from "../kit.ts";
 import { ROWS as PICTURE_ROWS } from "./crown/pictures.ts";
 import { CROSSROADS, Ending, type Id, NODES, type Node } from "./crown/story.ts";
 import { CROWN } from "./pages.ts";
@@ -105,7 +105,6 @@ export function draw(shown: Node): Screen {
     [cyan, null],
   ];
   const screen = page(TITLE, band(shown.ending), prompts);
-  screen.modes(Mode.MouseButtons);
   const titleWidth = [...shown.title].length + TITLE_ATTRIBUTES;
   screen.doubleHeight(NODE_TITLE_ROW, Math.floor(Math.max(0, COLUMNS - titleWidth) / 2), Colour.Yellow, shown.title);
   shown.picture.draw(screen, PICTURE_ROW, PICTURE_COLUMN);

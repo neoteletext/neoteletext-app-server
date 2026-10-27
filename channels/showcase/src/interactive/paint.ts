@@ -1,7 +1,7 @@
 // Page 206: a paint box for the mouse, each viewer's own canvas
-// (crates/teletext-showcase/src/interactive/paint.rs). The page asks for
-// MOUSE_BUTTONS (INPUT.md section 6.4), so a click on it comes to the
-// channel as a cell; a click toggles that block of the canvas in the
+// (crates/teletext-showcase/src/interactive/paint.rs). A click on it
+// comes to the channel as a cell, as every click does (INPUT.md section
+// 6.3); a click toggles that block of the canvas in the
 // colour chosen on the palette row, and C clears.
 //
 // Each block of the canvas has its own colour although a colour is a
@@ -13,7 +13,7 @@
 // New Background before the blocks, so blue is not on the palette.
 
 import { INDEX, page } from "../common.ts";
-import { Attribute, Button, Colour, type Context, type Input, Mode, type Screen, character, mosaicColour } from "../kit.ts";
+import { Attribute, Button, Colour, type Context, type Input, type Screen, character, mosaicColour } from "../kit.ts";
 import { Effect, type Sounds } from "../sound.ts";
 import { CALCULATOR, MENU, PAINT } from "./pages.ts";
 
@@ -102,7 +102,6 @@ class Canvas {
       ["", null],
       ["Index", INDEX],
     ]);
-    screen.modes(Mode.MouseButtons);
     this.blocks.forEach((blocks, offset) => {
       const row = TOP + offset;
       screen.codes(row, 0, [mosaicColour(CANVAS), Attribute.NewBackground, Attribute.HoldMosaics]);

@@ -4,11 +4,16 @@ use crate::screen::Screen;
 use alloc::string::ToString;
 use neoteletext_audio::idl::FRAGMENT_DATA;
 use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_input::caps::{ALL_CAPS, CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::cursor::ECHO;
 use neoteletext_input::event::write;
-use neoteletext_input::modes::{ALL_CAPS, KEY_RELEASE};
-use neoteletext_input::modes::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::session::Session as Receiver;
+
+/// The browser's offer: the capabilities alone (INPUT.md section 6.2).
+const OFFER: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
+/// Bits 0 to 15 of `caps`, the input modes until 27 October 2026: reserved,
+/// and ignored when a peer still sets them (INPUT.md section 6.2).
+const RESERVED_MODE_BITS: u32 = (1 << 16) - 1;
 
 /// A page that echoes what is typed into a field, each session its own.
 #[derive(Default)]
@@ -25,7 +30,6 @@ impl Echo {
         screen.text(5, 1, &text);
         let column = u8::try_from(text.len().saturating_add(1)).unwrap();
         screen.cursor(5, column, 20, ECHO);
-        screen.modes(KEY_RELEASE);
         context.publish(Owner::Session(session), ECHO_PAGE, &screen);
     }
 }
@@ -76,16 +80,15 @@ fn sent(effects: &[Effect], session: SessionId) -> Vec<Packet> {
         .collect()
 }
 
-/// The first control record among `packets`, as (type, first field,
-/// second field).
-fn first_control(packets: &[Packet]) -> Option<(u8, u32, u32)> {
+/// The first control record among `packets`: Some((version, caps)) for
+/// WELCOME, Some((0, 0)) for any other.
+fn first_control(packets: &[Packet]) -> Option<(u32, u32)> {
     for packet in packets {
         let mut buffer = [0_u8; FRAGMENT_DATA];
         if let Some(Ok(control)) = neoteletext_input::control::from_packet(packet, &mut buffer) {
             return Some(match control {
-                Control::Welcome { version, caps } => (1, version, caps),
-                Control::PageModes { page, modes } => (4, u32::from(page), modes),
-                _ => (0, 0, 0),
+                Control::Welcome { version, caps } => (version, caps),
+                _ => (0, 0),
             });
         }
     }
@@ -97,26 +100,26 @@ fn cursors(packets: &[Packet]) -> Vec<Cursor> {
 }
 
 /// INPUT.md as the browser's receiver session reads it: HELLO is answered
-/// by a WELCOME it accepts; PAGE brings the page with its modes and the
-/// cursor acknowledging both items; typed text is acted on and counted.
+/// by a WELCOME it accepts, agreeing the capabilities alone; PAGE brings
+/// the page and the cursor acknowledging both items, and no other record;
+/// typed text is acted on and counted.
 #[test]
 fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     let mut channel = channel();
     channel.opened(1, 0);
-    // The browser's offer (its core/src/typing.rs).
-    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    let mut receiver = Receiver::new(OFFER);
     let hello = receiver.open(0, None);
     let Event::Hello { caps, .. } = hello else { panic!("HELLO") };
     assert_eq!(caps & ALL_CAPS, caps);
     channel.received(1, &message(&Item::Event(hello)), 0);
     let packets = sent(&channel.take_effects(), 1);
-    let (kind, version, agreed) = first_control(&packets).unwrap();
-    assert_eq!(kind, 1, "WELCOME");
+    let (version, agreed) = first_control(&packets).unwrap();
+    assert_eq!(agreed, OFFER, "WELCOME agrees the capabilities offered");
     assert_eq!(receiver.welcome(version, agreed), Ok(()), "the receiver accepts the WELCOME");
 
     channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
     let packets = sent(&channel.take_effects(), 1);
-    assert_eq!(first_control(&packets), Some((4, u32::from(ECHO_PAGE), KEY_RELEASE)), "PAGE_MODES");
+    assert_eq!(first_control(&packets), None, "no control record with the page: PAGE_MODES is withdrawn");
     let acked: Vec<u16> = cursors(&packets).iter().map(|cursor| cursor.acked).collect();
     assert_eq!(acked.last(), Some(&2), "HELLO and PAGE acted on: {acked:?}");
 
@@ -185,7 +188,7 @@ fn a_page_gone_to_is_named_until_it_is_open() {
     let mut channel = Channel::new(config, alloc::vec![Box::new(Mover)], 7);
     channel.start(0);
     channel.opened(1, 0);
-    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    let mut receiver = Receiver::new(OFFER);
     channel.received(1, &message(&Item::Event(receiver.open(0, None))), 0);
     channel.received(1, &message(&Item::Event(Event::Page(0x250))), 0);
     channel.take_effects();
@@ -204,7 +207,7 @@ fn a_page_gone_to_is_named_until_it_is_open() {
 #[test]
 fn a_restarted_program_is_told_of_its_viewers() {
     let mut channel = channel();
-    let mut receiver = Receiver::new(PAGE_CAP | CURSOR_CAP | ECHO_CAP | neoteletext_input::modes::ALL_MODES);
+    let mut receiver = Receiver::new(OFFER);
     for session in [1, 2] {
         channel.opened(session, 0);
         channel.received(session, &message(&Item::Event(receiver.open(0, None))), 0);
@@ -221,4 +224,17 @@ fn a_restarted_program_is_told_of_its_viewers() {
         !effects.iter().any(|effect| matches!(effect, Effect::Own { session: 2, .. } | Effect::Disown { session: 2, .. })),
         "the viewer of another page is only joined: {effects:?}"
     );
+}
+
+/// A receiver that still sets the old mode bits, reserved since 27 October
+/// 2026, is agreed only the capabilities: WELCOME never sets a mode bit
+/// (INPUT.md section 6.2). Before, WELCOME agreed every mode offered.
+#[test]
+fn welcome_agrees_no_mode_bits() {
+    let mut channel = channel();
+    channel.opened(1, 0);
+    let hello = Event::Hello { version: neoteletext_input::VERSION, caps: OFFER | RESERVED_MODE_BITS, agent: None };
+    channel.received(1, &message(&Item::Event(hello)), 0);
+    let (_, agreed) = first_control(&sent(&channel.take_effects(), 1)).unwrap();
+    assert_eq!(agreed, OFFER);
 }

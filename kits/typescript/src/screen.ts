@@ -1,6 +1,6 @@
 // A page built as a terminal program builds its screen: text and colour
 // at a row and column, mosaic graphics from a sixel canvas, Fastext links,
-// a cursor and input modes; and the page in TTI, the engine's page format,
+// a cursor; and the page in TTI, the engine's page format,
 // as the server's TTI reader takes it (docs/applications.md section 3.2).
 // It mirrors crates/teletext-runtime/src/screen.rs.
 
@@ -79,20 +79,6 @@ export const CursorFlag = {
   Block: 4,
 } as const;
 
-/** A page's input modes (INPUT.md section 6; the engine's `neoteletext_input::modes`). */
-export const Mode = {
-  AllKeys: 1,
-  KeyRelease: 2,
-  BaseKey: 4,
-  MouseButtons: 8,
-  MouseDrag: 16,
-  MouseAll: 32,
-  MousePixels: 64,
-  Compose: 128,
-} as const;
-/** Every mode bit INPUT.md section 6 defines. */
-const MODE_BITS = 0xffff;
-
 /** The input cursor and its echo (INPUT.md section 7.1): its cell, the cells it may echo into, and its flags. */
 export interface Cursor {
   readonly row: number;
@@ -145,13 +131,12 @@ export interface Subpage {
   readonly subpage: number;
 }
 
-/** A screen being drawn: 25 rows of 40 seven-bit codes, its links, cursor and input modes. */
+/** A screen being drawn: 25 rows of 40 seven-bit codes, its links and cursor. */
 export class Screen {
   readonly #rows: number[][];
   #fastext: FastextLinks = NO_LINKS;
   #index: number | null = null;
   #cursor: Cursor | null = null;
-  #modes = 0;
   #fastextRow = false;
 
   /** A blank screen. */
@@ -166,7 +151,6 @@ export class Screen {
     copy.#fastext = this.#fastext;
     copy.#index = this.#index;
     copy.#cursor = this.#cursor;
-    copy.#modes = this.#modes;
     copy.#fastextRow = this.#fastextRow;
     return copy;
   }
@@ -279,16 +263,6 @@ export class Screen {
     return this.#cursor;
   }
 
-  /** Sets the input modes the page asks for (INPUT.md section 6). */
-  modes(modes: number): void {
-    this.#modes = modes & MODE_BITS;
-  }
-
-  /** The input modes. */
-  inputModes(): number {
-    return this.#modes;
-  }
-
   /** This screen as sub-page `subpage` of page `page`, in TTI. */
   toTti(page: number, subpage: number): string {
     const lines = [`PN,${pageText(page)}${subpage.toString().padStart(2, "0")}`, `SC,${hex(decimalSubcode(subpage), SUBCODE_DIGITS)}`];
@@ -300,9 +274,6 @@ export class Screen {
     if (this.#cursor !== null) {
       const { row, column, width, flags } = this.#cursor;
       lines.push(`CU,${row},${column},${width},${flags}`);
-    }
-    if (this.#modes !== 0) {
-      lines.push(`IM,${this.#modes}`);
     }
     return lines.map((line) => `${line}\n`).join("");
   }

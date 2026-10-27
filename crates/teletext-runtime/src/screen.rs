@@ -5,7 +5,7 @@
 use alloc::string::String;
 use neoteletext_core::consts::COLUMNS;
 use neoteletext_core::types::{Magazine, PageAddress, PageNumber, SubCode};
-use neoteletext_formats::page::{CursorLine, FastextLink, ModesLine, PageFile};
+use neoteletext_formats::page::{CursorLine, FastextLink, PageFile};
 
 /// Rows of a page: the header row 0 and rows 1 to 24 (EN 300 706 clause
 /// 9.3).
@@ -102,15 +102,14 @@ fn english_code(character: char) -> u8 {
     }
 }
 
-/// A screen being drawn: 25 rows of 40 seven-bit codes, its links, cursor
-/// and input modes.
+/// A screen being drawn: 25 rows of 40 seven-bit codes, its links and
+/// cursor.
 #[derive(Clone, Debug)]
 pub struct Screen {
     rows: [[u8; COLUMNS]; ROWS],
     fastext: [Option<u16>; 4],
     index: Option<u16>,
     cursor: Option<CursorLine>,
-    modes: u32,
 }
 
 impl Default for Screen {
@@ -123,7 +122,7 @@ impl Screen {
     /// A blank screen.
     #[must_use]
     pub const fn new() -> Self {
-        Self { rows: [[SPACE; COLUMNS]; ROWS], fastext: [None; 4], index: None, cursor: None, modes: 0 }
+        Self { rows: [[SPACE; COLUMNS]; ROWS], fastext: [None; 4], index: None, cursor: None }
     }
 
     /// Writes `codes` at `row`, `column`, cut at the row's end.
@@ -217,11 +216,6 @@ impl Screen {
         self.cursor = Some(CursorLine { row, column, width, flags, acked: 0, line: 0 });
     }
 
-    /// The input modes the page asks for (INPUT.md section 6).
-    pub fn modes(&mut self, modes: u32) {
-        self.modes = modes;
-    }
-
     /// The page this screen is, as the engine's page model.
     #[must_use]
     pub fn page(&self, number: u16, subpage: u8) -> PageFile {
@@ -246,9 +240,6 @@ impl Screen {
             }
         }
         page.cursor = self.cursor;
-        if self.modes != 0 {
-            page.input_modes = Some(ModesLine { modes: self.modes, line: 0 });
-        }
         page
     }
 

@@ -1,7 +1,7 @@
 // TTI read back as the server's reader takes what Screen.toTti writes:
-// each sub-page's rows, links, cursor and modes, for tests and for the
-// Fastext links of a page published from TTI. It reads the PN, OL, FL,
-// CU and IM lines in the escape form, and the packed OL,27 line of links
+// each sub-page's rows, links and cursor, for tests and for the Fastext
+// links of a page published from TTI. It reads the PN, OL, FL and CU
+// lines in the escape form, and the packed OL,27 line of links
 // that name a sub-page (packed-links.ts), and ignores every other line;
 // the server reads TTI with the engine's reader.
 
@@ -22,7 +22,6 @@ export interface ReadPage {
   /** Whether row 24 is shown: an FL line shows it, a packed line says. */
   readonly fastextRow: boolean;
   readonly cursor: Cursor | null;
-  readonly modes: number;
 }
 
 /** TTI's FL value for no link. */
@@ -35,7 +34,7 @@ const PAGE_DIGITS = 3;
 const HEXADECIMAL = 16;
 const DECIMAL = 10;
 
-/** Reads what {@link Screen.toTti} writes: PN, SC, OL, FL, CU and IM lines. */
+/** Reads what {@link Screen.toTti} writes: PN, SC, OL, FL and CU lines. */
 export function readTti(tti: string): ReadPage[] {
   const pages: ReadPage[] = [];
   let rows: number[][] = [];
@@ -46,7 +45,6 @@ export function readTti(tti: string): ReadPage[] {
     linkSubcodes: (number | null)[];
     fastextRow: boolean;
     cursor: Cursor | null;
-    modes: number;
   } | null = null;
   const finish = (): void => {
     if (page !== null) {
@@ -68,7 +66,6 @@ export function readTti(tti: string): ReadPage[] {
         linkSubcodes: [],
         fastextRow: false,
         cursor: null,
-        modes: 0,
       };
     } else if (page === null) {
       continue;
@@ -106,8 +103,6 @@ export function readTti(tti: string): ReadPage[] {
     } else if (command === "CU") {
       const [row = 0, column = 0, width = 0, flags = 0] = rest.split(",").map((field) => Number.parseInt(field, DECIMAL));
       page.cursor = { row, column, width, flags };
-    } else if (command === "IM") {
-      page.modes = Number.parseInt(rest, DECIMAL);
     }
   }
   finish();

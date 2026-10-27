@@ -188,7 +188,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=a87f8ee845436087afddf9307f48cc41ff08fdb3#a87f8ee845436087afddf9307f48cc41ff08fdb3"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
 dependencies = [
  "neoteletext-core",
 ]
@@ -196,12 +196,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=a87f8ee845436087afddf9307f48cc41ff08fdb3#a87f8ee845436087afddf9307f48cc41ff08fdb3"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
 
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=a87f8ee845436087afddf9307f48cc41ff08fdb3#a87f8ee845436087afddf9307f48cc41ff08fdb3"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
 dependencies = [
  "neoteletext-core",
 ]
@@ -209,7 +209,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=a87f8ee845436087afddf9307f48cc41ff08fdb3#a87f8ee845436087afddf9307f48cc41ff08fdb3"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=a87f8ee845436087afddf9307f48cc41ff08fdb3#a87f8ee845436087afddf9307f48cc41ff08fdb3"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-engine?rev=dcb2a3ba2d1091c787057a69aa360f15d6e0b18e#dcb2a3ba2d1091c787057a69aa360f15d6e0b18e"
 dependencies = [
  "embedded-io",
  "neoteletext-core",

@@ -7,7 +7,7 @@
 
 import { runChannel } from "../../src/channel.ts";
 import { packedLinksLine } from "../../src/packed-links.ts";
-import { Colour, CursorFlag, Mode, Screen, Sixels, SIXELS_ACROSS, SIXELS_DOWN, decimalSubcode } from "../../src/screen.ts";
+import { Colour, CursorFlag, Screen, Sixels, SIXELS_ACROSS, SIXELS_DOWN, decimalSubcode } from "../../src/screen.ts";
 
 /** The pages the test reads. */
 const INDEX = 0x100;
@@ -40,9 +40,8 @@ function index(): Screen {
   canvas.draw(screen, 4, 1, Colour.Green);
   screen.fastext([CAROUSEL, null, null, INDEX]);
   screen.indexLink(INDEX);
-  // A cursor and input modes, which the server must accept too.
+  // A cursor, which the server must accept too.
   screen.cursor(6, 2, 10, CursorFlag.Echo);
-  screen.modes(Mode.MouseButtons);
   return screen;
 }
 

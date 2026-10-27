@@ -16,10 +16,10 @@ use alloc::vec::Vec;
 
 use neoteletext_audio::encode::packets;
 use neoteletext_formats::page::{CursorLine, PageFile};
+use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
-use neoteletext_input::modes::{ALL_KEYS, BASE_KEY, COMPOSE, CURSOR_CAP, ECHO_CAP, KEY_RELEASE, MOUSE_BUTTONS, PAGE_CAP};
 
 use crate::application::{Action, Application, Audience, Context, Owner, PageEntry};
 use crate::frame::page_frame;
@@ -34,10 +34,10 @@ pub type SessionId = u64;
 /// reference channel's, INPUT.md section 7).
 const SERVICE: u8 = 0;
 
-/// What the channel uses of what a receiver offers in HELLO: every mode
-/// its pages may ask for, since a page's mode not agreed in WELCOME is
-/// masked off (INPUT.md section 6).
-const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP | ALL_KEYS | KEY_RELEASE | BASE_KEY | MOUSE_BUTTONS | COMPOSE;
+/// The capabilities the channel uses of what a receiver offers in HELLO
+/// (INPUT.md section 6.2). There are no modes to agree: every event is
+/// sent and the channel ignores what it does not use (section 6.3).
+const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
 
 /// A channel's description, for `channel.json`.
 #[derive(Clone, Debug)]
@@ -110,23 +110,17 @@ pub enum Effect {
     },
 }
 
-/// A page as the channel keeps it: encoded, with what the cursor and mode
-/// records need, not the page model.
+/// A page as the channel keeps it: encoded, with what the cursor record
+/// needs, not the page model.
 #[derive(Clone, Debug)]
 pub(crate) struct Held {
     pub frame: Arc<[u8]>,
     pub cursor: Option<CursorLine>,
-    pub modes: u32,
 }
 
 impl Held {
     fn of(subpages: &[PageFile]) -> Self {
-        let first = subpages.first();
-        Self {
-            frame: Arc::from(page_frame(subpages)),
-            cursor: first.and_then(|page| page.cursor),
-            modes: first.and_then(|page| page.input_modes).map_or(0, |line| line.modes),
-        }
+        Self { frame: Arc::from(page_frame(subpages)), cursor: subpages.first().and_then(|page| page.cursor) }
     }
 }
 
@@ -348,31 +342,26 @@ impl Channel {
             self.stats.opened(page);
             self.call(index, now, |application, context| application.opened(session, page, context));
         }
-        // The page again, with its cursor and modes, so its IM applies
-        // (the receiver keeps one page-modes slot).
+        // The page again, with its cursor record.
         self.send_page(session, page, true);
     }
 
-    /// Sends `page` as `session` sees it, with its cursor and mode records
-    /// when it is the page open and the session was welcomed.
-    fn send_page(&mut self, session: SessionId, page: u16, with_records: bool) {
+    /// Sends `page` as `session` sees it, with its cursor record when it
+    /// is the page open and the session was welcomed.
+    fn send_page(&mut self, session: SessionId, page: u16, with_cursor: bool) {
         let Some(state) = self.sessions.get(&session) else { return };
         let held = state.own.get(&page).or_else(|| self.shared.get(&page)).cloned();
         let Some(held) = held else { return };
         let mut bytes: Vec<u8> = held.frame.to_vec();
-        if with_records && state.welcomed && state.page == page {
-            self.append_records(session, page, &held, &mut bytes);
+        if with_cursor && state.welcomed && state.page == page {
+            self.append_cursor(session, page, &held, &mut bytes);
         }
         self.effects.push(Effect::Send { session, bytes: Arc::from(bytes) });
     }
 
-    /// The page's mode record and the cursor record with the input count.
-    fn append_records(&mut self, session: SessionId, page: u16, held: &Held, bytes: &mut Vec<u8>) {
+    /// The page's cursor record with the input count.
+    fn append_cursor(&mut self, session: SessionId, page: u16, held: &Held, bytes: &mut Vec<u8>) {
         let Some(state) = self.sessions.get_mut(&session) else { return };
-        let record = state.next_record();
-        if let Ok(packet) = packet_of(&Control::PageModes { page, modes: held.modes }, SERVICE, record) {
-            bytes.extend_from_slice(&packet.bytes);
-        }
         let cursor = cursor_of(page, state.acked, held.cursor.as_ref());
         let record = state.next_record();
         if let Some(packet) = cursor.packet(SERVICE, record) {

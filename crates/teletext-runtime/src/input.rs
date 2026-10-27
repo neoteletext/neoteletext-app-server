@@ -59,16 +59,17 @@ impl Named {
 pub enum Input<'a> {
     /// Text typed: whole characters, no control characters.
     Text(&'a str),
-    /// A key pressed, repeating or released (releases in `KEY_RELEASE`).
+    /// A key pressed, repeating or released: every one is sent (INPUT.md
+    /// section 6.3).
     Key {
         /// Press, repeat or release.
         action: Action,
         /// Which key.
         key: Named,
-        /// The text the press produced, in `ALL_KEYS`.
+        /// The text the press produced, if any.
         text: Option<&'a str>,
-        /// The United States layout's character of the same key, in
-        /// `BASE_KEY`: the letter of a key whatever the layout.
+        /// The United States layout's character of the same key, when it
+        /// differs: the letter of a key whatever the layout.
         base: Option<char>,
     },
     /// A mouse button pressed or released on a cell.
@@ -82,8 +83,8 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
-    /// The pointer moved over a cell: in `MOUSE_DRAG` while a button is
-    /// held, in `MOUSE_ALL` always (INPUT.md section 6.4).
+    /// The pointer moved over the page: every move that changes the dot
+    /// under it, a button held or not (INPUT.md section 6.3).
     Moved {
         /// The buttons held, a bit each: 1 left, 2 middle, 4 right.
         buttons: u8,
@@ -92,8 +93,8 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
-    /// The wheel turned over a cell, in `MOUSE_BUTTONS` (INPUT.md section
-    /// 5.4): in 1/120ths of a line, positive right and down.
+    /// The wheel turned over a cell (INPUT.md section 5.4): in 1/120ths of
+    /// a line, positive right and down.
     Wheel {
         /// Across.
         dx: i32,
@@ -102,6 +103,16 @@ pub enum Input<'a> {
         /// The cell's column.
         column: u32,
         /// The cell's row.
+        row: u32,
+    },
+    /// The pointer came onto a control of the page or went off it (INPUT.md
+    /// section 5.4, HOVER), while keys go to the channel.
+    Hover {
+        /// It came onto the control, rather than went off it.
+        entered: bool,
+        /// The control's first column.
+        column: u32,
+        /// The control's top row.
         row: u32,
     },
     /// A paste: data, never keystrokes.
@@ -127,6 +138,7 @@ impl<'a> Input<'a> {
                 Some(Self::Mouse { pressed: mouse.action == MouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
             Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),
+            Item::Event(Event::Hover { leave, column, row }) => Some(Self::Hover { entered: !leave, column, row }),
             Item::Event(Event::Paste(text)) => Some(Self::Paste(text)),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
@@ -146,19 +158,14 @@ impl<'a> Input<'a> {
         matches!(*self, Self::Key { action: Action::Release, key: released, .. } if released == key)
     }
 
-    /// The character this input typed, if it typed one character: text,
-    /// or a character key's press.
+    /// The character this input typed, if it typed one character: raw
+    /// text, or the text of a key's press or repeat (INPUT.md section 6.3).
+    /// A key that produced no text (Control and a letter) or a control
+    /// character (Enter) types nothing.
     #[must_use]
     pub fn character(&self) -> Option<char> {
-        match *self {
-            Self::Text(text) => {
-                let mut characters = text.chars();
-                characters.next().filter(|_| characters.next().is_none())
-            }
-            Self::Key { action: Action::Press | Action::Repeat, key: Named::Character(character), text, .. } => {
-                text.and_then(|text| text.chars().next()).or(Some(character))
-            }
-            _ => None,
-        }
+        let (Self::Text(text) | Self::Key { action: Action::Press | Action::Repeat, text: Some(text), .. }) = *self else { return None };
+        let mut characters = text.chars();
+        characters.next().filter(|character| !character.is_control() && characters.next().is_none())
     }
 }

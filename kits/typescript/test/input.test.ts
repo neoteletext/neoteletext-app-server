@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Button, Held, type Input, Key, character, clicked, decimalDigit, pressed, readInput, released } from "../src/input.ts";
+import { Button, Held, type Input, Key, character, clicked, decimalDigit, pressed, readInput, released, typed } from "../src/input.ts";
 
 test("every kind of event the server writes is read", () => {
   assert.deepEqual(readInput({ kind: "text", text: "hi" }), { kind: "text", text: "hi" });
@@ -36,6 +36,8 @@ test("every kind of event the server writes is read", () => {
     row: 12,
   });
   assert.deepEqual(readInput({ kind: "wheel", dx: 0, dy: -120, column: 1, row: 2 }), { kind: "wheel", dx: 0, dy: -120, column: 1, row: 2 });
+  assert.deepEqual(readInput({ kind: "hover", action: "enter", entered: true, column: 2, row: 20 }), { kind: "hover", action: "enter", column: 2, row: 20 });
+  assert.deepEqual(readInput({ kind: "hover", action: "leave", entered: false, column: 2, row: 20 }), { kind: "hover", action: "leave", column: 2, row: 20 });
   assert.deepEqual(readInput({ kind: "focus" }), { kind: "focus" });
   assert.deepEqual(readInput({ kind: "blur" }), { kind: "blur" });
 });
@@ -59,6 +61,10 @@ test("an event that is not whole is refused, with the reason", () => {
     { kind: "mouse", action: "move", column: 0, row: 0 },
     { kind: "mouse", action: "move", buttons: 8, column: 0, row: 0 },
     { kind: "wheel", dx: 0.5, dy: 0, column: 0, row: 0 },
+    { kind: "hover", action: "hold", column: 0, row: 1 },
+    { kind: "hover", column: 0, row: 1 },
+    { kind: "hover", action: "enter", row: 1 },
+    { kind: "hover", action: "leave", column: 0, row: -1 },
     { kind: "telepathy" },
   ]) {
     assert.equal(typeof readInput(bad), "string", JSON.stringify(bad));
@@ -75,10 +81,22 @@ test("presses, releases and characters are as the runtime's Input reads them", (
   assert.equal(character({ kind: "text", text: "\u{1F600}" }), "\u{1F600}", "one character, two UTF-16 units");
   assert.equal(character({ kind: "text", text: "ab" }), undefined);
   assert.equal(character({ kind: "key", action: "press", key: "a", text: "A" }), "A", "the text the press produced");
-  assert.equal(character({ kind: "key", action: "press", key: "a" }), "a");
-  assert.equal(character({ kind: "key", action: "release", key: "a" }), undefined);
+  assert.equal(character({ kind: "key", action: "repeat", key: "a", text: "a" }), "a", "a repeat types again");
+  assert.equal(character({ kind: "key", action: "press", key: "a" }), undefined, "a key that produced no text (Control and a letter) types nothing");
+  assert.equal(character({ kind: "key", action: "release", key: "a", text: "a" }), undefined, "a release types nothing");
+  assert.equal(character({ kind: "key", action: "press", key: "Numpad5", text: "5" }), "5", "a functional key's text is typed: the keypad");
+  assert.equal(character({ kind: "key", action: "press", key: Key.Enter, text: "\r" }), undefined, "a control character is the key's, not text");
   assert.equal(character({ kind: "key", action: "press", key: Key.F1 }), undefined, "a functional key types nothing");
   assert.equal(character({ kind: "paste", text: "a" }), undefined);
+});
+
+test("typing comes from a key's press or repeat with its text, and from raw text, never a paste (INPUT.md section 6.3)", () => {
+  assert.equal(typed({ kind: "key", action: "press", key: "e", text: "\u00e9" }), "\u00e9", "a dead key's composed character");
+  assert.equal(typed({ kind: "key", action: "press", key: "e", text: "\u00b4e" }), "\u00b4e", "a dead key that did not compose: both characters");
+  assert.equal(typed({ kind: "text", text: "\u4f60\u597d" }), "\u4f60\u597d", "an input method's committed text");
+  assert.equal(typed({ kind: "key", action: "release", key: "e", text: "e" }), undefined);
+  assert.equal(typed({ kind: "key", action: "press", key: "Dead" }), undefined, "the dead key itself");
+  assert.equal(typed({ kind: "paste", text: "a" }), undefined);
 });
 
 test("the decimal digits of every script are 0 to 9 (INPUT.md section 5.7 rule 8)", () => {

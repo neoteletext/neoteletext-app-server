@@ -4,7 +4,7 @@
 // three, and so the drum machines share one wake.
 
 import { page } from "../common.ts";
-import { type Application, Button, Colour, type Context, type Input, Key, Mode, type PageEntry, type Screen, character, isCharacterKey, pressed } from "../kit.ts";
+import { type Application, Button, Colour, type Context, type Input, Key, type PageEntry, type Screen, character, isCharacterKey, pressed } from "../kit.ts";
 import { Sounds } from "../sound.ts";
 import * as board from "./board.ts";
 import * as drums from "./drums.ts";
@@ -30,7 +30,6 @@ function screen(number: number, viewer: Viewer, playhead: number | null): Screen
         ["Drums", DRUMS],
       ]);
       piano.draw(screen, viewer.piano);
-      screen.modes(Mode.AllKeys | Mode.KeyRelease | Mode.BaseKey | Mode.MouseButtons);
       return screen;
     }
     case BOARD: {
@@ -41,7 +40,6 @@ function screen(number: number, viewer: Viewer, playhead: number | null): Screen
         ["Drums", DRUMS],
       ]);
       board.draw(screen, viewer.board);
-      screen.modes(Mode.MouseButtons);
       return screen;
     }
     default: {
@@ -52,7 +50,6 @@ function screen(number: number, viewer: Viewer, playhead: number | null): Screen
         ["Board", BOARD],
       ]);
       drums.draw(screen, viewer.machine, playhead);
-      screen.modes(Mode.MouseButtons);
       return screen;
     }
   }
@@ -196,7 +193,7 @@ export class Studio implements Application {
         }
         return true;
       }
-      // Text comes only from a receiver that did not take ALL_KEYS.
+      // Text that came from no key: a phone's, or an input method's.
       case "text": {
         const typed = character(input);
         const note = typed === undefined ? undefined : piano.noteOf(typed);

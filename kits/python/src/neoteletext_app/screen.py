@@ -1,6 +1,6 @@
 """A page as an application draws it, written as TTI for the server.
 
-A page is 25 rows of 40 character codes, its links and input modes
+A page is 25 rows of 40 character codes, its links and cursor
 (docs/applications.md section 3.2). It mirrors the runtime's `Screen`
 (crates/teletext-runtime).
 """
@@ -45,11 +45,6 @@ MASKED = 2
 BLOCK = 4
 #: The longest page title (docs/applications.md section 3.1).
 TITLE_LIMIT = 32
-#: The input modes a page may ask for (INPUT.md section 6): clicks and the
-#: wheel; moves while a button is held, as well; every move, as well.
-MOUSE_BUTTONS = 8
-MOUSE_DRAG = 16
-MOUSE_ALL = 32
 #: The lowest and highest page (EN 300 706 clause 3.1).
 FIRST_PAGE = 0x100
 LAST_PAGE = 0x8FF
@@ -127,7 +122,6 @@ class Screen:
     fastext_links: list[int | None] = field(default_factory=lambda: [None, None, None, None])
     index: int | None = None
     cursor_at: tuple[int, int, int, int] | None = None
-    input_modes: int = 0
     #: Packets beyond the rows, as TTI `OL` lines: a picture's X/26
     #: enhancements and X/28 colours (EN 300 706 clauses 9.4 and 9.4.2),
     #: written after the rows.
@@ -186,10 +180,6 @@ class Screen:
         """Set the input cursor and how far echo may run (INPUT.md section 7.1)."""
         self.cursor_at = (row, column, width, flags)
 
-    def modes(self, modes: int) -> None:
-        """Set the input modes the page asks for (INPUT.md section 6)."""
-        self.input_modes = modes
-
     def row_text(self, row: int) -> str:
         """Answer a row as text, control codes as spaces."""
         return "".join(chr(code) if code >= SPACE else " " for code in self.rows[row])
@@ -206,8 +196,6 @@ class Screen:
         if self.cursor_at is not None:
             cursor_row, column, width, flags = self.cursor_at
             lines.append(f"CU,{cursor_row},{column},{width},{flags}")
-        if self.input_modes:
-            lines.append(f"IM,{self.input_modes}")
         lines.extend(self.packets)
         return "\n".join(lines) + "\n"
 

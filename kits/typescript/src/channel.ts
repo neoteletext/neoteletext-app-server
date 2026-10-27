@@ -8,8 +8,9 @@
 //
 // Pages that do not use digits or the coloured keys themselves get page
 // selection by them (navigation.ts), so every page can be left by number
-// or by Fastext; on a page that asks for the mouse, a click the page does
-// not take follows the prompt or the page number it is on.
+// or by Fastext; every page is sent its clicks (INPUT.md section 6.3), and
+// a click the page does not take follows the prompt or the page number it
+// is on.
 
 import { App, type Owner, type PageDeclaration, type ServerEvents, type ServerStats, type Streams, processStreams, serveLines } from "./app.ts";
 import { type Input, clicked } from "./input.ts";
@@ -40,9 +41,8 @@ export interface Application {
   leftPage?(session: number, page: number, context: Context): void;
   /**
    * Input on one of this application's pages, open with the keys, that
-   * navigation did not take. On a page that asks for the mouse, answer
-   * true for a click the page took; any other click follows the Fastext
-   * prompt or the page number it is on.
+   * navigation did not take. Answer true for a click the page took; any
+   * other click follows the Fastext prompt or the page number it is on.
    */
   input?(session: number, page: number, input: Input, context: Context): boolean | void;
   /** The time asked for with {@link Context.wakeAt} has come. */

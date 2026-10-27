@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { type Application, type Context, type PageEntry, Random } from "../src/channel.ts";
 import { Button, Held, type Input, Key } from "../src/input.ts";
-import { Colour, Mode, Screen } from "../src/screen.ts";
+import { Colour, Screen } from "../src/screen.ts";
 import { Harness, shows } from "../src/testing.ts";
 
 /** A page with `text` on row 1 and Fastext links. */
@@ -167,9 +167,8 @@ test("a click the page does not take follows the prompt or page number it is on"
       const drawn = screen("See 200 here", [0x200, 0x101, null, null]);
       drawn.coloured(24, 0, Colour.Red, "Two");
       drawn.coloured(24, 10, Colour.Green, "News");
-      drawn.modes(Mode.MouseButtons);
       context.publish("channel", 0x100, drawn);
-      context.publishTti("channel", 0x200, "PN,20000\nOL,3,Back to 100\nIM,8\n");
+      context.publishTti("channel", 0x200, "PN,20000\nOL,3,Back to 100\n");
     },
     // The page takes a click on row 1's first cell, and nothing else.
     input: (_session, _page, input) => {

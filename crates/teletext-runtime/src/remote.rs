@@ -402,6 +402,14 @@ fn event(input: &Input<'_>) -> Writer {
                 .integer("column", i64::from(column))
                 .integer("row", i64::from(row));
         }
+        Input::Hover { entered, column, row } => {
+            event
+                .text("kind", "hover")
+                .text("action", if entered { "enter" } else { "leave" })
+                .boolean("entered", entered)
+                .integer("column", i64::from(column))
+                .integer("row", i64::from(row));
+        }
         Input::FocusIn => {
             event.text("kind", "focus");
         }

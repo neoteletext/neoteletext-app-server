@@ -31,18 +31,23 @@ export const Key = {
 /** What a key did. */
 export type KeyAction = "press" | "repeat" | "release";
 
+/** What the pointer did at a control: came onto it or went off it. */
+export type HoverAction = "enter" | "leave";
+
 /** One thing the viewer did on the page open with the keys. */
 export type Input =
   /** Text typed: whole characters. */
   | { readonly kind: "text"; readonly text: string }
-  /** A key pressed, repeating or released; `text` in ALL_KEYS, `base` in BASE_KEY (INPUT.md sections 5.6 and 6). */
+  /** A key pressed, repeating or released: every one is sent, with the `text` it produced and its `base` when that differs (INPUT.md sections 5.5 and 6.3). */
   | { readonly kind: "key"; readonly action: KeyAction; readonly key: string; readonly text?: string; readonly base?: string }
-  /** A mouse button pressed or released on a cell, in MOUSE_BUTTONS. */
+  /** A mouse button pressed or released on a cell. */
   | { readonly kind: "mouse"; readonly action: "press" | "release"; readonly button: number; readonly column: number; readonly row: number }
-  /** The pointer moved onto a cell: in MOUSE_DRAG while a button is held, in MOUSE_ALL always; `buttons` are those held, a bit each ({@link Held}). */
+  /** The pointer moved over the page, a button held or not (INPUT.md section 6.3); `buttons` are those held, a bit each ({@link Held}). */
   | { readonly kind: "mouse"; readonly action: "move"; readonly buttons: number; readonly column: number; readonly row: number }
   /** The wheel turned over a cell, in 1/120ths of a line, positive right and down. */
   | { readonly kind: "wheel"; readonly dx: number; readonly dy: number; readonly column: number; readonly row: number }
+  /** The pointer entered a control of the page or left it (INPUT.md section 5.4, HOVER): `column` and `row` are the control's first cell, its top-left, as the page declared it; a move from one control to the next is a leave, then an enter. */
+  | { readonly kind: "hover"; readonly action: HoverAction; readonly column: number; readonly row: number }
   /** A paste: data, never keystrokes. */
   | { readonly kind: "paste"; readonly text: string }
   /** The keys came to the page. */
@@ -82,22 +87,37 @@ export function released(input: Input, key: string): boolean {
   return input.kind === "key" && input.action === "release" && input.key === key;
 }
 
-/** Whether this is the main button pressed: a click, in MOUSE_BUTTONS. */
+/** Whether this is the main button pressed: a click. */
 export function clicked(input: Input): boolean {
   return input.kind === "mouse" && input.action === "press" && input.button === Button.Left;
 }
 
-/** The character this input typed, if it typed exactly one: text of one character, or a character key's press. */
-export function character(input: Input): string | undefined {
+/** Control characters, C0, DEL and C1 (Unicode's `Cc`): never text (INPUT.md section 5.3). */
+export const CONTROL_CHARACTER = /\p{Cc}/u;
+
+/** The text a key's press or repeat produced, if it typed any: a release types nothing, and a key whose text is a control character (Enter, Tab) is a key, not typing. */
+export function keyText(action: KeyAction, text: string | undefined): string | undefined {
+  return action === "release" || text === undefined || text.length === 0 || CONTROL_CHARACTER.test(text) ? undefined : text;
+}
+
+/**
+ * The text this input typed, if any. Typing comes two ways (INPUT.md
+ * sections 5.3 and 6.3): a key's press or repeat carries the text it
+ * produced, and raw text carries what no key did, an input method's or a
+ * phone's. A paste is data, never typing.
+ */
+export function typed(input: Input): string | undefined {
   if (input.kind === "text") {
-    const characters = [...input.text];
-    return characters.length === 1 ? characters[0] : undefined;
+    return input.text;
   }
-  if (input.kind === "key" && input.action !== "release" && isCharacterKey(input.key)) {
-    const typed = input.text === undefined ? undefined : [...input.text][0];
-    return typed ?? input.key;
-  }
-  return undefined;
+  return input.kind === "key" ? keyText(input.action, input.text) : undefined;
+}
+
+/** The character this input typed, if it typed exactly one: from raw text or a key's press or repeat; a key that produced no text (Control and a letter) types nothing. */
+export function character(input: Input): string | undefined {
+  const text = typed(input);
+  const characters = text === undefined ? [] : [...text];
+  return characters.length === 1 ? characters[0] : undefined;
 }
 
 type Fields = Readonly<Record<string, unknown>>;
@@ -169,6 +189,15 @@ export function readInput(value: unknown): Input | string {
         return "event: a wheel event needs dx, dy, column and row";
       }
       return { kind: "wheel", dx, dy, column, row };
+    }
+    case "hover": {
+      const action = value["action"];
+      const column = whole(value, "column", 0, LARGEST_COORDINATE);
+      const row = whole(value, "row", 0, LARGEST_COORDINATE);
+      if ((action !== "enter" && action !== "leave") || column === undefined || row === undefined) {
+        return "event: a hover needs an action, enter or leave, a column and a row";
+      }
+      return { kind: "hover", action, column, row };
     }
     case "focus":
       return { kind: "focus" };

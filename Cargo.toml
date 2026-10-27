@@ -21,11 +21,11 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "a87f8ee845436087afddf9307f48cc41ff08fdb3", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "a87f8ee845436087afddf9307f48cc41ff08fdb3", default-features = false, features = ["tti"] }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "a87f8ee845436087afddf9307f48cc41ff08fdb3", default-features = false }
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "a87f8ee845436087afddf9307f48cc41ff08fdb3", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "a87f8ee845436087afddf9307f48cc41ff08fdb3", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["tti"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
 # (decision 5).

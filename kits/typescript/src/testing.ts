@@ -2,11 +2,11 @@
 // join, open pages, type, press keys, click and turn the wheel, a clock the
 // test moves, and what the program wrote, read back from its lines as the
 // server would read them: each page's TTI decoded into its rows, links,
-// cursor and modes. It mirrors crates/teletext-showcase/src/testing.rs.
+// cursor. It mirrors crates/teletext-showcase/src/testing.rs.
 
 import { App, type ServerStats } from "./app.ts";
 import { type Application, Channel, type Clock } from "./channel.ts";
-import { Button, type Input, type KeyAction } from "./input.ts";
+import { Button, type HoverAction, type Input, type KeyAction, isCharacterKey } from "./input.ts";
 import { type ReadPage, type Rows, readTti } from "./read-tti.ts";
 import type { Cursor } from "./screen.ts";
 
@@ -111,17 +111,26 @@ export class Harness {
     this.channel.input(session, page, input);
   }
 
+  /** Raw text, as an input method or a phone commits it (INPUT.md section 5.3). */
   typeText(session: number, typed: string): void {
     this.send(session, { kind: "text", text: typed });
+  }
+
+  /** Types `typed` on the keyboard, as the browser sends it: each character a key's press with its text, then its release (INPUT.md section 6.3). */
+  typeKeys(session: number, typed: string): void {
+    for (const typedCharacter of typed) {
+      this.send(session, { kind: "key", action: "press", key: typedCharacter, text: typedCharacter });
+      this.send(session, { kind: "key", action: "release", key: typedCharacter });
+    }
   }
 
   paste(session: number, pasted: string): void {
     this.send(session, { kind: "paste", text: pasted });
   }
 
-  /** One key event by its INPUT.md name. */
+  /** One key event by its INPUT.md name; a character key's press or repeat carries the character as its text, as a key pressed alone does. */
   key(session: number, key: string, action: KeyAction): void {
-    this.send(session, { kind: "key", action, key });
+    this.send(session, { kind: "key", action, key, ...(isCharacterKey(key) && action !== "release" ? { text: key } : {}) });
   }
 
   /** Presses and releases a key. */
@@ -144,6 +153,11 @@ export class Harness {
   /** Moves the pointer onto a cell with `buttons` held ({@link Held}). */
   move(session: number, buttons: number, column: number, row: number): void {
     this.send(session, { kind: "mouse", action: "move", buttons, column, row });
+  }
+
+  /** The pointer enters or leaves the control whose first cell is `column`, `row` (INPUT.md section 5.4, HOVER). */
+  hover(session: number, action: HoverAction, column: number, row: number): void {
+    this.send(session, { kind: "hover", action, column, row });
   }
 
   /** A left click. */
@@ -250,12 +264,6 @@ export class Harness {
   cursor(session: number): Cursor | null {
     const page = this.at(session);
     return page === undefined ? null : this.seen(session, page).cursor;
-  }
-
-  /** The input modes of the page the session has open. */
-  pageModes(session: number): number {
-    const page = this.#open.get(session);
-    return page === undefined ? 0 : this.seen(session, page).modes;
   }
 
   /** The pages `session` was sent to, in order. */

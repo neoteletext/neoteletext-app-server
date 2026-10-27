@@ -9,7 +9,7 @@
 // a line that is not valid is reported on standard error and dropped: the
 // program never stops for a bad line.
 
-import { type Input, readInput } from "./input.ts";
+import { CONTROL_CHARACTER, type Input, readInput } from "./input.ts";
 import { MOST_SUBPAGES, Screen, type Subpage, isPageNumber, pageText, tti } from "./screen.ts";
 import { type Audience, type SoundMember, soundFields } from "./sound.ts";
 
@@ -27,7 +27,6 @@ const LAST_SUBPAGE = 99;
 const NEWLINE = 0x0a;
 /** The return a line may end with before its newline. */
 const RETURN = "\r";
-const CONTROL_CHARACTER = /\p{Cc}/u;
 /** Seven-bit text: what a TTI text may hold. */
 const ASCII = /^[\u0000-\u007f]*$/u;
 /** The line that starts each sub-page of a TTI text. */

@@ -231,8 +231,8 @@ export class Arcade implements Application {
           player.keys.release(control);
         }
       } else if (character(input) === SPACE_CHARACTER) {
-        // Text, from a receiver that does not send every key: no release
-        // will follow, so a tap.
+        // Text that came from no key, a phone's: no release will
+        // follow, so a tap.
         player.keys.tap(Control.Fire);
       }
       return;

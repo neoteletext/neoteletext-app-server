@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Colour, CursorFlag, Key, Mode, mosaicColour } from "../../../kits/typescript/src/kit.ts";
+import { Colour, CursorFlag, Key, mosaicColour } from "../../../kits/typescript/src/kit.ts";
 import { Harness, rowOf, shows, text } from "../../../kits/typescript/src/testing.ts";
 import { FASTEXT_ROW, labelColumns } from "../src/common.ts";
 import { interactive } from "../src/interactive.ts";
@@ -58,6 +58,15 @@ test("the form echoes, masks and greets", () => {
   harness.press(1, Key.Enter);
   assert.ok(shows(harness.own(1, FORM), "Hello, Ada!"));
   assert.ok(shows(harness.own(1, FORM), "has 6 characters"));
+});
+
+test("the form takes typing from the keys, and a dead key that did not compose types both characters", () => {
+  const harness = area();
+  harness.join(1, FORM);
+  const first = harness.cursor(1);
+  harness.typeKeys(1, "Ada");
+  harness.send(1, { kind: "key", action: "press", key: "x", text: "'x" });
+  assert.ok(text(harness.own(1, FORM), first?.row ?? 0).includes("Ada'x"), text(harness.own(1, FORM), first?.row ?? 0));
 });
 
 test("a full field stops, and stops the echo", () => {
@@ -243,8 +252,6 @@ test("the calculator answers on its page", () => {
 test("the paint box paints", () => {
   const harness = area();
   harness.join(1, PAINT);
-  assert.equal(harness.pageModes(1), Mode.MouseButtons);
-
   const [column, row] = [FIRST_COLUMN + 4, TOP + 2];
   harness.click(1, LEFT, column, row);
   assert.equal(harness.own(1, PAINT)[row]?.[column], SOLID);
@@ -267,9 +274,9 @@ test("the paint box paints", () => {
   assert.equal(harness.own(1, PAINT)[row]?.[column + 2], SPACE, "cleared");
 });
 
-// The page takes the mouse, so the receiver leaves its prompts to it: a
-// click off the canvas on a prompt follows the prompt's link, which the
-// kit does for every such page.
+// Every page is sent its clicks, so the receiver leaves its prompts to
+// it: a click off the canvas on a prompt follows the prompt's link, which
+// the kit does for every page.
 test("a click on the paint box's Fastext prompt follows it", () => {
   const harness = area();
   harness.join(1, PAINT);
@@ -277,6 +284,15 @@ test("a click on the paint box's Fastext prompt follows it", () => {
   assert.ok(sums !== null && sums !== undefined);
   harness.click(1, LEFT, sums[0] + 1, FASTEXT_ROW);
   assert.deepEqual(harness.gotos(1), [CALCULATOR]);
+});
+
+test("a click on a prompt of a page that does not use the mouse follows it: the form's", () => {
+  const harness = area();
+  harness.join(1, FORM);
+  const guestbook = labelColumns(["Input", "Guestbook", "", "Index"])[1];
+  assert.ok(guestbook !== null && guestbook !== undefined);
+  harness.click(1, LEFT, guestbook[0] + 1, FASTEXT_ROW);
+  assert.deepEqual(harness.gotos(1), [GUESTBOOK]);
 });
 
 test("only printable characters pass", () => {

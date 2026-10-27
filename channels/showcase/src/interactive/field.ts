@@ -2,7 +2,7 @@
 // the keys that edit it (crates/teletext-showcase/src/interactive/
 // field.rs).
 
-import { Attribute, COLUMNS, type Colour, CursorFlag, type Input, Key, type Screen, character, englishCodes, pressed, textColour } from "../kit.ts";
+import { Attribute, COLUMNS, type Colour, CursorFlag, type Input, Key, type Screen, character, englishCodes, pressed, textColour, typed } from "../kit.ts";
 
 /**
  * The characters the English option set shows as themselves besides
@@ -30,8 +30,9 @@ export type Edit =
   | { readonly kind: "other" };
 
 /**
- * The edit `input` asks for. Raw text, a paste and a character key's
- * press (in ALL_KEYS, INPUT.md section 6.3) all type; releases do nothing.
+ * The edit `input` asks for. Raw text, a paste and a key's press or
+ * repeat with its text (INPUT.md section 6.3) all type; releases do
+ * nothing.
  */
 export function editOf(input: Input): Edit {
   if (input.kind === "text" || input.kind === "paste") {
@@ -49,8 +50,13 @@ export function editOf(input: Input): Edit {
   if (pressed(input, Key.Escape)) {
     return { kind: "escape" };
   }
-  const typed = character(input);
-  return typed === undefined ? { kind: "other" } : { kind: "character", character: typed };
+  const one = character(input);
+  if (one !== undefined) {
+    return { kind: "character", character: one };
+  }
+  // A dead key that did not compose types both its characters at once.
+  const text = typed(input);
+  return text === undefined ? { kind: "other" } : { kind: "text", text };
 }
 
 /** A line of typing, at most `limit` characters, each one a page can show. */

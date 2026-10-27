@@ -31,7 +31,6 @@ def test_a_screen_is_written_as_tti_the_engine_reads() -> None:
     screen.fastext([0x200, 0x300, None, 0x101])
     screen.index_link(0x100)
     screen.cursor(22, 4, 20, 1)
-    screen.modes(8)
     text = screen.tti(0x100)
     lines = text.splitlines()
     assert lines[0] == "PN,10000"
@@ -42,7 +41,7 @@ def test_a_screen_is_written_as_tti_the_engine_reads() -> None:
     assert "OL,3,\x1bF_hash" in lines
     assert "FL,200,300,8FF,101,8FF,100" in lines
     assert "CU,22,4,20,1" in lines
-    assert "IM,8" in lines
+    assert not any(line.startswith("IM,") for line in lines), "a page asks for no input: every event is sent (INPUT.md section 6.3)"
 
 
 def test_sub_pages_are_numbered_from_one_in_decimal() -> None:
@@ -122,6 +121,46 @@ def test_digits_and_coloured_keys_select_pages() -> None:
     assert gotos == [{"type": "goto", "session": 5, "page": "200"}, {"type": "goto", "session": 5, "page": "200"}]
 
 
+def test_typing_comes_from_a_keys_press_with_its_text_and_from_raw_text() -> None:
+    def typed(value: dict[str, Any]) -> str | None:
+        return Event.of(value).typed
+
+    assert typed({"kind": "key", "action": "press", "key": "e", "text": "\u00e9"}) == "\u00e9"
+    assert typed({"kind": "key", "action": "repeat", "key": "a", "text": "a"}) == "a"
+    assert typed({"kind": "key", "action": "release", "key": "a", "text": "a"}) is None, "a release types nothing"
+    assert typed({"kind": "key", "action": "press", "key": "a"}) is None, "a key that produced no text types nothing"
+    assert typed({"kind": "key", "action": "press", "key": "Enter", "text": "\r"}) is None, "a control character is the key's"
+    assert typed({"kind": "text", "text": "\u4f60\u597d"}) == "\u4f60\u597d", "an input method's committed text"
+    assert typed({"kind": "paste", "text": "a"}) is None
+    assert Event.of({"kind": "key", "action": "press", "key": "Numpad5", "text": "5"}).character == "5", "the keypad's digit"
+
+
+def test_a_hover_is_read_and_selects_nothing() -> None:
+    hover = {"kind": "hover", "action": "enter", "entered": True, "column": 1, "row": 3}
+    assert Event.of(hover) == Event(kind="hover", action="enter", entered=True, column=1, row=3)
+    assert not Event.of({**hover, "action": "leave", "entered": False}).entered
+    app = Recorder()
+    screen = Screen()
+    screen.coloured(3, 0, Colour.WHITE, "See 200")
+    app.publish(0x100, screen)
+    run(app, {"type": "input", "session": 1, "page": "100", "event": {**hover, "column": 5}})
+    assert not [message for message in app.sent if message["type"] == "goto"], "a hover over a page number is not a click"
+
+
+def test_digits_typed_on_the_keys_select_pages() -> None:
+    app = Recorder()
+    app.publish(0x100, Screen())
+    app.publish(0x200, Screen())
+    run(
+        app,
+        *(
+            {"type": "input", "session": 5, "page": "100", "event": {"kind": "key", "action": "press", "key": digit, "text": digit}}
+            for digit in "200"
+        ),
+    )
+    assert [message for message in app.sent if message["type"] == "goto"] == [{"type": "goto", "session": 5, "page": "200"}]
+
+
 def test_a_page_that_takes_keys_keeps_them() -> None:
     class Typing(Recorder):
         async def on_input(self, session: int, page: int, event: Event) -> bool:  # noqa: ARG002
@@ -149,7 +188,6 @@ def test_a_click_on_a_prompt_or_a_page_number_follows_it() -> None:
     front.coloured(24, 0, Colour.RED, "Red")
     front.coloured(24, 10, Colour.GREEN, "Green")
     front.fastext([0x200, 0x100, None, None])
-    front.modes(16)
     app.publish(0x100, front)
 
     def click(column: int, row: int) -> dict[str, Any]:

@@ -114,3 +114,5 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Verification:** Tests: a restarted program is told of its viewers and redraws each one's own page; a steady program starts again at once and a failing one waits.
 - **State:** Met, 27 October 2026: `a_restarted_program_is_told_of_its_viewers`, `a_steady_program_starts_again_at_once_and_a_failing_one_waits`; by hand, a saved change showed in the browser in 1.3 to 2 seconds.
 
+### Requirement 4.2: The mouse modes a page may ask for are agreed
+- **State:** Withdrawn, 27 October 2026, superseded by INPUT.md section 6.3: the input modes no longer exist, every event is sent whenever keys go to the channel, and WELCOME agrees only the capabilities (`a_receiver_is_welcomed_and_its_input_acknowledged`, `welcome_agrees_no_mode_bits`).

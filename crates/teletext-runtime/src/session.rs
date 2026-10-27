@@ -16,7 +16,7 @@ pub(crate) struct Session {
     /// of a channel never type, and the decoder holds a paste's worth of
     /// bytes (decision 7 item 4).
     pub decoder: Option<Box<StreamDecoder<MAX_STREAM_ITEM>>>,
-    /// WELCOME was sent: the receiver acts on cursor and mode records.
+    /// WELCOME was sent: the receiver acts on cursor records.
     pub welcomed: bool,
     /// The input count acted on, modulo 65 536 (INPUT.md section 7.1).
     pub acked: u16,
