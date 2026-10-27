@@ -62,6 +62,8 @@ ssh "$host" "set -e; . ~/.cargo/env; cd teletext-server; rustup toolchain instal
     git -C ~/teletext-server-engine-tools checkout --quiet --detach $engine_rev
     (cd ~/teletext-server-engine-tools && rustup toolchain install >/dev/null && cargo build --quiet --release --locked -p neoteletext-cli)
     (cd ~/neoteletext-server-channels && ~/.local/bin/uv sync --quiet --frozen --no-dev)
+    # The TypeScript channels' libraries, released into the channels' vendor/ (decision 13).
+    (cd ~/neoteletext-server-channels && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent)
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/teletext-server.service <<UNIT
 [Unit]

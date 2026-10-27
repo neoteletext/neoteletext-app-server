@@ -122,9 +122,9 @@ A line for the server's log.
 
 ## 5. Kits
 
-The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The kits and the channels built on them are in their own repository, `~/devel/neoteletext-server-channels` (decision 12).
+The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The channels and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13).
 
-- **TypeScript** (`kits/typescript`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), the TTI writer, sounds, and the line loop.
+- **TypeScript** (`neottx-server-ts-protocol`, in `~/devel/neottx-server-ts-protocol`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), the TTI writer, sounds, and the line loop. The component library over it, `neottx-server-ts-ui-components`, is in `~/devel/neottx-server-ts-ui-components`.
 - **Python** (`kits/python`): the same, thinner.
 
 ## 6. The channels file
