@@ -104,3 +104,26 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Source:** Decision 3.
 - **Verification:** Check: the full gate's fuzzing step.
 - **State:** Met, 25 October 2026: `websocket_reader` (the server's WebSocket frames, in any pieces) and `channel_input` (a channel of every showcase application, two sessions' input streams with time passing); each ran 20 seconds clean (906,063 and 1,132 runs). `channel_input` is slow, since each run builds every application with its sound library.
+
+## 3. Pages and sub-pages
+
+### Requirement 3.1: The standard's maxima, from the engine
+- **Statement:** The server must accept every page number the standard allows for content (00 to FE in magazines 1 to 8, less Annex A.10's reserved numbers: 2,022) and every sub-page a link can name (sub-codes 0001 to 3F7E: 8,190 a page), naming each bound from the engine's `neoteletext_core::limits` and writing none of its own. What it holds and sends at once is bounded by budgets, never by refusing a page or sub-page the standard allows.
+- **Reason:** The owner's instruction that the engine, the server and the browser have the standard's maximum from one piece of code.
+- **Source:** Decision 10; `neoteletext-common/STANDARD-LIMITS.md`.
+- **Verification:** Test: a channel that declares 2,022 pages and publishes 8,190 sub-pages on one; check: no literal bound in the runtime.
+- **State:** Not met, 26 October 2026: `MOST_PAGES` is 800 and `MOST_SUBPAGES` 64 in `teletext-runtime`.
+
+### Requirement 3.2: Sub-pages pass the wire only when needed
+- **Statement:** A client must receive a sub-page's content only while it tunes that sub-page; for the rest of a tuned page it receives the page's catalogue (sub-codes and versions) and its changes, and titles only for the places it asks for (`SERVER.md` sections 5.4, 5.5 and 6). An application must be able to publish and remove single sub-pages without resending the others (`SERVER.md` section 7.3).
+- **Reason:** The owner's instruction that sub-pages pass the wire only when needed; a page at the standard's maximum is about 9 MB.
+- **Source:** Decision 10.
+- **Verification:** Test: bytes sent to a client tuned to one sub-page of a page of 8,190, when it opens, when another sub-page changes and when it steps; measure before and after.
+- **State:** Not met, 26 October 2026: a page is held and sent whole, to every connection, on every change.
+
+### Requirement 3.3: Applications are told the limits
+- **Statement:** `start` must carry the standard's maxima and the server's budgets, written from the engine's constants; the Python and TypeScript kits must expose them and hold no limit of their own, and a test of each kit must check that none is written as a literal.
+- **Reason:** One definition, for programs in languages that cannot import the engine.
+- **Source:** Decision 10.
+- **Verification:** Test of each kit; review of the channels.
+- **State:** Not met, 26 October 2026: the Hackaday channel writes `MOST_SUBPAGES = 64`, and `start` carries `protocol` and `epoch_ms` only.
