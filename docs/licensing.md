@@ -21,7 +21,11 @@ GPL and AGPL, in any form.
 
 ## 5. What is in use
 
-The engine's crates (MIT), when imported. No other library yet.
+| Library | Licence | For | Approved |
+|---|---|---|---|
+| The engine's crates (`neoteletext-core`, `-formats`, `-input`, `-audio`, `-web`) | MIT | Teletext itself | Decision 1 |
+| `tokio`, `hyper`, `hyper-util` | MIT | The native host | Decision 5 |
+| `libfuzzer-sys` | (MIT or Apache-2.0) and NCSA, for the LLVM libFuzzer it bundles | `fuzz/`, outside the shipped server | Decision 5 |
 
 ### 5.1 What the channels use
 
@@ -31,3 +35,12 @@ The channels are programs of their own (decision 8). What they run is not linked
 |---|---|---|---|
 | ruff, mypy, pytest (`uv.lock`) | MIT | The Python checks | Development only, not deployed (`uv run --no-dev`) |
 | numpy, Pillow (the engine's `scripts/image-to-teletext.py` pins them) | BSD-3-Clause; MIT-CMU (the historical PIL licence, permissive) | The Hackaday channel's pictures, through the engine's converter run by uv | The engine's own tool, not copied; MIT-CMU is outside `DEVELOPMENT.md` section 7's list, so the owner confirms it |
+
+## 6. Approved, not yet used
+
+| Library | Licence | For | Approved |
+|---|---|---|---|
+| `rustls`, `tokio-rustls`, `rustls-acme` | MIT or Apache-2.0 | TLS and certificates | Decision 5 |
+| `symphonia` (0.6.x) | MPL-2.0, by the owner's decision (section 2) | Decoding streamed audio: MP3, AAC, FLAC and Vorbis (`streaming-audio.md`) | Decision 5, 25 October 2026 |
+
+When `symphonia` is added, `deny.toml` allows MPL-2.0 and `CREDITS.md` names it. MPL-2.0 is copyleft per file: its own files stay under MPL-2.0 and their source stays available; this project's files keep their own licence.
