@@ -18,4 +18,4 @@ The NeoTeletext server. The design is `~/devel/neoteletext-common/SERVER.md`; th
 
 - Tools: `scripts/tools.sh` installs the pinned tools into the ignored `tools/`; the check script refuses other versions.
 - Edit loop: `scripts/try.sh` (Clippy on every save) or `scripts/try.sh <crate> [filter]`.
-- Gates: `scripts/check.sh commit` (pre-commit; it checks what is staged), `scripts/check.sh full` (pre-push; its Linux stage runs on `TELETEXT_LINUX_HOST`, `foundintelquiet4060` by default). Hooks: `git config core.hooksPath .githooks`.
+- Gates: `scripts/check.sh commit` (pre-commit; it checks what is staged, compile-clean only), `scripts/check.sh push` (pre-push of any branch but `main`; adds the feature shapes and tests), `scripts/check.sh full` (pre-push to `main`, the long integration step; each gate prints its last time first; its Linux stage runs on `TELETEXT_LINUX_HOST`, `foundintelquiet4060` by default). Hooks: `git config core.hooksPath .githooks`.

@@ -29,7 +29,54 @@ readonly WASM_TARGET="wasm32-unknown-unknown"
 # The crates that build for WebAssembly: everything a Worker links.
 readonly WASM_CRATES=(teletext-runtime teletext-cloudflare)
 
-step() { printf '\n== %s\n' "$*"; }
+# Timing and stamps (~/devel/neoteletext-common/DEVELOPMENT.md section 9):
+# each step prints its time as it ends; a pass records its steps' times,
+# for the next run's warning, and the tree it passed on, so a higher tier
+# does not run it again.
+# The Linux host's copy has no git directory, and records nothing.
+git_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+step_name=""
+step_start=$SECONDS
+step_times=""
+minutes() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
+end_step() {
+    [[ -n "$step_name" ]] || return 0
+    local took=$((SECONDS - step_start))
+    printf '   (%s)\n' "$(minutes "$took")"
+    step_times+="$took	$step_name"$'\n'
+    step_name=""
+}
+step() {
+    end_step
+    step_name="$*"
+    step_start=$SECONDS
+    printf '\n== %s\n' "$*"
+}
+announce() {
+    local file="$git_dir/gate-times-$1"
+    if [[ -f "$file" ]]; then
+        printf '== the %s gate: its last pass took %s; its slowest steps:\n' "$1" "$(minutes "$(head -1 "$file")")"
+        tail -n +2 "$file" | sort -rn | head -3 | while IFS=$'\t' read -r took name; do
+            printf '   %s  %s\n' "$(minutes "$took")" "$name"
+        done
+    else
+        printf '== the %s gate: no pass measured yet\n' "$1"
+    fi
+}
+passed() {
+    local tree="$2"
+    [[ -n "$tree" && -f "$git_dir/gate-passed-$1" && "$(cat "$git_dir/gate-passed-$1")" == "$tree" ]]
+}
+stamp() {
+    [[ -z "$2" ]] || printf '%s\n' "$2" >"$git_dir/gate-passed-$1"
+}
+record_pass() {
+    local tier="$1" tree="$2" took=$((SECONDS - gate_start))
+    end_step
+    printf '%s\n%s' "$took" "$step_times" >"$git_dir/gate-times-$tier"
+    stamp "$tier" "$tree"
+    printf '\nthe %s gate passed in %s\n' "$tier" "$(minutes "$took")"
+}
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2
     exit 1
@@ -89,6 +136,10 @@ check_workspace() {
     check_no_panic_lists
     step "Clippy, warnings as errors"
     cargo clippy --quiet --workspace --all-targets -- -D warnings
+}
+
+# What the push gate adds: every shape, and the tests.
+check_shapes_and_tests() {
     step "Clippy with every optional feature compiled out, warnings as errors"
     cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings
     step "Clippy for $WASM_TARGET, warnings as errors: ${WASM_CRATES[*]}"
@@ -126,15 +177,26 @@ commit_gate() {
         loose="$(unstaged_under crates fuzz scripts .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)"
         [[ -z "$loose" ]] || fail "changes that are not staged would make this check test something other than the commit; stage or stash them:
 $loose"
-        check_workspace
+        tree="$(git write-tree)"
+        if passed commit "$tree"; then
+            printf '\n== the commit gate already passed on this tree\n'
+            tree=""
+        else
+            check_workspace
+        fi
     fi
     return 0
 }
 
+# Runs alongside the steps here in the full gate; its output is shown
+# when they are done. The copy compares content and keeps none of this
+# machine's times, which would make a file edited here before the host's
+# last build look older than that build.
 check_linux() {
+    step_name=""
     step "Linux on $linux_host: Clippy and tests"
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
-    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
+    rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on its public repository, which the
     # host fetches by itself. rustup installs the toolchain
@@ -142,6 +204,7 @@ check_linux() {
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install
         cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings"
+    end_step
 }
 
 check_fuzz() {
@@ -165,19 +228,44 @@ check_fuzz() {
     )
 }
 
-full_gate() {
-    # The commit being pushed is the one checked: the pre-push hook passes
-    # the pushed commits, and the tree must be clean at HEAD.
+# The commit pushed is the one checked: the pre-push hook passes the
+# pushed commits, and the tree must be clean at HEAD.
+clean_head() {
     local pushed
     for pushed in "$@"; do
         [[ "$pushed" == "$(git rev-parse HEAD)" ]] || fail "pushing $pushed, but HEAD is $(git rev-parse HEAD); check out what you push"
     done
     local loose
     loose="$(unstaged_under .; git diff --cached --name-only)"
-    [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the full gate checks the commit being pushed:
+    [[ -z "$loose" ]] || fail "the tree has changes that are not committed; the $mode gate checks the commit being pushed:
 $loose"
+    tree="$(git rev-parse 'HEAD^{tree}')"
+    if passed "$mode" "$tree"; then
+        printf '\n== the %s gate already passed on this tree\n' "$mode"
+        exit 0
+    fi
+}
 
-    check_workspace
+push_gate() {
+    if passed commit "$tree"; then
+        printf '\n== the commit gate passed on this tree: skipped\n'
+    else
+        check_workspace
+    fi
+    check_shapes_and_tests
+}
+
+full_gate() {
+    local linux_log="$git_dir/gate-linux.log" linux_pid
+    check_linux >"$linux_log" 2>&1 &
+    linux_pid=$!
+    printf '\n== the Linux steps on %s run alongside, logged in %s\n' "$linux_host" "$linux_log"
+
+    if passed push "$tree"; then
+        printf '\n== the push gate passed on this tree: skipped\n'
+    else
+        push_gate
+    fi
     step "documentation tests"
     cargo test --quiet --workspace --doc
     step "documentation builds, warnings as errors"
@@ -191,21 +279,48 @@ $loose"
     step "no unused dependencies"
     cargo machete
     check_fuzz
-    check_linux
 
+    step "waiting for the Linux steps on $linux_host"
+    if ! wait "$linux_pid"; then
+        cat "$linux_log"
+        fail "the Linux steps on $linux_host failed"
+    fi
+    cat "$linux_log"
+
+    local loose
     step "the gate changed nothing that is committed"
     loose="$(git status --porcelain --untracked-files=no)"
     [[ -z "$loose" ]] || fail "running the gate changed committed files, so what passed is not what is committed:
 $loose"
 }
 
+tree=""
 case "$mode" in
-commit) commit_gate ;;
+commit | push | full) announce "$mode" ;;
+esac
+gate_start=$SECONDS
+
+case "$mode" in
+commit)
+    commit_gate
+    [[ -z "$tree" ]] || record_pass commit "$tree"
+    ;;
+push)
+    shift
+    clean_head "$@"
+    push_gate
+    record_pass push "$tree"
+    stamp commit "$tree"
+    ;;
 full)
     shift
-    full_gate "$@"
+    clean_head "$@"
+    full_gate
+    record_pass full "$tree"
+    stamp push "$tree"
+    stamp commit "$tree"
     ;;
-*) fail "usage: scripts/check.sh commit | full [pushed commit]..." ;;
+*) fail "usage: scripts/check.sh commit | push | full [pushed commit]..." ;;
 esac
 
 step "All checks passed ($mode)"
