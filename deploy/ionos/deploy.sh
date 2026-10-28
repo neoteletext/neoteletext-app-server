@@ -112,13 +112,18 @@ ssh "$target" "set -e; sudo systemctl daemon-reload; sudo systemctl enable --now
 
 say "caddyrouter: the neoteletext site block"
 # The block between its BEGIN and END lines is replaced whole (or the first
-# deploy's unmarked neoteletext.com block, or appended), in a candidate that
-# must validate before the live Caddyfile changes.
+# deploy's unmarked neoteletext.com block, to its closing brace, or
+# appended), in a candidate that must validate before the live Caddyfile
+# changes. A marked block ends at its END line alone: ending it at the
+# closing brace left the old END behind, one more on every deploy, and
+# those strays are dropped.
 # shellcheck disable=SC2016 # expanded on caddyrouter
 ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
     awk -v block="$block" '"'"'
-        /^# BEGIN neoteletext / || /^# neoteletext.com: its own nspawn container/ { skip = 1 }
-        skip && (/^# END neoteletext/ || /^}$/) { skip = 0; if (!done) { while ((getline line < block) > 0) print line; done = 1 }; next }
+        /^# BEGIN neoteletext / { skip = "end" }
+        /^# neoteletext.com: its own nspawn container/ { skip = "brace" }
+        (skip == "end" && /^# END neoteletext/) || (skip == "brace" && /^}$/) { skip = ""; if (!done) { while ((getline line < block) > 0) print line; done = 1 }; next }
+        !skip && /^# END neoteletext/ { next }
         !skip { print }
         END { if (!done) while ((getline line < block) > 0) print line }
     '"'"' /etc/caddy/Caddyfile > "$candidate"; chmod 644 "$candidate"
