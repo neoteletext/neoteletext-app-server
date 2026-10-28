@@ -1,24 +1,42 @@
 //! One WebSocket connection: its input to the channel, what is its own
 //! from the channel, and the shared pages, which it catches up on by
 //! itself from the channel's log (decision 7).
+//!
+//! **Keepalive** (requirement 11.3): the receiver pings a connection it
+//! has heard nothing on for a while and is answered here; this side pings
+//! one it has heard nothing on for longer, which only a receiver busy
+//! reading, or a dead one, leaves so quiet, and drops it when nothing at
+//! all comes back. Both are WebSocket control frames (RFC 6455 sections
+//! 5.5.2 and 5.5.3), which a receiver never displays.
 
 use std::collections::BTreeSet;
 use std::io::IoSlice;
 use std::sync::Arc;
+use std::time::Duration;
 
 use teletext_runtime::SessionId;
 use teletext_runtime::frame;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use crate::hub::{Command, Hub, OUTBOX, Outbound};
 use crate::stats::ServerStats;
 use crate::websocket::{CLOSE_PROTOCOL_ERROR, Message, Opcode, Reader, header};
+use neoteletext_web::consts::{PUSH_PING_AFTER_US, PUSH_PONG_WITHIN_US};
 
 /// The bytes read from the socket at a time. Input is a few bytes a key;
 /// a longer message arrives over several reads (decision 7 item 4).
 const READ_BYTES: usize = 1_024;
+/// A connection heard nothing on for this long is pinged: the receiver's
+/// heartbeat (the engine's REQ-WEB-005) pings one it has heard nothing on
+/// for `PUSH_PING_AFTER_US`, so a live receiver on a quiet connection has
+/// always been heard by then, its own wait for the pong the margin.
+pub const PING_AFTER: Duration = Duration::from_micros(PUSH_PING_AFTER_US.saturating_add(PUSH_PONG_WITHIN_US));
+/// A ping answered by nothing within this long means the connection is
+/// dead, the receiver's own bound for its pings.
+pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US);
 
 /// Serves one connection until it closes: `stream` is the socket hyper
 /// upgraded, and `early` what hyper had read past the upgrade.
@@ -38,14 +56,21 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
     let mut reader = Reader::new();
     reader.feed(early);
     let mut buffer = vec![0_u8; READ_BYTES];
+    // When anything was last heard, and when this side pinged since.
+    let mut heard = Instant::now();
+    let mut pinged: Option<Instant> = None;
     let mut open = send_pages(&mut writing, hub.pages.all(), &own, &stats).await;
     while open {
+        let due = pinged.map_or_else(|| heard.checked_add(PING_AFTER), |at| at.checked_add(DEAD_AFTER_PING)).unwrap_or(heard);
         tokio::select! {
             read = reading.read(&mut buffer) => {
                 let Ok(count) = read else { break };
                 if count == 0 {
                     break;
                 }
+                // Any byte at all shows the receiver is there.
+                heard = Instant::now();
+                pinged = None;
                 reader.feed(buffer.get(..count).unwrap_or(&[]));
                 open = messages(&mut reader, &mut writing, &hub, session, &stats).await;
             }
@@ -72,6 +97,17 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
                 };
                 sent = now;
                 open = send_pages(&mut writing, pages, &own, &stats).await;
+            }
+            () = tokio::time::sleep_until(due) => {
+                if pinged.is_some() {
+                    // RFC 6455 section 7.1.7: a peer that answers nothing
+                    // is not sent a Close; the connection is dropped.
+                    tracing::debug!(target: "connection", channel = hub.folder, session, "dropped: no answer to a ping");
+                    open = false;
+                } else {
+                    pinged = Some(Instant::now());
+                    open = write(&mut writing, Opcode::Ping, &[], &stats).await;
+                }
             }
         }
     }
@@ -151,3 +187,6 @@ async fn write<W: AsyncWrite + Unpin>(writing: &mut W, opcode: Opcode, payload: 
     }
     true
 }
+
+#[cfg(test)]
+mod tests;

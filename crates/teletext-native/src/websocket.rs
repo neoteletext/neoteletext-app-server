@@ -19,10 +19,10 @@ const MAX_CONTROL: usize = 125;
 const LENGTH_16: u8 = 126;
 /// A 64-bit length follows.
 const LENGTH_64: u8 = 127;
-const FIN: u8 = 0x80;
+pub(crate) const FIN: u8 = 0x80;
 const RSV: u8 = 0x70;
 const OPCODE: u8 = 0x0F;
-const MASKED: u8 = 0x80;
+pub(crate) const MASKED: u8 = 0x80;
 const LENGTH_7: u8 = 0x7F;
 const MASK_BYTES: usize = 4;
 

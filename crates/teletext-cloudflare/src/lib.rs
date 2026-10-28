@@ -12,9 +12,12 @@
 //! - **What survives** eviction and deployment is kept in the object's
 //!   SQLite storage through the runtime's `Store` and `Forget` effects
 //!   (requirement 5.2).
-//! - **Time** is the object's single alarm: the runtime's next deadline,
-//!   and while anyone watches, the time-filling header each second, which
-//!   keeps a watched channel's object awake (decision 20).
+//! - **Time** is the object's single alarm: the runtime's next deadline.
+//!   Nothing is sent for the time's sake (requirement 11.2), so a channel
+//!   whose pages do not change lets its object hibernate, watched or not.
+//! - **Keepalive** (requirement 11.3): the receiver pings a connection it
+//!   has heard nothing on, and Cloudflare's runtime answers the ping
+//!   itself, without waking the object; a Worker cannot send one.
 //!
 //! The crate is empty on every other target.
 
@@ -66,9 +69,6 @@ const VIEWER_TAG: &str = "viewer";
 const PROGRAM_TAG: &str = "program";
 /// The page a viewer starts on.
 const INITIAL_PAGE: u16 = 0x100;
-/// How often viewers are sent a time-filling header, in milliseconds (EN
-/// 300 706 clause 9.3.1; the native host's `CLOCK_EVERY_S`).
-const CLOCK_EVERY_MS: u64 = 1_000;
 /// A Close's status: the other side broke the protocol (RFC 6455 section 7.4.1).
 const CLOSE_PROTOCOL_ERROR: u16 = 1002;
 /// The object's tables, a migration a version (the numbered migrations of
@@ -179,8 +179,6 @@ struct Live {
     key: Key,
     /// Whether viewers reach the Worker over `https`.
     secure: bool,
-    /// When the time-filling header is next due.
-    clock_due: u64,
     /// The alarm last set, in milliseconds since the Unix epoch.
     alarm: Option<u64>,
 }
@@ -244,12 +242,9 @@ impl Live {
     }
 
     /// When the object next needs its alarm, in milliseconds since the
-    /// Unix epoch: the runtime's next deadline, and the clock while anyone
-    /// watches.
+    /// Unix epoch: the runtime's next deadline.
     fn next_alarm(&self) -> Option<u64> {
-        let deadline = self.channel.next_wake().map(|at| self.started_ms.saturating_add(at));
-        let clock = (!self.viewers.is_empty()).then(|| self.started_ms.saturating_add(self.clock_due));
-        deadline.into_iter().chain(clock).min()
+        self.channel.next_wake().map(|at| self.started_ms.saturating_add(at))
     }
 
     /// A session number never given before, and not connected now.
@@ -381,7 +376,6 @@ impl ChannelObject {
             next_session: first_session(started_ms),
             key,
             secure: origin.starts_with("https://"),
-            clock_due: CLOCK_EVERY_MS,
             alarm: None,
         };
         // A program still connected declared its pages before; they were kept.
@@ -518,13 +512,6 @@ impl worker::DurableObject for ChannelObject {
             live.alarm = None;
             let now = live.now();
             live.channel.deadline(now);
-            if !live.viewers.is_empty() && now >= live.clock_due {
-                let header = live.channel.time_filling(now);
-                for viewer in live.viewers.values() {
-                    send_binary(&viewer.socket, header.as_ref());
-                }
-                live.clock_due = now.saturating_add(CLOCK_EVERY_MS);
-            }
         })?;
         self.schedule().await?;
         Response::ok("")

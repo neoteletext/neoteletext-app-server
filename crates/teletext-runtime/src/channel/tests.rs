@@ -280,3 +280,82 @@ fn welcome_agrees_no_mode_bits() {
     let (_, agreed) = first_control(&sent(&channel.take_effects(), 1)).unwrap();
     assert_eq!(agreed, OFFER);
 }
+
+/// Row 0's text and mosaics in columns 8 to 39, as a converted picture's
+/// top row holds them: separated graphics white, then sixels.
+const PICTURE_ROW_0: &[u8] = b"\x1f\x17 `pp0 Qp  `pp  A picture's top";
+const _: () = assert!(crate::screen::HEADER_TEXT_COLUMN + PICTURE_ROW_0.len() == neoteletext_core::consts::COLUMNS);
+
+/// Publishes page 100 shared with `PICTURE_ROW_0` in row 0 and page 101
+/// shared with row 0 blank; page 102 each session's own, with the same
+/// row 0 as page 100.
+struct Rows0;
+
+impl Application for Rows0 {
+    fn pages(&self) -> Vec<PageEntry> {
+        alloc::vec![PageEntry::new(0x100, "Picture"), PageEntry::new(0x101, "Blank"), PageEntry::new(0x102, "Own")]
+    }
+
+    fn start(&mut self, context: &mut Context<'_>) {
+        let mut picture = Screen::new();
+        picture.codes(0, crate::screen::HEADER_TEXT_COLUMN, PICTURE_ROW_0);
+        context.publish(Owner::Channel, 0x100, &picture);
+        context.publish(Owner::Channel, 0x101, &Screen::new());
+    }
+
+    fn opened(&mut self, session: SessionId, _: u16, context: &mut Context<'_>) {
+        let mut own = Screen::new();
+        own.codes(0, crate::screen::HEADER_TEXT_COLUMN, PICTURE_ROW_0);
+        context.publish(Owner::Session(session), 0x102, &own);
+    }
+}
+
+/// Row 0's columns 8 to 39, without parity, of each header among `frame`'s packets.
+fn headers(frame: &[u8]) -> Vec<Vec<u8>> {
+    frame
+        .chunks(PACKET_BYTES)
+        .filter_map(|chunk| match neoteletext_core::packet::decode(&Packet { bytes: chunk.try_into().unwrap() }) {
+            Ok(neoteletext_core::packet::Decoded::Header(header)) => Some(header.display.iter().map(|byte| byte & 0x7F).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Requirement 11.1: columns 8 to 39 of row 0 reach the viewer as the
+/// program published them, shared or a session's own, and a blank row 0
+/// stays blank. Before, the runtime wrote the channel's name, the page's
+/// number, the date and the clock over them.
+#[test]
+fn row_0_is_the_pages_own() {
+    let config = ChannelConfig {
+        name: "Test".to_string(),
+        push_address: "ws://127.0.0.1:1/test/push".to_string(),
+        initial_page: 0x100,
+        epoch_at_start_ms: 1_793_056_542_000,
+        session_grace_ms: 0,
+    };
+    let mut channel = Channel::new(config, alloc::vec![Box::new(Rows0)], 7);
+    channel.start(0);
+    let shared: BTreeMap<u16, Arc<[u8]>> = channel
+        .take_effects()
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Shared { page, frame } => Some((page, frame)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(headers(&shared[&0x100]), [PICTURE_ROW_0]);
+    assert_eq!(headers(&shared[&0x101]), [[crate::screen::SPACE; PICTURE_ROW_0.len()]]);
+    channel.opened(1, 0);
+    channel.received(1, &message(&Item::Event(Event::Page(0x102))), 0);
+    let own: Vec<Vec<u8>> = channel
+        .take_effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { session: 1, bytes } => Some(headers(bytes)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(!own.is_empty() && own.iter().all(|row| row == PICTURE_ROW_0), "{own:?}");
+}

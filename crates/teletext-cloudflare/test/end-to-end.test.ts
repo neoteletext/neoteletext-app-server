@@ -28,6 +28,16 @@ const LOCAL_SECRET = "local-test-secret";
 const WITHIN_MS = 60_000;
 /** A T42 packet's bytes (EN 300 706 clause 7.1). */
 const PACKET_BYTES = 42;
+/** WebSocket opcodes (RFC 6455 section 5.2). */
+const OPCODE_BINARY = 0x2;
+const OPCODE_PING = 0x9;
+const OPCODE_PONG = 0xa;
+/** A frame's first byte: the final fragment. */
+const FIN = 0x80;
+/** A client frame's second byte: masked, as every client frame is (RFC 6455 section 5.3). */
+const MASKED = 0x80;
+/** How long a viewer on pages that do not change is watched for anything sent unasked. */
+const QUIET_MS = 5_000;
 
 const deployed = process.env.NEOTELETEXT_URL;
 const base = deployed ?? `http://127.0.0.1:${LOCAL_PORT}`;
@@ -144,7 +154,19 @@ class Viewer {
 
   /** The binary messages received so far, by their payloads' lengths. */
   messages(): number[] {
-    const lengths: number[] = [];
+    return this.frames()
+      .filter((frame) => frame.opcode === OPCODE_BINARY)
+      .map((frame) => frame.length);
+  }
+
+  /** Sends a Ping of `payload`, masked with the key 0. */
+  ping(payload: Buffer): void {
+    this.socket.write(Buffer.concat([Buffer.from([FIN | OPCODE_PING, MASKED | payload.length, 0, 0, 0, 0]), payload]));
+  }
+
+  /** The frames received so far: each one's opcode, payload length and payload. */
+  frames(): { opcode: number; length: number; payload: Buffer }[] {
+    const frames: { opcode: number; length: number; payload: Buffer }[] = [];
     let at = 0;
     while (at + 2 <= this.#buffer.length) {
       let length = this.#buffer[at + 1]! & 0x7f;
@@ -159,10 +181,10 @@ class Viewer {
         header = 10;
       }
       if (at + header + length > this.#buffer.length) break;
-      if ((this.#buffer[at]! & 0x0f) === 0x2) lengths.push(length);
+      frames.push({ opcode: this.#buffer[at]! & 0x0f, length, payload: this.#buffer.subarray(at + header, at + header + length) });
       at += header + length;
     }
-    return lengths;
+    return frames;
   }
 
   close(): void {
@@ -210,16 +232,26 @@ test("a program without the channel's secret is refused, and a second is refused
   second.close();
 });
 
-test("a viewer is sent the pages and the clock, and continues its session with its cookie", async () => {
+test("a viewer is sent the pages and nothing unasked after, its ping is answered, and it continues its session with its cookie", async () => {
   await eventually(() => page(`/${channel}/100.t42`), "page 100");
   const first = await Viewer.open();
   assert.equal(first.status, 101, first.head);
   const session = first.session;
   assert.ok(session !== undefined, `a cookie: ${first.head}`);
   assert.match(first.head.toLowerCase(), /set-cookie: _session=\d+\.\d+\.[0-9a-f]{64}; path=\/[^/]+\/; max-age=2592000; httponly; samesite=strict/);
-  // Every shared page, then a time-filling header (one packet) each second.
-  await eventually(async () => (first.messages().filter((length) => length === PACKET_BYTES).length >= 2 ? true : undefined), "two clock headers");
-  assert.ok(first.messages().some((length) => length > PACKET_BYTES), "the pages themselves");
+  // Every shared page, and then, on pages that do not change, nothing: no
+  // time-filling header (requirement 11.2).
+  await eventually(async () => (first.messages().some((length) => length > PACKET_BYTES) ? true : undefined), "the pages themselves");
+  await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
+  const sent = first.messages().length;
+  await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
+  assert.equal(first.messages().length, sent, "nothing sent unasked");
+  assert.ok(!first.messages().includes(PACKET_BYTES), "no header alone");
+  // The keepalive: the runtime answers a ping (requirement 11.3).
+  const payload = Buffer.from("keep");
+  first.ping(payload);
+  const pong = await eventually(async () => first.frames().find((frame) => frame.opcode === OPCODE_PONG), "a pong");
+  assert.deepEqual(pong.payload, payload, "the ping's payload");
   const cookie = first.cookie;
   first.close();
   const again = await eventually(async () => {

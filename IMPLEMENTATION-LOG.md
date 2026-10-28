@@ -81,3 +81,13 @@ Taken on the owner's instruction to go ahead with all of it ("i agree with all .
 | 36 | What "16 kbit/s on average" means for a constant-rate sound | Packets of at most 40 bytes | E.123 checks the average where a sound is published; at constant rate a packet's length is its rate, 40 bytes being 16 kbit/s exactly. |
 | 37 | The protocol's names for Opus | `opus`, `opus_live`, `opus_packets`, beside `object`, `live`, `blocks` | Parallel to the PCM members, so a kit keeps both paths side by side; `packet_bytes` named as the engine names it. |
 | 38 | The test's Opus | One second of a 440 Hz tone from `ffmpeg` with libopus 1.5, with E.124's own command, kept as `crates/teletext-runtime/src/remote/opus-tone.packets` | Real encoder output, every packet 40 bytes in five configurations (SILK, Hybrid and CELT, bare and padded); generated, so no one's rights in it. |
+
+## 29 October 2026: row 0 the page's, and the keepalive (decision 22)
+
+| Row | Question | Decision | Reason |
+|---|---|---|---|
+| 39 | Row 28's reason, now that nothing stamps the header | Row 28 stands: the record is the encoded frame | The frame now carries row 0 as the program published it, which is what a kept page must be served as. Row 28's reason is superseded. |
+| 40 | When the native host pings | After 35 seconds of hearing nothing: the receiver's 25 and its own 10 added; dropped 10 seconds after an unanswered Ping | A live receiver on a quiet connection always pings first, so this side pings only a connection busy with pages or a dead one: a quiet connection carries the receiver's heartbeat alone. The bounds are the engine's constants, imported, so the two cannot drift. |
+| 41 | Close a connection that answered nothing, or drop it | Drop it, without a Close | RFC 6455 section 7.1.7: a peer that answers nothing is failed, not closed; a Close would wait on the same dead socket. |
+| 42 | What restarts the keepalive's wait | Any byte read | Any byte shows the receiver is there; frames need not be whole for that. |
+| 43 | The Cloudflare host, where a Worker cannot send a Ping | Leave the receiver's Pings to Cloudflare's runtime, which answers them without waking the object | Measured under `wrangler dev`: a Ping answered with its payload. An object that woke for each would cost what the clock cost. |

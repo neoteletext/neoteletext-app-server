@@ -26,10 +26,9 @@ use crate::websocket::{CLOSE_PROTOCOL_ERROR, CLOSE_SERVICE_RESTART};
 /// How often a channel's counts are sent to its application, in seconds:
 /// often enough for a live figure on a page, rarely enough to cost nothing.
 pub const STATS_EVERY_S: u64 = 10;
-/// How often each viewer is sent a time-filling header: a clock shows
-/// seconds (EN 300 706 clause 9.3.1, the engine's decision E.121). The
-/// channel's figures are recorded for `/metrics` as often.
-pub const CLOCK_EVERY_S: u64 = 1;
+/// How often the channel's figures are recorded for `/metrics`. Nothing
+/// is sent to viewers for the time's sake (requirement 11.2).
+pub const RECORD_EVERY_S: u64 = 1;
 /// How often what the channel keeps is written, at most (requirement 5.2).
 pub const KEEP_EVERY_S: u64 = 5;
 
@@ -229,7 +228,7 @@ enum Event {
     Application(FromApplication),
     Deadline,
     Figures,
-    Clock,
+    Record,
     Keep,
 }
 
@@ -290,10 +289,9 @@ impl Task {
             tokio::time::interval_at(Instant::now().checked_add(period).unwrap_or_else(Instant::now), period)
         };
         let mut figures = every(STATS_EVERY_S);
-        // A time-filling header each second keeps every viewer's clock
-        // (the runtime's `header.rs`); a tick missed is not made up.
-        let mut clock = every(CLOCK_EVERY_S);
-        clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // A tick missed is not made up: the next records the figures as they are.
+        let mut record = every(RECORD_EVERY_S);
+        record.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut keep = every(KEEP_EVERY_S);
         keep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         self.apply(channel.take_effects(), &channel);
@@ -317,7 +315,7 @@ impl Task {
                 }
                 () = sleep_until(wake) => Event::Deadline,
                 _ = figures.tick() => Event::Figures,
-                _ = clock.tick() => Event::Clock,
+                _ = record.tick() => Event::Record,
                 _ = keep.tick() => Event::Keep,
             };
             let began = Instant::now();
@@ -364,13 +362,7 @@ impl Task {
             Event::Application(FromApplication::Line(text)) => channel.from_application(0, &text, now),
             Event::Application(FromApplication::Ended) => self.program_live = false,
             Event::Deadline => channel.deadline(now),
-            Event::Clock => {
-                let header = channel.time_filling(now);
-                for outbox in self.outboxes.values() {
-                    let _ = outbox.try_send(Outbound::Bytes(Arc::clone(&header)));
-                }
-                self.record(channel);
-            }
+            Event::Record => self.record(channel),
             Event::Figures => {
                 if self.program_live
                     && let Some(to) = self.to_application.as_ref()

@@ -70,7 +70,7 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
-- The server writes row 0's header itself, as a teletext inserter does (EN 300 706 clause 9.3.1): the channel's name, the page's number, the date and the time, UTC, such as `HACKADAY 100 Mon 26 Oct 23:15/42`; what a program writes in columns 8 to 39 of row 0 is replaced. It also sends every viewer a time-filling header each second, so the clock on a page that does not change keeps time (the engine's decision E.121). Columns 0 to 7 are the receiver's.
+- Row 0's columns 8 to 39 are the program's (EN 300 706 clause 9.3.1.4; decision 22, `docs/requirements.md` section 11): what an `OL,0` line puts there reaches the viewer as written, and the server writes nothing there. A program that wants a name, a date or a clock in the header writes it; without an `OL,0` line the row is blank. Columns 0 to 7 are the receiver's, where it shows the page's number; what a program puts there is never shown. The server sends no time-filling header: a clock on a page changes when the program publishes the page again.
 
 ### 3.3 `goto`
 

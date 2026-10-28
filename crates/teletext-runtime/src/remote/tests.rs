@@ -118,7 +118,7 @@ fn a_published_tti_page_is_the_channels() {
     assert_eq!(started[0].get("protocol").and_then(Value::integer), Some(PROTOCOL));
     assert_eq!(started[0].get("epoch_ms").and_then(Value::integer), Some(1_000));
 
-    let line = br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,1,\u001bAHACKADAY\nOL,3,Fresh hacks every day\nFL,200,300,400,500,8ff,100\n"}"#;
+    let line = br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,0,        Hackaday, by the program\nOL,1,\u001bAHACKADAY\nOL,3,Fresh hacks every day\nFL,200,300,400,500,8ff,100\n"}"#;
     channel.from_application(0, line, 0);
     let effects = channel.take_effects();
     assert!(logs(&effects).is_empty(), "{:?}", logs(&effects));
@@ -130,7 +130,8 @@ fn a_published_tti_page_is_the_channels() {
         Ok(Decoded::Header(header)) => Some(header.display.iter().map(|&byte| char::from(byte & 0x7F)).collect::<String>()),
         _ => None,
     });
-    assert_eq!(header.as_deref(), Some("TEST     100 Thu 01 Jan 00:00/01"), "the service's header, as an inserter writes it");
+    // Columns 8 to 39 of row 0 are the program's (requirement 11.1).
+    assert_eq!(header.as_deref(), Some("Hackaday, by the program        "), "the program's own header");
 }
 
 /// A page's controls (INPUT.md section 7.3) reach the browser: the packed
