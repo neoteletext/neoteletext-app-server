@@ -35,6 +35,7 @@ The channels are programs of their own (decision 8). What they run is not linked
 |---|---|---|---|
 | ruff, mypy, pytest (`uv.lock`) | MIT | The Python checks | Development only, not deployed (`uv run --no-dev`) |
 | numpy, Pillow (the engine's `scripts/image-to-teletext.py` pins them) | BSD-3-Clause; MIT-CMU (the historical PIL licence, permissive) | The Hackaday channel's pictures, through the engine's converter run by uv | The engine's own tool, not copied; MIT-CMU is outside `DEVELOPMENT.md` section 7's list, so the owner confirms it |
+| tslib (through oxlint-tsgolint) | 0BSD | The TypeScript channels' and kits' lint, an optional fallback not installed on macOS or Linux x64 | Development only, never linked into a channel; 0BSD is outside `DEVELOPMENT.md` section 7's list, approved by the owner on 28 October 2026 (decision 13) |
 
 ## 6. Approved, not yet used
 
