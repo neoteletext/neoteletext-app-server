@@ -7,6 +7,7 @@ use std::io::IoSlice;
 use std::sync::Arc;
 
 use teletext_runtime::SessionId;
+use teletext_runtime::frame;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -49,7 +50,7 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
                 open = messages(&mut reader, &mut writing, &hub, session, &stats).await;
             }
             outbound = own_queue.recv() => match outbound {
-                Some(Outbound::Bytes(bytes)) => open = write(&mut writing, Opcode::Binary, &bytes, &stats).await,
+                Some(Outbound::Bytes(bytes)) => open = write_binary(&mut writing, &bytes, &stats).await,
                 Some(Outbound::Own(page)) => { own.insert(page); }
                 Some(Outbound::Disown(page)) => { own.remove(&page); }
                 Some(Outbound::Close(code)) => {
@@ -114,7 +115,18 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
 /// Sends shared pages, but not those the session owns.
 async fn send_pages<W: AsyncWrite + Unpin>(writing: &mut W, pages: Vec<(u16, Arc<[u8]>)>, own: &BTreeSet<u16>, stats: &ServerStats) -> bool {
     for (page, frame) in pages {
-        if !own.contains(&page) && !write(writing, Opcode::Binary, &frame, stats).await {
+        if !own.contains(&page) && !write_binary(writing, &frame, stats).await {
+            return false;
+        }
+    }
+    true
+}
+
+/// Writes binary bytes as one message, or as several when they are more
+/// than a receiver takes in one (the runtime's `frame::messages`).
+async fn write_binary<W: AsyncWrite + Unpin>(writing: &mut W, bytes: &[u8], stats: &ServerStats) -> bool {
+    for part in frame::messages(bytes, frame::MOST_MESSAGE_BYTES) {
+        if !write(writing, Opcode::Binary, part, stats).await {
             return false;
         }
     }
