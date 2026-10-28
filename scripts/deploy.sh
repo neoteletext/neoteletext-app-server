@@ -61,7 +61,10 @@ ssh "$host" 'set -e; old=teletext-server/channels/hackaday; new=neoteletext-serv
 # The channels' own caches and environments stay on the host: a cache is
 # the host's knowledge (pictures take 14 s each to make), and an
 # environment is built there for its system.
-rsync -a --delete --exclude target --exclude tools --exclude .git --exclude tmp ./ "$host:teletext-server/"
+# The source is compared by content and written with the host's own times:
+# with this machine's times kept, a file edited here before the host's last
+# build looks older than that build, and Cargo ships the stale crate.
+rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude tmp ./ "$host:teletext-server/"
 rsync -a --delete --exclude .git --exclude tmp --exclude 'hackaday/cache' --exclude 'hackaday/sounds' --exclude 'hackaday/people' \
     --exclude .venv --exclude node_modules --exclude __pycache__ --exclude .mypy_cache --exclude .ruff_cache --exclude .pytest_cache \
     "$channels/" "$host:neoteletext-server-channels/"
