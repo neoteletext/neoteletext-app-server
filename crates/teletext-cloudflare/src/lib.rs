@@ -37,6 +37,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
 use teletext_runtime::remote::declared_pages;
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
@@ -91,6 +92,14 @@ fn failure(text: impl Into<String>) -> Error {
 /// Milliseconds since the Unix epoch.
 fn epoch_ms() -> u64 {
     Date::now().as_millis()
+}
+
+/// Sends binary bytes as one message, or as several when they are more
+/// than a receiver takes in one (the runtime's `frame::messages`).
+fn send_binary(socket: &WebSocket, bytes: &[u8]) {
+    for part in frame::messages(bytes, frame::MOST_MESSAGE_BYTES) {
+        let _ = socket.send_with_bytes(part);
+    }
 }
 
 /// The channels the Worker serves: folder and name.
@@ -188,7 +197,7 @@ impl Live {
             match effect {
                 Effect::Shared { page, frame } => {
                     for viewer in self.viewers.values().filter(|viewer| !viewer.own.contains(&page)) {
-                        let _ = viewer.socket.send_with_bytes(&frame);
+                        send_binary(&viewer.socket, &frame);
                     }
                 }
                 Effect::Own { session, page } => {
@@ -203,7 +212,7 @@ impl Live {
                 }
                 Effect::Send { session, bytes } => {
                     if let Some(viewer) = self.viewers.get(&session) {
-                        let _ = viewer.socket.send_with_bytes(&bytes);
+                        send_binary(&viewer.socket, &bytes);
                     }
                 }
                 Effect::Close { session } => {
@@ -392,7 +401,7 @@ impl ChannelObject {
     /// to it, then whatever its session owns.
     fn welcome(live: &mut Live, session: SessionId, socket: WebSocket) {
         for (_, frame) in live.channel.shared_frames() {
-            let _ = socket.send_with_bytes(frame.as_ref());
+            send_binary(&socket, frame.as_ref());
         }
         live.viewers.insert(session, Viewer { socket, own: BTreeSet::new() });
         let now = live.now();
@@ -512,7 +521,7 @@ impl worker::DurableObject for ChannelObject {
             if !live.viewers.is_empty() && now >= live.clock_due {
                 let header = live.channel.time_filling(now);
                 for viewer in live.viewers.values() {
-                    let _ = viewer.socket.send_with_bytes(header.as_ref());
+                    send_binary(&viewer.socket, header.as_ref());
                 }
                 live.clock_due = now.saturating_add(CLOCK_EVERY_MS);
             }
