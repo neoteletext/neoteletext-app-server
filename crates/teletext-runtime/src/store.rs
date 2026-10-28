@@ -37,7 +37,8 @@ pub const MOST_FRAME_BYTES: usize = MOST_SUBPAGES * MOST_PACKETS_PER_SUBPAGE * P
 /// number and two names of at most 480 bytes each.
 pub const MOST_RECORD_BYTES: usize = PAGE_HEADER_BYTES + MOST_FRAME_BYTES;
 /// A page's record before its frame: version, kind, page number, whether
-/// it has a cursor, the cursor's row, column, width and flags, and the
+/// it has a cursor, the cursor's row, column, a reserved byte (once the
+/// echo's width, withdrawn by the engine's E.134) and flags, and the
 /// frame's length, so a record cut short at a packet's end is not taken
 /// for a shorter page.
 const PAGE_HEADER_BYTES: usize = 13;
@@ -103,7 +104,7 @@ pub(crate) fn page_record(page: u16, held: &Held) -> Vec<u8> {
     record.extend_from_slice(&[FORMAT_VERSION, KIND_PAGE]);
     record.extend_from_slice(&page.to_be_bytes());
     match held.cursor {
-        Some(cursor) => record.extend_from_slice(&[1, cursor.row, cursor.column, cursor.width, cursor.flags]),
+        Some(cursor) => record.extend_from_slice(&[1, cursor.row, cursor.column, 0, cursor.flags]),
         None => record.extend_from_slice(&[0; 5]),
     }
     record.extend_from_slice(&u32::try_from(held.frame.len()).unwrap_or(u32::MAX).to_be_bytes());
@@ -117,10 +118,10 @@ pub(crate) fn read_page(page: u16, record: &[u8]) -> Result<Held, StoreError> {
     if reader.u16()? != page {
         return Err(StoreError::Invalid);
     }
-    let [has_cursor, row, column, width, flags] = reader.array()?;
+    let [has_cursor, row, column, _reserved, flags] = reader.array()?;
     let cursor = match has_cursor {
         0 => None,
-        1 => Some(CursorLine { row, column, width, flags, acked: 0, line: 0 }),
+        1 => Some(CursorLine { row, column, flags, acked: 0, line: 0 }),
         _ => return Err(StoreError::Invalid),
     };
     let length = usize::try_from(u32::from_be_bytes(reader.array()?)).map_err(|_| StoreError::Invalid)?;

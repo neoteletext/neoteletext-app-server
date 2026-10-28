@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 
 fn held() -> Held {
     let frame: Vec<u8> = (0..2 * PACKET_BYTES).map(|byte| u8::try_from(byte % 256).unwrap()).collect();
-    Held { frame: Arc::from(frame), cursor: Some(CursorLine { row: 5, column: 6, width: 7, flags: 8, acked: 0, line: 0 }) }
+    Held { frame: Arc::from(frame), cursor: Some(CursorLine { row: 5, column: 6, flags: 8, acked: 0, line: 0 }) }
 }
 
 /// A page's record reads back as the page it was made from, cursor and
@@ -13,7 +13,7 @@ fn a_page_record_reads_back() {
     let record = page_record(0x1AB, &held());
     let read = read_page(0x1AB, &record).unwrap();
     assert_eq!(read.frame, held().frame);
-    assert_eq!(read.cursor.map(|cursor| (cursor.row, cursor.column, cursor.width, cursor.flags)), Some((5, 6, 7, 8)));
+    assert_eq!(read.cursor.map(|cursor| (cursor.row, cursor.column, cursor.flags)), Some((5, 6, 8)));
     let without = Held { cursor: None, ..held() };
     assert!(read_page(0x1AB, &page_record(0x1AB, &without)).unwrap().cursor.is_none());
 }

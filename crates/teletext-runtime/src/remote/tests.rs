@@ -5,11 +5,11 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES, PACKET_ENHANCEMENT};
 use neoteletext_core::packet::{Decoded, decode};
-use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 use neoteletext_input::event::{Event, Item as InputItem, Key, KeyCode, write};
 
 /// What the browser offers in HELLO: its capabilities (INPUT.md section 6.2).
-const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
+const OFFERED: u32 = PAGE_CAP | CURSOR_CAP;
 
 const VIEWER: SessionId = 4;
 

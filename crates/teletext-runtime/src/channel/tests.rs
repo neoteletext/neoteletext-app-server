@@ -4,13 +4,13 @@ use crate::screen::Screen;
 use alloc::string::ToString;
 use neoteletext_audio::idl::FRAGMENT_DATA;
 use neoteletext_core::consts::PACKET_BYTES;
-use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
-use neoteletext_input::cursor::ECHO;
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
+use neoteletext_input::cursor::BLOCK;
 use neoteletext_input::event::write;
 use neoteletext_input::session::{Session as Receiver, Welcomed};
 
 /// The browser's offer: the capabilities alone (INPUT.md section 6.2).
-const OFFER: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
+const OFFER: u32 = PAGE_CAP | CURSOR_CAP;
 /// Bits 0 to 15 of `caps`, the input modes until 27 October 2026: reserved,
 /// and ignored when a peer still sets them (INPUT.md section 6.2).
 const RESERVED_MODE_BITS: u32 = (1 << 16) - 1;
@@ -22,6 +22,9 @@ struct Echo {
 }
 
 const ECHO_PAGE: u16 = 0x200;
+/// The flags a program written before E.134 set: echo (1), masked (2)
+/// and a block cursor.
+const OLD_FLAGS: u8 = 1 | 2 | BLOCK;
 
 impl Echo {
     fn draw(&self, session: SessionId, context: &mut Context<'_>) {
@@ -29,7 +32,7 @@ impl Echo {
         let mut screen = Screen::new();
         screen.text(5, 1, &text);
         let column = u8::try_from(text.len().saturating_add(1)).unwrap();
-        screen.cursor(5, column, 20, ECHO);
+        screen.cursor(5, column, OLD_FLAGS);
         context.publish(Owner::Session(session), ECHO_PAGE, &screen);
     }
 }
@@ -138,6 +141,7 @@ fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     let cursor = *cursors(&packets).last().unwrap();
     assert_eq!(cursor.acked, 4, "two characters more");
     assert_eq!(cursor.place, Some(Place { row: 5, column: 3 }), "the cursor after what was typed");
+    assert_eq!(cursor.flags, BLOCK, "echo and masked, withdrawn by E.134, written 0");
     assert!(packets.len() > 20, "the page itself came too: {} packets", packets.len());
 }
 

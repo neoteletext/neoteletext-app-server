@@ -16,9 +16,9 @@ use alloc::vec::Vec;
 
 use neoteletext_audio::encode::packets;
 use neoteletext_formats::page::{CursorLine, PageFile};
-use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 use neoteletext_input::control::{Control, packet_of};
-use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
+use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
 
 use crate::application::{Action, Application, Audience, Context, Level, Owner, PageEntry};
@@ -39,7 +39,7 @@ const SERVICE: u8 = 0;
 /// The capabilities the channel uses of what a receiver offers in HELLO
 /// (INPUT.md section 6.2). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (section 6.3).
-const USED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
+const USED: u32 = PAGE_CAP | CURSOR_CAP;
 
 /// A channel's description, for `channel.json`.
 #[derive(Clone, Debug)]
@@ -671,7 +671,9 @@ impl Channel {
 /// none, with the input count.
 fn cursor_of(page: u16, acked: u16, line: Option<&CursorLine>) -> Cursor {
     let place = line.filter(|line| line.row != NO_CURSOR).map(|line| Place { row: line.row, column: line.column });
-    Cursor { page, acked, place, width: line.map_or(0, |line| line.width), flags: line.map_or(0, |line| line.flags) }
+    // Only BLOCK is a flag now: echo and masked echo are withdrawn (the
+    // engine's E.134), and a program written before may still set them.
+    Cursor { page, acked, place, flags: line.map_or(0, |line| line.flags & BLOCK) }
 }
 
 #[cfg(test)]

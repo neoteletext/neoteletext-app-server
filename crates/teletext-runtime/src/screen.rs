@@ -210,10 +210,10 @@ impl Screen {
         self.index = Some(page);
     }
 
-    /// The cursor at `row`, `column`, with `width` cells the receiver may
-    /// echo into and the cursor record's flags (INPUT.md section 7.1).
-    pub fn cursor(&mut self, row: u8, column: u8, width: u8, flags: u8) {
-        self.cursor = Some(CursorLine { row, column, width, flags, acked: 0, line: 0 });
+    /// The cursor at `row`, `column`, with the cursor record's flags
+    /// (INPUT.md section 7.1).
+    pub fn cursor(&mut self, row: u8, column: u8, flags: u8) {
+        self.cursor = Some(CursorLine { row, column, flags, acked: 0, line: 0 });
     }
 
     /// The page this screen is, as the engine's page model.
