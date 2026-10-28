@@ -4,10 +4,10 @@ use crate::screen::Screen;
 use alloc::string::ToString;
 use neoteletext_audio::idl::FRAGMENT_DATA;
 use neoteletext_core::consts::PACKET_BYTES;
-use neoteletext_input::caps::{ALL_CAPS, CURSOR_CAP, ECHO_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
 use neoteletext_input::cursor::ECHO;
 use neoteletext_input::event::write;
-use neoteletext_input::session::Session as Receiver;
+use neoteletext_input::session::{Session as Receiver, Welcomed};
 
 /// The browser's offer: the capabilities alone (INPUT.md section 6.2).
 const OFFER: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
@@ -74,6 +74,13 @@ fn message(item: &Item<'_>) -> Vec<u8> {
     bytes[..length].to_vec()
 }
 
+/// The HELLO a receiver's session opens with, as it sends it.
+fn hello(receiver: &mut Receiver) -> Vec<u8> {
+    let mut bytes = [0_u8; 64];
+    let length = receiver.open(0, None, &mut bytes).unwrap();
+    bytes[..length].to_vec()
+}
+
 /// The packets of every message the channel sent `session`.
 fn sent(effects: &[Effect], session: SessionId) -> Vec<Packet> {
     effects
@@ -93,7 +100,7 @@ fn first_control(packets: &[Packet]) -> Option<(u32, u32)> {
         let mut buffer = [0_u8; FRAGMENT_DATA];
         if let Some(Ok(control)) = neoteletext_input::control::from_packet(packet, &mut buffer) {
             return Some(match control {
-                Control::Welcome { version, caps } => (version, caps),
+                Control::Welcome { version, caps, .. } => (version, caps),
                 _ => (0, 0),
             });
         }
@@ -114,14 +121,11 @@ fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     let mut channel = channel();
     channel.opened(1, 0);
     let mut receiver = Receiver::new(OFFER);
-    let hello = receiver.open(0, None);
-    let Event::Hello { caps, .. } = hello else { panic!("HELLO") };
-    assert_eq!(caps & ALL_CAPS, caps);
-    channel.received(1, &message(&Item::Event(hello)), 0);
+    channel.received(1, &hello(&mut receiver), 0);
     let packets = sent(&channel.take_effects(), 1);
     let (version, agreed) = first_control(&packets).unwrap();
     assert_eq!(agreed, OFFER, "WELCOME agrees the capabilities offered");
-    assert_eq!(receiver.welcome(version, agreed), Ok(()), "the receiver accepts the WELCOME");
+    assert_eq!(receiver.welcome(version, agreed, None), Ok(Welcomed::New), "the receiver accepts the WELCOME");
 
     channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
     let packets = sent(&channel.take_effects(), 1);
@@ -135,6 +139,28 @@ fn a_receiver_is_welcomed_and_its_input_acknowledged() {
     assert_eq!(cursor.acked, 4, "two characters more");
     assert_eq!(cursor.place, Some(Place { row: 5, column: 3 }), "the cursor after what was typed");
     assert!(packets.len() > 20, "the page itself came too: {} packets", packets.len());
+}
+
+/// A pointer moving over a page and a hover count no input units, as the
+/// receiver counts them (INPUT.md, E.133): before, every event counted
+/// one, the acknowledgement ran ahead of what the browser sent, and it
+/// refused every cursor record after the pointer moved.
+#[test]
+fn moves_and_hovers_are_not_acknowledged_as_units() {
+    use neoteletext_input::event::{Device, Mouse, MouseAction, Point};
+    let mut channel = channel();
+    channel.opened(1, 0);
+    let mut receiver = Receiver::new(OFFER);
+    channel.received(1, &hello(&mut receiver), 0);
+    channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
+    channel.take_effects();
+    let at = Point { column: 17, row: 5, pixels: None, mods: 0 };
+    channel.received(1, &message(&Item::Event(Event::Mouse(Mouse { action: MouseAction::Move, button: 0, at, device: Device::Mouse }))), 0);
+    channel.received(1, &message(&Item::Event(Event::Hover { leave: false, column: 17, row: 5 })), 0);
+    channel.take_effects();
+    channel.received(1, &message(&Item::Text("hi")), 0);
+    let cursor = *cursors(&sent(&channel.take_effects(), 1)).last().unwrap();
+    assert_eq!(cursor.acked, 4, "HELLO, PAGE and two characters; the move and the hover none");
 }
 
 /// A shared page is published once, whatever the number of sessions
@@ -201,7 +227,7 @@ fn a_page_gone_to_is_named_until_it_is_open() {
     channel.start(0);
     channel.opened(1, 0);
     let mut receiver = Receiver::new(OFFER);
-    channel.received(1, &message(&Item::Event(receiver.open(0, None))), 0);
+    channel.received(1, &hello(&mut receiver), 0);
     channel.received(1, &message(&Item::Event(Event::Page(0x250))), 0);
     channel.take_effects();
     channel.received(1, &message(&Item::Text("x")), 0);
@@ -222,7 +248,7 @@ fn a_restarted_program_is_told_of_its_viewers() {
     let mut receiver = Receiver::new(OFFER);
     for session in [1, 2] {
         channel.opened(session, 0);
-        channel.received(session, &message(&Item::Event(receiver.open(0, None))), 0);
+        channel.received(session, &hello(&mut receiver), 0);
     }
     channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
     channel.take_effects();

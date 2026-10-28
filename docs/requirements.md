@@ -107,7 +107,7 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Reason:** The owner's instruction to share code, not rebuild it (decision 1).
 - **Source:** Decision 1.
 - **Verification:** Check: the commit gate's engine pin step; review.
-- **State:** Met, 25 October 2026: no engine crate imported yet. *28 October 2026:* every engine crate at `e09a589`, the browser's pin (decision 21), `neoteletext-opus` among them.
+- **State:** Met, 25 October 2026: no engine crate imported yet. *28 October 2026:* every engine crate at `e09a589`, the browser's pin (decision 21), `neoteletext-opus` among them. Later that day at `8c59a89` (E.133), the browser's pin again, so both count input units alike: a move, gone, hover, COMPOSE and RESUME count none.
 
 ### Requirement 2.6: Every reader of outside input fuzzed
 - **Statement:** Every reader of bytes from clients, applications or files must have a fuzz target in `fuzz/`, and every input that ever found a fault must be kept in `fuzz/regressions/` and replayed first by the full gate.

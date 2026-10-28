@@ -376,7 +376,7 @@ fn the_channel_counts_what_happens() {
 /// that grips a scroll bar from the release that lets it go by it alone.
 #[test]
 fn mouse_events_name_their_action() {
-    use neoteletext_input::event::{Mouse, MouseAction, Point};
+    use neoteletext_input::event::{Device, Mouse, MouseAction, Point};
     let mut channel = channel();
     channel.opened(VIEWER, 0);
     send(&mut channel, &InputItem::Event(Event::Hello { version: neoteletext_input::VERSION, caps: OFFERED, agent: None }));
@@ -384,7 +384,7 @@ fn mouse_events_name_their_action() {
     channel.take_effects();
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
     for (action, button) in [(MouseAction::Press, 0), (MouseAction::Move, 1), (MouseAction::Release, 0)] {
-        send(&mut channel, &InputItem::Event(Event::Mouse(Mouse { action, button, at })));
+        send(&mut channel, &InputItem::Event(Event::Mouse(Mouse { action, button, at, device: Device::Mouse })));
     }
     let told = lines(&channel.take_effects());
     let actions: Vec<Option<&str>> = told.iter().map(|line| line.get("event").and_then(|event| event.get("action")).and_then(Value::text)).collect();

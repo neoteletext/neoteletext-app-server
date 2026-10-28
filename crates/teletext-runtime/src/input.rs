@@ -131,6 +131,9 @@ impl<'a> Input<'a> {
         match *item {
             Item::Text(text) => Some(Self::Text(text)),
             Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), text: key.text, base: key.base }),
+            // Gone is not a release (INPUT.md, MOUSE action 3): the protocol
+            // for programs has no event for it, so they are not told.
+            Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Gone => None,
             Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Move => {
                 Some(Self::Moved { buttons: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }

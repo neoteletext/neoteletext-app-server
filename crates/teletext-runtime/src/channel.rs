@@ -510,7 +510,7 @@ impl Channel {
             return;
         }
         let record = state.next_record();
-        if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED }, SERVICE, record) {
+        if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
             self.effects.push(Effect::Send { session, bytes: Arc::from(&packet.bytes[..]) });
         }

@@ -24,14 +24,14 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["tti"] }
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
-neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false }
+neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false, features = ["tti"] }
+neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false }
+neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
-neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "8c59a8971471272e4b3f60a94e0efbb151481129", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
 # (decision 5).

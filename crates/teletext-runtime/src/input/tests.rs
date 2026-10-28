@@ -1,5 +1,5 @@
 use super::*;
-use neoteletext_input::event::{Mouse, MouseAction, Point, Wheel};
+use neoteletext_input::event::{Device, Mouse, MouseAction, Point, Wheel};
 
 /// The wheel reaches an application with its turn and its cell, which it
 /// needs to scroll what is under the pointer.
@@ -14,10 +14,19 @@ fn the_wheel_is_input() {
 #[test]
 fn a_drag_is_input() {
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
-    let moved = Mouse { action: MouseAction::Move, button: 1, at };
+    let moved = Mouse { action: MouseAction::Move, button: 1, at, device: Device::Mouse };
     assert_eq!(Input::of(&Item::Event(Event::Mouse(moved))), Some(Input::Moved { buttons: 1, column: 39, row: 12 }));
-    let pressed = Mouse { action: MouseAction::Press, button: 0, at };
+    let pressed = Mouse { action: MouseAction::Press, button: 0, at, device: Device::Mouse };
     assert_eq!(Input::of(&Item::Event(Event::Mouse(pressed))), Some(Input::Mouse { pressed: true, button: 0, column: 39, row: 12 }));
+}
+
+/// A pointer gone is not a release, which would click what it was over:
+/// an application is not told of it.
+#[test]
+fn a_pointer_gone_is_not_a_release() {
+    let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
+    let gone = Mouse { action: MouseAction::Gone, button: 1, at, device: Device::Mouse };
+    assert_eq!(Input::of(&Item::Event(Event::Mouse(gone))), None);
 }
 
 /// A hover reaches an application with the control's first cell, entered
