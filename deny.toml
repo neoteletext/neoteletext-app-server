@@ -24,5 +24,6 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# The engine, a git dependency pinned at one commit (CLAUDE.md).
-allow-git = ["file:///Users/andrewstuart/devel/neoteletext-engine"]
+# The engine, a git dependency on its public repository pinned at one
+# commit (CLAUDE.md).
+allow-git = ["https://github.com/neoteletext/neoteletext-engine"]

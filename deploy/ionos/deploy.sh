@@ -39,11 +39,9 @@ if [ "$build" = 1 ]; then
     say "the server, built static on $builder"
     rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         --exclude node_modules --exclude .wrangler "$repo/" "$builder:teletext-server-check/"
-    engine=$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "\(file:[^"]*\)".*/\1/p' "$repo/Cargo.toml" | sort -u)
-    rsync -a --delete "${engine#file://}/.git/" "$builder:teletext-server-check-engine.git/"
-    # shellcheck disable=SC2029 # the engine and target are expanded here on purpose
+    # The engine comes from its public repository, which the builder fetches by itself.
+    # shellcheck disable=SC2029 # the target is expanded here on purpose
     ssh "$builder" ". ~/.cargo/env; cd teletext-server-check; rustup target add $musl >/dev/null 2>&1
-        export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.file://\$HOME/teletext-server-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
         cargo build --quiet --release --locked --target $musl -p teletext-native"
 fi
 

@@ -5,7 +5,7 @@
 # HOST is an ssh name (foundintelquiet4060 by default); ORIGIN is the
 # address viewers reach it at (http://192.168.0.166:8090 by default),
 # which each channel's push WebSocket is named on. The source and the
-# engine's history go to the host, it builds there; the channels'
+# host fetches the engine from its public repository and builds there; the channels'
 # repository (decision 12; TELETEXT_CHANNELS, ~/devel/neoteletext-server-channels
 # by default) goes beside it, the pictures (decision 6: never in git) into
 # its tmp/pictures, where its channels.json has the demo channels read
@@ -22,7 +22,7 @@ listen="0.0.0.0:${origin##*:}"
 # As many connections as the host allows (decision 7): its hard limit.
 open_files="524288"
 
-engine="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "\(file:[^"]*\)".*/\1/p' Cargo.toml | sort -u)"
+engine="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "\([^"]*\)".*/\1/p' Cargo.toml | sort -u)"
 # The engine's revision, whose tools (neottx, the picture converter) the
 # Hackaday channel runs.
 engine_rev="$(sed -n 's/^neoteletext-core = .* rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)"
@@ -68,7 +68,6 @@ rsync -a --delete --exclude .git --exclude tmp --exclude 'hackaday/cache' --excl
 for repository in "${own_repositories[@]+"${own_repositories[@]}"}"; do
     rsync -a --delete --exclude .git --exclude tmp --exclude node_modules "$channels/../$repository/" "$host:$repository/"
 done
-rsync -a --delete "${engine#file://}/.git/" "$host:teletext-server-engine.git/"
 # tmp is left out of the source's copy above, which therefore keeps it;
 # rsync makes only the last folder of a destination.
 ssh "$host" mkdir -p teletext-server/tmp neoteletext-server-channels/tmp
@@ -76,10 +75,10 @@ rsync -a --delete "$channels/tmp/pictures/" "$host:neoteletext-server-channels/t
 
 # shellcheck disable=SC2029 # expanded here on purpose
 ssh "$host" "set -e; . ~/.cargo/env; cd teletext-server; rustup toolchain install >/dev/null
-    export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.file://\$HOME/teletext-server-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine
     cargo build --quiet --release --locked -p teletext-native
     # The engine's tools at the pinned revision, for the channels that run them.
-    [ -d ~/teletext-server-engine-tools/.git ] || git clone --quiet ~/teletext-server-engine.git ~/teletext-server-engine-tools
+    [ -d ~/teletext-server-engine-tools/.git ] || git clone --quiet $engine ~/teletext-server-engine-tools
+    git -C ~/teletext-server-engine-tools remote set-url origin $engine
     git -C ~/teletext-server-engine-tools fetch --quiet origin
     git -C ~/teletext-server-engine-tools checkout --quiet --detach $engine_rev
     (cd ~/teletext-server-engine-tools && rustup toolchain install >/dev/null && cargo build --quiet --release --locked -p neoteletext-cli)

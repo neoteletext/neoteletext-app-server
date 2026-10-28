@@ -101,7 +101,7 @@ The runtime and the engine's `core` and `formats` already build for `wasm32-unkn
 
 ## 4. The engine
 
-Not yet imported. When the first crate needs it, every `neoteletext-*` dependency is a git dependency on `file:///Users/andrewstuart/devel/neoteletext-engine` at one `rev`, with `default-features = false` and the features named. The check script refuses two revisions, and the full gate's Linux stage reaches the engine as the browser's does.
+Every `neoteletext-*` dependency is a git dependency on the engine's public repository, `https://github.com/neoteletext/neoteletext-engine`, at one `rev`, with `default-features = false` and the features named; the check script refuses two revisions. Until 28 October 2026 it was the engine's local repository, `file:///Users/andrewstuart/devel/neoteletext-engine`, whose history the gates and deploys copied to the Linux host; the engine went public that day, on the owner's instruction, and the dependency moved to it at the same commit, `e09a589`.
 
 ## 5. What is built
 

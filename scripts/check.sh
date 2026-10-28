@@ -69,7 +69,7 @@ check_engine_pin() {
     step "the engine is pinned at one commit"
     local manifests=(Cargo.toml crates/*/Cargo.toml) revs
     [[ -f fuzz/Cargo.toml ]] && manifests+=(fuzz/Cargo.toml)
-    revs="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "file:[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' "${manifests[@]}" | sort -u)"
+    revs="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' "${manifests[@]}" | sort -u)"
     if grep -q '^neoteletext-[a-z0-9-]* = ' "${manifests[@]}"; then
         [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "every engine crate must name one commit, found: ${revs:-none}"
     else
@@ -136,21 +136,10 @@ check_linux() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
     rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"
-    # The engine is a git dependency on a repository on this machine; its
-    # history goes to the host, and git there reads it in place of this
-    # machine's path, for these commands only.
-    local engine
-    engine="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "\(file:[^"]*\)".*/\1/p' Cargo.toml crates/*/Cargo.toml | sort -u)"
-    [[ "$engine" != *$'\n'* ]] || fail "the manifests must name one engine repository, found: $engine"
-    local config=""
-    if [[ -n "$engine" ]]; then
-        rsync -a --delete "${engine#file://}/.git/" "$linux_host:teletext-server-check-engine.git/"
-        config="export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.file://\$HOME/teletext-server-check-engine.git.insteadOf GIT_CONFIG_VALUE_0=$engine;"
-    fi
-    # rustup installs the toolchain rust-toolchain.toml pins if the host
-    # does not have it yet.
-    # shellcheck disable=SC2029 # the engine is expanded here on purpose
-    ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install; $config
+    # The engine is a git dependency on its public repository, which the
+    # host fetches by itself. rustup installs the toolchain
+    # rust-toolchain.toml pins if the host does not have it yet.
+    ssh "$linux_host" "set -e; . ~/.cargo/env; cd teletext-server-check; rustup toolchain install
         cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings"
 }
