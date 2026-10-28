@@ -1,0 +1,57 @@
+# Caddy inside the neoteletext container, as the lockinatime container's
+# is. caddyrouter terminates TLS and proxies neottx.com and neoteletext.com,
+# with their www and app names, to this server at 10.70.0.18:8080 (an unprivileged
+# port: inside the container's user namespace even CAP_NET_BIND_SERVICE
+# cannot bind 80), passing the original Host header. Nothing here is
+# reachable from the internet directly: the container has its own network
+# namespace and only the host routes to it. HSTS is never set.
+{
+	admin unix//run/caddy/admin.sock
+	auto_https off
+	# caddyrouter (the host side of the container's veth) is the only peer
+	# and sets X-Forwarded-For to the real client.
+	servers {
+		trusted_proxies static 10.70.0.17/32
+		trusted_proxies_strict
+	}
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+		level INFO
+	}
+}
+
+# The static site (neoteletext-www/public) at www.neottx.com, the domain
+# now, with the headers its Cloudflare _headers file gave it.
+http://www.neottx.com:8080 {
+	header X-Content-Type-Options "nosniff"
+	header Referrer-Policy "strict-origin-when-cross-origin"
+	header X-Frame-Options "DENY"
+	@download path /download/*
+	header @download Content-Type "application/x-apple-diskimage"
+	header @download Content-Disposition "attachment"
+	@fonts path /fonts/*
+	header @fonts Cache-Control "public, max-age=31536000, immutable"
+	root * /opt/neoteletext/current/www
+	file_server
+}
+
+# The bare domain and the old names go to it; temporary while the names settle.
+http://neottx.com:8080, http://neoteletext.com:8080, http://www.neoteletext.com:8080 {
+	redir https://www.neottx.com{uri} 302
+}
+
+# The NeoTeletext server, its origin app.neottx.com: its channels' files and
+# their push WebSockets, which must be on the channel's own origin.
+http://app.neottx.com:8080 {
+	reverse_proxy 127.0.0.1:8090
+}
+
+# The server's first name goes to its origin.
+http://app.neoteletext.com:8080 {
+	redir https://app.neottx.com{uri} 308
+}

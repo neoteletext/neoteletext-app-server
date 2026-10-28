@@ -21,12 +21,13 @@ use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
 
-use crate::application::{Action, Application, Audience, Context, Owner, PageEntry};
+use crate::application::{Action, Application, Audience, Context, Level, Owner, PageEntry};
 use crate::frame::page_frame;
 use crate::header;
 use crate::input::Input;
 use crate::session::Session;
 use crate::stats::{ChannelStats, count};
+use crate::store::{StoreError, StoreKey, page_record, pages_record, read_page, read_pages};
 
 /// A connection's number, which the host chooses and never reuses.
 pub type SessionId = u64;
@@ -54,7 +55,16 @@ pub struct ChannelConfig {
     /// epoch, so applications can show the real time (the host's clock
     /// itself starts at 0).
     pub epoch_at_start_ms: u64,
+    /// How long a session whose connection closed waits for its viewer to
+    /// come back before its applications are told it ended, in
+    /// milliseconds; 0 ends it at once (requirement 5.5).
+    pub session_grace_ms: u64,
 }
+
+/// How long a session waits for its viewer to come back: 5 minutes, long
+/// enough for a phone that closed a background socket or a server that
+/// restarted (`SERVER.md` section 8.1: "a grace period of minutes").
+pub const SESSION_GRACE_MS: u64 = 5 * 60 * 1_000;
 
 /// What the host does for the channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +107,26 @@ pub enum Effect {
         /// The session.
         session: SessionId,
     },
+    /// The channel no longer has this shared page: the host stops serving
+    /// it (a page its application no longer declares).
+    Withdrawn {
+        /// The page.
+        page: u16,
+    },
+    /// Keep `bytes` under `key`, in place of what was kept there, and give
+    /// them back to [`Channel::load`] when the channel starts again
+    /// (requirement 5.2).
+    Store {
+        /// Where.
+        key: StoreKey,
+        /// The record.
+        bytes: Vec<u8>,
+    },
+    /// What was kept under `key` is no longer needed.
+    Forget {
+        /// Where.
+        key: StoreKey,
+    },
     /// A line for an application's process (`docs/applications.md`).
     ToApplication {
         /// The application, by its place in the channel.
@@ -104,8 +134,12 @@ pub enum Effect {
         /// The line, with its newline.
         line: Vec<u8>,
     },
-    /// Something for the server's operator to read.
+    /// Something for the server's operator to read (requirement 7.6).
     Log {
+        /// How much it matters.
+        level: Level,
+        /// The kind of event, a name that does not change.
+        event: &'static str,
         /// What happened.
         text: String,
     },
@@ -148,29 +182,96 @@ impl Channel {
     /// A channel of `applications`; `seed` seeds its games' randomness.
     #[must_use]
     pub fn new(config: ChannelConfig, applications: Vec<Box<dyn Application>>, seed: u64) -> Self {
-        let mut owners = BTreeMap::new();
         let applications: Vec<Hosted> = applications
             .into_iter()
-            .enumerate()
-            .map(|(index, application)| {
+            .map(|application| {
                 let pages = application.pages();
-                for entry in &pages {
-                    owners.entry(entry.number).or_insert(index);
-                }
                 Hosted { application, pages, wake: None }
             })
             .collect();
         // xorshift needs a seed other than zero.
-        Self {
+        let mut channel = Self {
             config,
             applications,
-            owners,
+            owners: BTreeMap::new(),
             shared: BTreeMap::new(),
             sessions: BTreeMap::new(),
             effects: Vec::new(),
             seed: seed | 1,
             stats: ChannelStats::default(),
+        };
+        channel.find_owners();
+        channel
+    }
+
+    /// Which application serves each page: the first to declare it.
+    fn find_owners(&mut self) {
+        self.owners.clear();
+        for (index, hosted) in self.applications.iter().enumerate() {
+            for entry in &hosted.pages {
+                self.owners.entry(entry.number).or_insert(index);
+            }
         }
+    }
+
+    /// Gives the channel back what it kept under `key` (requirement 5.2),
+    /// before it starts: a shared page is served at once, as it was last
+    /// published, until its application publishes it again.
+    ///
+    /// # Errors
+    /// A record that is not whole and of this format, or names an
+    /// application the channel does not have; nothing of it is taken.
+    pub fn load(&mut self, key: StoreKey, record: &[u8]) -> Result<(), StoreError> {
+        match key {
+            StoreKey::Page(page) => {
+                let held = read_page(page, record)?;
+                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
+                self.shared.insert(page, held);
+            }
+            StoreKey::Pages(application) => {
+                let pages = read_pages(record)?;
+                let hosted = self.applications.get_mut(application).ok_or(StoreError::NoApplication)?;
+                hosted.application.declared(&pages);
+                hosted.pages = pages;
+                self.find_owners();
+                self.effects.push(Effect::Contents);
+            }
+        }
+        Ok(())
+    }
+
+    /// Application `application`'s process declared `pages`, as it does
+    /// each time it starts (requirement 5.3): it serves them from now on,
+    /// and a shared page no application declares any more is withdrawn.
+    /// The host then calls [`Channel::application_started`].
+    pub fn declared(&mut self, application: usize, pages: Vec<PageEntry>) {
+        let Some(hosted) = self.applications.get_mut(application) else { return };
+        hosted.application.declared(&pages);
+        hosted.pages = pages;
+        self.find_owners();
+        let owners = &self.owners;
+        let gone: Vec<u16> = self.shared.keys().filter(|page| !owners.contains_key(page)).copied().collect();
+        for page in gone {
+            self.shared.remove(&page);
+            self.effects.push(Effect::Withdrawn { page });
+            self.effects.push(Effect::Forget { key: StoreKey::Page(page) });
+        }
+        self.effects.push(Effect::Contents);
+        self.store_pages(application);
+    }
+
+    /// Keeps application `application`'s declared pages.
+    fn store_pages(&mut self, application: usize) {
+        if let Some(hosted) = self.applications.get(application) {
+            self.effects.push(Effect::Store { key: StoreKey::Pages(application), bytes: pages_record(&hosted.pages) });
+        }
+    }
+
+    /// Whether the channel has pages to serve: kept from before, or
+    /// declared by its applications (requirement 8.4).
+    #[must_use]
+    pub fn is_ready(&self) -> bool {
+        self.entries().next().is_some()
     }
 
     /// The channel's description.
@@ -219,23 +320,81 @@ impl Channel {
         }
     }
 
-    /// A connection opened. The host sends it every shared page itself.
+    /// A connection opened for `session`. The host sends it every shared
+    /// page itself. A session waiting for its viewer continues
+    /// (requirement 5.5): a new input session (INPUT.md section 4), sent
+    /// its own pages again, its applications not told it joined again.
     pub fn opened(&mut self, session: SessionId, now: u64) {
-        if self.sessions.insert(session, Session::new()).is_none() {
-            self.stats.joined();
+        if let Some(state) = self.sessions.get_mut(&session) {
+            if state.waiting_since.take().is_some() {
+                state.reconnected();
+                self.stats.resumed();
+                let own: Vec<(u16, Arc<[u8]>)> = state.own.iter().map(|(&page, held)| (page, Arc::clone(&held.frame))).collect();
+                for (page, frame) in own {
+                    self.effects.push(Effect::Own { session, page });
+                    self.effects.push(Effect::Send { session, bytes: frame });
+                }
+            }
+            return;
         }
+        self.sessions.insert(session, Session::new());
+        self.stats.joined();
         for index in 0..self.applications.len() {
             self.call(index, now, |application, context| application.joined(session, context));
         }
     }
 
-    /// A connection closed.
+    /// A connection closed. Its session waits for its viewer to come back
+    /// for the channel's grace (requirement 5.5): its applications are
+    /// told it left the page it had open, and that it ended only when the
+    /// grace passes.
     pub fn closed(&mut self, session: SessionId, now: u64) {
-        if self.sessions.remove(&session).is_some() {
+        let Some(state) = self.sessions.get_mut(&session) else { return };
+        if state.waiting_since.is_some() {
+            return;
+        }
+        if self.config.session_grace_ms == 0 {
+            self.sessions.remove(&session);
             self.stats.left();
-            for index in 0..self.applications.len() {
-                self.call(index, now, |application, context| application.ended(session, context));
-            }
+            self.end(session, now);
+            return;
+        }
+        state.waiting_since = Some(now);
+        state.went = None;
+        state.decoder = None;
+        let page = core::mem::replace(&mut state.page, 0);
+        self.stats.waiting();
+        if let Some(&index) = self.owners.get(&page) {
+            self.call(index, now, |application, context| application.left_page(session, page, context));
+        }
+    }
+
+    /// Tells every application that `session` ended.
+    fn end(&mut self, session: SessionId, now: u64) {
+        for index in 0..self.applications.len() {
+            self.call(index, now, |application, context| application.ended(session, context));
+        }
+    }
+
+    /// When the session waiting longest stops waiting.
+    fn next_expiry(&self) -> Option<u64> {
+        let grace = self.config.session_grace_ms;
+        self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace))
+    }
+
+    /// Ends the sessions whose grace has passed at `now`.
+    fn expire(&mut self, now: u64) {
+        let grace = self.config.session_grace_ms;
+        let expired: Vec<SessionId> = self
+            .sessions
+            .iter()
+            .filter(|(_, state)| state.waiting_since.is_some_and(|since| since.saturating_add(grace) <= now))
+            .map(|(&session, _)| session)
+            .collect();
+        for session in expired {
+            self.sessions.remove(&session);
+            self.stats.expired();
+            self.end(session, now);
         }
     }
 
@@ -255,8 +414,10 @@ impl Channel {
         self.acknowledge(session);
     }
 
-    /// The time asked for has come: wakes the applications due.
+    /// The time asked for has come: ends the sessions whose grace has
+    /// passed, and wakes the applications due.
     pub fn deadline(&mut self, now: u64) {
+        self.expire(now);
         for index in 0..self.applications.len() {
             let due = self.applications.get(index).and_then(|hosted| hosted.wake).is_some_and(|at| at <= now);
             if due {
@@ -275,12 +436,14 @@ impl Channel {
         self.call(application, now, |hosted, context| hosted.process_line(line, context));
     }
 
-    /// Application `application`'s process started again after it ended:
-    /// it is told to start, and publishes its pages afresh. What it drew
-    /// for each viewer ended with it, so each session's own copies of its
-    /// pages are dropped, and it is told of every viewer and the page each
-    /// has open, as if they had just come.
-    pub fn restarted(&mut self, application: usize, now: u64) {
+    /// Application `application`'s process started, the first time or
+    /// again after it ended, and declared its pages ([`Channel::declared`]):
+    /// it is told to start, and publishes its pages afresh. What an
+    /// earlier process drew for each viewer ended with it, so each
+    /// session's own copies of its pages are dropped, and it is told of
+    /// every session and the page each viewer has open, as if they had
+    /// just come.
+    pub fn application_started(&mut self, application: usize, now: u64) {
         self.call(application, now, |hosted, context| hosted.start(context));
         let owners = &self.owners;
         let mine = |page: &u16| owners.get(page) == Some(&application);
@@ -302,7 +465,7 @@ impl Channel {
     /// When the channel next needs [`Channel::deadline`].
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
-        self.applications.iter().filter_map(|hosted| hosted.wake).min()
+        self.applications.iter().filter_map(|hosted| hosted.wake).chain(self.next_expiry()).min()
     }
 
     /// What the host must do now.
@@ -427,6 +590,7 @@ impl Channel {
                 count(&mut self.stats.shared_published);
                 let held = Held::of(&self.headed(subpages, now));
                 self.effects.push(Effect::Shared { page: number, frame: Arc::clone(&held.frame) });
+                self.effects.push(Effect::Store { key: StoreKey::Page(number), bytes: page_record(number, &held) });
                 // A page published for the first time is listed from now on.
                 if self.shared.insert(number, held).is_none() {
                     self.effects.push(Effect::Contents);
@@ -461,6 +625,7 @@ impl Channel {
                 {
                     entry.title = title;
                     self.effects.push(Effect::Contents);
+                    self.store_pages(index);
                 }
             }
             Action::Release { session, page } => {
@@ -479,7 +644,7 @@ impl Channel {
                 count(&mut self.stats.lines_to_application);
                 self.effects.push(Effect::ToApplication { application: index, line });
             }
-            Action::Log(text) => self.effects.push(Effect::Log { text: alloc::format!("{}: {text}", self.config.name) }),
+            Action::Log { level, event, text } => self.effects.push(Effect::Log { level, event, text }),
         }
     }
 

@@ -5,7 +5,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use teletext_runtime::remote::declared_pages;
-use teletext_runtime::{Channel, ChannelConfig, Remote};
+use teletext_runtime::{Channel, ChannelConfig, Remote, SESSION_GRACE_MS};
 
 /// The time between messages, in milliseconds.
 const STEP: u64 = 50;
@@ -18,7 +18,7 @@ const SENDERS: u8 = 3;
 const PROGRAM: u8 = 2;
 
 fuzz_target!(|data: &[u8]| {
-    let config = ChannelConfig { name: "Fuzz".into(), push_address: "ws://127.0.0.1/fuzz/push".into(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let config = ChannelConfig { name: "Fuzz".into(), push_address: "ws://127.0.0.1/fuzz/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: SESSION_GRACE_MS };
     let Ok(pages) = declared_pages(DECLARATION) else { return };
     let mut channel = Channel::new(config, vec![Box::new(Remote::new(pages))], 1);
     channel.start(0);

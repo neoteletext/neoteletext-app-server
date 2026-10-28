@@ -97,8 +97,12 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=UV=%h/.local/bin/uv
 Environment=NEOTTX=%h/teletext-server-engine-tools/target/release/neottx
 Environment=HACKADAY_CONVERTER=%h/teletext-server-engine-tools/scripts/image-to-teletext.py
-ExecStart=%h/teletext-server/target/release/teletext-server --listen $listen --origin $origin --channels %h/neoteletext-server-channels/channels.json
+# What survives a restart, in ~/.local/state/teletext-server (requirement 5.2).
+StateDirectory=teletext-server
+ExecStart=%h/teletext-server/target/release/teletext-server --listen $listen --origin $origin --channels %h/neoteletext-server-channels/channels.json --admin-listen 127.0.0.1:9464
 Restart=on-failure
+# The server stops within 10 s of SIGTERM (requirement 5.1).
+TimeoutStopSec=15
 LimitNOFILE=$open_files
 
 [Install]

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The pinned tools are built from their crates in tools/, each a package of
+# its own (scripts/tools.sh).
+exclude = ["tools"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,17 +24,36 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["tti"] }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "dcb2a3ba2d1091c787057a69aa360f15d6e0b18e", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["tti"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
+# The engine's Opus decoder, to hold each packet a program sends to the
+# profile the receivers decode (decision 21, the engine's E.123).
+neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
 # (decision 5).
 tokio = { version = "=1.54.1", default-features = false }
 hyper = { version = "=1.12.0", default-features = false }
 hyper-util = { version = "=0.1.21", default-features = false }
+# Logging (decision 18), approved by the owner on 28 October 2026: the
+# Rust ecosystem's structured logging, the tokio project's, MIT. Default
+# features off: no procedural macros; the `Targets` filter, not
+# `env-filter`, which would bring a regular expression engine.
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
+# The Cloudflare host (decision 20), approved by the owner on 28 October
+# 2026: Cloudflare's Rust SDK for Workers and Durable Objects (Apache-2.0),
+# and random bytes from the Web Crypto interface for the session cookie's
+# key (MIT or Apache-2.0).
+worker = { version = "=0.8.7", default-features = false }
+getrandom = { version = "=0.4.3", default-features = false, features = ["wasm_js"] }
+# The `worker` macros expand to code that names `wasm_bindgen` itself, so the
+# Worker depends on it directly, at the version `worker` resolves (MIT or
+# Apache-2.0); part of `worker`'s approval.
+wasm-bindgen = { version = "=0.2.129", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -47,3 +69,10 @@ unimplemented = "warn"
 
 [profile.release]
 strip = true
+
+# The Worker keeps its custom sections: wasm-bindgen reads the module's
+# `target_features` section to know it has reference types, without which
+# it cannot make the catch wrappers worker-build asks for (found 28 October
+# 2026: stripped, `wasm-bindgen` fails "externref table required").
+[profile.release.package.teletext-cloudflare]
+strip = false

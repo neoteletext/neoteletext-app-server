@@ -1,6 +1,8 @@
 use super::*;
 use crate::{Channel, ChannelConfig, Effect, Packet};
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES, PACKET_ENHANCEMENT};
 use neoteletext_core::packet::{Decoded, decode};
 use neoteletext_input::caps::{CURSOR_CAP, ECHO_CAP, PAGE_CAP};
@@ -12,10 +14,21 @@ const OFFERED: u32 = PAGE_CAP | CURSOR_CAP | ECHO_CAP;
 const VIEWER: SessionId = 4;
 
 fn channel() -> Channel {
+    channel_waiting(0)
+}
+
+/// The test channel, a closed session waiting `session_grace_ms` for its
+/// viewer.
+fn channel_waiting(session_grace_ms: u64) -> Channel {
     let pages =
         declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"1A0","title":"Hidden"},{"page":"300","title":"Game"}]}"#).unwrap();
-    let config =
-        ChannelConfig { name: "test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 1_000 };
+    let config = ChannelConfig {
+        name: "test".to_string(),
+        push_address: "ws://127.0.0.1:1/test/push".to_string(),
+        initial_page: 0x100,
+        epoch_at_start_ms: 1_000,
+        session_grace_ms,
+    };
     let mut channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
     channel.start(0);
     channel
@@ -36,7 +49,7 @@ fn lines(effects: &[Effect]) -> Vec<Value> {
 }
 
 fn logs(effects: &[Effect]) -> Vec<String> {
-    effects.iter().filter_map(|effect| if let Effect::Log { text } = effect { Some(text.clone()) } else { None }).collect()
+    effects.iter().filter_map(|effect| if let Effect::Log { text, .. } = effect { Some(text.clone()) } else { None }).collect()
 }
 
 fn send(channel: &mut Channel, item: &InputItem<'_>) {
@@ -311,7 +324,13 @@ fn a_released_page_is_the_channels_again() {
 fn a_section_heads_its_pages_in_the_contents() {
     let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"200","title":"Retro front","section":"Retrocomputing"},{"page":"201","title":"Challenge"}]}"#).unwrap();
     assert_eq!(pages[1].section.as_deref(), Some("Retrocomputing"));
-    let config = ChannelConfig { name: "test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let config = ChannelConfig {
+        name: "test".to_string(),
+        push_address: "ws://127.0.0.1:1/test/push".to_string(),
+        initial_page: 0x100,
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
     let contents = |channel: &Channel| String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
     assert_eq!(contents(&channel), "s\ttest\n", "nothing published, nothing listed");
@@ -393,4 +412,239 @@ fn a_hover_reaches_the_program_as_enter_and_leave() {
         r#"{"type":"input","session":4,"page":"300","event":{"kind":"hover","action":"leave","entered":false,"column":2,"row":20}}"#,
     ];
     assert_eq!(told, wanted.map(|line| json::parse(line.as_bytes()).unwrap()));
+}
+
+/// The test channel, with the server's grace for a session whose
+/// connection closed (requirement 5.5).
+fn waiting_channel() -> Channel {
+    channel_waiting(crate::SESSION_GRACE_MS)
+}
+
+/// Each line's `type`, in order.
+fn types(effects: &[Effect]) -> Vec<String> {
+    lines(effects).iter().filter_map(|line| line.get("type").and_then(Value::text).map(ToString::to_string)).collect()
+}
+
+/// A session whose connection closes waits for its viewer: the program is
+/// told the viewer left the page at once, and that the session ended only
+/// when the grace has passed, at the time the channel asks to be woken.
+/// Before, the program was told `close` at once (requirement 5.5).
+#[test]
+fn a_closed_session_waits_for_its_viewer() {
+    let mut channel = waiting_channel();
+    channel.opened(VIEWER, 0);
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    channel.take_effects();
+    channel.closed(VIEWER, 1_000);
+    assert_eq!(types(&channel.take_effects()), ["leave"]);
+    assert_eq!(channel.next_wake(), Some(1_000 + crate::SESSION_GRACE_MS));
+    channel.deadline(crate::SESSION_GRACE_MS);
+    assert_eq!(types(&channel.take_effects()), Vec::<String>::new(), "still waiting");
+    assert_eq!(channel.stats().sessions_waiting, 1);
+    channel.deadline(1_000 + crate::SESSION_GRACE_MS);
+    assert_eq!(types(&channel.take_effects()), ["close"]);
+    assert_eq!((channel.stats().sessions_waiting, channel.sessions(), channel.next_wake()), (0, 0, None));
+}
+
+/// A viewer who comes back within the grace continues their session: their
+/// own page is theirs again at once, and the program is not told they
+/// joined again; it is told when they open a page.
+#[test]
+fn a_viewer_who_comes_back_continues_their_session() {
+    let mut channel = waiting_channel();
+    channel.opened(VIEWER, 0);
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    let own = alloc::format!(r#"{{"type":"publish","page":"300","owner":{VIEWER},"tti":"PN,30000\nOL,5,Your game\n"}}"#);
+    channel.from_application(0, own.as_bytes(), 0);
+    channel.closed(VIEWER, 0);
+    channel.take_effects();
+    channel.opened(VIEWER, 60_000);
+    let effects = channel.take_effects();
+    assert!(effects.contains(&Effect::Own { session: VIEWER, page: 0x300 }), "{effects:?}");
+    let pages = texts(&sent_to(&effects, VIEWER));
+    assert!(pages.iter().any(|(page, text)| *page == 0x300 && text.contains("Your game")), "{pages:?}");
+    assert_eq!(types(&effects), Vec::<String>::new(), "no second join");
+    send(&mut channel, &InputItem::Event(Event::Page(0x300)));
+    assert_eq!(types(&channel.take_effects()), ["open"]);
+    assert_eq!((channel.stats().sessions_resumed, channel.stats().sessions_waiting, channel.stats().viewers), (1, 0, 1));
+    assert_eq!(channel.next_wake(), None, "nothing waits");
+}
+
+/// What a channel keeps is served by a channel made afresh before its
+/// program declares anything, and a page its program no longer declares
+/// is withdrawn and forgotten when it does (requirements 5.2 and 5.3).
+#[test]
+fn kept_pages_are_served_before_the_program_declares() {
+    let mut first = channel();
+    let pages = first.entries().cloned().collect::<Vec<_>>();
+    first.declared(0, pages);
+    first.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nCU,5,6,7,0\nOL,1,Kept\n"}"#, 0);
+    first.from_application(0, br#"{"type":"title","page":"100","title":"Kept front"}"#, 0);
+    let mut kept = BTreeMap::new();
+    for effect in first.take_effects() {
+        match effect {
+            Effect::Store { key, bytes } => {
+                kept.insert(key, bytes);
+            }
+            Effect::Forget { key } => {
+                kept.remove(&key);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(kept.keys().copied().collect::<Vec<_>>(), [crate::StoreKey::Page(0x100), crate::StoreKey::Pages(0)]);
+
+    let config = first.config().clone();
+    let mut second = Channel::new(config, alloc::vec![Box::new(Remote::new(Vec::new()))], 1);
+    assert!(!second.is_ready());
+    for (key, bytes) in &kept {
+        second.load(*key, bytes).unwrap();
+    }
+    assert!(second.is_ready());
+    let frame = first.shared_frames().find(|&(page, _)| page == 0x100).map(|(_, frame)| Arc::clone(frame)).unwrap();
+    assert!(second.take_effects().contains(&Effect::Shared { page: 0x100, frame: Arc::clone(&frame) }));
+    assert_eq!(second.resource("100.t42").unwrap().body, frame.to_vec());
+    let contents = String::from_utf8(second.resource("contents.txt").unwrap().body).unwrap();
+    assert!(contents.contains("p\t100\tKept front\n"), "{contents}");
+
+    second.declared(0, declared_pages(br#"{"type":"pages","pages":[{"page":"300","title":"Game"}]}"#).unwrap());
+    let effects = second.take_effects();
+    assert!(effects.contains(&Effect::Withdrawn { page: 0x100 }) && effects.contains(&Effect::Forget { key: crate::StoreKey::Page(0x100) }), "{effects:?}");
+    assert!(second.resource("100.t42").is_none());
+    second.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\n"}"#, 0);
+    assert_eq!(logs(&second.take_effects()).len(), 1, "a page no longer declared is refused");
+}
+
+/// The runtime's reports carry their level and a name that does not
+/// change: a refused line is a warning, a program's own message
+/// information (requirement 7.6).
+#[test]
+fn reports_carry_their_level_and_name() {
+    let mut channel = channel();
+    channel.take_effects();
+    channel.from_application(0, b"{not json", 0);
+    channel.from_application(0, br#"{"type":"log","text":"fetched 7 posts"}"#, 0);
+    let reports: Vec<(Level, &str, String)> = channel
+        .take_effects()
+        .into_iter()
+        .filter_map(|effect| if let Effect::Log { level, event, text } = effect { Some((level, event, text)) } else { None })
+        .collect();
+    assert_eq!(reports.len(), 2, "{reports:?}");
+    assert_eq!((reports[0].0, reports[0].1), (Level::Warn, "line_refused"));
+    assert_eq!((reports[1].0, reports[1].1, reports[1].2.as_str()), (Level::Info, "program_log", "fetched 7 posts"));
+}
+
+/// One second of a 440 Hz tone as a publisher encodes it for the profile,
+/// with the command the engine's decision E.124 names, its 51 packets back
+/// to back, every one 40 bytes: made by
+/// `ffmpeg -f lavfi -i sine=frequency=440:sample_rate=48000:duration=1 -ac 1
+/// -c:a libopus -b:a 16k -vbr off -frame_duration 20 tone.opus` (libopus
+/// 1.5) and the packets read out of the Ogg file after its two headers.
+const TONE: &[u8] = include_bytes!("opus-tone.packets");
+/// Its packets' length.
+const TONE_PACKET_BYTES: u16 = 40;
+/// Samples it holds: the 51 frames less the encoder's look-ahead, so the
+/// last frame runs past the sound's end (decision E.124 item 2).
+const TONE_SAMPLES: u32 = 48_648;
+
+fn base64_of(bytes: &[u8]) -> String {
+    let mut encoded = alloc::vec![0_u8; base64::encoded_len(bytes.len())];
+    let length = base64::encode(bytes, &mut encoded).unwrap();
+    String::from_utf8(encoded[..length].to_vec()).unwrap()
+}
+
+/// The packets a session is sent for `records`, numbered from `first`.
+fn audio_packets(records: &[Vec<u8>], first: u8) -> Vec<u8> {
+    let (packets, _) = neoteletext_audio::encode::packets(0, first, records);
+    packets.iter().flat_map(|packet| packet.bytes).collect()
+}
+
+/// A stored Opus sound as an encoder writes it reaches the viewer as the
+/// engine carries it, codec 2, its packets unchanged (requirements 10.1
+/// and 10.2): the very records `Sound::opus` makes.
+#[test]
+fn an_encoders_opus_sound_reaches_the_viewer_as_codec_2() {
+    assert_eq!(TONE.len(), 51 * usize::from(TONE_PACKET_BYTES));
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    channel.take_effects();
+    let line = alloc::format!(
+        r#"{{"type":"sound","to":{{"session":{VIEWER}}},"opus":{{"handle":7,"generation":2,"packet_bytes":{TONE_PACKET_BYTES},"samples":{TONE_SAMPLES},"packets":"{}"}}}}"#,
+        base64_of(TONE)
+    );
+    channel.from_application(0, line.as_bytes(), 0);
+    let effects = channel.take_effects();
+    assert_eq!(logs(&effects), Vec::<String>::new());
+    let sound = Sound::opus(7, 2, TONE_PACKET_BYTES, TONE, TONE_SAMPLES).unwrap();
+    assert_eq!(sound.codec, Codec::Opus);
+    let mut records = alloc::vec![sound.object_record().unwrap()];
+    records.extend(sound.data_records());
+    assert_eq!(sent_to(&effects, VIEWER), audio_packets(&records, 0));
+}
+
+/// A live Opus sound: its object, then its packets as they come, numbered
+/// from the block named.
+#[test]
+fn a_live_opus_sound_goes_as_its_packets_come() {
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    channel.take_effects();
+    let live = alloc::format!(r#"{{"type":"sound","to":{{"session":{VIEWER}}},"opus_live":{{"handle":9,"packet_bytes":{TONE_PACKET_BYTES}}}}}"#);
+    channel.from_application(0, live.as_bytes(), 0);
+    let packets = &TONE[..10 * usize::from(TONE_PACKET_BYTES)];
+    let next = alloc::format!(
+        r#"{{"type":"sound","to":{{"session":{VIEWER}}},"opus_packets":{{"handle":9,"packet_bytes":{TONE_PACKET_BYTES},"first":100,"packets":"{}"}}}}"#,
+        base64_of(packets)
+    );
+    channel.from_application(0, next.as_bytes(), 0);
+    let effects = channel.take_effects();
+    assert_eq!(logs(&effects), Vec::<String>::new());
+    let sound = Sound::live(9, 0, Codec::Opus, OPUS_RATE, TONE_PACKET_BYTES).unwrap();
+    let mut records = alloc::vec![sound.object_record().unwrap()];
+    records.extend(sound.packet_records(100, packets).unwrap());
+    // Two messages: the object's record, then the packets' records after it.
+    let object = audio_packets(&records[..1], 0);
+    let rest = audio_packets(&records[1..], 1);
+    assert_eq!(sent_to(&effects, VIEWER), [object, rest].concat());
+}
+
+/// Packets outside the profile are refused whole, with the reason, and
+/// nothing is sent: over 40 bytes (above 16 kbit/s at constant rate),
+/// stereo, two frames, a 10 ms frame, empty, or not whole packets
+/// (requirement 10.1; the engine's E.123 and REQ-AUD-022).
+#[test]
+fn opus_outside_the_profile_is_refused() {
+    let mut channel = channel();
+    channel.opened(VIEWER, 0);
+    channel.take_effects();
+    // TOC bytes (RFC 6716 section 3.1, table 2): Hybrid fullband 20 ms,
+    // mono, one frame; then its stereo, two-frame and 10 ms forms.
+    let hybrid_fullband_20ms: u8 = 15 << 3;
+    let refused: [(u16, Vec<u8>, &str); 6] = [
+        (41, alloc::vec![hybrid_fullband_20ms; 41], "packet_bytes is 1 to 40"),
+        (2, alloc::vec![hybrid_fullband_20ms | 0x04, 0], "stereo"),
+        (3, alloc::vec![hybrid_fullband_20ms | 1, 0, 0], "more than one frame"),
+        (2, alloc::vec![14 << 3, 0], "a frame other than 20 ms"),
+        (2, alloc::vec![hybrid_fullband_20ms, 0, hybrid_fullband_20ms], "whole packets of 2 bytes"),
+        (2, Vec::new(), "whole packets of 2 bytes"),
+    ];
+    for (packet_bytes, packets, reason) in refused {
+        let line = alloc::format!(
+            r#"{{"type":"sound","to":{{"session":{VIEWER}}},"opus_packets":{{"handle":1,"packet_bytes":{packet_bytes},"first":0,"packets":"{}"}}}}"#,
+            base64_of(&packets)
+        );
+        channel.from_application(0, line.as_bytes(), 0);
+        let effects = channel.take_effects();
+        let said = logs(&effects);
+        assert!(said.len() == 1 && said[0].contains(reason), "{reason}: {said:?}");
+        assert!(sent_to(&effects, VIEWER).is_empty(), "{reason}: nothing sent");
+    }
+    // A stored sound whose sample count its packets do not hold.
+    let line = alloc::format!(
+        r#"{{"type":"sound","to":{{"session":{VIEWER}}},"opus":{{"handle":1,"packet_bytes":{TONE_PACKET_BYTES},"samples":48000,"packets":"{}"}}}}"#,
+        base64_of(TONE)
+    );
+    channel.from_application(0, line.as_bytes(), 0);
+    let said = logs(&channel.take_effects());
+    assert!(said.len() == 1 && said[0].contains("sound.opus: Length"), "{said:?}");
 }

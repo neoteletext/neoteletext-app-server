@@ -1,7 +1,8 @@
 //! One connection's session (INPUT.md section 4): its input stream, the
 //! input count it has acted on, the page open with the keys, its record
 //! numbers, and the pages it owns privately. A reconnection is a new
-//! session.
+//! input session; the session itself continues while its viewer's cookie
+//! names it (requirement 5.5).
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -31,11 +32,21 @@ pub(crate) struct Session {
     /// Pages this session owns: each viewer's own game, typed form or
     /// adventure (`SERVER.md` section 2).
     pub own: BTreeMap<u16, Held>,
+    /// When its connection closed, while it waits for its viewer to come
+    /// back (requirement 5.5); none while connected.
+    pub waiting_since: Option<u64>,
 }
 
 impl Session {
     pub(crate) const fn new() -> Self {
-        Self { decoder: None, welcomed: false, acked: 0, page: 0, went: None, record_id: 0, own: BTreeMap::new() }
+        Self { decoder: None, welcomed: false, acked: 0, page: 0, went: None, record_id: 0, own: BTreeMap::new(), waiting_since: None }
+    }
+
+    /// Its viewer came back on a new connection: a new input session
+    /// (INPUT.md section 4), which keeps the pages it owns.
+    pub(crate) fn reconnected(&mut self) {
+        let own = core::mem::take(&mut self.own);
+        *self = Self { own, ..Self::new() };
     }
 
     /// The next record number, advanced.

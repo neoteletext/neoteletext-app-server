@@ -19,6 +19,8 @@ members = ["."]
 libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
+# The engine's base64, to write the packets as a program does.
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-engine", rev = "e09a589aeb19ed50b5ebbcff0b92c67b70a5dc5d", default-features = false }
 
 [profile.release]
 debug = 1
@@ -33,6 +35,27 @@ bench = false
 [[bin]]
 name = "channel_input"
 path = "fuzz_targets/channel_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "store_reader"
+path = "fuzz_targets/store_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_cookie"
+path = "fuzz_targets/session_cookie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opus_sound"
+path = "fuzz_targets/opus_sound.rs"
 test = false
 doc = false
 bench = false

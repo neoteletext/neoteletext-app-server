@@ -18,6 +18,8 @@ readonly BACON_VERSION="3.26.0"
 readonly DENY_VERSION="0.20.2"
 readonly FUZZ_VERSION="0.13.2"
 readonly MACHETE_VERSION="0.9.2"
+# The Cloudflare host's build: workers-rs's, at `worker`'s version (decision 20).
+readonly WORKER_BUILD_VERSION="0.8.7"
 # libFuzzer needs a nightly compiler; this one is pinned by date.
 readonly FUZZ_NIGHTLY="nightly-2026-10-01"
 
@@ -28,6 +30,7 @@ bacon|bacon|$BACON_VERSION|2550a220971b0d2c96e0fd698ba12945bfca3e9bf53fdf26af1f5
 cargo-deny|cargo-deny|$DENY_VERSION|e528dfcbe739af7ce37a77d3d6df1b29dd6887b1c701d888820c0f16b864f737|cargo-deny --version
 cargo-fuzz|cargo-fuzz|$FUZZ_VERSION|5acfd01930e49823e58c30dd8012d3338a620377d7c7d4cc140ca4b2169400e2|cargo-fuzz --version
 cargo-machete|cargo-machete|$MACHETE_VERSION|0f134a108e6c4080e558e32421cb85c064da766937fdb5d50dfa57458edc6678|cargo-machete --version
+worker-build|worker-build|$WORKER_BUILD_VERSION|1051c05ef088889a30ad3bad40c22a716ba8ca8d02a3fb01cef8c143ba952222|worker-build --version
 "
 # Where crates.io serves a published crate (its index's "dl" setting).
 readonly CRATE_DOWNLOADS="https://static.crates.io/crates"

@@ -1,0 +1,18 @@
+# BEGIN neoteletext (~/devel/neoteletext-app-server/deploy/ionos/deploy.sh
+# replaces everything to END). The neoteletext nspawn container, with its own
+# network namespace; Caddy inside it listens on 10.70.0.18:8080: the static
+# site on www.neottx.com, the NeoTeletext server on app.neottx.com, and
+# redirects from neottx.com and the neoteletext.com names. TLS terminates here.
+neottx.com, www.neottx.com, app.neottx.com, neoteletext.com, www.neoteletext.com, app.neoteletext.com {
+	reverse_proxy http://10.70.0.18:8080
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/neoteletext.com.log {
+			roll_size 10MB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+}
+# END neoteletext

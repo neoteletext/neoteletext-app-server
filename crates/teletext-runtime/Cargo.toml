@@ -13,6 +13,7 @@ neoteletext-formats.workspace = true
 neoteletext-input.workspace = true
 neoteletext-audio.workspace = true
 neoteletext-web.workspace = true
+neoteletext-opus.workspace = true
 
 [lints]
 workspace = true

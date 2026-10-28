@@ -19,9 +19,12 @@
     clippy::unimplemented
 )]
 
+pub mod admin;
 pub mod apps;
 pub mod connection;
 pub mod http;
 pub mod hub;
+pub mod logging;
+pub mod state;
 pub mod stats;
 pub mod websocket;

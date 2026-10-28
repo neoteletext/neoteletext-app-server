@@ -8,21 +8,23 @@
 //! refused whole and reported through [`Context::log`], never acted on in
 //! part.
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use neoteletext_audio::encode::{Command, Sound};
 use neoteletext_audio::record::{FLAG_AFTER_CURRENT, FLAG_LOOP};
-use neoteletext_audio::{CHANNELS, Codec, IMA_BLOCK_LARGE, IMA_BLOCK_SMALL, MAX_GAIN};
+use neoteletext_audio::{CHANNELS, Codec, IMA_BLOCK_LARGE, IMA_BLOCK_SMALL, MAX_GAIN, OPUS_FRAME_SAMPLES, OPUS_RATE};
 use neoteletext_formats::item::{Item, Reader};
 use neoteletext_formats::page::PageFile;
 use neoteletext_formats::tti::TtiReader;
 use neoteletext_input::event::Action;
 use neoteletext_input::keys;
+use neoteletext_opus::{DecodeError, Decoder, FRAME_SAMPLES, PacketError};
 use neoteletext_web::base64;
 
-use crate::application::{Application, Audience, Context, Owner, PageEntry};
+use crate::application::{Application, Audience, Context, Level, Owner, PageEntry};
 use crate::channel::SessionId;
 use crate::input::{Input, Named};
 use crate::json::{self, Value, Writer};
@@ -50,6 +52,20 @@ const CHANNEL_SLOTS: usize = CHANNELS as usize;
 /// The longest sound one message may carry: two minutes at 48 kHz, the
 /// browser's own limit for a sound.
 const MOST_SAMPLES: usize = 48_000 * 120;
+/// The Opus profile's average rate (the engine's decision E.123): 16 kbit/s.
+const OPUS_BITS_PER_SECOND: u32 = 16_000;
+/// Opus frames a second: 48 kHz in frames of 960 samples, 20 ms.
+const OPUS_FRAMES_PER_SECOND: u32 = OPUS_RATE / OPUS_FRAME_SAMPLES;
+/// Bits in a byte.
+const BITS_PER_BYTE: u32 = 8;
+/// The longest packet a constant-rate sound may have and keep to the
+/// profile's average: 40 bytes, the 16 kbit/s of 20 ms (decision 21; the
+/// engine's E.123 checks the average where a sound is published, not in
+/// its decoder).
+const OPUS_MOST_PACKET_BYTES: u32 = OPUS_BITS_PER_SECOND / OPUS_FRAMES_PER_SECOND / BITS_PER_BYTE;
+const _: () = assert!(OPUS_MOST_PACKET_BYTES * BITS_PER_BYTE * OPUS_FRAMES_PER_SECOND == OPUS_BITS_PER_SECOND);
+/// The most packets one message may carry: a stored sound's two minutes.
+const MOST_OPUS_PACKETS: usize = MOST_SAMPLES / FRAME_SAMPLES;
 
 /// Why a line from the process was refused.
 type Refusal = String;
@@ -89,10 +105,16 @@ pub fn declared_pages(line: &[u8]) -> Result<Vec<PageEntry>, Refusal> {
     Ok(entries)
 }
 
+/// Whether `title` may be a page's title or a section's name: at most
+/// [`TITLE_LIMIT`] characters, none a control.
+pub(crate) fn is_title(title: &str) -> bool {
+    title.chars().count() <= TITLE_LIMIT && !title.chars().any(char::is_control)
+}
+
 /// A page's title, none being empty: at most [`TITLE_LIMIT`] characters, none a control.
 fn title_of(value: Option<&Value>, number: u16) -> Result<&str, Refusal> {
     let title = value.and_then(Value::text).unwrap_or("");
-    if title.chars().count() > TITLE_LIMIT || title.chars().any(char::is_control) {
+    if !is_title(title) {
         return Err(format!("the title of {number:03X} is over {TITLE_LIMIT} characters or has controls"));
     }
     Ok(title)
@@ -121,13 +143,50 @@ pub struct Remote {
     /// The last command's number on each of the profile's four channels:
     /// a receiver acts only on a newer one (`audio.md` section 7.1).
     sequences: [u16; CHANNEL_SLOTS],
+    /// The engine's Opus decoder, made at the first Opus sound, which holds
+    /// each packet to the profile the receivers decode (decision 21).
+    opus: Option<OpusCheck>,
+}
+
+/// The decoder that checks Opus packets: about 28 KB, so made only for a
+/// program that sends Opus.
+struct OpusCheck(Box<Decoder>);
+
+impl core::fmt::Debug for OpusCheck {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("OpusCheck")
+    }
 }
 
 impl Remote {
     /// The application, serving the pages it declared.
     #[must_use]
     pub const fn new(pages: Vec<PageEntry>) -> Self {
-        Self { pages, sequences: [0; CHANNEL_SLOTS] }
+        Self { pages, sequences: [0; CHANNEL_SLOTS], opus: None }
+    }
+
+    /// Refuses unless `packets` are whole packets of `packet_bytes` each, at
+    /// most 40 bytes, every one in the profile the receivers decode: mono,
+    /// one 20 ms frame, at most 160 bytes, bare or padded (the engine's
+    /// E.123 and E.124). The engine's own decoder judges each packet, from
+    /// its start, so the profile is the engine's alone (requirement 10.1).
+    fn check_opus(&mut self, packet_bytes: u16, packets: &[u8]) -> Result<(), Refusal> {
+        if packet_bytes == 0 || u32::from(packet_bytes) > OPUS_MOST_PACKET_BYTES {
+            return Err(format!("sound: packet_bytes is 1 to {OPUS_MOST_PACKET_BYTES}, the profile's 16 kbit/s at constant rate"));
+        }
+        let size = usize::from(packet_bytes);
+        if packets.is_empty() || !packets.len().is_multiple_of(size) {
+            return Err(format!("sound: packets are whole packets of {packet_bytes} bytes each"));
+        }
+        let OpusCheck(decoder) = self.opus.get_or_insert_with(|| OpusCheck(Box::new(Decoder::new())));
+        let mut pcm = [0_i16; FRAME_SAMPLES];
+        for (index, packet) in packets.chunks_exact(size).enumerate() {
+            decoder.reset();
+            if let Err(DecodeError::Packet(refused)) = decoder.decode(packet, &mut pcm) {
+                return Err(format!("sound: packet {index} is outside the Opus profile: {}", packet_refusal(refused)));
+            }
+        }
+        Ok(())
     }
 
     fn serves(&self, number: u16) -> bool {
@@ -161,7 +220,7 @@ impl Remote {
                 Ok(())
             }
             Some("log") => {
-                context.log(value.get("text").and_then(Value::text).unwrap_or(""));
+                context.log(Level::Info, "program_log", value.get("text").and_then(Value::text).unwrap_or(""));
                 Ok(())
             }
             Some("pages") => Err("pages: declared once, in the first line".to_string()),
@@ -200,6 +259,34 @@ impl Remote {
             let mut records = alloc::vec![sound.object_record().map_err(|error| format!("sound.object: {error:?}"))?];
             records.extend(sound.data_records());
             records
+        } else if let Some(opus) = value.get("opus") {
+            let (handle, generation) = handle_of(opus)?;
+            let packet_bytes = packet_bytes_of(opus)?;
+            let packets = opus_packets(opus)?;
+            self.check_opus(packet_bytes, &packets)?;
+            let samples =
+                opus.get("samples").and_then(Value::integer).and_then(|samples| u32::try_from(samples).ok()).ok_or("sound.opus: samples is a count")?;
+            let sound = Sound::opus(handle, generation, packet_bytes, &packets, samples).map_err(|error| format!("sound.opus: {error:?}"))?;
+            let mut records = alloc::vec![sound.object_record().map_err(|error| format!("sound.opus: {error:?}"))?];
+            records.extend(sound.data_records());
+            records
+        } else if let Some(live) = value.get("opus_live") {
+            let (handle, generation) = handle_of(live)?;
+            let packet_bytes = packet_bytes_of(live)?;
+            if u32::from(packet_bytes) > OPUS_MOST_PACKET_BYTES {
+                return Err(format!("sound.opus_live: packet_bytes is 1 to {OPUS_MOST_PACKET_BYTES}, the profile's 16 kbit/s at constant rate"));
+            }
+            let sound = Sound::live(handle, generation, Codec::Opus, OPUS_RATE, packet_bytes).map_err(|error| format!("sound.opus_live: {error:?}"))?;
+            alloc::vec![sound.object_record().map_err(|error| format!("sound.opus_live: {error:?}"))?]
+        } else if let Some(live) = value.get("opus_packets") {
+            let (handle, generation) = handle_of(live)?;
+            let packet_bytes = packet_bytes_of(live)?;
+            let first =
+                live.get("first").and_then(Value::integer).and_then(|first| u16::try_from(first).ok()).ok_or("sound.opus_packets: first is a block number")?;
+            let packets = opus_packets(live)?;
+            self.check_opus(packet_bytes, &packets)?;
+            let sound = Sound::live(handle, generation, Codec::Opus, OPUS_RATE, packet_bytes).map_err(|error| format!("sound.opus_packets: {error:?}"))?;
+            sound.packet_records(first, &packets).map_err(|error| format!("sound.opus_packets: {error:?}"))?
         } else if let Some(live) = value.get("live") {
             let (handle, generation) = handle_of(live)?;
             let sound = Sound::live(handle, generation, Codec::ImaAdpcm, rate_of(live)?, IMA_BLOCK_LARGE).map_err(|error| format!("sound.live: {error:?}"))?;
@@ -231,7 +318,7 @@ impl Remote {
         } else if let Some(gain) = value.get("gain") {
             alloc::vec![self.command(gain, GAIN, 0, 0, 0, 0, None)?]
         } else {
-            return Err("sound: one of object, live, blocks, play, stop or gain is needed".to_string());
+            return Err("sound: one of opus, opus_live, opus_packets, object, live, blocks, play, stop or gain is needed".to_string());
         };
         context.sound(audience, records);
         Ok(())
@@ -300,6 +387,42 @@ fn samples(fields: &Value) -> Result<Vec<i16>, Refusal> {
         return Err(format!("sound: pcm is whole samples, at most {MOST_SAMPLES}"));
     }
     Ok(bytes.as_chunks::<2>().0.iter().map(|&pair| i16::from_le_bytes(pair)).collect())
+}
+
+/// An Opus sound's packet length.
+fn packet_bytes_of(fields: &Value) -> Result<u16, Refusal> {
+    fields
+        .get("packet_bytes")
+        .and_then(Value::integer)
+        .and_then(|bytes| u16::try_from(bytes).ok())
+        .filter(|&bytes| bytes > 0)
+        .ok_or_else(|| format!("sound: packet_bytes is 1 to {OPUS_MOST_PACKET_BYTES}"))
+}
+
+/// An Opus sound's packets, back to back, base64 (RFC 4648 section 4): at
+/// most two minutes of them, bounded before anything is decoded.
+fn opus_packets(fields: &Value) -> Result<Vec<u8>, Refusal> {
+    let text = fields.get("packets").and_then(Value::text).ok_or("sound: packets is base64 of the Opus packets, back to back")?;
+    let most_bytes = MOST_OPUS_PACKETS.saturating_mul(usize::try_from(OPUS_MOST_PACKET_BYTES).unwrap_or(usize::MAX));
+    if text.len() > base64::encoded_len(most_bytes) {
+        return Err(format!("sound: packets are at most {MOST_OPUS_PACKETS}, two minutes"));
+    }
+    let mut bytes = alloc::vec![0_u8; base64::decoded_len_max(text.len())];
+    let length = base64::decode(text.as_bytes(), &mut bytes).map_err(|error| format!("sound: packets are not base64: {error:?}"))?;
+    bytes.truncate(length);
+    Ok(bytes)
+}
+
+/// Why the engine's decoder refused a packet, in words.
+const fn packet_refusal(refused: PacketError) -> &'static str {
+    match refused {
+        PacketError::Empty => "empty",
+        PacketError::TooLong => "over 160 bytes",
+        PacketError::Stereo => "stereo",
+        PacketError::SeveralFrames => "more than one frame",
+        PacketError::Malformed => "malformed",
+        PacketError::NotTwentyMs => "a frame other than 20 ms",
+    }
 }
 
 /// The sub-pages of a TTI text, each addressed to `number` whatever its
@@ -432,6 +555,10 @@ impl Application for Remote {
         self.pages.clone()
     }
 
+    fn declared(&mut self, pages: &[PageEntry]) {
+        self.pages = pages.to_vec();
+    }
+
     fn start(&mut self, context: &mut Context<'_>) {
         let mut writer = Writer::new("start");
         writer.integer("protocol", PROTOCOL).integer("epoch_ms", i64::try_from(context.epoch_ms()).unwrap_or(i64::MAX));
@@ -466,7 +593,7 @@ impl Application for Remote {
 
     fn process_line(&mut self, line: &[u8], context: &mut Context<'_>) {
         if let Err(refusal) = self.act(line, context) {
-            context.log(&format!("refused a line from the application: {refusal}"));
+            context.log(Level::Warn, "line_refused", &format!("refused a line from the application: {refusal}"));
         }
     }
 }

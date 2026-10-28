@@ -4,12 +4,15 @@ How a channel's application, a program in any language, talks to the server. It 
 
 ## 1. Process
 
-- The server starts each channel's program, named in the channels file (section 6), in its own folder, with `NEOTELETEXT_CHANNEL` set to the channel's folder.
+- **Two transports carry the same lines** (requirements 6.1, 6.2 and 6.4):
+  - **standard input and output:** the server starts each channel's program named by a `command` in the channels file (section 6), in its own folder, with `NEOTELETEXT_CHANNEL` set to the channel's folder;
+  - **a Unix domain socket:** a channel named with a `socket` is served to the program that connects to it, which runs as a service of its own and so outlives a restart of the server. The socket and its folder are their owner's alone. One program at a time; when it goes, or the server restarts, it connects again and declares its pages again.
 - **One program serves every viewer** of its channel, multiplexed by session (`SERVER.md` section 7.1).
-- **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB, on the program's standard input and output. Standard error goes to the server's log.
-- **The first line the program writes declares its pages** (section 3.1), within 30 seconds. The server then sends `start`.
+- **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB. A program's standard error becomes the server's log, a line an event with its channel, cut at 64 KiB (requirement 7.5).
+- **The first line the program writes declares its pages** (section 3.1), within 30 seconds, each time it starts. The server then sends `start`. Until then the channel serves the pages the server kept from before (requirement 5.2); a page the program no longer declares is withdrawn.
+- **`start` ends every session the program knew** (requirement 9.1): it is then told of every session there is.
 - **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more after declaring its pages was ended, not failing, and is started again at once. Its channel pages stay as last published meanwhile. When it is running again it declares its pages again and is sent `start`, and publishes afresh. Each viewer's own copies of its pages are dropped, and it is sent `join` for every viewer connected and `open` for each viewer on one of its pages, so it draws them again.
-- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (`SERVER.md` section 7.5).
+- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (`SERVER.md` section 7.5). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
 - **Every line the program sends is checked whole** and refused whole when it is not valid, with the reason in the server's log. Nothing of a refused line is acted on.
 - **Timers are the program's own:** it has a clock, so the protocol has no `tick`.
 
@@ -18,14 +21,14 @@ How a channel's application, a program in any language, talks to the server. It 
 | `type` | Fields | When |
 |---|---|---|
 | `start` | `protocol` (1), `epoch_ms`; to come (decision 10): `standard`, the standard's maxima, and `budgets`, the server's | The program is to publish its channel pages |
-| `join` | `session` | A viewer connected |
+| `join` | `session` | A session began: a viewer connected without a session to continue |
 | `open` | `session`, `page` | The viewer opened one of the program's pages |
-| `leave` | `session`, `page` | The viewer left it |
+| `leave` | `session`, `page` | The viewer left it, or their connection closed |
 | `input` | `session`, `page`, `event` | Input on the page open, from INPUT.md |
-| `close` | `session` | The viewer went: forget the session |
+| `close` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7, for a page to show |
 
-`session` is a whole number, never reused. `page` is three hexadecimal digits, `"100"` to `"8FF"`.
+`session` is a whole number, never reused, across restarts too, and below 2^53, so a TypeScript program reads it exactly (requirement 5.4). A session outlives its connection (requirement 5.5): a viewer who comes back within 5 minutes, or later while their browser keeps the session's cookie (30 days, renewed at each connection), continues it, and the program is told `open` when they open a page, not `join` again. A program may keep what it knows of a viewer under the session's number (requirement 9.2). `page` is three hexadecimal digits, `"100"` to `"8FF"`.
 
 `event.kind` is one of:
 
@@ -79,10 +82,19 @@ Sends the viewer to a page of the channel (INPUT.md section 7.1, REQ-INT-113).
 
 ### 3.4 `sound`
 
-The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to` is `{"session":7}` for one viewer or `{"page":"501"}` for everyone with that page open. One of:
+The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to` is `{"session":7}` for one viewer or `{"page":"501"}` for everyone with that page open.
+
+**Sound for the desktop is Opus** (decision 21). The browser on macOS, Windows and Linux decodes Opus alone (the engine's decision E.131, the browser's decision 121), in one profile (the engine's E.123): mono, 48 kHz, one 20 ms frame a packet, at most 160 bytes, bare or padded, and at constant rate, every packet of a sound one length, at most 40 bytes, the profile's 16 kbit/s. The program encodes; the server checks every packet with the engine's own decoder and refuses the whole line if one is outside the profile, then carries the packets unchanged as codec 2 (E.124). A constant-rate encoder writes them, such as `ffmpeg -c:a libopus -b:a 16k -vbr off -frame_duration 20`, its packets read out of the Ogg file after its two header packets.
+
+**PCM becomes IMA ADPCM, for microcontroller receivers** such as tellyboy, which decode no Opus (E.131): `object`, `live` and `blocks` are kept for them, and are silent in the desktop browser.
+
+One of:
 
 | Member | Fields | Becomes |
 |---|---|---|
+| `opus` | `handle` 0–255, `generation`, `packet_bytes` 1–40, `samples` (the sound's length: its last packet's frame may run past it), `packets`: base64 of the packets back to back, at most two minutes | A stored Opus sound, codec 2 |
+| `opus_live` | `handle`, `generation`, `packet_bytes` 1–40 | A live Opus sound's object |
+| `opus_packets` | `handle`, `generation`, `packet_bytes`, `first` (the first packet's block number), `packets` | A live Opus sound's next packets, one a block, in order |
 | `object` | `handle` 0–255, `generation`, `rate` (8000, 11025, 16000, 22050, 24000, 32000, 44100 or 48000), `pcm`: base64 of 16-bit little-endian mono samples, at most two minutes | A stored sound, encoded here as IMA ADPCM in 256-byte blocks |
 | `live` | `handle`, `generation`, `rate` | A live sound's object (`audio.md` section 8.3) |
 | `blocks` | `handle`, `generation`, `rate`, `first` (block number), `pcm` | Live blocks of 1,017 samples each, encoded here in 512-byte blocks |
@@ -138,9 +150,15 @@ The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4).
 
 `teletext-server --channels ~/devel/neoteletext-server-channels/channels.json`. A folder is letters, digits, `-` and `_`. A relative `directory` is taken from the file's own folder, so `../<repository>` names a channel's repository beside the channels'.
 
+A channel whose program runs as a service of its own names a socket in place of a command and a directory, on Linux and macOS:
+
+```json
+{"folder":"hackaday","name":"Hackaday","socket":"sockets/hackaday.sock"}
+```
+
 ## 7. Figures
 
-The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` at the server's root holds the same for every channel; the log has a one-line summary each minute.
+The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` at the server's root holds the same for every channel; the log has an event with the figures each minute. Each of `server` and `channel` also carries `all_time`: its counters and peaks since the server was first run with its state directory (requirement 8.3), and, for a channel, `pages_opened`, each page's opens. The same figures, since the process started, are at `/metrics` on the administration listener, in the Prometheus text format (requirement 8.1).
 
 - **`server`:**
   - `uptime_s`;
@@ -155,4 +173,5 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `opens`, and `most_opened`: ten page numbers with how often each was opened;
   - `inputs` and `keys`;
   - `shared_published` and `own_published`;
-  - `gotos`, `sound_records`, `lines_to_application` and `lines_from_application`.
+  - `gotos`, `sound_records`, `lines_to_application`, `lines_from_application` and `lines_dropped`;
+  - `sessions_waiting`, sessions whose viewer may come back, and `sessions_resumed`.

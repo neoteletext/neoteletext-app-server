@@ -1,0 +1,26 @@
+# The Cloudflare host (decision 20): the Worker, one Durable Object per
+# channel, and the channels it serves. Secrets are not here: each channel's
+# program's secret is the Worker secret PROGRAM_SECRET_<FOLDER>
+# (`wrangler secret put`), and locally `.dev.vars`, which git ignores.
+name = "neoteletext"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-10-01"
+# The address viewers reach (decision 20); `wrangler dev` is given its
+# own with `--var ORIGIN:...`.
+routes = [{ pattern = "cf.neoteletext.com", custom_domain = true }]
+
+[build]
+command = "worker-build --release"
+
+[[durable_objects.bindings]]
+name = "CHANNEL"
+class_name = "ChannelObject"
+
+# SQLite storage for each channel's object (requirement 5.2).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChannelObject"]
+
+[vars]
+ORIGIN = "https://cf.neoteletext.com"
+CHANNELS = '[{"folder":"demo","name":"Demo"}]'

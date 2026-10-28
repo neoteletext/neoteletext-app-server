@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::hub::{Command, Hub, OUTBOX, Outbound};
 use crate::stats::ServerStats;
-use crate::websocket::{Message, Opcode, Reader, header};
+use crate::websocket::{CLOSE_PROTOCOL_ERROR, Message, Opcode, Reader, header};
 
 /// The bytes read from the socket at a time. Input is a few bytes a key;
 /// a longer message arrives over several reads (decision 7 item 4).
@@ -24,10 +24,12 @@ const READ_BYTES: usize = 1_024;
 pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
     if hub.commands.send(Command::Opened { session, outbox }).await.is_err() {
+        hub.release(session);
         return;
     }
     let stats = Arc::clone(&hub.stats);
     stats.connected();
+    tracing::debug!(target: "connection", channel = hub.folder, session, "opened");
     let (mut reading, mut writing) = stream.into_split();
     let mut generation = hub.generation.clone();
     let mut sent = *generation.borrow_and_update();
@@ -50,7 +52,13 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
                 Some(Outbound::Bytes(bytes)) => open = write(&mut writing, Opcode::Binary, &bytes, &stats).await,
                 Some(Outbound::Own(page)) => { own.insert(page); }
                 Some(Outbound::Disown(page)) => { own.remove(&page); }
-                Some(Outbound::Close) | None => open = false,
+                Some(Outbound::Close(code)) => {
+                    // RFC 6455 section 5.5.1: the status code first, two bytes.
+                    let _ = write(&mut writing, Opcode::Close, &code.to_be_bytes(), &stats).await;
+                    tracing::debug!(target: "connection", channel = hub.folder, session, code, "closed by the server");
+                    open = false;
+                }
+                None => open = false,
             },
             changed = generation.changed() => {
                 if changed.is_err() {
@@ -69,6 +77,8 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
     let _ = writing.shutdown().await;
     stats.disconnected();
     let _ = hub.commands.send(Command::Closed { session }).await;
+    hub.release(session);
+    tracing::debug!(target: "connection", channel = hub.folder, session, "closed");
 }
 
 /// Handles the client's whole messages; returns whether the connection
@@ -89,8 +99,12 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
                     return false;
                 }
             }
-            Ok(Some(Message::Close)) | Err(_) => {
+            Ok(Some(Message::Close)) => {
                 let _ = write(writing, Opcode::Close, &[], stats).await;
+                return false;
+            }
+            Err(_) => {
+                let _ = write(writing, Opcode::Close, &CLOSE_PROTOCOL_ERROR.to_be_bytes(), stats).await;
                 return false;
             }
         }

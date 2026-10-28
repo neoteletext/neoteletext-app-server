@@ -7,6 +7,12 @@
 /// The largest message a client may send: INPUT.md's 4,096-byte message
 /// with room for a close's reason.
 pub const MAX_MESSAGE: usize = 8 * 1024;
+/// A Close's status: the endpoint closes because the other broke the
+/// protocol (RFC 6455 section 7.4.1).
+pub const CLOSE_PROTOCOL_ERROR: u16 = 1002;
+/// A Close's status: the service is restarting, and the client may
+/// connect again (the IANA WebSocket Close Code registry; requirement 5.1).
+pub const CLOSE_SERVICE_RESTART: u16 = 1012;
 /// The largest control frame's payload (RFC 6455 section 5.5).
 const MAX_CONTROL: usize = 125;
 /// A 16-bit length follows (RFC 6455 section 5.2).

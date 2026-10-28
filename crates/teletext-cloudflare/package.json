@@ -1,0 +1,15 @@
+{
+  "name": "teletext-cloudflare",
+  "private": true,
+  "description": "Cloudflare's tool for the Cloudflare host, pinned (decision 20)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test --test-concurrency=1 test/end-to-end.test.ts"
+  },
+  "devDependencies": {
+    "wrangler": "4.154.0"
+  }
+}

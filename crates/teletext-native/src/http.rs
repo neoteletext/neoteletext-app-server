@@ -12,12 +12,14 @@ use std::sync::{Arc, PoisonError};
 use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
-use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, ETAG, HeaderValue, IF_NONE_MATCH, UPGRADE};
+use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, COOKIE, ETAG, HeaderValue, IF_NONE_MATCH, SET_COOKIE, UPGRADE};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use teletext_runtime::SessionId;
 use teletext_runtime::layout::bundle;
+use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
 use crate::hub::Hub;
@@ -26,6 +28,14 @@ use crate::stats::{ServerStats, count};
 /// A whole response body.
 #[derive(Debug, Default)]
 pub struct Whole(Option<Bytes>);
+
+impl Whole {
+    /// A body of `bytes`.
+    #[must_use]
+    pub const fn of(bytes: Bytes) -> Self {
+        Self(Some(bytes))
+    }
+}
 
 impl Body for Whole {
     type Data = Bytes;
@@ -50,10 +60,30 @@ impl Body for Whole {
 pub struct Routes {
     /// The channels.
     pub hubs: BTreeMap<String, Hub>,
-    /// Sessions are numbered from here, never reused.
+    /// Sessions are numbered from here, never reused, across restarts too
+    /// (requirement 5.4: `session_cookie::first_session`).
     pub sessions: AtomicU64,
     /// The server's figures.
     pub stats: Arc<ServerStats>,
+    /// How sessions continue across connections, where they can.
+    pub cookies: Option<Cookies>,
+}
+
+/// The session cookie's keys and attributes (requirement 5.5).
+#[derive(Debug)]
+pub struct Cookies {
+    /// The key cookies are signed with.
+    pub key: Key,
+    /// The key before it, still accepted.
+    pub previous: Option<Key>,
+    /// Whether viewers reach the server over `https`: the cookie is then
+    /// `Secure`.
+    pub secure: bool,
+}
+
+/// Seconds since the Unix epoch.
+fn now_s() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
 }
 
 /// Where the server's figures are served, beside the channels' folders.
@@ -133,22 +163,61 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
         return status(StatusCode::UPGRADE_REQUIRED);
     };
     let accept = neoteletext_web::ws::accept_for(&key);
-    let session = routes.sessions.fetch_add(1, Ordering::Relaxed);
+    let (session, set_cookie) = session_for(routes, &hub, &request);
     let pending = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
-        let Ok(upgraded) = pending.await else { return };
+        let Ok(upgraded) = pending.await else {
+            hub.release(session);
+            return;
+        };
         // The raw socket: no HTTP buffers stay with the connection.
-        let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
+        let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else {
+            hub.release(session);
+            return;
+        };
         connection::serve(parts.io.into_inner(), &parts.read_buf, hub, session).await;
     });
     let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();
+    if let Some(value) = set_cookie.and_then(|cookie| HeaderValue::from_str(&cookie).ok()) {
+        headers.insert(SET_COOKIE, value);
+    }
     headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
     headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
     if let Ok(value) = HeaderValue::from_bytes(&accept) {
         headers.insert("sec-websocket-accept", value);
     }
     response
+}
+
+/// The session a push connection continues or starts, claimed for it,
+/// and the cookie to set (requirement 5.5): the session its cookie names,
+/// unless another connection has it; else a new one. A session another
+/// connection has is not given a cookie, so the browser keeps the one it
+/// has.
+fn session_for(routes: &Routes, hub: &Hub, request: &Request<Incoming>) -> (SessionId, Option<String>) {
+    let Some(cookies) = routes.cookies.as_ref() else { return (new_session(routes, hub), None) };
+    let now = now_s();
+    let keys: Vec<&Key> = std::iter::once(&cookies.key).chain(cookies.previous.as_ref()).collect();
+    let named = request.headers().get_all(COOKIE).iter().find_map(|header| session_cookie::session_of(header.as_bytes(), &hub.folder, now, &keys));
+    match named {
+        Some(session) if hub.claim(session) => (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure))),
+        Some(_) => (new_session(routes, hub), None),
+        None => {
+            let session = new_session(routes, hub);
+            (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure)))
+        }
+    }
+}
+
+/// A session never given before, claimed.
+fn new_session(routes: &Routes, hub: &Hub) -> SessionId {
+    loop {
+        let session = routes.sessions.fetch_add(1, Ordering::Relaxed);
+        if hub.claim(session) {
+            return session;
+        }
+    }
 }
 
 fn status(code: StatusCode) -> Response<Whole> {

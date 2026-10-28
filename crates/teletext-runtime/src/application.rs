@@ -77,7 +77,21 @@ pub(crate) enum Action {
     /// A line for the application's process (`docs/applications.md`).
     Message(Vec<u8>),
     /// Something for the server's operator to read.
-    Log(String),
+    Log { level: Level, event: &'static str, text: String },
+}
+
+/// How much a report matters to the server's operator, as a log ranks it
+/// (requirement 7.6).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Level {
+    /// Something failed that the operator must act on.
+    Error,
+    /// Something was refused or lost, and the server went on.
+    Warn,
+    /// What the server did, worth reading.
+    Info,
+    /// Detail for finding a fault.
+    Debug,
 }
 
 /// The application's view of the runtime during one call.
@@ -154,9 +168,10 @@ impl Context<'_> {
         self.actions.push(Action::Message(line));
     }
 
-    /// Reports `text` to the server's operator, as the host logs.
-    pub fn log(&mut self, text: &str) {
-        self.actions.push(Action::Log(String::from(text)));
+    /// Reports `text` to the server's operator at `level`, as the event
+    /// `event`, a name that does not change, for the host's log.
+    pub fn log(&mut self, level: Level, event: &'static str, text: &str) {
+        self.actions.push(Action::Log { level, event, text: String::from(text) });
     }
 
     /// A pseudo-random number, from the seed the host gave the channel
@@ -182,6 +197,10 @@ impl Context<'_> {
 pub trait Application: Send {
     /// The pages it serves, for the channel's contents and to route input.
     fn pages(&self) -> Vec<PageEntry>;
+
+    /// Its process declared these pages, which it serves from now on
+    /// (requirement 5.3), or they were kept from before (requirement 5.2).
+    fn declared(&mut self, _pages: &[PageEntry]) {}
 
     /// The channel started: publish the shared pages.
     fn start(&mut self, context: &mut Context<'_>);

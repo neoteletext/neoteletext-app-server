@@ -56,7 +56,13 @@ impl Application for Echo {
 }
 
 fn channel() -> Channel {
-    let config = ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".to_string(),
+        push_address: "ws://127.0.0.1:1/test/push".to_string(),
+        initial_page: 0x100,
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config, alloc::vec![Box::new(Echo::default())], 7);
     channel.start(0);
     channel
@@ -184,7 +190,13 @@ impl Application for Mover {
 /// page. Before, the acknowledgement after the input named the page left.
 #[test]
 fn a_page_gone_to_is_named_until_it_is_open() {
-    let config = ChannelConfig { name: "Test".to_string(), push_address: "ws://127.0.0.1:1/test/push".to_string(), initial_page: 0x100, epoch_at_start_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".to_string(),
+        push_address: "ws://127.0.0.1:1/test/push".to_string(),
+        initial_page: 0x100,
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config, alloc::vec![Box::new(Mover)], 7);
     channel.start(0);
     channel.opened(1, 0);
@@ -214,7 +226,7 @@ fn a_restarted_program_is_told_of_its_viewers() {
     }
     channel.received(1, &message(&Item::Event(Event::Page(ECHO_PAGE))), 0);
     channel.take_effects();
-    channel.restarted(0, 0);
+    channel.application_started(0, 0);
     let effects = channel.take_effects();
     let place = |wanted: &Effect| effects.iter().position(|effect| effect == wanted);
     let disowned = place(&Effect::Disown { session: 1, page: ECHO_PAGE }).expect("the old program's page is dropped");

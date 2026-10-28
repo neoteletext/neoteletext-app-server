@@ -42,3 +42,42 @@ The questions met while implementing without the owner, and the answer taken, as
 | 14 | Where the showcase menu puts the collections' folders, now that they are `characters` and the like again | Column 27, the Rust's, with a check at load that every folder ends within the row; row 10's workaround is gone | The `-ts` folders existed only while the Rust server served the plain names; the TypeScript programs serve them now. |
 | 15 | What `channel_input` fuzzes once no application runs in the server | A channel whose application is the runtime's `Remote`, with a fixed declaration, fed two sessions' input and the program's lines | Every channel is a program now, so that is what a viewer's bytes reach; the program's lines are outside input too (requirement 2.6), which no target read before. |
 | 16 | What becomes of `teletext-pages` and the server's `--pictures` | Removed with the Rust showcase | Both served only the in-process channels; the showcase's programs read the pictures themselves (`channels.json`), and the deploy script copies them to the host's `tmp/pictures`, where those programs look. |
+
+## 28 October 2026: surviving a restart, logging and figures
+
+Taken on the owner's instruction to go ahead with all of it ("i agree with all ... go ahead, do all of this then write the code and build and test"), and, for logging and figures, "i automatically accept what you propose for these". For the owner's review.
+
+| Row | Question | Decision | Reason |
+|---|---|---|---|
+| 17 | How long a closed session waits for its viewer | 5 minutes | `SERVER.md` section 8.1's "a grace period of minutes": long enough for a phone's background socket and a server's restart; the memory waiting sessions hold under churn is not yet measured. |
+| 18 | How long the session cookie lasts | 30 days, renewed at each connection | Long enough for a program to keep a viewer's game or place under the session's number (requirement 9.2); short of RFC 6265bis's 400-day cap, since it identifies a returning viewer to the channel's program. |
+| 19 | What a second connection presenting a connected session's cookie gets | A new session of its own and no cookie | One session per connection keeps the runtime's input state per session; setting a cookie would take the first tab's session from it. Two tabs in one browser therefore share nothing until one closes. |
+| 20 | How session numbers stay unique across restarts without keeping a counter | The start time in milliseconds times 1,024 | No file to keep or lose; 1,024 a millisecond is far above any rate of connection; the product stays below 2^53 until about the year 2248. |
+| 21 | How often what a channel keeps is written | Within 5 seconds of a change, and at shutdown | Pages a program republishes every second would otherwise write a file a second each; 5 seconds lose at most that much on a crash, nothing on a clean stop. |
+| 22 | Where `/metrics` is served, and on which port | An administration listener, none unless `--admin-listen` is given; the deploy uses `127.0.0.1:9464` | Figures about viewers stay off the public address; none by default keeps two servers on one machine (the tests) from colliding; 9464 is the port the OpenTelemetry Prometheus exporter registers. |
+| 23 | The log's format by default | JSON when standard error is not a terminal, text when it is | What a supervisor or collector reads, and what a person at a terminal reads, without a flag. |
+| 24 | How `RUST_LOG` is read | `tracing-subscriber`'s `Targets` filter, not `env-filter` | Targets and levels are all the server needs; `env-filter` brings a regular expression engine. |
+| 25 | At which level a program's standard error is logged | `INFO`, target `program` | Programs write progress there as often as faults; a level from the line's text would be a guess. |
+| 26 | The buckets of the channel's event-time histogram | 50 µs to 100 ms, eleven bounds | From a key's cost to a republication of hundreds of pages; Prometheus's default buckets start at 5 ms, above what a channel's task should take. |
+| 27 | What a kept page's record holds | Version, kind, page, cursor, the frame's length, the frame | The frame is what is served, so nothing is encoded again at load; the length was added when `a_page_record_not_whole_is_refused` found that a record cut at a packet's end read as a shorter page. |
+| 28 | Whether a page's record is the published sub-pages or the encoded frame | The encoded frame | The frame carries the header as the inserter stamped it; the time-filling header corrects the clock within a second. |
+
+## 28 October 2026: the Cloudflare host
+
+| Row | Question | Decision | Reason |
+|---|---|---|---|
+| 29 | Why `wasm-bindgen` failed with "externref table required for catch wrappers" | The Worker's release build is not stripped (`[profile.release.package.teletext-cloudflare] strip = false`) | The workspace's `strip = true` removed the module's `target_features` section, from which `wasm-bindgen` learns that it has reference types; built unstripped, it bound at once. |
+| 30 | Where the Cloudflare host's secrets for programs live | A Worker secret a channel, `PROGRAM_SECRET_<FOLDER>`, sent by the program as `Authorization: Bearer`; locally `.dev.vars`, ignored by git | Requirement 1.5's channel's secret; a header, never the address, which logs keep. |
+| 31 | How the object serves `channel.json`, `contents.txt` and the pages | The object answers them from the runtime, as the native host does | The edge cache in front (architecture section 3.3) is an optimisation once deployed; owed in `TECH-DEBT.md`. |
+| 32 | What becomes of viewers connected when an object is evicted | They start afresh: each is sent every shared page and its session's join | While the clock is kept a watched object is not evicted for being idle; eviction then comes with a deployment, which closes the connections anyway. |
+| 33 | Whether the object sends its program the `stats` line | Not yet | The figures are the native host's (`ServerStats`); the object's are the runtime's alone. Owed in `TECH-DEBT.md`. |
+| 34 | The subdomain | `cf.neoteletext.com`, unless the owner names another | Short, and says which host serves it beside a native one. |
+
+## 28 October 2026: Opus for the desktop
+
+| Row | Question | Decision | Reason |
+|---|---|---|---|
+| 35 | How the server checks a packet against the profile when the engine's packet reader is private | Each packet decoded by the engine's public `Decoder` from a reset state; only its "outside the profile" refusal refuses the line | Writing the TOC rules here would copy the engine; a reset decoder judges the profile without state, and a frame the decoder finds corrupt from a reset state may be sound in its stream, so that is not refused. Each packet is decoded once more than needed, about 50 a second a live sound. |
+| 36 | What "16 kbit/s on average" means for a constant-rate sound | Packets of at most 40 bytes | E.123 checks the average where a sound is published; at constant rate a packet's length is its rate, 40 bytes being 16 kbit/s exactly. |
+| 37 | The protocol's names for Opus | `opus`, `opus_live`, `opus_packets`, beside `object`, `live`, `blocks` | Parallel to the PCM members, so a kit keeps both paths side by side; `packet_bytes` named as the engine names it. |
+| 38 | The test's Opus | One second of a 440 Hz tone from `ffmpeg` with libopus 1.5, with E.124's own command, kept as `crates/teletext-runtime/src/remote/opus-tone.packets` | Real encoder output, every packet 40 bytes in five configurations (SILK, Hybrid and CELT, bare and padded); generated, so no one's rights in it. |

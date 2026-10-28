@@ -5,14 +5,15 @@
 | **Asked** | By the owner on 25 October 2026: "could you make some sort of server application that plays internet radio stations?", then: "use symphonia, include it in the licence credits for the server. what i want is the capability to do streaming audio transcoding built in to the server design that how would it work what would it look like to the programmer. also design the same so that we can stream internet radio stations or stream podcasts using http byte ranges". Station list: radio-browser.info. |
 | **State** | Design, 25 October 2026. Nothing built. Section 10 lists what the owner must decide. |
 | **Measured** | Section 7: symphonia 0.6.1 on eight real streams, recorded the same day. |
+| **Amended** | 28 October 2026 (decision 21): the output is Opus in the profile the desktop browsers decode (the engine's decisions E.123, E.124 and E.131), no longer IMA ADPCM. Sections 1, 2, 3.1, 7, 8, 10 and 11 say what changed; the encoder is the owner's to choose (section 10 item 8). |
 
 ## 1. What it is
 
 Transcoding becomes a service of the server, like publishing a page. An application names a source by URL. The server then does the work:
 1. fetches it;
 2. decodes MP3, AAC or FLAC;
-3. mixes it to mono and resamples it to the audio profile's 16 kHz;
-4. encodes it as IMA ADPCM (the engine's encoder);
+3. mixes it to mono and resamples it to 48 kHz, the Opus profile's only rate;
+4. encodes it as Opus in the profile (the engine's decision E.123): mono, 16 kbit/s at constant rate, a 40-byte packet every 20 ms, with the encoder of section 10 item 8;
 5. sends it to every session the application says is listening.
 
 The application never touches a byte of audio. It hears what is playing (the station's title, levels and position) and draws pages from that.
@@ -24,26 +25,26 @@ There are two kinds of source:
 ## 2. The pipeline
 
 ```
- URL ──► fetch ──► unwrap ─────────► decode ──► mono ──► resample ──► IMA ADPCM ──► blocks
-         HTTP(S)   ICY metadata out  symphonia  mix      to 16 kHz    engine        64 ms each
-         ranges    HLS playlists,                                     encoder
-         redirects TS → ADTS                                                          │
+ URL ──► fetch ──► unwrap ─────────► decode ──► mono ──► resample ──► Opus ──────► packets
+         HTTP(S)   ICY metadata out  symphonia  mix      to 48 kHz    encoder       40 bytes,
+         ranges    HLS playlists,                                     (section 10   20 ms each
+         redirects TS → ADTS                                          item 8)          │
                                                                                       ▼
                      title, levels, position ──► application        blocks ──► stream ring ──► connections
 ```
 
-- **The transcoder is sans I/O, like the runtime.** `teletext-transcode` takes bytes in and gives encoded blocks and events out. It holds no socket, clock or thread. A host feeds it what it fetched. It builds for `wasm32-unknown-unknown` as well: symphonia 0.6.1, with the codecs needed, compiled for that target on 25 October 2026.
+- **The transcoder is sans I/O, like the runtime.** `teletext-transcode` takes bytes in and gives encoded packets and events out. It holds no socket, clock or thread. A host feeds it what it fetched. symphonia 0.6.1, with the codecs needed, compiled for `wasm32-unknown-unknown` on 25 October 2026; whether the transcoder still does depends on the Opus encoder (section 10 item 8). It runs in the native host's workers either way (section 8), not in a Worker on Cloudflare, whose CPU limits suit fan-out, not transcoding.
 - **The fetcher is the host's.** On the native host it is a task, or a worker process (section 8), holding the HTTP connection.
 - **Blocks go to listeners as pages go to viewers** (decision 7). The runtime never touches a listener's audio.
   - A live stream is a ring of encoded blocks with a sequence number.
   - Each connection's own task catches up from the last block it sent, up to the receiver's lead.
   - A slow connection skips to the newest blocks; no queue grows.
-- **The output is the engine's audio profile, unchanged:**
-  - IMA ADPCM at 16 kHz, mono, in 512-byte blocks;
-  - 64 kbit/s per listener;
-  - the live-sound records the showcase radio sends today.
+- **The output is the engine's Opus profile** (decisions E.123 and E.124; this repository's decision 21):
+  - Opus, mono, 48 kHz, one 20 ms frame a packet, every packet 40 bytes: 16 kbit/s at constant rate;
+  - 16 kbit/s per listener, a quarter of the IMA ADPCM output this design first had;
+  - live Opus sounds, codec 2, the records `opus_live` and `opus_packets` make (`docs/applications.md` section 3.4).
 
-  The browser needs no change.
+  The desktop browser plays it, and plays nothing else (its decision 121). A microcontroller receiver such as tellyboy decodes no Opus (the engine's E.131); a stream for it would be a second output, in IMA ADPCM, which this design does not cover.
 
 ## 3. What it looks like to the programmer
 
@@ -71,7 +72,7 @@ impl Context<'_> {
     /// On demand only: each listener's own position.
     pub fn audio_seek(&mut self, session: SessionId, stream: StreamId, to_ms: u64);
     pub fn audio_pause(&mut self, session: SessionId, stream: StreamId, paused: bool);
-    /// Generated only: 16-bit mono samples at 16 kHz, appended.
+    /// Generated only: 16-bit mono samples at 48 kHz, appended.
     pub fn audio_push(&mut self, stream: StreamId, samples: &[i16]);
     pub fn audio_close(&mut self, stream: StreamId);
 }
@@ -265,12 +266,13 @@ Costs are milliseconds of one core per second of audio, on the development Mac:
   - Not measured: the 24–32 kbit/s HE-AAC stations, whose core may stop below 8 kHz.
 - **The resampler is most of the cost.** The probe's filter computes its sine and cosine for every tap. A precomputed polyphase table should cost several times less; not yet measured. Decoding is 0.3–3.7 ms per second of audio.
 - **Memory:** a transcoding process peaked at 3.2–3.6 MB resident on 2-second inputs (macOS; Linux not measured).
+- **Measured before decision 21:** these figures resampled to 16 kHz and encoded IMA ADPCM. With Opus the resampler runs to 48 kHz and an Opus encoder replaces the engine's IMA ADPCM encoder; neither cost, nor the sound at 16 kbit/s, is measured yet.
 
 ## 8. Scale, and whether a separate process scales
 
-**The work grows with the number of stations playing, not the number of listeners.** One station heard by 100,000 people is one fetch, one decode and one encode. The 100,000 connections read the same encoded blocks, exactly as they read a shared page (decision 7, measured at 100,000 connections). Sending is 64 kbit/s per listener, so a busy station is limited by the network (6.4 Gbit/s for 100,000 listeners), not the transcoder.
+**The work grows with the number of stations playing, not the number of listeners.** One station heard by 100,000 people is one fetch, one decode and one encode. The 100,000 connections read the same encoded blocks, exactly as they read a shared page (decision 7, measured at 100,000 connections). Sending is 16 kbit/s per listener in Opus, so a busy station is limited by the network (1.6 Gbit/s for 100,000 listeners, a quarter of the IMA ADPCM output's 6.4), not the transcoder.
 
-What each station playing costs, from section 7:
+What each station playing costs, from section 7's IMA ADPCM measurements; an Opus encoder's cost is to be added when it is chosen and measured:
 
 | Stations playing at once | One process each | Tasks in a few worker processes |
 |---|---|---|
@@ -316,8 +318,8 @@ The URLs come from a public directory anyone can add to, and from podcast feeds.
 ## 10. Decisions for the owner
 
 1. **Opus (1.1% of stations, with Vorbis).** symphonia 0.6.1 has no Opus decoder. Options:
-   - leave Opus stations out, which is the recommendation for now;
-   - `symphonia-adapter-libopus` 0.3.0, which links the C libopus (BSD-3-Clause);
+   - leave Opus stations out, the recommendation until decision 21;
+   - `symphonia-adapter-libopus` 0.3.0, which links the C libopus (BSD-3-Clause): the recommendation if libopus becomes the encoder (item 8), since the one library then decodes Opus stations too;
    - one of the young pure-Rust decoders (`opus-decoder` 0.1.1, `rusty-opus` 1.0.2, `opus-rs` 0.1.39), untested here.
 2. **The HTTP client for fetching.**
    - The engine's `neoteletext-web` has a strict, sans-I/O HTTP/1.1 client (its own parser, bounded heads, chunked framing). Using it keeps one HTTP implementation, as decision 1 wants. It needs these engine changes: an endless body, the `Range` and `Icy-MetaData` headers, and audio media types.
@@ -331,11 +333,15 @@ The URLs come from a public directory anyone can add to, and from podcast feeds.
    - Apple's podcast search (no key);
    - Podcast Index (free, with an API key in `~/devel/credentials/`).
 6. **Rights.** Relaying a station or a podcast to many listeners is retransmission. Many stations' and podcasts' terms forbid it, and ads inserted per request would be relayed to people they were not counted for. On the LAN for testing, this matters little. A public server needs a policy, for example only stations that allow relaying, or each listener fetching for themselves. That is the owner's call.
-7. **The output rate.** 16 kHz (64 kbit/s) is the profile's wideband rate and suits music. 8 kHz (32 kbit/s) halves the bandwidth and suits speech-only stations and podcasts. It could be chosen per stream.
+7. **The output rate.** *Withdrawn on 28 October 2026 (decision 21):* the Opus profile fixes it at 48 kHz and 16 kbit/s (the engine's E.123).
+8. **The Opus encoder** (decision 21). The engine decodes Opus and has no encoder (its E.124 item 4). Options:
+   - **libopus, the reference encoder, through a Rust binding** (C, BSD-3-Clause; bindings such as `audiopus_sys` build it from source): the same codebase whose decoder the engine's is bit-exact with, so what it writes is what the receivers decode; it runs inside the confined workers (section 8), where a C library's faults stay. The transcoder would then no longer build for `wasm32-unknown-unknown` without libopus compiled for it, which the transcoder does not need (section 2). **Recommended.**
+   - A pure-Rust encoder: none mature or tested here.
+   - `ffmpeg` as the worker program, decoding every station and encoding Opus: it would replace symphonia, against the owner's instruction "use symphonia", and its LGPL or GPL build may run only as a separate program (`DEVELOPMENT.md` section 7).
 
 ## 11. Not known yet
 
 - HE-AAC below 48 kbit/s, and HLS in fragmented MP4: not tested.
 - A precomputed resampler's cost, and a transcoding process's memory on Linux: not measured.
 - How the browser's live sound treats block numbers that wrap after 65,536 blocks (70 minutes), and a stream that starts at a block other than 0: to be checked against the engine's `audio.md` section 8.3.
-- The engine's live encoder restarts its step size on every call, costing 2–7 dB at each restart (`TECH-DEBT.md`). A transcoder that encodes block by block hits it every block. It is the engine change already recorded, now needed.
+- The engine's live IMA ADPCM encoder restarts its step size on every call (`TECH-DEBT.md`); with Opus output the radio no longer meets it. An Opus encoder keeps its state from packet to packet, and its look-ahead (libopus's pre-skip) delays the stream's start by a few milliseconds; how the first packets are numbered against the receiver's live sound (the engine's `audio.md` section 8.3) is to be checked.

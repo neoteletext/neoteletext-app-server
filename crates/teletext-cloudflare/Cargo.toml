@@ -1,0 +1,22 @@
+[package]
+name = "teletext-cloudflare"
+description = "The server on Cloudflare: a Worker and one Durable Object per channel around the runtime (decision 20)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+# Everything is for Cloudflare's target alone: elsewhere the crate is empty,
+# so the native gates build nothing of `worker`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+teletext-runtime.workspace = true
+worker.workspace = true
+getrandom.workspace = true
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

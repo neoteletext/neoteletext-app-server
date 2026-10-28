@@ -76,7 +76,9 @@ pub fn time_filling(name: &str, epoch_ms: u64) -> [u8; 42] {
         *slot = with_odd_parity(byte);
     }
     let magazine = Magazine::from_bits(FILLING_MAGAZINE);
-    encode::header(magazine, PageNumber(PAGE_TIME_FILLING), SubCode::new(0), ControlBits(C11_SERIAL), &display).bytes
+    // Only the null address XFF:3F7F has no header (the engine's REQ-NUM-007);
+    // sub-code 0000 is never it, so the empty packet below is never sent.
+    encode::header(magazine, PageNumber(PAGE_TIME_FILLING), SubCode::new(0), ControlBits(C11_SERIAL), &display).map_or([0; 42], |packet| packet.bytes)
 }
 
 /// The date as `Mon 26 Oct` and the clock as `23:15/42`, UTC.
