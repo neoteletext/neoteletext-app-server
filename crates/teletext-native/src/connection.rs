@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use teletext_runtime::SessionId;
 use teletext_runtime::frame;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -41,6 +41,15 @@ pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US)
 /// Serves one connection until it closes: `stream` is the socket hyper
 /// upgraded, and `early` what hyper had read past the upgrade.
 pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId) {
+    let (reading, writing) = stream.into_split();
+    serve_halves(reading, writing, early, hub, session).await;
+}
+
+/// `serve` on the connection's two halves. The tests serve an in-memory
+/// stream, whose delivery tokio's stopped clock governs: a socket's
+/// is the kernel's, and the clock jumps to its next timer while a frame
+/// is in the kernel's hands.
+async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: R, mut writing: W, early: &[u8], hub: Hub, session: SessionId) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
     if hub.commands.send(Command::Opened { session, outbox }).await.is_err() {
         hub.release(session);
@@ -49,7 +58,6 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId
     let stats = Arc::clone(&hub.stats);
     stats.connected();
     tracing::debug!(target: "connection", channel = hub.folder, session, "opened");
-    let (mut reading, mut writing) = stream.into_split();
     let mut generation = hub.generation.clone();
     let mut sent = *generation.borrow_and_update();
     let mut own: BTreeSet<u16> = BTreeSet::new();

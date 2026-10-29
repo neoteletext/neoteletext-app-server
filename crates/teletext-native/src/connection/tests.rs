@@ -2,7 +2,7 @@ use super::*;
 use crate::hub::spawn;
 use crate::websocket::{FIN, MASKED};
 use teletext_runtime::{Channel, ChannelConfig, Remote};
-use tokio::net::TcpListener;
+use tokio::io::DuplexStream;
 
 /// The server's Ping, which has no payload: two bytes.
 const PING: [u8; 2] = [FIN | Opcode::Ping as u8, 0];
@@ -17,8 +17,12 @@ fn from_receiver(opcode: Opcode) -> [u8; 6] {
     [FIN | opcode as u8, MASKED, 0, 0, 0, 0]
 }
 
+/// Bytes either end of the in-memory connection holds unread: more than
+/// any exchange here sends.
+const IN_FLIGHT: usize = 64 * 1024;
+
 /// A connection served on a channel with no pages, and the receiver's end.
-async fn connected() -> TcpStream {
+fn connected() -> DuplexStream {
     let config = ChannelConfig {
         name: "test".to_owned(),
         push_address: "ws://127.0.0.1:1/test/push".to_owned(),
@@ -28,10 +32,9 @@ async fn connected() -> TcpStream {
     };
     let channel = Channel::new(config, vec![Box::new(Remote::new(Vec::new()))], 1);
     let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()), None);
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let receiver = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
-    let (server, _) = listener.accept().await.unwrap();
-    tokio::spawn(async move { serve(server, &[], hub, 1).await });
+    let (receiver, server) = tokio::io::duplex(IN_FLIGHT);
+    let (reading, writing) = tokio::io::split(server);
+    tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1).await });
     receiver
 }
 
@@ -40,7 +43,7 @@ async fn connected() -> TcpStream {
 const WITHIN: Duration = PING_AFTER.saturating_add(DEAD_AFTER_PING).saturating_mul(2);
 
 /// Two bytes from `receiver`: a control frame of no payload.
-async fn frame(receiver: &mut TcpStream) -> [u8; 2] {
+async fn frame(receiver: &mut DuplexStream) -> [u8; 2] {
     let mut bytes = [0_u8; 2];
     tokio::time::timeout(WITHIN, receiver.read_exact(&mut bytes)).await.expect("a frame in time").unwrap();
     bytes
@@ -51,7 +54,7 @@ async fn frame(receiver: &mut TcpStream) -> [u8; 2] {
 /// `DEAD_AFTER_PING`. Before, it was never pinged, and stayed.
 #[tokio::test(start_paused = true)]
 async fn a_silent_connection_is_pinged_then_dropped() {
-    let mut receiver = connected().await;
+    let mut receiver = connected();
     let began = Instant::now();
     assert_eq!(frame(&mut receiver).await, PING);
     assert_eq!(began.elapsed(), PING_AFTER);
@@ -64,7 +67,7 @@ async fn a_silent_connection_is_pinged_then_dropped() {
 /// A receiver that answers is pinged again only after `PING_AFTER` more.
 #[tokio::test(start_paused = true)]
 async fn an_answered_ping_keeps_the_connection() {
-    let mut receiver = connected().await;
+    let mut receiver = connected();
     for _ in 0..3 {
         let began = Instant::now();
         assert_eq!(frame(&mut receiver).await, PING);
@@ -77,7 +80,7 @@ async fn an_answered_ping_keeps_the_connection() {
 /// on a quiet connection the keepalive costs the receiver's pings alone.
 #[tokio::test(start_paused = true)]
 async fn a_receiver_that_pings_is_answered_and_not_pinged() {
-    let mut receiver = connected().await;
+    let mut receiver = connected();
     for _ in 0..5 {
         tokio::time::sleep(RECEIVER_PING_AFTER).await;
         receiver.write_all(&from_receiver(Opcode::Ping)).await.unwrap();
