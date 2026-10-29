@@ -17,8 +17,8 @@ What is owed, and why, as `~/devel/neoteletext-common/DEVELOPMENT.md` section 2.
 
 Owed by decision 10: the items of `neoteletext-common/STANDARD-LIMITS.md` section 7 that name this repository. Built on 29 October 2026: items 8 (the engine's limits), 9 (the page held and kept by sub-page), 10 (`keep`, `remove`, `start`'s `standard` and `budgets`) and 13 (the files of each sub-page). Owed:
 
-- **Item 11:** TUNE, UNTUNE and TITLES, the SUBPAGES, TITLES and LIMITS records; their bytes are not yet specified in `INPUT.md`.
-- **Item 12:** the sender per tuned sub-page. Until then every connection is sent every sub-page of every shared page, as before.
+- **Item 11, as decision 23 amends it:** SELECT (`INPUT.md` section 5.4, REQ-INT-140), read by the engine's `neoteletext-input`, and the LIMITS record. TUNE, UNTUNE, TITLES, SUBPAGES and TITLES are withdrawn.
+- **Item 12, as decision 23 amends it:** the sender per selected page, first sub-pages otherwise (requirement 3.2 as amended). Until then every connection is sent every sub-page of every shared page: 3,542,532 bytes in a demo site connection's first 6 s, measured on 29 October 2026.
 - **Item 14:** the kits, which still write 64 and 800.
 - **Item 15:** the measurements.
 - **Titles in `NNN.sub`:** none is written until the engine has the title function `SERVER.md` section 6.2 names (implementation log row 48).
