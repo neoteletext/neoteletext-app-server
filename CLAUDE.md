@@ -8,11 +8,15 @@ The NeoTeletext server. The design is `~/devel/neoteletext-common/SERVER.md`; th
 - **What the engine lacks for a server is written here, once** (the owner's decision of 25 October 2026, option B of `SERVER.md` section 3.3): the engine's scope is unchanged.
 - **`runtime` does no I/O and reads no clock**: it works through a `Host` trait; `native` holds the sockets, TLS and processes.
 
+## Requirements, decisions, checklists and to-dos: rdm only
+
+They are records in rdm, reached through its MCP tools (search, get_record, list_records, create_record, revise_record, set_status, link_records), since 30 October 2026 (rdm decision DEC-1389). **Never create or edit a file to record one:** there is no `docs/requirements.md`, `TECH-DEBT.md`, `PENDINGTASKSFORANDREW.md` or decisions section in `docs/architecture.md` any more, and a hook refuses edits to those files. Old identifiers still work in rdm: "Requirement 1.3", "Decision 10", "TECH-DEBT 4", "Pending task 2". A requirement has its Statement, Reason, Source, Verification and State in its body. Work owed is an rdm to-do, a task only the owner can do among them; a decision taken without the owner is created with `needs_confirmation`. If a merge brings one of those files back, record what it adds in rdm and delete the file.
+
 ## Key documents
 
-- `docs/requirements.md`: every requirement, numbered by section ("Requirement 1.3"), with Statement, Reason, Source, Verification and a dated State.
-- `docs/architecture.md`: section 2 the owner's decisions ("Decision n", with a "Now" column), section 3 how the server runs on each host.
-- `docs/licensing.md`, `CREDITS.md`, `TECH-DEBT.md`, `IMPLEMENTATION-LOG.md`, `PENDINGTASKSFORANDREW.md`.
+- The requirements and the owner's decisions: rdm, above.
+- `docs/architecture.md`: section 3 how the server runs on each host (section numbers unchanged; section 2, the decisions, is in rdm).
+- `docs/licensing.md`, `CREDITS.md`, `IMPLEMENTATION-LOG.md`.
 
 ## Commands
 
