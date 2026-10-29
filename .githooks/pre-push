@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
+# neoteletext-common's gates/pre-push, copied by gates/sync (gates.md).
 # Git passes one line per ref pushed: local ref, local commit, remote ref,
 # remote commit. A push to main runs the full gate, the long integration
-# step; a push of any other branch runs the push gate
-# (~/devel/neoteletext-common/DEVELOPMENT.md section 9). Each checks the
+# step; a push of any other branch runs the push gate. Each checks the
 # commits pushed; a deletion pushes no commit, and a commit the remote
 # already holds, on any of its branches, brings it no code a gate has not
 # passed.
