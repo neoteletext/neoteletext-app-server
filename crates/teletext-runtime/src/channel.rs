@@ -24,6 +24,7 @@ use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, unit
 use crate::application::{Action, Application, Audience, Context, Level, Owner, PageEntry};
 use crate::held::Held;
 use crate::input::Input;
+use crate::layout::Part;
 use crate::session::Session;
 use crate::stats::{ChannelStats, count};
 use crate::store::{KeptPage, StoreError, StoreKey, page_record, pages_record, read_page, read_pages, read_subpage, subpage_record};
@@ -75,6 +76,9 @@ pub enum Effect {
         page: u16,
         /// Its frame, encoded once.
         frame: Arc<[u8]>,
+        /// Where each sub-page is in the frame, for the host that serves
+        /// the page's files itself ([`crate::layout::SharedPage`]).
+        parts: Arc<[Part]>,
     },
     /// The session owns this page from now on: the host stops sending it
     /// the shared page of that number.
@@ -248,7 +252,7 @@ impl Channel {
         let loaded = &self.loaded;
         let held = Held::of_encoded(kept.subcodes.iter().map(|&subcode| (subcode, loaded.get(&(page, subcode)).map_or(&[][..], Vec::as_slice))), kept.cursor);
         self.loaded.retain(|&(each, _), _| each != page);
-        self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
+        self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame), parts: Arc::clone(&held.parts) });
         self.shared.insert(page, held);
     }
 
@@ -646,7 +650,7 @@ impl Channel {
                 };
                 count(&mut self.stats.shared_published);
                 self.keep(page, &held);
-                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
+                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame), parts: Arc::clone(&held.parts) });
                 // A page published for the first time is listed from now on.
                 if self.shared.insert(page, held).is_none() {
                     self.effects.push(Effect::Contents);

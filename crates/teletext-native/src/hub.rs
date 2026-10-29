@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
+use teletext_runtime::layout::{Part, Resource, SharedPage, bundle, page_file};
 use teletext_runtime::{Channel, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
@@ -87,10 +88,13 @@ pub enum Outbound {
     Close(u16),
 }
 
-/// The shared pages, as every connection reads them.
+/// A shared page's latest frame, and where each of its sub-pages is in it.
+type Latest = (Arc<[u8]>, Arc<[Part]>);
+
+/// The shared pages, as every connection and request reads them.
 #[derive(Debug, Default)]
 pub struct Pages {
-    frames: RwLock<BTreeMap<u16, Arc<[u8]>>>,
+    frames: RwLock<BTreeMap<u16, Latest>>,
     log: Mutex<VecDeque<(u64, u16)>>,
 }
 
@@ -98,13 +102,30 @@ impl Pages {
     /// The latest frame of `page`.
     #[must_use]
     pub fn frame(&self, page: u16) -> Option<Arc<[u8]>> {
-        self.frames.read().unwrap_or_else(PoisonError::into_inner).get(&page).cloned()
+        self.frames.read().unwrap_or_else(PoisonError::into_inner).get(&page).map(|(frame, _)| Arc::clone(frame))
     }
 
     /// Every page's latest frame.
     #[must_use]
     pub fn all(&self) -> Vec<(u16, Arc<[u8]>)> {
-        self.frames.read().unwrap_or_else(PoisonError::into_inner).iter().map(|(&page, frame)| (page, Arc::clone(frame))).collect()
+        self.frames.read().unwrap_or_else(PoisonError::into_inner).iter().map(|(&page, (frame, _))| (page, Arc::clone(frame))).collect()
+    }
+
+    /// A page's file: `NNN.t42`, `NNN-SSSS.t42` or `NNN.sub`, as the
+    /// runtime lays them out (its `layout::SharedPage`), or none.
+    #[must_use]
+    pub fn file(&self, name: &str) -> Option<Resource> {
+        let (page, file) = page_file(name)?;
+        let frames = self.frames.read().unwrap_or_else(PoisonError::into_inner);
+        let (frame, parts) = frames.get(&page)?;
+        SharedPage { frame, parts }.file(file)
+    }
+
+    /// `index.t42`: every page's first sub-page, within a receiver's limit.
+    #[must_use]
+    pub fn bundle(&self) -> Vec<u8> {
+        let frames = self.frames.read().unwrap_or_else(PoisonError::into_inner);
+        bundle(frames.values().map(|(frame, parts)| SharedPage { frame, parts }.first()))
     }
 
     /// The pages changed after generation `since`, each once, or none
@@ -123,8 +144,8 @@ impl Pages {
         Some(pages)
     }
 
-    fn set(&self, page: u16, frame: Arc<[u8]>, generation: u64) {
-        self.frames.write().unwrap_or_else(PoisonError::into_inner).insert(page, frame);
+    fn set(&self, page: u16, frame: Arc<[u8]>, parts: Arc<[Part]>, generation: u64) {
+        self.frames.write().unwrap_or_else(PoisonError::into_inner).insert(page, (frame, parts));
         let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         if log.len() == LOG_CAPACITY {
             log.pop_front();
@@ -386,9 +407,9 @@ impl Task {
         for effect in effects {
             match effect {
                 Effect::Contents => *self.contents.write().unwrap_or_else(PoisonError::into_inner) = contents_of(channel),
-                Effect::Shared { page, frame } => {
+                Effect::Shared { page, frame, parts } => {
                     self.current = self.current.saturating_add(1);
-                    self.pages.set(page, frame, self.current);
+                    self.pages.set(page, frame, parts, self.current);
                     changed = true;
                 }
                 Effect::Withdrawn { page } => self.pages.remove(page),

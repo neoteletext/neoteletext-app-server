@@ -11,10 +11,11 @@ use core::ops::Range;
 use neoteletext_formats::page::{CursorLine, PageFile};
 
 use crate::frame::append_page;
+use crate::layout::SharedPage;
 
 /// One sub-page's place in its page's frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Part {
+pub struct Part {
     /// Its sub-code.
     pub subcode: u16,
     /// Its packets' bytes in the frame.
@@ -27,7 +28,7 @@ pub(crate) struct Held {
     /// Every sub-page's packets, in the page's order.
     pub frame: Arc<[u8]>,
     /// Where each sub-page is in the frame, in the same order.
-    pub parts: Vec<Part>,
+    pub parts: Arc<[Part]>,
     /// The first sub-page's cursor.
     pub cursor: Option<CursorLine>,
 }
@@ -42,7 +43,7 @@ impl Held {
             append_page(&mut frame, subpage);
             parts.push(Part { subcode: subpage.subcode.value(), bytes: start..frame.len() });
         }
-        Self { frame: Arc::from(frame), parts, cursor: subpages.first().and_then(|page| page.cursor) }
+        Self { frame: Arc::from(frame), parts: Arc::from(parts), cursor: subpages.first().and_then(|page| page.cursor) }
     }
 
     /// The page of sub-pages already encoded, in the order given, with
@@ -55,7 +56,12 @@ impl Held {
             frame.extend_from_slice(bytes);
             parts.push(Part { subcode, bytes: start..frame.len() });
         }
-        Self { frame: Arc::from(frame), parts, cursor }
+        Self { frame: Arc::from(frame), parts: Arc::from(parts), cursor }
+    }
+
+    /// The page as its files read it.
+    pub(crate) fn shared(&self) -> SharedPage<'_> {
+        SharedPage { frame: &self.frame, parts: &self.parts }
     }
 
     /// The sub-codes, in the page's order.
@@ -65,17 +71,18 @@ impl Held {
 
     /// Each sub-page's sub-code and packets, in the page's order.
     pub(crate) fn subpages(&self) -> impl Iterator<Item = (u16, &[u8])> {
-        self.parts.iter().map(|part| (part.subcode, self.frame.get(part.bytes.clone()).unwrap_or_default()))
+        self.shared().subpages()
     }
 
     /// Sub-page `subcode`'s packets, if the page has it.
     pub(crate) fn subpage(&self, subcode: u16) -> Option<&[u8]> {
-        self.subpages().find(|&(each, _)| each == subcode).map(|(_, bytes)| bytes)
+        self.shared().subpage(subcode)
     }
 
     /// The first sub-page's packets: the page itself when it has one.
+    #[cfg(test)]
     pub(crate) fn first(&self) -> &[u8] {
-        self.subpages().next().map_or(&[][..], |(_, bytes)| bytes)
+        self.shared().first()
     }
 
     /// This page with `subpages` put in it (`docs/applications.md`

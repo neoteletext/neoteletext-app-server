@@ -165,9 +165,18 @@ fn the_server_serves_what_a_program_publishes() {
     assert_eq!(page.links, [Some(0x101), None, None, Some(0x100), None, Some(0x100)]);
     assert!(page.row_24, "a page with links shows row 24");
 
+    // A page of several sub-pages is files of its own (the engine's
+    // REQ-WEB-019): its first in NNN.t42, each in NNN-SSSS.t42, listed by
+    // NNN.sub, numbered by place.
     let carousel = received(&fetch(&address, "/kit/101.t42"));
-    assert_eq!(carousel.iter().map(|page| page.subcode).collect::<Vec<_>>(), [1, 2], "two sub-pages, numbered as published");
-    assert_eq!(carousel[1].row(1), padded(b"\x07Sub-page 2"));
+    assert_eq!(carousel.iter().map(|page| page.subcode).collect::<Vec<_>>(), [1], "the first sub-page alone");
+    let second = received(&fetch(&address, "/kit/101-0002.t42"));
+    assert_eq!(second.iter().map(|page| page.subcode).collect::<Vec<_>>(), [2]);
+    assert_eq!(second[0].row(1), padded(b"\x07Sub-page 2"));
+    let catalogue = String::from_utf8(fetch(&address, "/kit/101.sub")).unwrap();
+    assert_eq!(catalogue.lines().map(|line| line.split('\t').next().unwrap_or("")).collect::<Vec<_>>(), ["0001", "0002"], "{catalogue}");
+    let bundle = received(&fetch(&address, "/kit/index.t42"));
+    assert_eq!(bundle.iter().filter(|page| page.row(1) == padded(b"\x07Sub-page 2")).count(), 0, "the bundle carries first sub-pages only");
 
     let raw = received(&fetch(&address, "/kit/102.t42"));
     assert_eq!(raw[0].row(1), padded(b"\x02Raw"), "TTI published as it was written");

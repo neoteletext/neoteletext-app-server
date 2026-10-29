@@ -17,7 +17,7 @@ use neoteletext_web::consts::DEFAULT_PAGE_LIMIT;
 use neoteletext_web::subpages::{MAX_LINE, Validator, write_entry};
 
 use crate::channel::Channel;
-use crate::held::Held;
+pub use crate::held::Part;
 
 /// A file of the channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,25 +43,13 @@ impl Channel {
         match name {
             "channel.json" => Some(Resource { content_type: "application/json", body: self.descriptor().into_bytes() }),
             "contents.txt" => Some(Resource { content_type: "text/plain", body: self.contents().into_bytes() }),
-            "index.t42" => Some(Resource { content_type: T42_TYPE, body: bundle(self.shared_pages().map(|(_, held)| held.first())) }),
-            _ => match ChannelFile::from_name(name)? {
-                ChannelFile::Page { page, t42: true } => Some(Resource { content_type: T42_TYPE, body: self.held(page.mpp())?.first().to_vec() }),
-                ChannelFile::SubPage { page, subcode } => {
-                    let held = self.held(page.mpp()).filter(|held| held.parts.len() > 1)?;
-                    Some(Resource { content_type: T42_TYPE, body: held.subpage(subcode.value())?.to_vec() })
-                }
-                ChannelFile::SubPages { page } => {
-                    let held = self.held(page.mpp()).filter(|held| held.parts.len() > 1)?;
-                    Some(Resource { content_type: SUBPAGES_TYPE, body: catalogue(held) })
-                }
-                _ => None,
-            },
+            "index.t42" => Some(Resource { content_type: T42_TYPE, body: bundle(self.shared_pages().map(|(_, held)| held.shared().first())) }),
+            _ => {
+                let (page, file) = page_file(name)?;
+                let (_, held) = self.shared_pages().find(|&(number, _)| number == page)?;
+                held.shared().file(file)
+            }
         }
-    }
-
-    /// The shared page `page`, if the channel has it.
-    fn held(&self, page: u16) -> Option<&Held> {
-        self.shared_pages().find(|&(number, _)| number == page).map(|(_, held)| held)
     }
 
     fn descriptor(&self) -> String {
@@ -114,19 +102,73 @@ pub fn bundle<'a>(frames: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
     body
 }
 
-/// A page's catalogue, `NNN.sub` (the engine's decision E.132): each
-/// sub-page's sub-code and validator, in the page's order. The titles are
-/// left out, which the format allows.
-fn catalogue(held: &Held) -> Vec<u8> {
-    let mut body = alloc::vec![0_u8; held.parts.len().saturating_mul(MAX_LINE)];
-    let mut writer = Writer::new(&mut body);
-    for (subcode, packets) in held.subpages() {
-        // Room for every entry was made above.
-        let _ = write_entry(&mut writer, SubCode::new(subcode), &Validator::of(packets), "");
+/// A file of one page: `NNN.t42`, `NNN-SSSS.t42` or `NNN.sub`, with its
+/// page number; none for any other name.
+#[must_use]
+pub fn page_file(name: &str) -> Option<(u16, ChannelFile)> {
+    let file = ChannelFile::from_name(name)?;
+    match file {
+        ChannelFile::Page { page, t42: true } | ChannelFile::SubPage { page, .. } | ChannelFile::SubPages { page } => Some((page.mpp(), file)),
+        _ => None,
     }
-    let length = writer.len();
-    body.truncate(length);
-    body
+}
+
+/// A shared page as its files read it, wherever its host keeps it: its
+/// frame and where each sub-page is in it.
+#[derive(Clone, Copy, Debug)]
+pub struct SharedPage<'a> {
+    /// Every sub-page's packets, in the page's order.
+    pub frame: &'a [u8],
+    /// Where each is in the frame.
+    pub parts: &'a [Part],
+}
+
+impl<'a> SharedPage<'a> {
+    /// Each sub-page's sub-code and packets, in the page's order.
+    pub fn subpages(self) -> impl Iterator<Item = (u16, &'a [u8])> {
+        self.parts.iter().map(move |part| (part.subcode, self.frame.get(part.bytes.clone()).unwrap_or_default()))
+    }
+
+    /// Sub-page `subcode`'s packets, if the page has it.
+    #[must_use]
+    pub fn subpage(self, subcode: u16) -> Option<&'a [u8]> {
+        self.subpages().find(|&(each, _)| each == subcode).map(|(_, bytes)| bytes)
+    }
+
+    /// The first sub-page's packets: the page itself when it has one.
+    #[must_use]
+    pub fn first(self) -> &'a [u8] {
+        self.subpages().next().map_or(&[][..], |(_, bytes)| bytes)
+    }
+
+    /// The page's file `file`, which names it ([`page_file`]): `NNN.t42`
+    /// its first sub-page; for a page of several, `NNN-SSSS.t42` each and
+    /// `NNN.sub` the catalogue. None for a file the page does not have.
+    #[must_use]
+    pub fn file(self, file: ChannelFile) -> Option<Resource> {
+        let several = self.parts.len() > 1;
+        match file {
+            ChannelFile::Page { t42: true, .. } => Some(Resource { content_type: T42_TYPE, body: self.first().to_vec() }),
+            ChannelFile::SubPage { subcode, .. } if several => Some(Resource { content_type: T42_TYPE, body: self.subpage(subcode.value())?.to_vec() }),
+            ChannelFile::SubPages { .. } if several => Some(Resource { content_type: SUBPAGES_TYPE, body: self.catalogue() }),
+            _ => None,
+        }
+    }
+
+    /// The catalogue, `NNN.sub` (the engine's decision E.132): each
+    /// sub-page's sub-code and validator, in the page's order. The titles
+    /// are left out, which the format allows.
+    fn catalogue(self) -> Vec<u8> {
+        let mut body = alloc::vec![0_u8; self.parts.len().saturating_mul(MAX_LINE)];
+        let mut writer = Writer::new(&mut body);
+        for (subcode, packets) in self.subpages() {
+            // Room for every entry was made above.
+            let _ = write_entry(&mut writer, SubCode::new(subcode), &Validator::of(packets), "");
+        }
+        let length = writer.len();
+        body.truncate(length);
+        body
+    }
 }
 
 /// Text for a JSON string: printable ASCII, with quote and backslash

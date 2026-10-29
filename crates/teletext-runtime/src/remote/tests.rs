@@ -128,7 +128,7 @@ fn a_published_tti_page_is_the_channels() {
     channel.from_application(0, line, 0);
     let effects = channel.take_effects();
     assert!(logs(&effects).is_empty(), "{:?}", logs(&effects));
-    let frame = effects.iter().find_map(|effect| if let Effect::Shared { page: 0x100, frame } = effect { Some(frame.clone()) } else { None }).unwrap();
+    let frame = effects.iter().find_map(|effect| if let Effect::Shared { page: 0x100, frame, .. } = effect { Some(frame.clone()) } else { None }).unwrap();
     let pages = texts(&frame);
     assert_eq!(pages.len(), 1);
     assert!(pages[0].1.contains("HACKADAY") && pages[0].1.contains("Fresh hacks every day"), "{:?}", pages[0].1);
@@ -158,7 +158,7 @@ fn a_published_pages_controls_are_its_packet_26() {
     channel.from_application(0, line.as_bytes(), 0);
     let effects = channel.take_effects();
     assert!(logs(&effects).is_empty(), "{:?}", logs(&effects));
-    let frame = effects.iter().find_map(|effect| if let Effect::Shared { page: 0x100, frame } = effect { Some(frame.clone()) } else { None }).unwrap();
+    let frame = effects.iter().find_map(|effect| if let Effect::Shared { page: 0x100, frame, .. } = effect { Some(frame.clone()) } else { None }).unwrap();
     let enhancements: Vec<[u8; DATA_BYTES]> = frame
         .chunks(PACKET_BYTES)
         .filter_map(|chunk| chunk.try_into().ok().map(|bytes| Packet { bytes }))
@@ -512,7 +512,7 @@ fn kept_pages_are_served_before_the_program_declares() {
     }
     assert!(second.is_ready());
     let frame = first.shared_frames().find(|&(page, _)| page == 0x100).map(|(_, frame)| Arc::clone(frame)).unwrap();
-    assert!(second.take_effects().contains(&Effect::Shared { page: 0x100, frame: Arc::clone(&frame) }));
+    assert!(second.take_effects().iter().any(|effect| matches!(effect, Effect::Shared { page: 0x100, frame: shared, .. } if *shared == frame)));
     assert_eq!(second.resource("100.t42").unwrap().body, frame.to_vec());
     let contents = String::from_utf8(second.resource("contents.txt").unwrap().body).unwrap();
     assert!(contents.contains("p\t100\tKept front\n"), "{contents}");
@@ -824,6 +824,6 @@ fn a_kept_page_comes_back_from_its_records_in_any_order() {
         }
         assert!(!second.is_shared(0x100), "not until every record has come");
         second.load(last.0, &last.1).unwrap();
-        assert!(second.take_effects().contains(&Effect::Shared { page: 0x100, frame: Arc::clone(&frame) }));
+        assert!(second.take_effects().iter().any(|effect| matches!(effect, Effect::Shared { page: 0x100, frame: shared, .. } if *shared == frame)));
     }
 }

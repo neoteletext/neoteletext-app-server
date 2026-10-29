@@ -193,7 +193,7 @@ impl Live {
     fn apply(&mut self, sql: &SqlStorage) {
         for effect in self.channel.take_effects() {
             match effect {
-                Effect::Shared { page, frame } => {
+                Effect::Shared { page, frame, .. } => {
                     for viewer in self.viewers.values().filter(|viewer| !viewer.own.contains(&page)) {
                         send_binary(&viewer.socket, &frame);
                     }

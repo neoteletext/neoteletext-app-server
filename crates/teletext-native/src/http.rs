@@ -18,7 +18,6 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
 use teletext_runtime::SessionId;
-use teletext_runtime::layout::bundle;
 use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
@@ -115,12 +114,9 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let (content_type, body): (&str, Arc<[u8]>) = match file {
         "channel.json" => ("application/json", Arc::clone(&hub.descriptor)),
         "contents.txt" => ("text/plain", Arc::clone(&hub.contents.read().unwrap_or_else(PoisonError::into_inner))),
-        "index.t42" => {
-            let frames = hub.pages.all();
-            (T42_TYPE, bundle(frames.iter().map(|(_, frame)| &frame[..])).into())
-        }
-        other => match page_of(other).and_then(|page| hub.pages.frame(page)) {
-            Some(frame) => (T42_TYPE, frame),
+        "index.t42" => (T42_TYPE, hub.pages.bundle().into()),
+        other => match hub.pages.file(other) {
+            Some(resource) => (resource.content_type, resource.body.into()),
             None => return status(StatusCode::NOT_FOUND),
         },
     };
@@ -224,16 +220,6 @@ fn status(code: StatusCode) -> Response<Whole> {
     let mut response = Response::new(Whole(None));
     *response.status_mut() = code;
     response
-}
-
-/// `NNN.t42` as a page number: three capital hexadecimal digits,
-/// magazine 1 to 8.
-fn page_of(name: &str) -> Option<u16> {
-    let digits = name.strip_suffix(".t42")?;
-    if digits.len() != 3 || !digits.bytes().all(|digit| digit.is_ascii_digit() || (b'A'..=b'F').contains(&digit)) {
-        return None;
-    }
-    u16::from_str_radix(digits, 16).ok().filter(|page| (0x100..=0x8FF).contains(page))
 }
 
 /// FNV-1a over `bytes`, for an `ETag`: a change of content changes it.

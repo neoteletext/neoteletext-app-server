@@ -340,7 +340,7 @@ fn row_0_is_the_pages_own() {
         .take_effects()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Shared { page, frame } => Some((page, frame)),
+            Effect::Shared { page, frame, .. } => Some((page, frame)),
             _ => None,
         })
         .collect();
