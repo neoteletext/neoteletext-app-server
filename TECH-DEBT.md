@@ -15,7 +15,15 @@ What is owed, and why, as `~/devel/neoteletext-common/DEVELOPMENT.md` section 2.
 
 ## The standard's maxima and sub-pages on the wire (26 October 2026)
 
-Owed by decision 10: every item of `neoteletext-common/STANDARD-LIMITS.md` section 7 that names this repository, in its order; none is started. The owner's questions are its section 6.
+Owed by decision 10: the items of `neoteletext-common/STANDARD-LIMITS.md` section 7 that name this repository. Built on 29 October 2026: items 8 (the engine's limits), 9 (the page held and kept by sub-page), 10 (`keep`, `remove`, `start`'s `standard` and `budgets`) and 13 (the files of each sub-page). Owed:
+
+- **Item 11:** TUNE, UNTUNE and TITLES, the SUBPAGES, TITLES and LIMITS records; their bytes are not yet specified in `INPUT.md`.
+- **Item 12:** the sender per tuned sub-page. Until then every connection is sent every sub-page of every shared page, as before.
+- **Item 14:** the kits, which still write 64 and 800.
+- **Item 15:** the measurements.
+- **Titles in `NNN.sub`:** none is written until the engine has the title function `SERVER.md` section 6.2 names (implementation log row 48).
+
+The owner's questions are its section 6.
 
 ## Surviving a restart, logging and figures (28 October 2026)
 

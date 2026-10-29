@@ -64,6 +64,10 @@ impl PageEntry {
 pub(crate) enum Action {
     /// Publish a page, all its sub-pages.
     Publish { owner: Owner, number: u16, subpages: Vec<PageFile> },
+    /// Put sub-pages in a page, each by its sub-code, keeping the others.
+    Put { owner: Owner, number: u16, subpages: Vec<PageFile> },
+    /// End sub-pages of a page, by their sub-codes, keeping the others.
+    Remove { owner: Owner, number: u16, subcodes: Vec<u16> },
     /// Send audio records.
     Records { audience: Audience, records: Vec<Vec<u8>> },
     /// Send the session's viewer to a page.
@@ -123,6 +127,19 @@ impl Context<'_> {
     /// Publishes a page with its sub-pages, each numbered as given.
     pub fn publish_subpages(&mut self, owner: Owner, number: u16, subpages: Vec<PageFile>) {
         self.actions.push(Action::Publish { owner, number, subpages });
+    }
+
+    /// Puts sub-pages in a page, each named by its sub-code, replacing the
+    /// sub-page of that sub-code and keeping the page's others
+    /// (`SERVER.md` section 7.3).
+    pub fn put_subpages(&mut self, owner: Owner, number: u16, subpages: Vec<PageFile>) {
+        self.actions.push(Action::Put { owner, number, subpages });
+    }
+
+    /// Ends the sub-pages of `subcodes` in a page, keeping its others; a
+    /// page left with none is no longer served.
+    pub fn remove_subpages(&mut self, owner: Owner, number: u16, subcodes: Vec<u16>) {
+        self.actions.push(Action::Remove { owner, number, subcodes });
     }
 
     /// Sends audio records (`neoteletext_audio::encode`): sound objects,

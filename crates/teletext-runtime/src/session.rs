@@ -9,7 +9,7 @@ use alloc::collections::BTreeMap;
 
 use neoteletext_input::event::{MAX_STREAM_ITEM, StreamDecoder};
 
-use crate::channel::Held;
+use crate::held::Held;
 
 /// A session's state.
 pub(crate) struct Session {

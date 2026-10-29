@@ -16,6 +16,8 @@ use alloc::vec::Vec;
 use neoteletext_audio::encode::{Command, Sound};
 use neoteletext_audio::record::{FLAG_AFTER_CURRENT, FLAG_LOOP};
 use neoteletext_audio::{CHANNELS, Codec, IMA_BLOCK_LARGE, IMA_BLOCK_SMALL, MAX_GAIN, OPUS_FRAME_SAMPLES, OPUS_RATE};
+use neoteletext_core::limits;
+use neoteletext_core::types::SubCode;
 use neoteletext_formats::item::{Item, Reader};
 use neoteletext_formats::page::PageFile;
 use neoteletext_formats::tti::TtiReader;
@@ -32,13 +34,21 @@ use crate::screen::address;
 
 /// The protocol's version, in `start` (`docs/applications.md`).
 pub const PROTOCOL: i64 = 1;
-/// The most sub-pages one publication may hold.
-pub const MOST_SUBPAGES: usize = 64;
-/// The most pages an application may declare.
-pub const MOST_PAGES: usize = 800;
+/// The longest line either side may send (`docs/applications.md` section
+/// 1): 16 MiB. A sub-page of TTI is under 4 KB; a two-minute sound's
+/// samples in base64 are about 15 MB.
+pub const LONGEST_LINE: usize = 16 * 1024 * 1024;
 /// The longest page title: the engine's `contents.txt` rule (its
 /// REQ-WEB-025, decision E.120).
-const TITLE_LIMIT: usize = neoteletext_web::contents::MAX_TITLE;
+pub(crate) const TITLE_LIMIT: usize = neoteletext_web::contents::MAX_TITLE;
+/// The first and last page numbers the protocol writes: magazines 1 to 8,
+/// pages 00 to FF (the engine's area NUM, REQ-NUM-002).
+const FIRST_PAGE: u16 = limits::FIRST_PAGE_ADDRESS;
+const LAST_PAGE: u16 = limits::LAST_PAGE_ADDRESS;
+/// The most sub-pages a publication of a whole page may hold: as many as
+/// the code of practice numbers by place (REQ-NUM-016), 8,069. A page
+/// holds up to 8,190 put by their sub-codes (REQ-NUM-020).
+const MOST_NUMBERED: usize = limits::SUBCODES_ABOVE_SET;
 /// A command's operations (the engine's `audio.md` section 4.4).
 const PLAY: u8 = 1;
 /// Stop.
@@ -80,12 +90,15 @@ pub fn declared_pages(line: &[u8]) -> Result<Vec<PageEntry>, Refusal> {
         return Err("the first line must be {\"type\":\"pages\",…}".to_string());
     }
     let items = value.get("pages").and_then(Value::items).ok_or("pages: an array is needed")?;
-    if items.len() > MOST_PAGES {
-        return Err(format!("pages: at most {MOST_PAGES}"));
+    if items.len() > limits::USABLE_PAGE_NUMBERS {
+        return Err(format!("pages: at most {}", limits::USABLE_PAGE_NUMBERS));
     }
     let mut entries: Vec<PageEntry> = Vec::new();
     for item in items {
         let number = page_number(item.get("page")).ok_or("pages: a page is a number such as \"100\"")?;
+        if is_reserved(number) {
+            return Err(format!("pages: {number:03X} is reserved by the standard (EN 300 706 Annex A.1 and A.10): never a page"));
+        }
         let title = title_of(item.get("title"), number)?;
         let section = match item.get("section") {
             None | Some(Value::Null) => None,
@@ -121,14 +134,36 @@ fn title_of(value: Option<&Value>, number: u16) -> Result<&str, Refusal> {
 }
 
 /// A page number as the protocol writes it: hexadecimal text, `"100"` to
-/// `"8FF"`, magazine 1 to 8 (EN 300 706 clause 3.1).
+/// `"8FF"`, magazine 1 to 8 (EN 300 706 clause 7.1.2; REQ-NUM-002).
 fn page_number(value: Option<&Value>) -> Option<u16> {
     let text = value?.text()?;
     if text.len() != 3 {
         return None;
     }
-    let number = u16::from_str_radix(text, 16).ok()?;
-    (0x100..=0x8FF).contains(&number).then_some(number)
+    u16::from_str_radix(text, 16).ok().filter(|&number| is_page_number(number))
+}
+
+/// Whether `number` is a page number of magazines 1 to 8.
+pub(crate) const fn is_page_number(number: u16) -> bool {
+    number >= FIRST_PAGE && number <= LAST_PAGE
+}
+
+/// Whether `number` is one the standard reserves, never a page: mFF, mFD
+/// and mFE in every magazine, 1BE and 1F0 (the engine's REQ-NUM-008 and
+/// REQ-NUM-010). The other 2,022 may each carry a page.
+fn is_reserved(number: u16) -> bool {
+    let [magazine, page] = number.to_be_bytes();
+    limits::is_reserved_page(magazine, page)
+}
+
+/// A sub-code as the protocol writes it: four hexadecimal digits, as
+/// TTI's `SC` line and a sub-page's file name write it.
+fn subcode_of(value: &Value) -> Option<u16> {
+    let text = value.text()?;
+    if text.len() != limits::SUBCODE_DIGITS {
+        return None;
+    }
+    u16::from_str_radix(text, 16).ok().filter(|&subcode| limits::is_sub_code(subcode))
 }
 
 /// A page number written as the protocol writes it.
@@ -198,6 +233,7 @@ impl Remote {
         let value = json::parse(line).map_err(|fault| format!("not JSON: {fault:?}"))?;
         match value.get("type").and_then(Value::text) {
             Some("publish") => self.publish(&value, context),
+            Some("remove") => self.remove(&value, context),
             Some("goto") => {
                 let session = session_of(value.get("session")).ok_or("goto: a session is needed")?;
                 let page = page_number(value.get("page")).ok_or("goto: a page such as \"100\" is needed")?;
@@ -239,8 +275,42 @@ impl Remote {
             other => Owner::Session(session_of(other).ok_or("publish: owner is \"channel\" or a session")?),
         };
         let tti = value.get("tti").and_then(Value::text).ok_or("publish: tti is needed")?;
+        let keep = match value.get("keep") {
+            None => false,
+            Some(keep) => keep.boolean().ok_or("publish: keep is true or false")?,
+        };
         let subpages = read_tti(tti, number)?;
-        context.publish_subpages(owner, number, subpages);
+        if keep {
+            // Each sub-page put is named by its SC line; the page's others
+            // are kept (`SERVER.md` section 7.3).
+            for (index, subpage) in subpages.iter().enumerate() {
+                if subpages.iter().take(index).any(|earlier| earlier.subcode == subpage.subcode) {
+                    return Err(format!("publish: sub-page {:04X} twice", subpage.subcode.value()));
+                }
+            }
+            context.put_subpages(owner, number, subpages);
+        } else {
+            context.publish_subpages(owner, number, numbered(subpages)?);
+        }
+        Ok(())
+    }
+
+    fn remove(&self, value: &Value, context: &mut Context<'_>) -> Result<(), Refusal> {
+        let number = page_number(value.get("page")).ok_or("remove: a page such as \"100\" is needed")?;
+        if !self.serves(number) {
+            return Err(format!("remove: {number:03X} was not declared"));
+        }
+        let owner = match value.get("owner") {
+            Some(Value::Text(text)) if text == "channel" => Owner::Channel,
+            other => Owner::Session(session_of(other).ok_or("remove: owner is \"channel\" or a session")?),
+        };
+        let items = value.get("subpages").and_then(Value::items).ok_or("remove: subpages is an array of sub-codes such as \"0001\"")?;
+        if items.is_empty() || items.len() > limits::MAX_SUBPAGES {
+            return Err(format!("remove: 1 to {} sub-codes", limits::MAX_SUBPAGES));
+        }
+        let subcodes =
+            items.iter().map(|item| subcode_of(item).ok_or("remove: a sub-code is four hexadecimal digits, 0000 to 3F7F")).collect::<Result<Vec<u16>, _>>()?;
+        context.remove_subpages(owner, number, subcodes);
         Ok(())
     }
 
@@ -425,20 +495,36 @@ const fn packet_refusal(refused: PacketError) -> &'static str {
     }
 }
 
+/// The sub-pages of a whole page numbered by place, as the code of
+/// practice numbers them (TR 100 287 clause 10.1; the engine's REQ-NUM-016
+/// and REQ-NUM-019): one is 0000, a set of up to 79 is 0001 to 0079, and a
+/// larger one only sub-codes above 0079. What the TTI's `SC` lines said is
+/// not kept: the publication is the page, in its order.
+fn numbered(mut subpages: Vec<PageFile>) -> Result<Vec<PageFile>, Refusal> {
+    let count = u16::try_from(subpages.len()).ok().filter(|&count| usize::from(count) <= MOST_NUMBERED);
+    let count = count.ok_or_else(|| format!("publish: a whole page is at most {MOST_NUMBERED} sub-pages; put more by their sub-codes with keep"))?;
+    for (place, subpage) in (1..=count).zip(subpages.iter_mut()) {
+        let subcode = limits::sub_code_of(place, count).ok_or("publish: a place the code of practice does not number")?;
+        subpage.subcode = SubCode::new(subcode);
+    }
+    Ok(subpages)
+}
+
 /// The sub-pages of a TTI text, each addressed to `number` whatever its
 /// `PN` line says: the publication's page is the one the process named.
+/// At most the standard's 8,190 (REQ-NUM-020) are read.
 fn read_tti(tti: &str, number: u16) -> Result<Vec<PageFile>, Refusal> {
     let mut reader = TtiReader::new();
     let mut subpages: Vec<PageFile> = Vec::new();
     let mut fault: Option<String> = None;
     let mut collect = |item: Item<'_>| match item {
         Item::Page(page) => {
-            if subpages.len() < MOST_SUBPAGES {
+            if subpages.len() < limits::MAX_SUBPAGES {
                 let mut page = *page;
                 page.address = address(number);
                 subpages.push(page);
             } else if fault.is_none() {
-                fault = Some(format!("publish: at most {MOST_SUBPAGES} sub-pages"));
+                fault = Some(format!("publish: at most {} sub-pages", limits::MAX_SUBPAGES));
             }
         }
         Item::Diagnostic(diagnostic) if fault.is_none() => fault = Some(format!("publish: TTI: {diagnostic:?}")),
@@ -544,6 +630,31 @@ fn event(input: &Input<'_>) -> Writer {
     event
 }
 
+/// The standard's maxima, from the engine's `limits`, the one place they
+/// are written (requirement 3.3; `STANDARD-LIMITS.md` section 3 item 3).
+fn standard() -> Writer {
+    let mut standard = Writer::nested();
+    standard
+        .integer("magazines", count_of(limits::MAGAZINES))
+        .integer("pages", count_of(limits::USABLE_PAGE_NUMBERS))
+        .integer("keyable_pages", count_of(limits::KEYABLE_PAGES))
+        .integer("subpages", count_of(limits::MAX_SUBPAGES))
+        .integer("numbered_subpages", count_of(MOST_NUMBERED))
+        .integer("decimal_subpages", count_of(limits::DECIMAL_SUBCODES));
+    standard
+}
+
+/// The server's own bounds on what a program sends.
+fn budgets() -> Writer {
+    let mut budgets = Writer::nested();
+    budgets.integer("line_bytes", count_of(LONGEST_LINE)).integer("title_characters", count_of(TITLE_LIMIT));
+    budgets
+}
+
+fn count_of(count: usize) -> i64 {
+    i64::try_from(count).unwrap_or(i64::MAX)
+}
+
 fn session_line(kind: &str, session: SessionId) -> Writer {
     let mut writer = Writer::new(kind);
     writer.integer("session", i64::try_from(session).unwrap_or(i64::MAX));
@@ -561,7 +672,11 @@ impl Application for Remote {
 
     fn start(&mut self, context: &mut Context<'_>) {
         let mut writer = Writer::new("start");
-        writer.integer("protocol", PROTOCOL).integer("epoch_ms", i64::try_from(context.epoch_ms()).unwrap_or(i64::MAX));
+        writer
+            .integer("protocol", PROTOCOL)
+            .integer("epoch_ms", i64::try_from(context.epoch_ms()).unwrap_or(i64::MAX))
+            .object("standard", standard())
+            .object("budgets", budgets());
         Self::message(context, writer);
     }
 

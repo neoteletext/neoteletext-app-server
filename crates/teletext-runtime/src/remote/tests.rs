@@ -89,8 +89,8 @@ fn sent_to(effects: &[Effect], session: SessionId) -> Vec<u8> {
 
 #[test]
 fn a_declaration_names_the_pages_and_nothing_else_passes() {
-    let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"8FF"}]}"#).unwrap();
-    assert_eq!(pages.iter().map(|entry| entry.number).collect::<Vec<_>>(), [0x100, 0x8FF]);
+    let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"8FC"}]}"#).unwrap();
+    assert_eq!(pages.iter().map(|entry| entry.number).collect::<Vec<_>>(), [0x100, 0x8FC]);
     let too_long_pages = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
     let whole = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"100","title":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT));
     assert!(declared_pages(whole.as_bytes()).is_ok(), "a title of the engine's longest");
@@ -98,6 +98,12 @@ fn a_declaration_names_the_pages_and_nothing_else_passes() {
         &br#"{"type":"publish"}"#[..],
         br#"{"type":"pages","pages":[{"page":"099"}]}"#,
         br#"{"type":"pages","pages":[{"page":"900"}]}"#,
+        // Reserved by the standard, never a page (REQ-NUM-008, REQ-NUM-010).
+        br#"{"type":"pages","pages":[{"page":"1FF"}]}"#,
+        br#"{"type":"pages","pages":[{"page":"8FD"}]}"#,
+        br#"{"type":"pages","pages":[{"page":"3FE"}]}"#,
+        br#"{"type":"pages","pages":[{"page":"1BE"}]}"#,
+        br#"{"type":"pages","pages":[{"page":"1F0"}]}"#,
         br#"{"type":"pages","pages":[{"page":"100"},{"page":"100"}]}"#,
         too_long_pages.as_bytes(),
         br#"{"type":"pages","pages":[{"page":100}]}"#,
@@ -493,7 +499,10 @@ fn kept_pages_are_served_before_the_program_declares() {
             _ => {}
         }
     }
-    assert_eq!(kept.keys().copied().collect::<Vec<_>>(), [crate::StoreKey::Page(0x100), crate::StoreKey::Pages(0)]);
+    assert_eq!(
+        kept.keys().copied().collect::<Vec<_>>(),
+        [crate::StoreKey::Page(0x100), crate::StoreKey::SubPage { page: 0x100, subcode: 0 }, crate::StoreKey::Pages(0)]
+    );
 
     let config = first.config().clone();
     let mut second = Channel::new(config, alloc::vec![Box::new(Remote::new(Vec::new()))], 1);
@@ -648,4 +657,173 @@ fn opus_outside_the_profile_is_refused() {
     channel.from_application(0, line.as_bytes(), 0);
     let said = logs(&channel.take_effects());
     assert!(said.len() == 1 && said[0].contains("sound.opus: Length"), "{said:?}");
+}
+
+/// The shared page `page`'s sub-codes, in order, from its frame's headers.
+fn subcodes_of(channel: &Channel, page: u16) -> Vec<u16> {
+    let (_, frame) = channel.shared_frames().find(|&(number, _)| number == page).unwrap();
+    frame
+        .chunks(PACKET_BYTES)
+        .filter_map(|chunk| match decode(&Packet { bytes: chunk.try_into().ok()? }) {
+            Ok(Decoded::Header(header)) => header.subcode.map(SubCode::value),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A TTI text of `count` sub-pages, the nth with `SC` `subcode(n)`.
+fn tti_of(count: usize, subcode: impl Fn(usize) -> u16) -> String {
+    let mut tti = String::new();
+    for index in 0..count {
+        let _ = core::fmt::Write::write_fmt(&mut tti, format_args!("PN,10000\nSC,{:04X}\nOL,1,Sub-page {index}\n", subcode(index)));
+    }
+    tti
+}
+
+fn publish_line(tti: &str, keep: bool) -> Vec<u8> {
+    let mut writer = Writer::new("publish");
+    writer.text("page", "100").text("owner", "channel").text("tti", tti).boolean("keep", keep);
+    writer.line()
+}
+
+/// `start` tells the program the standard's maxima and the server's
+/// budgets, each the engine's or the server's own constant (requirement
+/// 3.3).
+#[test]
+fn start_tells_the_standards_maxima_and_the_budgets() {
+    let mut channel = channel();
+    let started = lines(&channel.take_effects());
+    let standard = started[0].get("standard").unwrap();
+    let figure = |object: &Value, name: &str| object.get(name).and_then(Value::integer).and_then(|value| usize::try_from(value).ok());
+    assert_eq!(figure(standard, "magazines"), Some(limits::MAGAZINES));
+    assert_eq!(figure(standard, "pages"), Some(2_022));
+    assert_eq!(figure(standard, "keyable_pages"), Some(800));
+    assert_eq!(figure(standard, "subpages"), Some(8_190));
+    assert_eq!(figure(standard, "numbered_subpages"), Some(8_069));
+    assert_eq!(figure(standard, "decimal_subpages"), Some(3_199));
+    let budgets = started[0].get("budgets").unwrap();
+    assert_eq!(figure(budgets, "line_bytes"), Some(LONGEST_LINE));
+    assert_eq!(figure(budgets, "title_characters"), Some(TITLE_LIMIT));
+}
+
+/// A whole page's sub-pages are numbered by place as the code of practice
+/// numbers them, whatever their `SC` lines said (REQ-NUM-016, REQ-NUM-019):
+/// one is 0000, up to 79 are 0001 to 0079, more only above 0079, to
+/// 8,069; one more is refused.
+#[test]
+fn a_whole_page_is_numbered_by_place_as_the_code_of_practice_numbers() {
+    let mut channel = channel();
+    for (count, first, last) in [(1, 0x0000, 0x0000), (3, 0x0001, 0x0003), (79, 0x0001, 0x0079), (80, 0x0100, 0x0179), (8_069, 0x0100, 0x3F7E)] {
+        channel.from_application(0, &publish_line(&tti_of(count, |_| 0x0777), false), 0);
+        assert_eq!(logs(&channel.take_effects()), Vec::<String>::new(), "{count}");
+        let subcodes = subcodes_of(&channel, 0x100);
+        assert_eq!(subcodes.len(), count);
+        assert_eq!((subcodes[0], subcodes[count - 1]), (first, last), "{count}");
+        let places: Vec<u16> = (1..=u16::try_from(count).unwrap()).collect();
+        let numbered: Vec<u16> = places.iter().map(|&place| limits::sub_code_of(place, places.len().try_into().unwrap()).unwrap()).collect();
+        assert_eq!(subcodes, numbered);
+    }
+    channel.from_application(0, &publish_line(&tti_of(8_070, |_| 0), false), 0);
+    assert_eq!(logs(&channel.take_effects()).len(), 1, "8,070 cannot be numbered by place");
+}
+
+/// Every sub-code a link can name, 0001 to 3F7E, put by its `SC` line, is
+/// held: the standard's 8,190 sub-pages on one page (requirement 3.1,
+/// REQ-NUM-020). A put keeps the page's other sub-pages; a remove ends
+/// those it names; ending the last ends the page.
+#[test]
+fn a_page_holds_the_standards_8190_subpages_put_by_subcode() {
+    let all: Vec<u16> = (limits::FIRST_SUBPAGE_CODE..=limits::LAST_SUBPAGE_CODE).filter(|&subcode| limits::is_sub_code(subcode)).collect();
+    assert_eq!(all.len(), 8_190);
+    let mut channel = channel();
+    for part in all.chunks(1_000) {
+        channel.from_application(0, &publish_line(&tti_of(part.len(), |index| part[index]), true), 0);
+    }
+    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
+    assert_eq!(subcodes_of(&channel, 0x100), all);
+
+    channel.from_application(0, &publish_line("PN,10000\nSC,0002\nOL,1,Changed\n", true), 0);
+    let effects = channel.take_effects();
+    let stored: Vec<crate::StoreKey> = effects.iter().filter_map(|effect| if let Effect::Store { key, .. } = effect { Some(*key) } else { None }).collect();
+    assert_eq!(stored, [crate::StoreKey::SubPage { page: 0x100, subcode: 2 }, crate::StoreKey::Page(0x100)], "one sub-page changed, one kept");
+    assert_eq!(subcodes_of(&channel, 0x100), all, "the others kept, in order");
+    let changed = channel.resource("100-0002.t42").unwrap().body;
+    assert!(texts(&changed)[0].1.contains("Changed"));
+
+    channel.from_application(0, br#"{"type":"remove","page":"100","owner":"channel","subpages":["0001","3F7E"]}"#, 0);
+    let effects = channel.take_effects();
+    assert!(effects.contains(&Effect::Forget { key: crate::StoreKey::SubPage { page: 0x100, subcode: 0x3F7E } }));
+    assert_eq!(subcodes_of(&channel, 0x100), all[1..all.len() - 1]);
+    let left: Vec<String> = all[1..all.len() - 1].iter().map(|subcode| alloc::format!("\"{subcode:04X}\"")).collect();
+    for part in left.chunks(4_000) {
+        let line = alloc::format!(r#"{{"type":"remove","page":"100","owner":"channel","subpages":[{}]}}"#, part.join(","));
+        channel.from_application(0, line.as_bytes(), 0);
+    }
+    let effects = channel.take_effects();
+    assert!(effects.contains(&Effect::Withdrawn { page: 0x100 }) && effects.contains(&Effect::Forget { key: crate::StoreKey::Page(0x100) }));
+    assert!(!channel.is_shared(0x100));
+
+    for bad in [
+        &br#"{"type":"remove","page":"100","owner":"channel","subpages":["4000"]}"#[..],
+        br#"{"type":"remove","page":"100","owner":"channel","subpages":["001"]}"#,
+        br#"{"type":"remove","page":"100","owner":"channel","subpages":[]}"#,
+        br#"{"type":"remove","page":"200","owner":"channel","subpages":["0001"]}"#,
+    ] {
+        channel.from_application(0, bad, 0);
+        assert_eq!(logs(&channel.take_effects()).len(), 1, "{}", String::from_utf8_lossy(bad));
+    }
+    channel.from_application(0, &publish_line(&tti_of(2, |_| 0x0005), true), 0);
+    assert_eq!(logs(&channel.take_effects()).len(), 1, "a put names each sub-page once");
+}
+
+/// A page of several sub-pages is served as files of its own (the
+/// engine's REQ-WEB-019 and decision E.132): `NNN.t42` and `index.t42`
+/// hold its first sub-page only, `NNN-SSSS.t42` each sub-page, and
+/// `NNN.sub` the catalogue the engine's reader reads, in the page's order;
+/// a page of one sub-page has no catalogue.
+#[test]
+fn a_pages_subpages_are_files_of_their_own() {
+    let mut channel = channel();
+    channel.from_application(0, &publish_line(&tti_of(3, |_| 0), false), 0);
+    channel.from_application(0, br#"{"type":"publish","page":"300","owner":"channel","tti":"PN,30000\nOL,1,Alone\n"}"#, 0);
+    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
+    let page = channel.resource("100.t42").unwrap().body;
+    assert_eq!(texts(&page).len(), 1, "the first sub-page alone");
+    assert!(texts(&page)[0].1.contains("Sub-page 0"));
+    let second = channel.resource("100-0002.t42").unwrap().body;
+    assert!(texts(&second)[0].1.contains("Sub-page 1"));
+    assert!(channel.resource("100-0004.t42").is_none());
+    let index = channel.resource("index.t42").unwrap().body;
+    assert_eq!(texts(&index).iter().map(|(page, _)| *page).collect::<Vec<_>>(), [0x100, 0x300]);
+
+    let catalogue = channel.resource("100.sub").unwrap();
+    assert_eq!(catalogue.content_type, "text/plain");
+    let read: Vec<_> =
+        neoteletext_web::subpages::read(&catalogue.body).unwrap().map(|entry| entry.map(|entry| (entry.subcode.value(), entry.validator)).unwrap()).collect();
+    let files: Vec<_> =
+        (1..=3).map(|subcode| neoteletext_web::subpages::Validator::of(&channel.resource(&alloc::format!("100-{subcode:04X}.t42")).unwrap().body)).collect();
+    assert_eq!(read, [(1, files[0]), (2, files[1]), (3, files[2])]);
+    assert!(channel.resource("300.sub").is_none() && channel.resource("300-0000.t42").is_none(), "one sub-page, no catalogue");
+    assert!(texts(&channel.resource("300.t42").unwrap().body)[0].1.contains("Alone"));
+}
+
+/// Kept records come back in any order, and a page is served once its
+/// record and all its sub-pages' have come.
+#[test]
+fn a_kept_page_comes_back_from_its_records_in_any_order() {
+    let mut first = channel();
+    first.from_application(0, &publish_line(&tti_of(3, |_| 0), false), 0);
+    let kept: Vec<(crate::StoreKey, Vec<u8>)> =
+        first.take_effects().into_iter().filter_map(|effect| if let Effect::Store { key, bytes } = effect { Some((key, bytes)) } else { None }).collect();
+    let frame = first.shared_frames().next().map(|(_, frame)| Arc::clone(frame)).unwrap();
+    for order in [kept.clone(), kept.iter().rev().cloned().collect()] {
+        let mut second = Channel::new(first.config().clone(), alloc::vec![Box::new(Remote::new(Vec::new()))], 1);
+        let (last, before) = order.split_last().unwrap();
+        for (key, bytes) in before {
+            second.load(*key, bytes).unwrap();
+        }
+        assert!(!second.is_shared(0x100), "not until every record has come");
+        second.load(last.0, &last.1).unwrap();
+        assert!(second.take_effects().contains(&Effect::Shared { page: 0x100, frame: Arc::clone(&frame) }));
+    }
 }

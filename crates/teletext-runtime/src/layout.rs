@@ -1,14 +1,23 @@
-//! The channel's files over HTTP, in the engine's layout (decision E.70):
-//! `channel.json`, `contents.txt`, `index.t42` and each `NNN.t42`.
+//! The channel's files over HTTP, in the engine's layout (decisions E.70
+//! and E.132; its REQ-WEB-019): `channel.json`, `contents.txt`,
+//! `index.t42`, each `NNN.t42`, and for a page of several sub-pages each
+//! `NNN-SSSS.t42` and the catalogue `NNN.sub`. `NNN.t42` and `index.t42`
+//! hold first sub-pages only, so a page costs one sub-page until a
+//! receiver asks for more (`STANDARD-LIMITS.md` section 4 items 7 and 8).
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
+use neoteletext_core::types::SubCode;
+use neoteletext_web::bytes::Writer;
+use neoteletext_web::channel::ChannelFile;
 use neoteletext_web::consts::DEFAULT_PAGE_LIMIT;
+use neoteletext_web::subpages::{MAX_LINE, Validator, write_entry};
 
 use crate::channel::Channel;
+use crate::held::Held;
 
 /// A file of the channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +30,9 @@ pub struct Resource {
 
 /// T42's media type (the engine's `requirements/web.md`).
 pub const T42_TYPE: &str = "application/x-teletext-t42";
+/// A catalogue's media type: a line format of text (the engine's
+/// REQ-WEB-034).
+pub const SUBPAGES_TYPE: &str = "text/plain";
 /// The longest title `contents.txt` keeps (the engine's contents rule).
 const TITLE_CHARACTERS: usize = neoteletext_web::contents::MAX_TITLE;
 
@@ -31,13 +43,25 @@ impl Channel {
         match name {
             "channel.json" => Some(Resource { content_type: "application/json", body: self.descriptor().into_bytes() }),
             "contents.txt" => Some(Resource { content_type: "text/plain", body: self.contents().into_bytes() }),
-            "index.t42" => Some(Resource { content_type: T42_TYPE, body: bundle(self.shared_frames().map(|(_, frame)| &frame[..])) }),
-            _ => {
-                let page = page_file(name)?;
-                let (_, frame) = self.shared_frames().find(|&(number, _)| number == page)?;
-                Some(Resource { content_type: T42_TYPE, body: frame.to_vec() })
-            }
+            "index.t42" => Some(Resource { content_type: T42_TYPE, body: bundle(self.shared_pages().map(|(_, held)| held.first())) }),
+            _ => match ChannelFile::from_name(name)? {
+                ChannelFile::Page { page, t42: true } => Some(Resource { content_type: T42_TYPE, body: self.held(page.mpp())?.first().to_vec() }),
+                ChannelFile::SubPage { page, subcode } => {
+                    let held = self.held(page.mpp()).filter(|held| held.parts.len() > 1)?;
+                    Some(Resource { content_type: T42_TYPE, body: held.subpage(subcode.value())?.to_vec() })
+                }
+                ChannelFile::SubPages { page } => {
+                    let held = self.held(page.mpp()).filter(|held| held.parts.len() > 1)?;
+                    Some(Resource { content_type: SUBPAGES_TYPE, body: catalogue(held) })
+                }
+                _ => None,
+            },
         }
+    }
+
+    /// The shared page `page`, if the channel has it.
+    fn held(&self, page: u16) -> Option<&Held> {
+        self.shared_pages().find(|&(number, _)| number == page).map(|(_, held)| held)
     }
 
     fn descriptor(&self) -> String {
@@ -90,15 +114,19 @@ pub fn bundle<'a>(frames: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
     body
 }
 
-/// `NNN.t42` as a page number: three capital hexadecimal digits, magazine
-/// 1 to 8.
-fn page_file(name: &str) -> Option<u16> {
-    let digits = name.strip_suffix(".t42")?;
-    if digits.len() != 3 || !digits.bytes().all(|digit| digit.is_ascii_digit() || (b'A'..=b'F').contains(&digit)) {
-        return None;
+/// A page's catalogue, `NNN.sub` (the engine's decision E.132): each
+/// sub-page's sub-code and validator, in the page's order. The titles are
+/// left out, which the format allows.
+fn catalogue(held: &Held) -> Vec<u8> {
+    let mut body = alloc::vec![0_u8; held.parts.len().saturating_mul(MAX_LINE)];
+    let mut writer = Writer::new(&mut body);
+    for (subcode, packets) in held.subpages() {
+        // Room for every entry was made above.
+        let _ = write_entry(&mut writer, SubCode::new(subcode), &Validator::of(packets), "");
     }
-    let number = u16::from_str_radix(digits, 16).ok()?;
-    (0x100..=0x8FF).contains(&number).then_some(number)
+    let length = writer.len();
+    body.truncate(length);
+    body
 }
 
 /// Text for a JSON string: printable ASCII, with quote and backslash

@@ -15,18 +15,18 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use neoteletext_audio::encode::packets;
-use neoteletext_formats::page::{CursorLine, PageFile};
+use neoteletext_formats::page::CursorLine;
 use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
 
 use crate::application::{Action, Application, Audience, Context, Level, Owner, PageEntry};
-use crate::frame::page_frame;
+use crate::held::Held;
 use crate::input::Input;
 use crate::session::Session;
 use crate::stats::{ChannelStats, count};
-use crate::store::{StoreError, StoreKey, page_record, pages_record, read_page, read_pages};
+use crate::store::{KeptPage, StoreError, StoreKey, page_record, pages_record, read_page, read_pages, read_subpage, subpage_record};
 
 /// A connection's number, which the host chooses and never reuses.
 pub type SessionId = u64;
@@ -144,20 +144,6 @@ pub enum Effect {
     },
 }
 
-/// A page as the channel keeps it: encoded, with what the cursor record
-/// needs, not the page model.
-#[derive(Clone, Debug)]
-pub(crate) struct Held {
-    pub frame: Arc<[u8]>,
-    pub cursor: Option<CursorLine>,
-}
-
-impl Held {
-    fn of(subpages: &[PageFile]) -> Self {
-        Self { frame: Arc::from(page_frame(subpages)), cursor: subpages.first().and_then(|page| page.cursor) }
-    }
-}
-
 struct Hosted {
     application: Box<dyn Application>,
     pages: Vec<PageEntry>,
@@ -171,6 +157,10 @@ pub struct Channel {
     /// Which application serves each page.
     owners: BTreeMap<u16, usize>,
     shared: BTreeMap<u16, Held>,
+    /// Shared pages given back by [`Channel::load`] whose sub-pages have
+    /// not all come yet, and sub-pages whose page has not.
+    loading: BTreeMap<u16, KeptPage>,
+    loaded: BTreeMap<(u16, u16), Vec<u8>>,
     sessions: BTreeMap<SessionId, Session>,
     effects: Vec<Effect>,
     seed: u64,
@@ -194,6 +184,8 @@ impl Channel {
             applications,
             owners: BTreeMap::new(),
             shared: BTreeMap::new(),
+            loading: BTreeMap::new(),
+            loaded: BTreeMap::new(),
             sessions: BTreeMap::new(),
             effects: Vec::new(),
             seed: seed | 1,
@@ -214,7 +206,8 @@ impl Channel {
     }
 
     /// Gives the channel back what it kept under `key` (requirement 5.2),
-    /// before it starts: a shared page is served at once, as it was last
+    /// before it starts, in any order: a shared page is served once its
+    /// record and every one of its sub-pages' have come, as it was last
     /// published, until its application publishes it again.
     ///
     /// # Errors
@@ -223,9 +216,14 @@ impl Channel {
     pub fn load(&mut self, key: StoreKey, record: &[u8]) -> Result<(), StoreError> {
         match key {
             StoreKey::Page(page) => {
-                let held = read_page(page, record)?;
-                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
-                self.shared.insert(page, held);
+                let kept = read_page(page, record)?;
+                self.loading.insert(page, kept);
+                self.assemble(page);
+            }
+            StoreKey::SubPage { page, subcode } => {
+                let packets = read_subpage(page, subcode, record)?;
+                self.loaded.insert((page, subcode), packets.to_vec());
+                self.assemble(page);
             }
             StoreKey::Pages(application) => {
                 let pages = read_pages(record)?;
@@ -237,6 +235,21 @@ impl Channel {
             }
         }
         Ok(())
+    }
+
+    /// Serves `page` from what was loaded, once its record and all its
+    /// sub-pages' are in.
+    fn assemble(&mut self, page: u16) {
+        let Some(kept) = self.loading.get(&page) else { return };
+        if !kept.subcodes.iter().all(|&subcode| self.loaded.contains_key(&(page, subcode))) {
+            return;
+        }
+        let Some(kept) = self.loading.remove(&page) else { return };
+        let loaded = &self.loaded;
+        let held = Held::of_encoded(kept.subcodes.iter().map(|&subcode| (subcode, loaded.get(&(page, subcode)).map_or(&[][..], Vec::as_slice))), kept.cursor);
+        self.loaded.retain(|&(each, _), _| each != page);
+        self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
+        self.shared.insert(page, held);
     }
 
     /// Application `application`'s process declared `pages`, as it does
@@ -251,9 +264,7 @@ impl Channel {
         let owners = &self.owners;
         let gone: Vec<u16> = self.shared.keys().filter(|page| !owners.contains_key(page)).copied().collect();
         for page in gone {
-            self.shared.remove(&page);
-            self.effects.push(Effect::Withdrawn { page });
-            self.effects.push(Effect::Forget { key: StoreKey::Page(page) });
+            self.withdraw(page);
         }
         self.effects.push(Effect::Contents);
         self.store_pages(application);
@@ -293,6 +304,11 @@ impl Channel {
     /// The shared pages' frames, in page order.
     pub fn shared_frames(&self) -> impl Iterator<Item = (u16, &Arc<[u8]>)> {
         self.shared.iter().map(|(&page, held)| (page, &held.frame))
+    }
+
+    /// The shared pages, in page order.
+    pub(crate) fn shared_pages(&self) -> impl Iterator<Item = (u16, &Held)> {
+        self.shared.iter().map(|(&page, held)| (page, held))
     }
 
     /// Starts the applications: each publishes its shared pages.
@@ -568,25 +584,11 @@ impl Channel {
 
     fn act(&mut self, index: usize, action: Action) {
         match action {
-            Action::Publish { owner: Owner::Channel, number, subpages } => {
-                count(&mut self.stats.shared_published);
-                let held = Held::of(&subpages);
-                self.effects.push(Effect::Shared { page: number, frame: Arc::clone(&held.frame) });
-                self.effects.push(Effect::Store { key: StoreKey::Page(number), bytes: page_record(number, &held) });
-                // A page published for the first time is listed from now on.
-                if self.shared.insert(number, held).is_none() {
-                    self.effects.push(Effect::Contents);
-                }
+            Action::Publish { owner, number, subpages } => self.change(owner, number, |_| Some(Held::of(&subpages))),
+            Action::Put { owner, number, subpages } => {
+                self.change(owner, number, |held| Some(held.map_or_else(|| Held::of(&subpages), |held| held.with(&subpages))));
             }
-            Action::Publish { owner: Owner::Session(session), number, subpages } => {
-                let Some(state) = self.sessions.get_mut(&session) else { return };
-                count(&mut self.stats.own_published);
-                let held = Held::of(&subpages);
-                if state.own.insert(number, held).is_none() {
-                    self.effects.push(Effect::Own { session, page: number });
-                }
-                self.send_page(session, number, true);
-            }
+            Action::Remove { owner, number, subcodes } => self.change(owner, number, |held| held.and_then(|held| held.without(&subcodes))),
             Action::Records { audience, records } => self.records(audience, &records),
             Action::Goto { session, page } => {
                 let Some(state) = self.sessions.get_mut(&session) else { return };
@@ -627,6 +629,73 @@ impl Channel {
             }
             Action::Log { level, event, text } => self.effects.push(Effect::Log { level, event, text }),
         }
+    }
+
+    /// Makes `page` of `owner` what `make` makes of it as it is: the
+    /// channel's copy, kept and sent to every viewer, or one session's;
+    /// none ends it.
+    fn change(&mut self, owner: Owner, page: u16, make: impl FnOnce(Option<&Held>) -> Option<Held>) {
+        match owner {
+            Owner::Channel => {
+                let Some(held) = make(self.shared.get(&page)) else {
+                    if self.shared.contains_key(&page) {
+                        self.withdraw(page);
+                        self.effects.push(Effect::Contents);
+                    }
+                    return;
+                };
+                count(&mut self.stats.shared_published);
+                self.keep(page, &held);
+                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
+                // A page published for the first time is listed from now on.
+                if self.shared.insert(page, held).is_none() {
+                    self.effects.push(Effect::Contents);
+                }
+            }
+            Owner::Session(session) => {
+                let Some(state) = self.sessions.get_mut(&session) else { return };
+                let Some(held) = make(state.own.get(&page)) else {
+                    if state.own.remove(&page).is_some() {
+                        self.effects.push(Effect::Disown { session, page });
+                        self.send_page(session, page, true);
+                    }
+                    return;
+                };
+                count(&mut self.stats.own_published);
+                if state.own.insert(page, held).is_none() {
+                    self.effects.push(Effect::Own { session, page });
+                }
+                self.send_page(session, page, true);
+            }
+        }
+    }
+
+    /// Keeps the shared `page`, now `held` (requirement 5.2): its record,
+    /// each sub-page that changed, and the forgetting of each that ended.
+    fn keep(&mut self, page: u16, held: &Held) {
+        let before = self.shared.get(&page);
+        for (subcode, packets) in held.subpages() {
+            if before.and_then(|before| before.subpage(subcode)) != Some(packets) {
+                self.effects.push(Effect::Store { key: StoreKey::SubPage { page, subcode }, bytes: subpage_record(page, subcode, packets) });
+            }
+        }
+        if let Some(before) = before {
+            for subcode in before.subcodes().filter(|&subcode| held.subpage(subcode).is_none()) {
+                self.effects.push(Effect::Forget { key: StoreKey::SubPage { page, subcode } });
+            }
+        }
+        self.effects.push(Effect::Store { key: StoreKey::Page(page), bytes: page_record(page, held) });
+    }
+
+    /// The channel no longer has the shared `page`: it is not served, and
+    /// nothing of it is kept.
+    fn withdraw(&mut self, page: u16) {
+        let Some(held) = self.shared.remove(&page) else { return };
+        self.effects.push(Effect::Withdrawn { page });
+        for subcode in held.subcodes() {
+            self.effects.push(Effect::Forget { key: StoreKey::SubPage { page, subcode } });
+        }
+        self.effects.push(Effect::Forget { key: StoreKey::Page(page) });
     }
 
     fn records(&mut self, audience: Audience, records: &[Vec<u8>]) {

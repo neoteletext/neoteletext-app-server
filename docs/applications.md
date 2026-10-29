@@ -20,13 +20,26 @@ How a channel's application, a program in any language, talks to the server. It 
 
 | `type` | Fields | When |
 |---|---|---|
-| `start` | `protocol` (1), `epoch_ms`; to come (decision 10): `standard`, the standard's maxima, and `budgets`, the server's | The program is to publish its channel pages |
+| `start` | `protocol` (1), `epoch_ms`, `standard`, `budgets` (below) | The program is to publish its channel pages |
 | `join` | `session` | A session began: a viewer connected without a session to continue |
 | `open` | `session`, `page` | The viewer opened one of the program's pages |
 | `leave` | `session`, `page` | The viewer left it, or their connection closed |
 | `input` | `session`, `page`, `event` | Input on the page open, from INPUT.md |
 | `close` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7, for a page to show |
+
+`standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own:
+
+| Field | Value | What |
+|---|---|---|
+| `magazines` | 8 | Magazines 1 to 8 (EN 300 706 clause 7.1.2) |
+| `pages` | 2,022 | Page numbers that may carry a page: 00 to FE in each magazine, less those the standard reserves (section 3.1) |
+| `keyable_pages` | 800 | Those a viewer can key, 100 to 899 |
+| `subpages` | 8,190 | Sub-pages a page may hold, 0001 to 3F7E, put by their sub-codes (section 3.2) |
+| `numbered_subpages` | 8,069 | Sub-pages a whole page may have, numbered by place as the code of practice numbers them (section 3.2) |
+| `decimal_subpages` | 3,199 | Sub-codes a viewer can key, 0001 to 3979 |
+
+`budgets` is the server's own bounds: `line_bytes`, the longest line (16 MiB, section 1), and `title_characters`, the longest title (120, section 3.1).
 
 `session` is a whole number, never reused, across restarts too, and below 2^53, so a TypeScript program reads it exactly (requirement 5.4). A session outlives its connection (requirement 5.5): a viewer who comes back within 5 minutes, or later while their browser keeps the session's cookie (30 days, renewed at each connection), continues it, and the program is told `open` when they open a page, not `join` again. A program may keep what it knows of a viewer under the session's number (requirement 9.2). `page` is three hexadecimal digits, `"100"` to `"8FF"`.
 
@@ -52,7 +65,7 @@ What reaches the program: while the browser sends keys to the channel, every eve
 {"type":"pages","pages":[{"page":"100","title":"Front page"},{"page":"101","title":"News"}]}
 ```
 
-At most 800 pages, each once; a title at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's `contents.txt` lists them. A program publishes only the pages it declared.
+At most 2,022 pages, each once: any of 100 to 8FE but those the standard reserves, page FF of each magazine (time filling, never a page), FD and FE of each magazine (the Magazine Inventory Page and the Magazine Organization Table), 1BE and 1F0 (EN 300 706 Annex A.10; the engine's REQ-NUM-008 and REQ-NUM-010). A title is at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's `contents.txt` lists the decimal ones. A program publishes only the pages it declared.
 
 A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
 
@@ -64,13 +77,25 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
 
 - **`owner`** is `"channel"`, one shared copy sent to every viewer, encoded once; or a session number, that viewer's own copy of the page from now on (`SERVER.md` section 7.3).
 - **`tti`** is the page in TTI, the engine's page format (`neoteletext-engine` REQ-INP-013), read by the engine's TTI reader:
-  - `PN,mppss`: starts each sub-page. The page number comes from `page`; the sub-page from `ss`. At most 64 sub-pages. *To change (decision 10, not built):* up to 8,190, each named by `SC` with its four-digit sub-code, a publication putting only the sub-pages it carries and `remove` ending others; the bound comes from `start`.
+  - `PN,mppss`: starts each sub-page. The page number comes from `page`, whatever the line says.
+  - `SC,ssss`: the sub-page's sub-code, four hexadecimal digits; see `keep`.
   - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
   - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
   - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
+- **`keep`**, absent or `false`: the publication is the whole page, its sub-pages in the order given, the page's others ended. The server numbers them by place as the code of practice does (TR 100 287 clause 10.1; the engine's REQ-NUM-016 and REQ-NUM-019), whatever their `SC` lines say: one sub-page is 0000, a set of 2 to 79 is 0001 to 0079, and a larger set takes only sub-codes above 0079, the decimal ones first (0100 to 3979), so a whole page has at most 8,069 (`start`'s `numbered_subpages`).
+- **`keep: true`**: the publication puts the sub-pages it carries, each named by its `SC` line (any of 0000 to 3F7F, each once), and keeps the page's others as they were: one that has the sub-code of a sub-page the page has replaces it where it stands, and a new one goes before the first with a higher sub-code. So a page holds up to the standard's 8,190 sub-pages (`start`'s `subpages`), and changing one costs one. A put on a page not yet published makes the page of what it carries.
+- The server keeps and serves a page by its sub-pages: `NNN.t42` holds the first, and a page of several has `NNN-SSSS.t42` for each and the catalogue `NNN.sub` (the engine's REQ-WEB-019 and decision E.132).
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
 - Row 0's columns 8 to 39 are the program's (EN 300 706 clause 9.3.1.4; decision 22, `docs/requirements.md` section 11): what an `OL,0` line puts there reaches the viewer as written, and the server writes nothing there. A program that wants a name, a date or a clock in the header writes it; without an `OL,0` line the row is blank. Columns 0 to 7 are the receiver's, where it shows the page's number; what a program puts there is never shown. The server sends no time-filling header: a clock on a page changes when the program publishes the page again.
+
+### 3.2a `remove`
+
+```json
+{"type":"remove","page":"100","owner":"channel","subpages":["0002","0A10"]}
+```
+
+Ends the sub-pages of those sub-codes, four hexadecimal digits each, 1 to 8,190 of them; the page's others are kept. A sub-code the page does not have is ignored. A page left with none is no longer served, as if never published.
 
 ### 3.3 `goto`
 

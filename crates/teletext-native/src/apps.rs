@@ -25,9 +25,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWr
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 
-/// The longest line either side may send: a page of TTI is under 4 KB,
-/// a two-minute sound's samples in base64 about 15 MB.
-pub const LONGEST_LINE: usize = 16 * 1024 * 1024;
+/// The longest line either side may send, which `start` tells a program:
+/// a page of TTI is under 4 KB, a two-minute sound's samples in base64
+/// about 15 MB.
+pub use teletext_runtime::remote::LONGEST_LINE;
 /// The longest line of a program's standard error logged whole; the rest
 /// of a longer one is cut (requirement 7.5).
 pub const LONGEST_ERROR_LINE: usize = 64 * 1024;

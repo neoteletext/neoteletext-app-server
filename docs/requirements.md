@@ -123,21 +123,21 @@ The behaviour of `SERVER.md` becomes requirements here as each part is adopted a
 - **Reason:** The owner's instruction that the engine, the server and the browser have the standard's maximum from one piece of code.
 - **Source:** Decision 10; `neoteletext-common/STANDARD-LIMITS.md`.
 - **Verification:** Test: a channel that declares 2,022 pages and publishes 8,190 sub-pages on one; check: no literal bound in the runtime.
-- **State:** Not met, 26 October 2026: `MOST_PAGES` is 800 and `MOST_SUBPAGES` 64 in `teletext-runtime`.
+- **State:** Met in tests, 29 October 2026: a program declares any of the 2,022 page numbers and refuses the reserved ones; a page holds 8,190 sub-pages put by sub-code, a whole page 8,069 numbered by place; every bound is the engine's `limits` (`a_page_holds_the_standards_8190_subpages_put_by_subcode`, `a_whole_page_is_numbered_by_place_as_the_code_of_practice_numbers`). The channel of 2,022 declared pages is not yet tested.
 
 ### Requirement 3.2: Sub-pages pass the wire only when needed
 - **Statement:** A client must receive a sub-page's content only while it tunes that sub-page; for the rest of a tuned page it receives the page's catalogue (sub-codes and versions) and its changes, and titles only for the places it asks for (`SERVER.md` sections 5.4, 5.5 and 6). An application must be able to publish and remove single sub-pages without resending the others (`SERVER.md` section 7.3).
 - **Reason:** The owner's instruction that sub-pages pass the wire only when needed; a page at the standard's maximum is about 9 MB.
 - **Source:** Decision 10.
 - **Verification:** Test: bytes sent to a client tuned to one sub-page of a page of 8,190, when it opens, when another sub-page changes and when it steps; measure before and after.
-- **State:** Not met, 26 October 2026: a page is held and sent whole, to every connection, on every change.
+- **State:** Partly met, 29 October 2026: a program puts and removes single sub-pages (`keep`, `remove`), the server holds, keeps and serves each as a file of its own (`NNN-SSSS.t42`, `NNN.sub`; `a_pages_subpages_are_files_of_their_own`), and a receiver that reads files fetches only those it shows. Not met: tuning by sub-page on the WebSocket, so a connection is still sent every sub-page of every shared page.
 
 ### Requirement 3.3: Applications are told the limits
 - **Statement:** `start` must carry the standard's maxima and the server's budgets, written from the engine's constants; the Python and TypeScript kits must expose them and hold no limit of their own, and a test of each kit must check that none is written as a literal.
 - **Reason:** One definition, for programs in languages that cannot import the engine.
 - **Source:** Decision 10.
 - **Verification:** Test of each kit; review of the channels.
-- **State:** Not met, 26 October 2026: the Hackaday channel writes `MOST_SUBPAGES = 64`, and `start` carries `protocol` and `epoch_ms` only.
+- **State:** Partly met, 29 October 2026: `start` carries `standard` and `budgets` from the engine's and the server's constants (`start_tells_the_standards_maxima_and_the_budgets`). Not met: the kits still write 64 and 800, and the Hackaday channel `MOST_SUBPAGES = 64`.
 
 ## 4. Channels' programs
 
