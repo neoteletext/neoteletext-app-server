@@ -94,6 +94,6 @@ async fn a_stopping_channel_closes_its_connections_and_keeps_its_pages() {
     }
     assert_eq!(closed, Some(CLOSE_SERVICE_RESTART));
     let kept: Vec<StoreKey> = state.records("test").0.into_iter().map(|(key, _)| key).collect();
-    assert_eq!(kept, [StoreKey::Page(0x100), StoreKey::Pages(0)]);
+    assert_eq!(kept, [StoreKey::Page(0x100), StoreKey::SubPage { page: 0x100, subcode: 0 }, StoreKey::Pages(0)]);
     let _ = std::fs::remove_dir_all(&root);
 }
