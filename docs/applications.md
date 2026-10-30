@@ -20,23 +20,23 @@ How a channel's application, a program in any language, talks to the server. It 
 Protocol version 2 (DEC-1482). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-2.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
 
 Common shapes:
-- `connection`: a whole number from 1, naming one open connection; `session`: a whole number, the viewer's session, which outlives connections (requirement 5.5). Both below 2^53.
+- `connection`: a whole number from 1, naming one open connection: one browser tab, with one selection (DEC-1527); `session`: a whole number, the viewer's session, which outlives connections and is shared by a viewer's tabs (requirement 5.5). Both below 2^53.
 - `page`: three hexadecimal digits in capitals, magazine 1 to 8 first, `"100"` to `"8FF"`; `sub`: four, `"0000"` to `"3F7F"`, where `"3F7F"` means the page and none of its sub-pages in particular (EN 300 706 clause 9.6.1).
-- `view`: 0 to 15, one browser tab showing the channel. Until the browser's SELECT is built, every event is of view 0, and the page it opens is its selection, with `sub` `"3F7F"`.
+- A connection's **selection** is a page with `sub` `"3F7F"`, answered with the page's first sub-page in ascending sub-code order (0000 when the page has it), which then becomes the selection; or one sub-page. A sub-page never changes by itself: no rotation (DEC-1526).
 - `connections`: `"all"`, every open connection, or a list of 1 to 4,096 connections; a connection named that has closed is passed over.
 
 | `type` | Fields | When |
 |---|---|---|
 | `start` | `protocol` (2), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
-| `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selections` (`view`, and `selection`: `page` and `sub`, or `null` for the channel's initial page) | A viewer's connection opened; answer with `reply` (REQ-1471) |
-| `selected` | `connection`, `view`, `page`, `sub` | A view selected a page (`sub` 3F7F: send its current sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1500) |
-| `input` | `connection`, `view`, `page`, `event` | Input on the page with the keys (INPUT.md) |
-| `left` | `connection`, `view`, `page` | A view left a page, or its connection closed |
+| `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selection` (`page` and `sub`, or `null` for the channel's initial page) | A viewer's connection opened; answer with `reply` (REQ-1471) |
+| `selected` | `connection`, `page`, `sub` | The connection selected a page (`sub` 3F7F: send its first sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1526) |
+| `input` | `connection`, `page`, `event` | Input on the page with the keys (INPUT.md) |
+| `left` | `connection`, `page` | The connection's selection left a page, or the connection closed |
 | `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7 |
 | `refused` | `message` (its `type`, or `null`), `path` (such as `page.rows[3]`, empty for the whole), `rule` (a closed list: `syntax`, `unknown_field`, `missing_field`, `wrong_type`, `not_listed`, `out_of_range`, `too_long`, `too_short`, `not_ascending`, `duplicate`, `reserved`, `wrong_magazine`, `forbidden_character`, `not_base64`, `wrong_length`, `not_in_index`, `unknown_connection`, `not_awaited`, `outside_profile`, `invalid_packet`, and the rest the schema lists), `detail` | A line the program sent was refused whole; nothing of it was done (REQ-1475) |
 
-`standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199, `views` 16. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`).
+`standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`).
 
 `event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `goto` (INPUT.md section 9.4).
 
@@ -44,13 +44,13 @@ Common shapes:
 
 | `type` | Fields | What |
 |---|---|---|
-| `reply` | `connection`, `magazines`, `selected` (`view`, `page`: one sub-page) | The answer to `connected`, exactly once: the channel's index for this viewer, and the sub-page each view shows. Each page in `selected` must be listed in `magazines` |
-| `page` | `connections`, `page`: one sub-page | A sub-page. It reaches only the views of those connections that show it: views that selected it, and views that selected its page with 3F7F, for which it becomes the current sub-page (DEC-1500) |
-| `subpages` | `connections`, `page`, `version`, `subpages` (`sub`, `title` of at most 40 characters or `null`), each sub-code once, in the page's order | A page's sub-page list, with the answer to a page selection and whenever it changes |
+| `reply` | `connection`, `magazines`, `selected` (one sub-page, or `null`) | The answer to `connected`, exactly once: the channel's index for this viewer, and the sub-page its selection shows, or the initial page's first. The page must be listed in `magazines` |
+| `page` | `connections`, `page`: one sub-page | A sub-page. It reaches only those connections whose selection shows it: those that selected it, and those that selected its page with 3F7F and await its first sub-page, whose selection it becomes (DEC-1526) |
+| `subpages` | `connections`, `page`, `version` (0 to 65,535), `subpages` (`sub`, `title` of at most 40 characters or `null`), each sub-code once, in ascending order | A page's sub-page list, with the answer to a page selection and whenever it changes; sent to the connections named whose selection shows the page and that do not hold that version |
 | `index` | `connections`, `magazines` | The index changed: a page added, removed, retitled, its section or sub-page count changed |
-| `goto` | `connection`, `view`, `page`, `sub` | Sends a view to a page (INPUT.md section 7.1) |
+| `goto` | `connection`, `page`, `sub` | Sends the connection to a page (INPUT.md section 7.1): a selection, so the program is then sent `selected` for it |
 | `sound` | `kind`, `connections`, and the kind's fields (below) | A sound, its data, or a command |
-| `cookie` | `connection`, `name`, `value`, `path`, `max_age`, `expires`, `same_site` (`Strict`, `Lax`, `None`), `secure`, `http_only` | Sets one of the program's cookies; names starting `_` are the server's |
+| `cookie` | `connection`, `name`, `value`, `path`, `max_age` (seconds, 0 removing it, `null` for the browser's session), `same_site` (`Strict`, `Lax`, `None`), `secure`, `http_only` | Sets one of the program's cookies; names starting `_` are the server's |
 | `author_log` | `connections`, `level` (`E`, `W` or `I`), `text` (1 to 200 bytes), `page` or `null` | A line for the developer console of the viewer's browser |
 | `log` | `level` (`error`, `warn`, `info`, `debug`), `event` (lower case, digits and `_`), `text` | A line for the server's log |
 | `packets` | `connections`, `packets`: base64 of whole 42-byte packets | Raw packets (`SERVER.md` section 7.4) |
@@ -68,7 +68,7 @@ Common shapes:
 - `packets`: at most 16 other packed lines by `packet`: `x27_nibbles` (designation 1 to 3, 39 values of 4 bits), `x27` (designation 4 to 15), `x28` and `m29` (designation 0 to 15), each of 13 triplets;
 - `cursor`: `{row, column, block}` or `null` (INPUT.md section 7.1).
 
-The server encodes the sub-page with the engine's encoder and sends it alone (REQ-1501). A view is sent it whole the first time after its selection changes, and after that only its header, the rows that changed and the enhancement group when any of it changed; nothing when nothing changed (DEC-1499).
+The server encodes the sub-page with the engine's encoder and sends it alone (REQ-1501). A connection is sent it whole, with the erase bit, the first time after its selection changes or when it is another sub-page than the one last sent; after that, the same sub-code goes as only its header, the rows that changed and the enhancement group when any of it changed, and nothing when nothing changed (DEC-1499). Every frame of a sub-page with Link Extension links is followed by its LINKS record (DEC-1517).
 
 **`sound`** (`SERVER.md` section 9; the engine's audio profile), by `kind`, each with `connections`:
 
@@ -84,11 +84,11 @@ The server encodes the sub-page with the engine's encoder and sends it alone (RE
 | `stop` | `channel`, `fade_ms` |
 | `gain` | `channel`, `gain`, `fade_ms` |
 
-**Not yet relayed** (phase 2, with the engine's encoders): the index as index records, `subpages` as the SUBPAGES record, `author_log` as LOG records, `cookie` as a SET_COOKIE record, the Link Extension as the LINKS record, and DENIED "unavailable" when an answer is late. They are checked now and refused when wrong.
+**What reaches the viewer** (REQ-1480), every packet checked with the engine's one stream check (REQ-1462): sub-pages as page frames; the index of `reply` and `index` as index records; `subpages` as SUBPAGES records; `author_log` as LOG records; `cookie` as a SET_COOKIE record; the Link Extension as LINKS records; sounds as the audio profile's records; `packets` as they are. **Not yet:** DENIED "unavailable" when an answer is late (TODO-1522); the operator's log says so meanwhile.
 
 ## 4. Pages and sessions
 
-- The server keeps no page (REQ-1474): only what each open connection is, and for each view the last version of the sub-page it shows, to send its changes (DEC-1499). A program sends a sub-page again to the connections that should see it whenever it changes; a connection that opens later is sent nothing of it until the program answers its `connected`.
+- The server keeps no page (REQ-1474): only what each open connection is, and the last version of the sub-page its selection shows, to send its changes (DEC-1499). A program sends a sub-page again to the connections that should see it whenever it changes; a connection that opens later is sent nothing of it until the program answers its `connected`.
 - A channel can differ for every viewer: the program answers each connection and selection as it chooses.
 - A program keeps each session's state itself and forgets it on `closed` (`SERVER.md` section 8.4).
 
