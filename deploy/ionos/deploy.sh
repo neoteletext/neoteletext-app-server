@@ -6,7 +6,9 @@
 #      runs on the container's Ubuntu 24.04 whatever that host runs;
 #   2. the TypeScript channels and the neoteletext.com home page, copied from
 #      their working trees beside this repository, the channels' libraries
-#      installed from their vendor/;
+#      installed from their vendor/; the old Hackaday channel, Python, with
+#      a pinned uv and the engine's tools it runs (neottx and the picture
+#      converter), its own downloads on the container never touched;
 #   3. the channels file, the service, and the container's Caddy, which
 #      serves the home page on neoteletext.com and www and proxies
 #      app.neoteletext.com to the server;
@@ -26,14 +28,38 @@ edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
 channels=(neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo)
+# Hackaday's protocol 2 port is in a worktree until it is merged into the
+# repository's main, whose working tree holds other uncommitted work
+# (TODO-1541); on the container it keeps the repository's name.
+hackaday_tree=${NEOTELETEXT_HACKADAY_TREE:-$devel/neoteletext-server-channel-hackaday-protocol2}
+# The old Hackaday channel, Python, beside the Python kit.
+python_channels=neoteletext-server-channels
+# The development machine's uv, so uv.lock is read by the version that wrote it.
+uv_version=0.8.17
+# The engine the server is pinned to builds the neottx the old channel runs.
+engine_rev=$(sed -n 's/^neoteletext-core = .*rev = "\([0-9a-f]*\)".*/\1/p' "$repo/Cargo.toml")
 musl=x86_64-unknown-linux-musl
+stamp=$(date +%Y-%m-%d-%H%M%S)
 
 build=1
 [ "${1:-}" = "--no-build" ] && build=0
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+source_of() { if [ "$1" = neoteletext-server-channel-hackaday ]; then echo "$hackaday_tree"; else echo "$devel/$1"; fi; }
 
-for c in "${channels[@]}" neoteletext-www; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
+for c in "${channels[@]}"; do [ -d "$(source_of "$c")" ] || die "$(source_of "$c") not found"; done
+for c in neoteletext-www "$python_channels"; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
+[ -n "$engine_rev" ] || die "no engine rev in $repo/Cargo.toml"
+
+say "backups on the container, stamped $stamp"
+# Data the channels download is left out: nothing below overwrites it.
+# shellcheck disable=SC2029
+ssh "$target" "set -e; cd ~
+    if [ -f $app/bin/teletext-server ]; then cp -a $app/bin/teletext-server teletext-server.bak-$stamp; fi
+    if [ -f $app/channels.json ]; then sudo cp -a $app/channels.json channels.json.bak-$stamp; fi
+    if [ -d $app/current ]; then sudo tar -C $app/current -czf current.bak-$stamp.tgz --exclude=node_modules --exclude=.venv \
+        --exclude='*/hackaday/cache' --exclude='*/hackaday/sounds' --exclude='*/hackaday/people' .; fi
+    ls -d ~/*.bak-$stamp*"
 
 if [ "$build" = 1 ]; then
     say "the server, built static on $builder"
@@ -53,12 +79,48 @@ ssh "$builder" "cat teletext-server-check/target/$musl/release/teletext-server" 
 say "the channels and the home page into $app/current, the channels' user's"
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current"
 for c in "${channels[@]}"; do
-    rsync -a --delete --exclude node_modules --exclude tmp --exclude .git "$devel/$c/" "$target:$app/current/$c/"
+    rsync -a --delete --exclude node_modules --exclude tmp --exclude .git "$(source_of "$c")/" "$target:$app/current/$c/"
 done
 rsync -a --delete "$devel/neoteletext-www/public/" "$target:$app/current/www/"
 # shellcheck disable=SC2029
 ssh "$target" "set -e; cd $app/current
     for c in ${channels[*]}; do (cd \$c && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent); done"
+
+say "the old Hackaday channel, uv, and the engine's tools into $app/tools"
+# The channel's downloads (cache, sounds, people) are the container's own:
+# excluded, so rsync neither sends nor deletes them.
+rsync -a --delete --exclude .git --exclude tmp --exclude .venv --exclude __pycache__ --exclude .mypy_cache \
+    --exclude .ruff_cache --exclude .pytest_cache --exclude /hackaday/cache --exclude /hackaday/sounds --exclude /hackaday/people \
+    "$devel/$python_channels/" "$target:$app/current/$python_channels/"
+uv_archive=uv-x86_64-unknown-linux-gnu.tar.gz
+uv_release=https://github.com/astral-sh/uv/releases/download/$uv_version
+# shellcheck disable=SC2029
+ssh "$target" "set -e
+    if [ \"\$(uv --version 2>/dev/null)\" != 'uv $uv_version' ]; then
+        d=\$(mktemp -d)
+        (cd \$d && curl -fsSL -o $uv_archive $uv_release/$uv_archive && curl -fsSL -o $uv_archive.sha256 $uv_release/$uv_archive.sha256 \
+            && sha256sum -c $uv_archive.sha256 >/dev/null && tar xzf $uv_archive \
+            && sudo install -m 755 uv-x86_64-unknown-linux-gnu/uv uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/)
+        rm -rf \$d
+    fi
+    cd $app/current/$python_channels && uv python install --quiet \$(cat .python-version) && uv sync --quiet --frozen --no-dev"
+# A glibc build: the musl one needs a musl C compiler, which the builder
+# lacks, for the TLS that neottx's qr and keyboard commands bring.
+# shellcheck disable=SC2029
+ssh "$builder" ". ~/.cargo/env; set -e; cd ~; [ -d neottx-build ] || git clone --quiet https://github.com/neoteletext/neoteletext-engine neottx-build
+    cd neottx-build; git fetch --quiet origin; git checkout --quiet $engine_rev; cargo build --quiet --release --locked -p neoteletext-cli"
+# shellcheck disable=SC2029
+glibc_needed=$(ssh "$builder" "objdump -T neottx-build/target/release/neottx | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1")
+glibc_there=$(ssh "$target" "ldd --version | head -1 | awk '{print \$NF}'")
+[ "$(printf '%s\n%s\n' "$glibc_needed" "$glibc_there" | sort -V | tail -1)" = "$glibc_there" ] ||
+    die "neottx needs glibc $glibc_needed; the container has $glibc_there"
+# shellcheck disable=SC2029
+ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/tools"
+# shellcheck disable=SC2029
+ssh "$builder" "cat neottx-build/target/release/neottx" | ssh "$target" "install -m 755 /dev/stdin $app/tools/neottx"
+# shellcheck disable=SC2029
+ssh "$builder" "cat neottx-build/scripts/image-to-teletext.py" | ssh "$target" "install -m 644 /dev/stdin $app/tools/image-to-teletext.py
+    cd ~ && uv run --quiet $app/tools/image-to-teletext.py --help >/dev/null"
 
 say "the data, once: the Hackaday archive and the pictures from ~/incoming"
 # The copy into ~/incoming ends by writing ~/incoming/.complete; nothing is
@@ -79,6 +141,7 @@ say "the channels file, the service and the container's Caddy"
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts"],"directory":"current/neoteletext-server-channel-hackaday"},
+  {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","HACKADAY_CONVERTER=$app/tools/image-to-teletext.py","UV=/usr/local/bin/uv","uv","run","--frozen","--no-dev","python","-m","hackaday"],"directory":"current/$python_channels/hackaday"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-demosite"},
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
 ]}
@@ -135,4 +198,5 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
 
 say "inside the container"
 ssh "$target" 'sleep 3; systemctl is-active neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
-    for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done'
+    for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
+    for c in hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.json %{http_code}\n" http://127.0.0.1:8090/$c/channel.json; done'
