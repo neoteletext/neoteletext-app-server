@@ -52,7 +52,8 @@ impl Body for Whole {
     }
 }
 
-/// The server's channels by folder, and the next session's number.
+/// The server's channels by folder, and the next session's and
+/// connection's numbers.
 #[derive(Debug)]
 pub struct Routes {
     /// The channels.
@@ -60,6 +61,9 @@ pub struct Routes {
     /// Sessions are numbered from here, never reused, across restarts too
     /// (requirement 5.4: `session_cookie::first_session`).
     pub sessions: AtomicU64,
+    /// Connections are numbered from 1, never reused while the server
+    /// runs.
+    pub connections: AtomicU64,
     /// The server's figures.
     pub stats: Arc<ServerStats>,
     /// How sessions continue across connections, where they can.
@@ -118,18 +122,13 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
     };
     let accept = neoteletext_web::ws::accept_for(&key);
     let (session, set_cookie) = session_for(routes, &hub, &request);
+    let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let pending = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
-        let Ok(upgraded) = pending.await else {
-            hub.release(session);
-            return;
-        };
+        let Ok(upgraded) = pending.await else { return };
         // The raw socket: no HTTP buffers stay with the connection.
-        let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else {
-            hub.release(session);
-            return;
-        };
-        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, session).await;
+        let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
+        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session).await;
     });
     let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();
@@ -144,34 +143,18 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
     response
 }
 
-/// The session a push connection continues or starts, claimed for it,
-/// and the cookie to set (requirement 5.5): the session its cookie names,
-/// unless another connection has it; else a new one. A session another
-/// connection has is not given a cookie, so the browser keeps the one it
-/// has.
+/// The session a push connection continues or starts, and the cookie to
+/// set (requirement 5.5): the session its cookie names, else a new one.
+/// Several connections, one a tab, may share a session, as a web server's
+/// tabs of one site do (DEC-1527).
 fn session_for(routes: &Routes, hub: &Hub, request: &Request<Incoming>) -> (SessionId, Option<String>) {
-    let Some(cookies) = routes.cookies.as_ref() else { return (new_session(routes, hub), None) };
+    let new = || routes.sessions.fetch_add(1, Ordering::Relaxed);
+    let Some(cookies) = routes.cookies.as_ref() else { return (new(), None) };
     let now = now_s();
     let keys: Vec<&Key> = std::iter::once(&cookies.key).chain(cookies.previous.as_ref()).collect();
     let named = request.headers().get_all(COOKIE).iter().find_map(|header| session_cookie::session_of(header.as_bytes(), &hub.folder, now, &keys));
-    match named {
-        Some(session) if hub.claim(session) => (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure))),
-        Some(_) => (new_session(routes, hub), None),
-        None => {
-            let session = new_session(routes, hub);
-            (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure)))
-        }
-    }
-}
-
-/// A session never given before, claimed.
-fn new_session(routes: &Routes, hub: &Hub) -> SessionId {
-    loop {
-        let session = routes.sessions.fetch_add(1, Ordering::Relaxed);
-        if hub.claim(session) {
-            return session;
-        }
-    }
+    let session = named.unwrap_or_else(new);
+    (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure)))
 }
 
 fn status(code: StatusCode) -> Response<Whole> {

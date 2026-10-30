@@ -1289,12 +1289,15 @@
               "type": "array"
             },
             "selected": {
-              "description": "For each view, the sub-page it shows: the one it selected, the\npage's current one for a page selection (3F7F), or the initial\npage's for a view that selected none.",
-              "items": {
-                "$ref": "#/$defs/ViewPage"
-              },
-              "maxItems": 16,
-              "type": "array"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Page"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The sub-page the connection's selection shows: the one it selected;\nfor a page selected with 3F7F, the page's first sub-page in\nascending sub-code order (0000 when the page has it); for none, the\ninitial page's first. None when the program has nothing to show."
             },
             "type": {
               "const": "reply",
@@ -1304,8 +1307,7 @@
           "required": [
             "type",
             "connection",
-            "magazines",
-            "selected"
+            "magazines"
           ],
           "type": "object"
         },
@@ -1360,7 +1362,8 @@
             },
             "version": {
               "description": "The list's version, which the program changes whenever the list\nchanges.",
-              "format": "uint32",
+              "format": "uint16",
+              "maximum": 65535,
               "minimum": 0,
               "type": "integer"
             }
@@ -1404,7 +1407,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Sends one view of a connection to a page.",
+          "description": "Sends a connection to a page.",
           "properties": {
             "connection": {
               "description": "The connection.",
@@ -1424,19 +1427,11 @@
             "type": {
               "const": "goto",
               "type": "string"
-            },
-            "view": {
-              "description": "The view.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
             "type",
             "connection",
-            "view",
             "page",
             "sub"
           ],
@@ -1954,21 +1949,12 @@
               "minimum": 1,
               "type": "integer"
             },
-            "expires": {
-              "description": "`Expires`, in seconds since the Unix epoch, or none.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "http_only": {
               "description": "`HttpOnly`.",
               "type": "boolean"
             },
             "max_age": {
-              "description": "`Max-Age` in seconds, or none.",
+              "description": "`Max-Age` in seconds, 0 removing it, or none for a cookie that\nlasts the browser's session.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -2188,7 +2174,7 @@
         },
         {
           "const": "duplicate",
-          "description": "The same number, view or code twice.",
+          "description": "The same number or code twice.",
           "type": "string"
         },
         {
@@ -2332,14 +2318,16 @@
               "maxItems": 50,
               "type": "array"
             },
-            "selections": {
-              "description": "Each view's selection at the start; a view with none asks for the\nchannel's initial page.",
-              "items": {
-                "$ref": "#/$defs/ViewSelection"
-              },
-              "maxItems": 16,
-              "minItems": 1,
-              "type": "array"
+            "selection": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Selection"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What the connection selected at its start, or none: the channel's\ninitial page. A connection is one browser tab with one selection\n(DEC-1527)."
             },
             "session": {
               "description": "The viewer's session, from its signed cookie (requirement 5.5).",
@@ -2357,14 +2345,13 @@
             "type",
             "connection",
             "session",
-            "cookies",
-            "selections"
+            "cookies"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "A view selected a page or a sub-page (REQ-1472); answer with `page`.",
+          "description": "A connection selected a page or a sub-page (REQ-1472); answer with\n`page`.",
           "properties": {
             "connection": {
               "description": "The connection.",
@@ -2384,19 +2371,11 @@
             "type": {
               "const": "selected",
               "type": "string"
-            },
-            "view": {
-              "description": "The view, 0 to 15.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
             "type",
             "connection",
-            "view",
             "page",
             "sub"
           ],
@@ -2424,19 +2403,11 @@
             "type": {
               "const": "input",
               "type": "string"
-            },
-            "view": {
-              "description": "The view, 0 to 15.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
             "type",
             "connection",
-            "view",
             "page",
             "event"
           ],
@@ -2444,7 +2415,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "A view left a page, or its connection closed.",
+          "description": "A connection's selection left a page, or the connection closed.",
           "properties": {
             "connection": {
               "description": "The connection.",
@@ -2460,19 +2431,11 @@
             "type": {
               "const": "left",
               "type": "string"
-            },
-            "view": {
-              "description": "The view.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
             "type",
             "connection",
-            "view",
             "page"
           ],
           "type": "object"
@@ -2608,12 +2571,6 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
-        },
-        "views": {
-          "description": "Views a connection may have.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "required": [
@@ -2623,8 +2580,7 @@
         "pages_in_magazine_1",
         "keyable_pages",
         "subpages",
-        "decimal_subpages",
-        "views"
+        "decimal_subpages"
       ],
       "type": "object"
     },
@@ -2726,56 +2682,6 @@
         "address",
         "mode",
         "data"
-      ],
-      "type": "object"
-    },
-    "ViewPage": {
-      "additionalProperties": false,
-      "description": "A view's sub-page, in a reply.",
-      "properties": {
-        "page": {
-          "$ref": "#/$defs/Page",
-          "description": "The sub-page it shows."
-        },
-        "view": {
-          "description": "The view, 0 to 15.",
-          "format": "uint8",
-          "maximum": 15,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "view",
-        "page"
-      ],
-      "type": "object"
-    },
-    "ViewSelection": {
-      "additionalProperties": false,
-      "description": "One view's selection.",
-      "properties": {
-        "selection": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Selection"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What it selected, or none: the channel's initial page."
-        },
-        "view": {
-          "description": "The view, 0 to 15.",
-          "format": "uint8",
-          "maximum": 15,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "view"
       ],
       "type": "object"
     }

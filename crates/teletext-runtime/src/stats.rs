@@ -27,6 +27,9 @@ pub struct ChannelStats {
     pub pages_sent: u64,
     /// Lines from the program refused (REQ-1475).
     pub refused: u64,
+    /// Packets not sent because they failed the stream's packet check: a
+    /// fault of the server or the engine (REQ-1462).
+    pub invalid_packets: u64,
     /// Viewers sent to another page by the application.
     pub gotos: u64,
     /// Audio records sent: sound objects, their data and commands.

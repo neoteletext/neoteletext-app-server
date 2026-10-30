@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
-use teletext_runtime::{Channel, ChannelConfig, Effect, Level, SESSION_GRACE_MS, SessionId};
+use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, Level, SESSION_GRACE_MS, SessionId};
 use worker::{
     Date, Env, Error, Headers, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
     durable_object, event,
@@ -162,7 +162,10 @@ struct Live {
     channel: Channel,
     /// When the host's clock started, in milliseconds since the Unix epoch.
     started_ms: u64,
-    viewers: BTreeMap<SessionId, WebSocket>,
+    /// The viewers' connections, one a tab (DEC-1527).
+    viewers: BTreeMap<ConnectionId, WebSocket>,
+    /// The next connection's number: never reused while the object runs.
+    next_connection: ConnectionId,
     program: Option<WebSocket>,
     next_session: SessionId,
     key: Key,
@@ -182,13 +185,13 @@ impl Live {
     fn apply(&mut self) {
         for effect in self.channel.take_effects() {
             match effect {
-                Effect::Send { session, bytes } => {
-                    if let Some(socket) = self.viewers.get(&session) {
+                Effect::Send { connection, bytes } => {
+                    if let Some(socket) = self.viewers.get(&connection) {
                         send_binary(socket, &bytes);
                     }
                 }
-                Effect::Close { session } => {
-                    if let Some(socket) = self.viewers.get(&session) {
+                Effect::Close { connection } => {
+                    if let Some(socket) = self.viewers.get(&connection) {
                         let _ = socket.close(Some(CLOSE_PROTOCOL_ERROR), Some("protocol error"));
                     }
                 }
@@ -209,15 +212,11 @@ impl Live {
         self.channel.next_wake().map(|at| self.started_ms.saturating_add(at))
     }
 
-    /// A session number never given before, and not connected now.
+    /// A session number never given before.
     fn new_session(&mut self) -> SessionId {
-        loop {
-            let session = self.next_session;
-            self.next_session = self.next_session.saturating_add(1);
-            if !self.viewers.contains_key(&session) {
-                return session;
-            }
-        }
+        let session = self.next_session;
+        self.next_session = self.next_session.saturating_add(1);
+        session
     }
 }
 
@@ -325,6 +324,7 @@ impl ChannelObject {
             channel,
             started_ms,
             viewers: BTreeMap::new(),
+            next_connection: 1,
             program: self.state.get_websockets_with_tag(PROGRAM_TAG).into_iter().next(),
             next_session: first_session(started_ms),
             key,
@@ -334,8 +334,9 @@ impl ChannelObject {
         // Viewers still connected after an eviction each start afresh, and a
         // program still connected is started again, told of each.
         for socket in self.state.get_websockets_with_tag(VIEWER_TAG) {
-            let Ok(Some(session)) = socket.deserialize_attachment::<SessionId>() else { continue };
-            Self::welcome(&mut live, session, socket);
+            let Ok(Some((connection, session))) = socket.deserialize_attachment::<(ConnectionId, SessionId)>() else { continue };
+            live.next_connection = live.next_connection.max(connection.saturating_add(1));
+            Self::welcome(&mut live, connection, session, socket);
         }
         if live.program.is_some() {
             let now = live.now();
@@ -347,10 +348,10 @@ impl ChannelObject {
     }
 
     /// A viewer's connection for `session` opened: its program is told.
-    fn welcome(live: &mut Live, session: SessionId, socket: WebSocket) {
-        live.viewers.insert(session, socket);
+    fn welcome(live: &mut Live, connection: ConnectionId, session: SessionId, socket: WebSocket) {
+        live.viewers.insert(connection, socket);
         let now = live.now();
-        live.channel.opened(session, now);
+        live.channel.opened(connection, session, now);
     }
 
     /// Sets the object's alarm to when it is next needed, if that changed.
@@ -387,24 +388,20 @@ impl ChannelObject {
     fn accept_viewer(&self, request: &Request) -> Result<Response> {
         let pair = WebSocketPair::new()?;
         let cookie = request.headers().get("cookie")?;
-        let (session, set_cookie) = self.with_live(|live| {
+        // Several tabs may share a session (DEC-1527).
+        let (connection, session, set_cookie) = self.with_live(|live| {
             let now_s = epoch_ms() / 1_000;
             let named = cookie.as_deref().and_then(|header| session_cookie::session_of(header.as_bytes(), &live.folder, now_s, &[&live.key]));
-            let (session, give_cookie) = match named {
-                Some(session) if !live.viewers.contains_key(&session) => (session, true),
-                Some(_) => (live.new_session(), false),
-                None => (live.new_session(), true),
-            };
-            let set_cookie = give_cookie.then(|| session_cookie::set_cookie(&live.key, &live.folder, session, now_s, live.secure));
-            (session, set_cookie)
+            let session = named.unwrap_or_else(|| live.new_session());
+            let connection = live.next_connection;
+            live.next_connection = live.next_connection.saturating_add(1);
+            (connection, session, session_cookie::set_cookie(&live.key, &live.folder, session, now_s, live.secure))
         })?;
         self.state.accept_websocket_with_tags(&pair.server, &[VIEWER_TAG]);
-        pair.server.serialize_attachment(session)?;
-        self.with_live(|live| Self::welcome(live, session, pair.server))?;
+        pair.server.serialize_attachment((connection, session))?;
+        self.with_live(|live| Self::welcome(live, connection, session, pair.server))?;
         let headers = Headers::new();
-        if let Some(cookie) = set_cookie {
-            headers.set("set-cookie", &cookie)?;
-        }
+        headers.set("set-cookie", &set_cookie)?;
         Ok(Response::from_websocket(pair.client)?.with_headers(headers))
     }
 
@@ -481,8 +478,8 @@ impl worker::DurableObject for ChannelObject {
                     }
                 }
                 WebSocketIncomingMessage::Binary(bytes) if !program => {
-                    if let Ok(Some(session)) = socket.deserialize_attachment::<SessionId>() {
-                        live.channel.received(session, &bytes, now);
+                    if let Ok(Some((connection, _))) = socket.deserialize_attachment::<(ConnectionId, SessionId)>() {
+                        live.channel.received(connection, &bytes, now);
                     }
                 }
                 _ => {}
@@ -507,17 +504,17 @@ impl ChannelObject {
     async fn gone(&self, socket: &WebSocket) -> Result<()> {
         self.wake(None)?;
         let program = self.is_program(socket);
-        let session = socket.deserialize_attachment::<SessionId>().ok().flatten();
+        let connection = socket.deserialize_attachment::<(ConnectionId, SessionId)>().ok().flatten().map(|(connection, _)| connection);
         self.with_live(|live| {
             if program {
                 live.program = None;
                 live.channel.program_ended();
                 log(Level::Info, &live.folder, "program_gone", "the program went");
-            } else if let Some(session) = session
-                && live.viewers.remove(&session).is_some()
+            } else if let Some(connection) = connection
+                && live.viewers.remove(&connection).is_some()
             {
                 let now = live.now();
-                live.channel.closed(session, now);
+                live.channel.closed(connection, now);
             }
         })?;
         self.schedule().await

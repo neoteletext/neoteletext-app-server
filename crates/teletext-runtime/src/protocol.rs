@@ -41,11 +41,6 @@ pub const LONGEST_LINE: usize = 16 * 1024 * 1024;
 /// The longest page title, magazine name or section heading: the
 /// engine's contents rule (its REQ-WEB-025, decision E.120).
 pub const TITLE_CHARACTERS: usize = neoteletext_web::contents::MAX_TITLE;
-/// The views a connection may have: each a browser tab showing the
-/// channel, numbered 0 to 15 (`INPUT.md` section 5.4, SELECT's `view`).
-/// The engine names no constant for it yet; when SELECT is built there it
-/// is to be its `MAX_VIEWS`.
-pub const MAX_VIEWS: u8 = 16;
 /// The connections one message may name. Provisional, a budget of the
 /// server's own: more viewers than this are reached with `"all"`.
 pub const MOST_NAMED_CONNECTIONS: usize = 4_096;
@@ -102,8 +97,6 @@ const LAST_COLUMN: u8 = 39;
 const LAST_AUDIO_CHANNEL: u8 = 3;
 /// The highest gain, 100.
 const MOST_GAIN: u8 = neoteletext_audio::MAX_GAIN;
-/// The last view, 15.
-const LAST_VIEW: u8 = MAX_VIEWS - 1;
 /// The last mouse button: 2, the right.
 const LAST_BUTTON: u8 = 2;
 /// The longest Opus packet the profile's constant rate allows: 40 bytes
@@ -312,11 +305,12 @@ pub enum ServerMessage {
     Start(Start),
     /// A viewer's connection opened (REQ-1471); answer with `reply`.
     Connected(Connected),
-    /// A view selected a page or a sub-page (REQ-1472); answer with `page`.
+    /// A connection selected a page or a sub-page (REQ-1472); answer with
+    /// `page`.
     Selected(Selected),
     /// Input on a page (INPUT.md).
     Input(InputMessage),
-    /// A view left a page, or its connection closed.
+    /// A connection's selection left a page, or the connection closed.
     Left(Left),
     /// A session ended, five minutes after its last connection closed.
     Closed(Closed),
@@ -360,8 +354,6 @@ pub struct Standard {
     pub subpages: u64,
     /// Sub-codes a viewer can key, 0001 to 3979.
     pub decimal_subpages: u64,
-    /// Views a connection may have.
-    pub views: u64,
 }
 
 /// The server's own bounds.
@@ -396,10 +388,10 @@ pub struct Connected {
     /// The cookies the program set on earlier connections.
     #[schemars(length(max = MOST_COOKIES))]
     pub cookies: Vec<CookiePair>,
-    /// Each view's selection at the start; a view with none asks for the
-    /// channel's initial page.
-    #[schemars(length(min = 1, max = MAX_VIEWS))]
-    pub selections: Vec<ViewSelection>,
+    /// What the connection selected at its start, or none: the channel's
+    /// initial page. A connection is one browser tab with one selection
+    /// (DEC-1527).
+    pub selection: Option<Selection>,
 }
 
 /// A cookie as a request carries it.
@@ -412,17 +404,6 @@ pub struct CookiePair {
     /// Its value.
     #[schemars(length(max = COOKIE_BYTES))]
     pub value: String,
-}
-
-/// One view's selection.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ViewSelection {
-    /// The view, 0 to 15.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
-    /// What it selected, or none: the channel's initial page.
-    pub selection: Option<Selection>,
 }
 
 /// A page and sub-code selected.
@@ -442,9 +423,6 @@ pub struct Selected {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The view, 0 to 15.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
     /// The page.
     pub page: PageNumber,
     /// The sub-code, or 3F7F for the page and none of its sub-pages.
@@ -458,9 +436,6 @@ pub struct InputMessage {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The view, 0 to 15.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
     /// The page with the keys.
     pub page: PageNumber,
     /// What happened.
@@ -592,16 +567,14 @@ pub struct Buttons {
     pub right: bool,
 }
 
-/// `left`.
+/// `left`: the connection's selection left a page, or the connection
+/// closed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Left {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The view.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
     /// The page it left.
     pub page: PageNumber,
 }
@@ -684,7 +657,7 @@ pub enum Rule {
     TooShort,
     /// A list not in ascending order.
     NotAscending,
-    /// The same number, view or code twice.
+    /// The same number or code twice.
     Duplicate,
     /// A page number the standard reserves.
     Reserved,
@@ -723,7 +696,7 @@ pub enum ProgramMessage {
     Subpages(SubPages),
     /// A change to the magazines and their pages.
     Index(Index),
-    /// Sends one view of a connection to a page.
+    /// Sends a connection to a page.
     Goto(Goto),
     /// A sound, its data, or a command.
     Sound(Sound),
@@ -767,22 +740,11 @@ pub struct Reply {
     /// The channel's magazines for this viewer (REQ-1477).
     #[schemars(length(max = limits::MAGAZINES))]
     pub magazines: Vec<Magazine>,
-    /// For each view, the sub-page it shows: the one it selected, the
-    /// page's current one for a page selection (3F7F), or the initial
-    /// page's for a view that selected none.
-    #[schemars(length(max = MAX_VIEWS))]
-    pub selected: Vec<ViewPage>,
-}
-
-/// A view's sub-page, in a reply.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ViewPage {
-    /// The view, 0 to 15.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
-    /// The sub-page it shows.
-    pub page: Page,
+    /// The sub-page the connection's selection shows: the one it selected;
+    /// for a page selected with 3F7F, the page's first sub-page in
+    /// ascending sub-code order (0000 when the page has it); for none, the
+    /// initial page's first. None when the program has nothing to show.
+    pub selected: Option<Box<Page>>,
 }
 
 /// A magazine of the index (REQ-1477).
@@ -817,10 +779,10 @@ pub struct IndexEntry {
     pub subpages: u16,
 }
 
-/// `page`: one sub-page. It reaches only the views of the connections
-/// named that show it: those that selected it, and those that selected
-/// its page with 3F7F, for which it is the page's current sub-page
-/// (DEC-1500 items 2 and 4).
+/// `page`: one sub-page. It reaches only those of the connections named
+/// whose selection shows it: the connections that selected it, and those
+/// that selected its page with 3F7F and are waiting for its first
+/// sub-page, which then becomes their selection (DEC-1500, DEC-1526).
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PageMessage {
@@ -832,8 +794,8 @@ pub struct PageMessage {
 
 /// `subpages`: a page's list of sub-pages (DEC-1500 item 3, REQ-1503),
 /// sent with the answer to a page selection and whenever the list changes;
-/// relayed as the SUBPAGES record to the connections named whose views
-/// show the page and do not hold this version.
+/// relayed as the SUBPAGES record to the connections named whose
+/// selection shows the page and that do not hold this version.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SubPages {
@@ -843,7 +805,7 @@ pub struct SubPages {
     pub page: PageNumber,
     /// The list's version, which the program changes whenever the list
     /// changes.
-    pub version: u32,
+    pub version: u16,
     /// The sub-pages in the page's order, each sub-code at most once.
     #[schemars(length(min = 1, max = limits::MAX_SUBPAGES))]
     pub subpages: Vec<SubPageEntry>,
@@ -874,16 +836,14 @@ pub struct Index {
     pub magazines: Vec<Magazine>,
 }
 
-/// `goto`.
+/// `goto`: moves the connection's selection to a page, which is itself a
+/// selection (DEC-1526 item 4).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Goto {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The view.
-    #[schemars(range(max = LAST_VIEW))]
-    pub view: u8,
     /// The page.
     pub page: PageNumber,
     /// The sub-code, or 3F7F for the page.
@@ -1300,10 +1260,9 @@ pub struct Cookie {
     /// `Path`, or none.
     #[schemars(length(min = 1, max = COOKIE_BYTES))]
     pub path: Option<String>,
-    /// `Max-Age` in seconds, or none.
+    /// `Max-Age` in seconds, 0 removing it, or none for a cookie that
+    /// lasts the browser's session.
     pub max_age: Option<u32>,
-    /// `Expires`, in seconds since the Unix epoch, or none.
-    pub expires: Option<u64>,
     /// `SameSite`, or none.
     pub same_site: Option<SameSite>,
     /// `Secure`.

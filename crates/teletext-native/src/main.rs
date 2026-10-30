@@ -174,7 +174,13 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         admin = arguments.admin,
         "serving"
     );
-    let routes = Arc::new(Routes { hubs, sessions: AtomicU64::new(first_session(epoch_at_start_ms)), stats: Arc::clone(&stats), cookies });
+    let routes = Arc::new(Routes {
+        hubs,
+        sessions: AtomicU64::new(first_session(epoch_at_start_ms)),
+        connections: AtomicU64::new(1),
+        stats: Arc::clone(&stats),
+        cookies,
+    });
     tokio::spawn(figures(Arc::clone(&stats), kept.clone()));
     let stopped = stop_signal();
     tokio::pin!(stopped);

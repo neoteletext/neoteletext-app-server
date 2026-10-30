@@ -35,6 +35,7 @@ pub mod input;
 pub mod json;
 mod page;
 pub mod protocol;
+mod records;
 pub mod session_cookie;
 mod sound;
 pub mod stats;

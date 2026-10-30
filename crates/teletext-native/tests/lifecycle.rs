@@ -178,9 +178,9 @@ fn a_restart_closes_viewers_as_a_restart() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// A connection presenting its session's cookie continues that session;
-/// a second connection while the first is open is given a session of its
-/// own and no cookie; a forged cookie is ignored (requirement 5.5).
+/// A connection presenting its session's cookie continues that session,
+/// a second connection, another tab, while the first is open included
+/// (DEC-1527); a forged cookie is ignored (requirement 5.5).
 #[test]
 fn a_session_continues_with_its_cookie() {
     let folder = scratch("cookie");
@@ -195,24 +195,18 @@ fn a_session_continues_with_its_cookie() {
     let cookie = set_cookie.split(';').next().unwrap().to_owned();
 
     let (_while_open, second_cookie) = push(&server.address, Some(&cookie));
-    assert_eq!(second_cookie, None, "a session connected already is not shared");
+    assert_eq!(second_cookie.map(|cookie| session_of(&cookie)), Some(session), "another tab continues the session");
 
-    let forged = format!("_session={}.9999999999.{}", session + 1, "0".repeat(64));
+    // A session number the server would never give next.
+    let claimed = session + 1_000;
+    let forged = format!("_session={claimed}.9999999999.{}", "0".repeat(64));
     let (_forger, forged_cookie) = push(&server.address, Some(&forged));
-    assert_ne!(forged_cookie.map(|cookie| session_of(&cookie)), Some(session + 1), "a forged cookie names nothing");
+    assert_ne!(forged_cookie.map(|cookie| session_of(&cookie)), Some(claimed), "a forged cookie names nothing");
 
     drop(first);
-    let started = Instant::now();
-    loop {
-        let (_again, renewed) = push(&server.address, Some(&cookie));
-        if let Some(renewed) = renewed {
-            assert_eq!(session_of(&renewed), session, "the session continues");
-            break;
-        }
-        // The first connection's close has not reached the server yet.
-        assert!(started.elapsed() < WITHIN, "the session was not continued");
-        std::thread::sleep(RETRY);
-    }
+    let (_again, renewed) = push(&server.address, Some(&cookie));
+    assert_eq!(renewed.map(|cookie| session_of(&cookie)), Some(session), "the session continues");
+    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// The administration listener answers `/healthz`, `/readyz` (200 once

@@ -12,8 +12,8 @@ use std::io::IoSlice;
 use std::sync::Arc;
 use std::time::Duration;
 
-use teletext_runtime::SessionId;
 use teletext_runtime::frame;
+use teletext_runtime::{ConnectionId, SessionId};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -38,24 +38,30 @@ pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US)
 
 /// Serves one connection until it closes: `stream` is the socket hyper
 /// upgraded, and `early` what hyper had read past the upgrade.
-pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, session: SessionId) {
+pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId) {
     let (reading, writing) = stream.into_split();
-    serve_halves(reading, writing, early, hub, session).await;
+    serve_halves(reading, writing, early, hub, connection, session).await;
 }
 
 /// `serve` on the connection's two halves. The tests serve an in-memory
 /// stream, whose delivery tokio's stopped clock governs: a socket's
 /// is the kernel's, and the clock jumps to its next timer while a frame
 /// is in the kernel's hands.
-async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: R, mut writing: W, early: &[u8], hub: Hub, session: SessionId) {
+async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    mut reading: R,
+    mut writing: W,
+    early: &[u8],
+    hub: Hub,
+    connection: ConnectionId,
+    session: SessionId,
+) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
-    if hub.commands.send(Command::Opened { session, outbox }).await.is_err() {
-        hub.release(session);
+    if hub.commands.send(Command::Opened { connection, session, outbox }).await.is_err() {
         return;
     }
     let stats = Arc::clone(&hub.stats);
     stats.connected();
-    tracing::debug!(target: "connection", channel = hub.folder, session, "opened");
+    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "opened");
     let mut reader = Reader::new();
     reader.feed(early);
     let mut buffer = vec![0_u8; READ_BYTES];
@@ -75,14 +81,14 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
                 heard = Instant::now();
                 pinged = None;
                 reader.feed(buffer.get(..count).unwrap_or(&[]));
-                open = messages(&mut reader, &mut writing, &hub, session, &stats).await;
+                open = messages(&mut reader, &mut writing, &hub, connection, &stats).await;
             }
             outbound = own_queue.recv() => match outbound {
                 Some(Outbound::Bytes(bytes)) => open = write_binary(&mut writing, &bytes, &stats).await,
                 Some(Outbound::Close(code)) => {
                     // RFC 6455 section 5.5.1: the status code first, two bytes.
                     let _ = write(&mut writing, Opcode::Close, &code.to_be_bytes(), &stats).await;
-                    tracing::debug!(target: "connection", channel = hub.folder, session, code, "closed by the server");
+                    tracing::debug!(target: "connection", channel = hub.folder, connection, session, code, "closed by the server");
                     open = false;
                 }
                 None => open = false,
@@ -91,7 +97,7 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
                 if pinged.is_some() {
                     // RFC 6455 section 7.1.7: a peer that answers nothing
                     // is not sent a Close; the connection is dropped.
-                    tracing::debug!(target: "connection", channel = hub.folder, session, "dropped: no answer to a ping");
+                    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "dropped: no answer to a ping");
                     open = false;
                 } else {
                     pinged = Some(Instant::now());
@@ -102,19 +108,18 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
     }
     let _ = writing.shutdown().await;
     stats.disconnected();
-    let _ = hub.commands.send(Command::Closed { session }).await;
-    hub.release(session);
-    tracing::debug!(target: "connection", channel = hub.folder, session, "closed");
+    let _ = hub.commands.send(Command::Closed { connection }).await;
+    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "closed");
 }
 
 /// Handles the client's whole messages; returns whether the connection
 /// stays open.
-async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, hub: &Hub, session: SessionId, stats: &ServerStats) -> bool {
+async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, hub: &Hub, connection: ConnectionId, stats: &ServerStats) -> bool {
     loop {
         match reader.next_message() {
             Ok(None) => return true,
             Ok(Some(Message::Binary(bytes))) => {
-                if hub.commands.send(Command::Received { session, bytes }).await.is_err() {
+                if hub.commands.send(Command::Received { connection, bytes }).await.is_err() {
                     return false;
                 }
             }

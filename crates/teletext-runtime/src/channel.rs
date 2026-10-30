@@ -1,13 +1,15 @@
 //! One channel, as a state machine: the host gives it what happened, with
 //! the time, and carries out the [`Effect`]s it answers with.
 //!
-//! **The server relays; the program owns every page** (DEC-1482). The
+//! **The server relays; the program owns every page** (DEC-1482). A
+//! connection is one browser tab with one selection (DEC-1527). The
 //! channel keeps no content (REQ-1474): only what each open connection
-//! is, its session, what its views select and the cursor of what it was
-//! sent. Each connection that opens is told to the program as `connected`
-//! (REQ-1471), each selection as `selected` (REQ-1472), and what the
-//! program sends goes to the connections it names, as it comes
-//! (REQ-1473), as teletext packets (REQ-1480).
+//! is, its session, its selection, and the one sub-page that selection
+//! shows as it was last sent, against which its changes are taken
+//! (DEC-1499). Each connection that opens is told to the program as
+//! `connected` (REQ-1471), each selection as `selected` (REQ-1472), and
+//! what the program sends goes to the connections it names, as it comes
+//! (REQ-1473), as checked teletext packets (REQ-1480, REQ-1462).
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -17,6 +19,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use neoteletext_audio::encode::packets;
+use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
 use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
 use neoteletext_input::control::{Control, packet_of};
@@ -25,10 +29,12 @@ use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, unit
 
 use crate::input::Input;
 use crate::json::Writer;
+use crate::page::Change;
 use crate::protocol::{
     self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, InputMessage, Left, OperatorLevel, PageNumber, ProgramMessage, Refusal, Rule,
-    Selected, Selection, ServerMessage, SessionId, Standard, Start, ViewSelection,
+    Selected, Selection, ServerMessage, SessionId, Standard, Start,
 };
+use crate::records;
 use crate::sound::{Sounds, audience};
 use crate::stats::{ChannelStats, count};
 
@@ -41,13 +47,9 @@ const SERVICE: u8 = 0;
 /// sent and the channel ignores what it does not use (section 6.3).
 const USED: u32 = PAGE_CAP | CURSOR_CAP;
 
-/// The view every event is of until the receiver's SELECT names views
-/// (`INPUT.md` REQ-INT-140): a connection's first.
-const FIRST_VIEW: u8 = 0;
-
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
-/// (REQ-1481). Provisional, not yet measured: an rdm to-do measures the
+/// (REQ-1481). Provisional, not yet measured: TODO-1521 measures the
 /// three channels' programs on the live server and sets it from that.
 pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
 
@@ -65,9 +67,9 @@ pub struct ChannelConfig {
     /// epoch, so programs can show the real time (the host's clock itself
     /// starts at 0).
     pub epoch_at_start_ms: u64,
-    /// How long a session whose connection closed waits for its viewer to
-    /// come back before its program is told it ended, in milliseconds; 0
-    /// ends it at once (requirement 5.5).
+    /// How long a session whose last connection closed waits for its
+    /// viewer to come back before its program is told it ended, in
+    /// milliseconds; 0 ends it at once (requirement 5.5).
     pub session_grace_ms: u64,
 }
 
@@ -93,19 +95,19 @@ pub enum Level {
 /// What the host does for the channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
-    /// Bytes for one session's connection, as one binary WebSocket
-    /// message, or several where the host must cut it
-    /// ([`crate::frame::messages`]).
+    /// Bytes for one connection, whole packets every one checked
+    /// (REQ-1462), as one binary WebSocket message, or several where the
+    /// host must cut it ([`crate::frame::messages`]).
     Send {
-        /// The session.
-        session: SessionId,
+        /// The connection.
+        connection: ConnectionId,
         /// The message.
         bytes: Arc<[u8]>,
     },
-    /// Close the session's connection: its input broke the protocol.
+    /// Close the connection: its input broke the protocol.
     Close {
-        /// The session.
-        session: SessionId,
+        /// The connection.
+        connection: ConnectionId,
     },
     /// A line for the channel's program, with its newline.
     ToProgram {
@@ -123,9 +125,23 @@ pub enum Effect {
     },
 }
 
+/// The sub-page a connection's selection shows, as it was last sent: the
+/// baseline of its changes (DEC-1499).
+struct Shown {
+    /// The page.
+    page: u16,
+    /// The sub-page's sub-code.
+    sub: u16,
+    /// Its packets as last sent whole.
+    packets: Vec<[u8; PACKET_BYTES]>,
+    /// Its cursor.
+    cursor: Option<CursorLine>,
+}
+
 /// One open connection: all the channel holds of a viewer (REQ-1474).
 struct Connection {
-    /// Its session.
+    /// Its session; a session may have several connections, one a tab
+    /// (DEC-1527).
     session: SessionId,
     /// The input stream's decoder, made at the first input: most viewers
     /// of a channel never type, and the decoder holds a paste's worth of
@@ -143,32 +159,24 @@ struct Connection {
     went: Option<u16>,
     /// The next record number on the audio and input service.
     record_id: u8,
-    /// What each view selects.
-    selections: BTreeMap<u8, Selection>,
-    /// The cursor of each page it was sent, for its cursor records.
-    cursors: BTreeMap<u16, Option<CursorLine>>,
+    /// What it selected: a page and a sub-code, the sub-code 3F7F until
+    /// the program answers with the page's first sub-page (DEC-1526).
+    selection: Option<Selection>,
+    /// The sub-page its selection shows, as last sent.
+    shown: Option<Shown>,
     /// The program running now was told of it with `connected`.
     announced: bool,
     /// The program answered that `connected`.
     replied: bool,
     /// When the program's `reply` is due, while it is awaited.
     reply_due: Option<u64>,
-    /// Each view's page awaited from the program for its selection, and
-    /// when it is due.
-    selection_due: BTreeMap<u8, (u16, u64)>,
-    /// For each view, the last version sent it of the sub-page it shows
-    /// (DEC-1499): REQ-1474's one exception, at most one sub-page a view.
-    shown: BTreeMap<u8, Shown>,
-}
-
-/// The sub-page a view shows, as it was last sent.
-struct Shown {
-    /// The page.
-    page: u16,
-    /// The sub-page's sub-code.
-    sub: u16,
-    /// Its packets as last sent whole.
-    packets: Vec<[u8; neoteletext_core::consts::PACKET_BYTES]>,
+    /// When the sub-page its selection asked for is due, while awaited.
+    selection_due: Option<u64>,
+    /// The index's sending, numbered for the receiver (`INPUT.md`
+    /// section 7.5).
+    index_generation: u16,
+    /// The sub-page list it holds of its selected page, and its version.
+    list_held: Option<(u16, u16)>,
 }
 
 impl Connection {
@@ -181,13 +189,14 @@ impl Connection {
             keys: 0,
             went: None,
             record_id: 0,
-            selections: BTreeMap::new(),
-            cursors: BTreeMap::new(),
+            selection: None,
+            shown: None,
             announced: false,
             replied: false,
             reply_due: None,
-            selection_due: BTreeMap::new(),
-            shown: BTreeMap::new(),
+            selection_due: None,
+            index_generation: 0,
+            list_held: None,
         }
     }
 
@@ -198,12 +207,29 @@ impl Connection {
         id
     }
 
-    /// The cursor record for `page`, numbered next.
+    /// The cursor record for `page`, numbered next: the cursor of the
+    /// sub-page shown when it is of that page, else none.
     fn cursor_packet(&mut self, page: u16) -> Option<Arc<[u8]>> {
-        let cursor = cursor_of(page, self.acked, self.cursors.get(&page).copied().flatten().as_ref());
+        let line = self.shown.as_ref().filter(|shown| shown.page == page).and_then(|shown| shown.cursor);
+        let cursor = cursor_of(page, self.acked, line.as_ref());
         let record = self.next_record();
         cursor.packet(SERVICE, record).map(|packet| Arc::from(&packet.bytes[..]))
     }
+
+    /// Whether its selection shows the sub-page `sub` of `page`: it
+    /// selected that sub-page, or the page with 3F7F and awaits its first.
+    fn shows(&self, page: u16, sub: u16) -> bool {
+        self.selection.is_some_and(|selection| selection.page.0 == page && (selection.sub.0 == sub || selection.sub == ANY_SUBPAGE))
+    }
+}
+
+/// A session: it outlives its connections (requirement 5.5).
+struct Session {
+    /// Its connections open now.
+    open: usize,
+    /// When its last connection closed, while it waits for its viewer to
+    /// come back.
+    waiting_since: Option<u64>,
 }
 
 /// One channel's state.
@@ -212,14 +238,7 @@ pub struct Channel {
     /// Whether the program is running, `start` sent to it.
     program: bool,
     connections: BTreeMap<ConnectionId, Connection>,
-    /// The connection each session has open.
-    by_session: BTreeMap<SessionId, ConnectionId>,
-    /// Every session there is, connected or waiting for its viewer since
-    /// the time given (requirement 5.5).
-    sessions: BTreeMap<SessionId, Option<u64>>,
-    /// The next connection's number: from 1, never reused while the
-    /// channel runs.
-    next_connection: ConnectionId,
+    sessions: BTreeMap<SessionId, Session>,
     sounds: Sounds,
     effects: Vec<Effect>,
     stats: ChannelStats,
@@ -234,9 +253,7 @@ impl Channel {
             config,
             program: false,
             connections: BTreeMap::new(),
-            by_session: BTreeMap::new(),
             sessions: BTreeMap::new(),
-            next_connection: 1,
             sounds: Sounds::default(),
             effects: Vec::new(),
             stats: ChannelStats::default(),
@@ -292,8 +309,24 @@ impl Channel {
         self.effects.push(Effect::Log { level, event, text });
     }
 
-    fn send(&mut self, session: SessionId, bytes: Arc<[u8]>) {
-        self.effects.push(Effect::Send { session, bytes });
+    /// Sends `bytes` to `connection`, every packet checked first with the
+    /// engine's one check of a stream's packets (REQ-1462, TODO-1465): one
+    /// that fails is not sent, and the operator is told, since it is a
+    /// fault of the server or the engine.
+    fn send(&mut self, connection: ConnectionId, bytes: Arc<[u8]>) {
+        let (packets, rest) = bytes.as_chunks::<PACKET_BYTES>();
+        let valid = |packet: &[u8; PACKET_BYTES]| is_valid_stream_packet(&Packet { bytes: *packet });
+        if rest.is_empty() && packets.iter().all(valid) {
+            self.effects.push(Effect::Send { connection, bytes });
+            return;
+        }
+        let kept: Vec<u8> = packets.iter().filter(|packet| valid(packet)).flatten().copied().collect();
+        let dropped = packets.len().saturating_sub(kept.len() / PACKET_BYTES).saturating_add(usize::from(!rest.is_empty()));
+        self.stats.invalid_packets = self.stats.invalid_packets.saturating_add(u64::try_from(dropped).unwrap_or(u64::MAX));
+        self.log(Level::Error, "invalid_packets", format!("{dropped} packets for connection {connection} were not valid stream packets and were not sent"));
+        if !kept.is_empty() {
+            self.effects.push(Effect::Send { connection, bytes: Arc::from(kept) });
+        }
     }
 
     /// A line for the program, while it runs; lines for a program that is
@@ -339,7 +372,7 @@ impl Channel {
             state.announced = false;
             state.replied = false;
             state.reply_due = None;
-            state.selection_due.clear();
+            state.selection_due = None;
         }
     }
 
@@ -353,44 +386,41 @@ impl Channel {
         state.announced = true;
         state.replied = false;
         state.reply_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
-        // Every view's selection; until SELECT names views, the first view
-        // with none, which asks for the initial page.
-        let mut selections: Vec<ViewSelection> =
-            state.selections.iter().map(|(&view, &selection)| ViewSelection { view, selection: Some(selection) }).collect();
-        if selections.is_empty() {
-            selections.push(ViewSelection { view: FIRST_VIEW, selection: None });
-        }
-        let message = Connected { connection, session: state.session, cookies: Vec::new(), selections };
+        let message = Connected { connection, session: state.session, cookies: Vec::new(), selection: state.selection };
         self.tell(&ServerMessage::Connected(message));
     }
 
-    /// A connection opened for `session`; the host keys what it sends by
-    /// the session. A session waiting for its viewer continues
-    /// (requirement 5.5) on a new input session (INPUT.md section 4).
-    pub fn opened(&mut self, session: SessionId, now: u64) {
-        match self.sessions.insert(session, None) {
-            Some(Some(_)) => self.stats.resumed(),
-            Some(None) => {}
-            None => self.stats.joined(),
+    /// A connection the host numbered `connection` opened for `session`,
+    /// which it continues or starts (requirement 5.5). The host never
+    /// reuses a connection's number while the channel runs.
+    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, now: u64) {
+        let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
+        if state.waiting_since.take().is_some() {
+            self.stats.resumed();
+        } else if state.open == 0 {
+            self.stats.joined();
         }
-        let connection = self.next_connection;
-        self.next_connection = self.next_connection.saturating_add(1);
+        state.open = state.open.saturating_add(1);
         self.connections.insert(connection, Connection::new(session));
-        self.by_session.insert(session, connection);
         self.announce(connection, now);
     }
 
-    /// A connection closed: the program is told its views left their
-    /// pages, and its session waits for its viewer for the channel's grace
-    /// (requirement 5.5); the program is told it ended with `closed` only
-    /// when the grace passes.
-    pub fn closed(&mut self, session: SessionId, now: u64) {
-        let Some(connection) = self.by_session.remove(&session) else { return };
+    /// A connection closed: the program is told its selection left its
+    /// page, and when it was its session's last, the session waits for its
+    /// viewer for the channel's grace (requirement 5.5); the program is
+    /// told it ended with `closed` only when the grace passes.
+    pub fn closed(&mut self, connection: ConnectionId, now: u64) {
         let Some(state) = self.connections.remove(&connection) else { return };
-        if state.announced {
-            for (&view, selection) in &state.selections {
-                self.tell(&ServerMessage::Left(Left { connection, view, page: selection.page }));
-            }
+        if state.announced
+            && let Some(selection) = state.selection
+        {
+            self.tell(&ServerMessage::Left(Left { connection, page: selection.page }));
+        }
+        let session = state.session;
+        let Some(open) = self.sessions.get_mut(&session) else { return };
+        open.open = open.open.saturating_sub(1);
+        if open.open > 0 {
+            return;
         }
         if self.config.session_grace_ms == 0 {
             self.sessions.remove(&session);
@@ -398,20 +428,18 @@ impl Channel {
             self.tell(&ServerMessage::Closed(Closed { session }));
             return;
         }
-        self.sessions.insert(session, Some(now));
+        open.waiting_since = Some(now);
         self.stats.waiting();
     }
 
-    /// A binary message from a session's connection: its input stream
-    /// (INPUT.md).
-    pub fn received(&mut self, session: SessionId, bytes: &[u8], now: u64) {
-        let Some(&connection) = self.by_session.get(&session) else { return };
+    /// A binary message from a connection: its input stream (INPUT.md).
+    pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         let mut decoder = state.decoder.take().unwrap_or_else(|| Box::new(StreamDecoder::<MAX_STREAM_ITEM>::default()));
         let result = decoder.push(bytes, &mut |item| self.item(connection, &item, now));
         if result.is_err() {
             // A protocol error ends the session (INPUT.md section 8).
-            self.effects.push(Effect::Close { session });
+            self.effects.push(Effect::Close { connection });
             return;
         }
         if let Some(state) = self.connections.get_mut(&connection) {
@@ -424,8 +452,12 @@ impl Channel {
     /// answers the program did not give in time are given up (REQ-1481).
     pub fn deadline(&mut self, now: u64) {
         let grace = self.config.session_grace_ms;
-        let expired: Vec<SessionId> =
-            self.sessions.iter().filter(|(_, since)| since.is_some_and(|since| since.saturating_add(grace) <= now)).map(|(&session, _)| session).collect();
+        let expired: Vec<SessionId> = self
+            .sessions
+            .iter()
+            .filter(|(_, state)| state.waiting_since.is_some_and(|since| since.saturating_add(grace) <= now))
+            .map(|(&session, _)| session)
+            .collect();
         for session in expired {
             self.sessions.remove(&session);
             self.stats.expired();
@@ -437,16 +469,14 @@ impl Channel {
                 state.reply_due = None;
                 late.push(format!("connection {connection}: no reply to connected"));
             }
-            state.selection_due.retain(|view, &mut (page, due)| {
-                let waiting = due > now;
-                if !waiting {
-                    late.push(format!("connection {connection} view {view}: no page {page:03X} for selected"));
-                }
-                waiting
-            });
+            if state.selection_due.is_some_and(|due| due <= now) {
+                state.selection_due = None;
+                late.push(format!("connection {connection}: no page for selected"));
+            }
         }
         // DENIED "unavailable" (`SERVER.md` section 5.5) goes to the viewer
-        // here once the engine encodes it; until then the operator is told.
+        // here once its record exists (TODO-1522); until then the operator
+        // is told.
         for text in late {
             self.log(Level::Warn, "program_late", format!("{text} within {PROGRAM_REPLY_LIMIT_MS} ms"));
         }
@@ -456,8 +486,8 @@ impl Channel {
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
         let grace = self.config.session_grace_ms;
-        let expiry = self.sessions.values().filter_map(|&since| since).min().map(|since| since.saturating_add(grace));
-        let dues = self.connections.values().flat_map(|state| state.reply_due.into_iter().chain(state.selection_due.values().map(|&(_, due)| due)));
+        let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
+        let dues = self.connections.values().flat_map(|state| state.reply_due.into_iter().chain(state.selection_due));
         dues.chain(expiry).min()
     }
 
@@ -478,7 +508,7 @@ impl Channel {
                 if matches!(input, Input::Key { action: neoteletext_input::event::Action::Press, .. } | Input::Text(_)) {
                     count(&mut self.stats.keys);
                 }
-                self.tell(&ServerMessage::Input(InputMessage { connection, view: FIRST_VIEW, page: PageNumber(keys), event }));
+                self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(keys), event }));
             }
         }
     }
@@ -491,40 +521,37 @@ impl Channel {
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
-            let session = state.session;
-            self.send(session, Arc::from(&packet.bytes[..]));
+            self.send(connection, Arc::from(&packet.bytes[..]));
         }
     }
 
     /// PAGE: the page with the keys changed. Until the receiver's SELECT is
-    /// built (`INPUT.md` REQ-INT-140, the engine's TODO-1489), it is also
-    /// the first view's selection: the page it opened, and none of its
-    /// sub-pages in particular.
+    /// wired here (the engine's TODO-1489), a PAGE of a page other than the
+    /// one selected stands for a selection of that page with 3F7F.
     fn page_open(&mut self, connection: ConnectionId, page: u16, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.went = None;
         state.keys = page;
-        if page == 0 {
+        if page == 0 || state.selection.is_some_and(|selection| selection.page.0 == page) {
             return;
         }
-        self.select(connection, FIRST_VIEW, Selection { page: PageNumber(page), sub: ANY_SUBPAGE }, now);
+        self.select(connection, Selection { page: PageNumber(page), sub: ANY_SUBPAGE }, now);
     }
 
-    /// A view selected a page or a sub-page: the program is told it left
-    /// the page it had, and asked for the new one (REQ-1472). SELECT calls
-    /// this for each view once the engine decodes it.
-    fn select(&mut self, connection: ConnectionId, view: u8, selection: Selection, now: u64) {
+    /// The connection selected a page (sub-code 3F7F) or one sub-page: the
+    /// program is told it left the page it had, and asked for the new one
+    /// (REQ-1472). What was kept of the sub-page shown is dropped, so the
+    /// first sub-page after a new selection goes whole (DEC-1499).
+    fn select(&mut self, connection: ConnectionId, selection: Selection, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
-        let before = state.selections.insert(view, selection);
+        let before = state.selection.replace(selection);
         if before == Some(selection) {
             return;
         }
-        // What the view was last sent is dropped: the first sub-page after
-        // a new selection goes whole (DEC-1499 items 3 and 4).
-        state.shown.remove(&view);
+        state.shown = None;
         let announced = state.announced;
         if announced {
-            state.selection_due.insert(view, (selection.page.0, now.saturating_add(PROGRAM_REPLY_LIMIT_MS)));
+            state.selection_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         }
         self.stats.opened(selection.page.0);
         if !announced {
@@ -534,9 +561,9 @@ impl Channel {
         if let Some(before) = before
             && before.page != selection.page
         {
-            self.tell(&ServerMessage::Left(Left { connection, view, page: before.page }));
+            self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
         }
-        self.tell(&ServerMessage::Selected(Selected { connection, view, page: selection.page, sub: selection.sub }));
+        self.tell(&ServerMessage::Selected(Selected { connection, page: selection.page, sub: selection.sub }));
     }
 
     /// After a message's input: the cursor record says what was acted on.
@@ -546,9 +573,8 @@ impl Channel {
             return;
         }
         let page = state.went.unwrap_or(state.keys);
-        let session = state.session;
         if let Some(bytes) = state.cursor_packet(page) {
-            self.send(session, bytes);
+            self.send(connection, bytes);
         }
     }
 
@@ -573,7 +599,30 @@ impl Channel {
         }
     }
 
-    fn act(&mut self, message: ProgramMessage, _now: u64) -> Result<(), Refusal> {
+    /// Sends a record made for each of `targets` by `make`, from its own
+    /// record id; a record the engine's encoder refuses refuses the
+    /// message (checked before any is sent, by the first target's).
+    fn send_records(
+        &mut self,
+        targets: &[ConnectionId],
+        kind: protocol::MessageType,
+        mut make: impl FnMut(&mut Connection) -> Result<Vec<u8>, records::Refused>,
+    ) -> Result<(), Refusal> {
+        let mut sends = Vec::new();
+        for &connection in targets {
+            let Some(state) = self.connections.get_mut(&connection) else { continue };
+            let bytes = make(state).map_err(|detail| Refusal { message: Some(kind), path: String::new(), rule: Rule::WrongType, detail })?;
+            sends.push((connection, bytes));
+        }
+        for (connection, bytes) in sends {
+            if !bytes.is_empty() {
+                self.send(connection, Arc::from(bytes));
+            }
+        }
+        Ok(())
+    }
+
+    fn act(&mut self, message: ProgramMessage, now: u64) -> Result<(), Refusal> {
         let kind = message.kind();
         let refuse = |path: &str, rule: Rule, detail: String| Refusal { message: Some(kind), path: path.to_string(), rule, detail };
         match message {
@@ -586,127 +635,143 @@ impl Channel {
                 }
                 state.replied = true;
                 state.reply_due = None;
-                // A view given its page holds it as selected, so the PAGE
-                // that follows when the receiver shows it asks for nothing.
-                for view_page in &reply.selected {
-                    state.selections.entry(view_page.view).or_insert(Selection { page: view_page.page.page, sub: ANY_SUBPAGE });
+                // A connection with no selection asked for the initial page:
+                // the sub-page given is its selection's.
+                if let Some(page) = &reply.selected
+                    && state.selection.is_none()
+                {
+                    state.selection = Some(Selection { page: page.page, sub: ANY_SUBPAGE });
                 }
-                // The index goes as index records on data channel 12 once
-                // the engine encodes them (REQ-1480, TODO-1491).
-                for view_page in &reply.selected {
-                    self.send_page(&[reply.connection], &view_page.page);
+                let magazines = reply.magazines;
+                self.send_records(&[reply.connection], kind, |state| {
+                    state.index_generation = state.index_generation.wrapping_add(1);
+                    records::index(state.index_generation, &magazines, &mut state.record_id)
+                })?;
+                if let Some(page) = &reply.selected {
+                    self.send_page(&[reply.connection], page);
                 }
             }
             ProgramMessage::Page(message) => {
                 let targets = self.targets(&message.connections);
                 self.send_page(&targets, &message.page);
             }
-            // The index goes as index records (REQ-1480, TODO-1491), and a
-            // sub-page list as a SUBPAGES record to the connections named
-            // whose views show the page and do not hold its version
-            // (REQ-1503), once the engine encodes them.
-            ProgramMessage::Index(_) | ProgramMessage::Subpages(_) => {}
+            ProgramMessage::Subpages(list) => {
+                let page = list.page.0;
+                let targets: Vec<ConnectionId> = self
+                    .targets(&list.connections)
+                    .into_iter()
+                    .filter(|connection| {
+                        self.connections.get(connection).is_some_and(|state| {
+                            state.selection.is_some_and(|selection| selection.page.0 == page) && state.list_held != Some((page, list.version))
+                        })
+                    })
+                    .collect();
+                self.send_records(&targets, kind, |state| {
+                    state.list_held = Some((page, list.version));
+                    records::subpage_list(&list, &mut state.record_id)
+                })?;
+            }
+            ProgramMessage::Index(index) => {
+                let targets = self.targets(&index.connections);
+                self.send_records(&targets, kind, |state| {
+                    state.index_generation = state.index_generation.wrapping_add(1);
+                    records::index(state.index_generation, &index.magazines, &mut state.record_id)
+                })?;
+            }
+            // A goto is itself a selection (DEC-1526 item 4): the receiver
+            // goes to the page of the cursor record, and the program is
+            // asked for it.
             ProgramMessage::Goto(goto) => {
                 let Some(state) = self.connections.get_mut(&goto.connection) else { return Ok(()) };
                 count(&mut self.stats.gotos);
                 state.went = Some(goto.page.0);
-                let session = state.session;
                 if let Some(bytes) = state.cursor_packet(goto.page.0) {
-                    self.send(session, bytes);
+                    self.send(goto.connection, bytes);
                 }
+                self.select(goto.connection, Selection { page: goto.page, sub: goto.sub }, now);
             }
             ProgramMessage::Sound(sound) => {
                 let records = self.sounds.records(&sound).map_err(|(rule, detail)| refuse("", rule, detail))?;
                 let targets = self.targets(audience(&sound));
                 self.records(&targets, &records);
             }
-            // Sent as a SET_COOKIE record once the engine encodes the typed
-            // one (REQ-1480, TODO-1491).
             ProgramMessage::Cookie(cookie) => {
-                self.log(Level::Debug, "cookie_held_back", format!("cookie {} for connection {}: not sent yet", cookie.name, cookie.connection));
+                if !self.connections.contains_key(&cookie.connection) {
+                    return Ok(());
+                }
+                self.send_records(&[cookie.connection], kind, |state| records::cookie(&cookie, &mut state.record_id))?;
             }
-            // Sent as LOG records once the engine encodes them (REQ-1480,
-            // TODO-1460); until then the operator sees them.
-            ProgramMessage::AuthorLog(log) => self.log(Level::Debug, "author_log", format!("{:?} {}", log.level, log.text)),
-            ProgramMessage::Log(log) => {
-                let level = match log.level {
+            ProgramMessage::AuthorLog(line) => {
+                let targets = self.targets(&line.connections);
+                self.send_records(&targets, kind, |state| records::author_log(&line, &mut state.record_id))?;
+            }
+            ProgramMessage::Log(line) => {
+                let level = match line.level {
                     OperatorLevel::Error => Level::Error,
                     OperatorLevel::Warn => Level::Warn,
                     OperatorLevel::Info => Level::Info,
                     OperatorLevel::Debug => Level::Debug,
                 };
-                self.log(level, "program_log", format!("{}: {}", log.event, log.text));
+                self.log(level, "program_log", format!("{}: {}", line.event, line.text));
             }
             ProgramMessage::Packets(packets) => {
                 let bytes: Arc<[u8]> = Arc::from(protocol::check::bytes_of(&packets.packets));
                 for connection in self.targets(&packets.connections) {
-                    if let Some(session) = self.connections.get(&connection).map(|state| state.session) {
-                        self.send(session, Arc::clone(&bytes));
-                    }
+                    self.send(connection, Arc::clone(&bytes));
                 }
             }
         }
         Ok(())
     }
 
-    /// Sends the sub-page `page` to the views of `targets` that show it:
-    /// those that selected it, and those that selected its page with 3F7F,
-    /// for which it is now the page's current sub-page (DEC-1500 items 2
-    /// and 4). Each is sent the whole sub-page the first time, and then
-    /// only what changed since the version it was last sent (DEC-1499,
-    /// REQ-1504). It is encoded once, whatever the number of viewers.
+    /// Sends the sub-page `page` to those of `targets` whose selection
+    /// shows it: those that selected it, and those that selected its page
+    /// with 3F7F, whose selection it then becomes (DEC-1526 item 3). Each
+    /// is sent it whole, with the erase bit, unless its baseline is the
+    /// same sub-code, when only what changed is sent (DEC-1499); every
+    /// frame of a sub-page with Link Extension links is followed by its
+    /// LINKS record (DEC-1517). It is encoded once, whatever the number of
+    /// viewers.
     fn send_page(&mut self, targets: &[ConnectionId], page: &protocol::Page) {
         let encoded = crate::page::encode(page);
-        let whole: Arc<[u8]> = Arc::from(encoded.packets.concat());
         let (number, sub) = (page.page.0, page.sub.0);
-        let mut sends = Vec::new();
+        let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
+        let mut faults: Vec<String> = Vec::new();
         for &connection in targets {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            let showing: Vec<u8> = state
-                .selections
-                .iter()
-                .filter(|(_, selection)| selection.page.0 == number && (selection.sub.0 == sub || selection.sub == ANY_SUBPAGE))
-                .map(|(&view, _)| view)
-                .collect();
-            if showing.is_empty() {
+            if !state.shows(number, sub) {
                 continue;
             }
-            let mut queued: Vec<Arc<[u8]>> = Vec::new();
-            for view in showing {
-                let change = match state.shown.get(&view) {
-                    Some(kept) if kept.page == number && kept.sub == sub => crate::page::changes(&kept.packets, &encoded),
-                    _ => crate::page::Change::Whole,
-                };
-                state.shown.insert(view, Shown { page: number, sub, packets: encoded.packets.clone() });
-                let bytes = match change {
-                    crate::page::Change::Nothing => continue,
-                    crate::page::Change::Whole => Arc::clone(&whole),
-                    crate::page::Change::Rows(bytes) => Arc::from(bytes),
-                };
-                // Every frame of a sub-page with Link Extension links,
-                // whole or changed rows, is followed by its LINKS record,
-                // and a frame of one without links by none (REQ-1494),
-                // once the engine encodes the record (TODO-1497).
-                // Views of one connection share its stream: the same bytes
-                // go once.
-                if !queued.contains(&bytes) {
-                    queued.push(bytes);
-                }
-            }
+            state.selection = Some(Selection { page: page.page, sub: page.sub });
+            state.selection_due = None;
+            let change = match &state.shown {
+                Some(kept) if kept.page == number && kept.sub == sub => crate::page::changes(&kept.packets, &encoded),
+                _ => Change::Whole,
+            };
+            state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor });
+            let mut bytes = match change {
+                Change::Nothing => continue,
+                Change::Whole => encoded.packets.concat(),
+                Change::Rows(bytes) => bytes,
+            };
             count(&mut self.stats.pages_sent);
-            state.cursors.insert(number, encoded.cursor);
-            state.selection_due.retain(|_, &mut (awaited, _)| awaited != number);
-            let session = state.session;
-            sends.extend(queued.into_iter().map(|bytes| (session, bytes)));
+            match records::sub_page_links(page, &mut state.record_id) {
+                Ok(links) => bytes.extend_from_slice(&links),
+                Err(fault) => faults.push(fault),
+            }
             if state.welcomed
                 && state.keys == number
                 && let Some(cursor) = state.cursor_packet(number)
             {
-                sends.push((session, cursor));
+                bytes.extend_from_slice(&cursor);
             }
+            sends.push((connection, bytes));
         }
-        for (session, bytes) in sends {
-            self.send(session, bytes);
+        for fault in faults {
+            self.log(Level::Error, "links_refused", format!("{number:03X}/{sub:04X}: the engine refused its links: {fault}"));
+        }
+        for (connection, bytes) in sends {
+            self.send(connection, Arc::from(bytes));
         }
     }
 
@@ -717,12 +782,11 @@ impl Channel {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
             let (packets, next) = packets(SERVICE, state.record_id, records);
             state.record_id = next;
-            let mut bytes = Vec::with_capacity(packets.len().saturating_mul(neoteletext_core::consts::PACKET_BYTES));
+            let mut bytes = Vec::with_capacity(packets.len().saturating_mul(PACKET_BYTES));
             for packet in &packets {
                 bytes.extend_from_slice(&packet.bytes);
             }
-            let session = state.session;
-            self.send(session, Arc::from(bytes));
+            self.send(connection, Arc::from(bytes));
         }
     }
 }
@@ -745,7 +809,6 @@ fn standard() -> Standard {
         keyable_pages: wide(limits::KEYABLE_PAGES),
         subpages: wide(limits::MAX_SUBPAGES),
         decimal_subpages: wide(limits::DECIMAL_SUBCODES),
-        views: u64::from(protocol::MAX_VIEWS),
     }
 }
 

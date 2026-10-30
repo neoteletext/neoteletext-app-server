@@ -10,13 +10,13 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use neoteletext_core::limits;
-use neoteletext_core::packet::{Packet, decode};
+use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_core::policy::is_safe_output_char;
 use neoteletext_web::base64;
 
 use super::{
-    AuthorLog, COLUMNS, Connections, Cookie, Index, Log, MAX_VIEWS, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage,
-    ProgramMessage, Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
+    AuthorLog, COLUMNS, Connections, Cookie, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage,
+    Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
 
 /// Why a message was refused: what `refused` carries back.
@@ -113,7 +113,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Index(Index { connections, magazines }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_magazines(&root.field("magazines"), magazines))
         }
-        ProgramMessage::Goto(goto) => check_view(&root.field("view"), goto.view),
+        ProgramMessage::Goto(_) => Ok(()),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -180,13 +180,6 @@ fn check_base64(path: &Path<'_>, text: &str, most: usize) -> Result<Vec<u8>, Fau
         return Err(fault(path, Rule::NotBase64, "not the canonical base64 of its bytes".to_string()));
     }
     Ok(bytes)
-}
-
-fn check_view(path: &Path<'_>, view: u8) -> Checked {
-    if view >= MAX_VIEWS {
-        return Err(fault(path, Rule::OutOfRange, format!("{view}, at most {}", MAX_VIEWS.saturating_sub(1))));
-    }
-    Ok(())
 }
 
 fn check_connections(path: &Path<'_>, connections: &Connections) -> Checked {
@@ -269,22 +262,11 @@ fn check_magazines(path: &Path<'_>, magazines: &[Magazine]) -> Checked {
 
 fn check_reply(root: &Path<'_>, reply: &Reply) -> Checked {
     check_magazines(&root.field("magazines"), &reply.magazines)?;
-    let selected = root.field("selected");
-    if reply.selected.len() > usize::from(MAX_VIEWS) {
-        return Err(fault(&selected, Rule::TooLong, format!("{} pages, at most one a view, {MAX_VIEWS}", reply.selected.len())));
-    }
-    for (index, view_page) in reply.selected.iter().enumerate() {
-        let at = selected.item(index);
-        check_view(&at.field("view"), view_page.view)?;
-        if reply.selected.iter().take(index).any(|earlier| earlier.view == view_page.view) {
-            return Err(fault(&at.field("view"), Rule::Duplicate, format!("view {} twice", view_page.view)));
-        }
-        let page = &view_page.page;
-        check_page(&at.field("page"), page)?;
-        let listed = reply.magazines.iter().flat_map(|magazine| magazine.pages.iter()).find(|entry| entry.page == page.page);
-        if listed.is_none() {
-            return Err(fault(&at.field("page").field("page"), Rule::NotInIndex, format!("{:03X} is not in magazines", page.page.0)));
-        }
+    let Some(page) = &reply.selected else { return Ok(()) };
+    let at = root.field("selected");
+    check_page(&at, page)?;
+    if !reply.magazines.iter().flat_map(|magazine| magazine.pages.iter()).any(|entry| entry.page == page.page) {
+        return Err(fault(&at.field("page"), Rule::NotInIndex, format!("{:03X} is not in magazines", page.page.0)));
     }
     Ok(())
 }
@@ -385,29 +367,6 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
     Ok(())
 }
 
-/// The schemes an address may have as a link target (the engine's
-/// web-native concept section 3).
-const ADDRESS_SCHEMES: [&str; 2] = ["https://", "http://"];
-/// What marks a web page's address, to open outside teletext (decision
-/// E.88).
-const WEB_MARK: &str = "web:";
-
-/// Whether `text` is a service name: letters, digits and hyphens
-/// (Appendix E.1), of at most the engine's `SERVICE_NAME_BYTES`.
-fn is_service(text: &str) -> bool {
-    !text.is_empty() && text.len() <= neoteletext_formats::page::SERVICE_NAME_BYTES && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-}
-
-/// Whether `text` is three hexadecimal digits of a page, magazine 1 to 8.
-fn is_page(text: &str) -> bool {
-    text.len() == 3 && u16::from_str_radix(text, 16).is_ok_and(|number| (limits::FIRST_PAGE_ADDRESS..=limits::LAST_PAGE_ADDRESS).contains(&number))
-}
-
-/// Whether `text` is four hexadecimal digits of a sub-code.
-fn is_subcode(text: &str) -> bool {
-    text.len() == limits::SUBCODE_DIGITS && u16::from_str_radix(text, 16).is_ok_and(limits::is_sub_code)
-}
-
 /// What a link target is (Appendix E.1, the web-native concept section 3).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Target {
@@ -419,26 +378,22 @@ enum Target {
     Web,
 }
 
-/// A link target's kind, or none for a target in no form of Appendix E.1:
-/// printable ASCII without spaces or commas, of at most 256 bytes.
+/// A link target's kind, read by the engine's own parser of TTI's link
+/// targets (`tti::link_destination`), or none for a target in no form of
+/// Appendix E.1: printable ASCII without spaces or commas, of at most 256
+/// bytes.
 fn target(text: &str) -> Option<Target> {
-    if text.is_empty() || text.len() > super::LINK_TARGET_BYTES || !text.bytes().all(|byte| byte.is_ascii_graphic() && byte != b',') {
+    if text.len() > super::LINK_TARGET_BYTES || !text.bytes().all(|byte| byte.is_ascii_graphic() && byte != b',') {
         return None;
     }
-    let address = text.strip_prefix(WEB_MARK).unwrap_or(text);
-    if text.starts_with(WEB_MARK) || text.contains("://") {
-        let lower = address.to_ascii_lowercase();
-        let addressed = ADDRESS_SCHEMES.iter().any(|scheme| lower.starts_with(scheme));
-        return addressed.then_some(if text.starts_with(WEB_MARK) { Target::Web } else { Target::Elsewhere });
-    }
-    let parts: Vec<&str> = text.split(':').collect();
-    match parts.as_slice() {
-        [page] if is_page(page) => Some(Target::Here),
-        [page, sub] if is_page(page) && is_subcode(sub) => Some(Target::Here),
-        [service, page] if is_service(service) && is_page(page) => Some(Target::Elsewhere),
-        [service, page, sub] if is_service(service) && is_page(page) && is_subcode(sub) => Some(Target::Elsewhere),
-        _ => None,
-    }
+    let destination = neoteletext_formats::tti::link_destination(text.as_bytes())?;
+    Some(if destination.is_web() {
+        Target::Web
+    } else if !destination.service.is_empty() || !destination.url.is_empty() {
+        Target::Elsewhere
+    } else {
+        Target::Here
+    })
 }
 
 fn check_target(path: &Path<'_>, text: &str) -> Result<Target, Fault> {
@@ -653,11 +608,12 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
     if bytes.is_empty() || !bytes.len().is_multiple_of(size) {
         return Err(fault(path, Rule::WrongLength, format!("{} bytes: whole packets of {size}", bytes.len())));
     }
-    // Until the engine's one packet check (REQ-1462, TODO-1463): an
-    // address that decodes under Hamming 8/4 and a packet the decoder reads.
+    // The engine's one check of a stream's packets (REQ-1462, TODO-1465):
+    // an address that decodes under Hamming 8/4, and a kind the stream may
+    // carry.
     for (index, chunk) in bytes.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().enumerate() {
-        if decode(&Packet { bytes: *chunk }).is_err() {
-            return Err(fault(&path.item(index), Rule::InvalidPacket, "its address does not decode, or it is not a packet the stream may carry".to_string()));
+        if !is_valid_stream_packet(&Packet { bytes: *chunk }) {
+            return Err(fault(&path.item(index), Rule::InvalidPacket, "its address does not decode, or it is a kind the stream may not carry".to_string()));
         }
     }
     Ok(())

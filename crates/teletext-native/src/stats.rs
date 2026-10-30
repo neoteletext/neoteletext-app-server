@@ -396,6 +396,7 @@ impl ServerStats {
             .integer("keys", number(stats.keys))
             .integer("pages_sent", number(stats.pages_sent))
             .integer("refused", number(stats.refused))
+            .integer("invalid_packets", number(stats.invalid_packets))
             .integer("gotos", number(stats.gotos))
             .integer("sound_records", number(stats.sound_records))
             .integer("lines_to_application", number(stats.lines_to_application))

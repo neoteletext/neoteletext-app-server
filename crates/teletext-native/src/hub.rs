@@ -5,11 +5,11 @@
 //!
 //! The task times itself over every event (requirement 8.2).
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
-use teletext_runtime::{Channel, Effect, SessionId};
+use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
@@ -36,22 +36,26 @@ pub const OUTBOX: usize = 256;
 pub enum Command {
     /// A connection opened, with its queue.
     Opened {
-        /// The connection's session.
+        /// The connection, numbered by the server, never reused while it
+        /// runs.
+        connection: ConnectionId,
+        /// Its session, which it continues or starts (requirement 5.5);
+        /// a session may have several connections, one a tab (DEC-1527).
         session: SessionId,
         /// Its queue.
         outbox: mpsc::Sender<Outbound>,
     },
     /// Its input stream.
     Received {
-        /// The session.
-        session: SessionId,
+        /// The connection.
+        connection: ConnectionId,
         /// One binary message.
         bytes: Vec<u8>,
     },
     /// It closed.
     Closed {
-        /// The session.
-        session: SessionId,
+        /// The connection.
+        connection: ConnectionId,
     },
     /// The server stops (requirement 5.1): every connection is closed as a
     /// restart, and `done` is answered.
@@ -81,22 +85,6 @@ pub struct Hub {
     pub commands: mpsc::Sender<Command>,
     /// The server's figures, which every connection adds to.
     pub stats: Arc<ServerStats>,
-    /// The sessions connected now: a session is never shared by two
-    /// connections at once (requirement 5.5).
-    pub connected: Arc<Mutex<BTreeSet<SessionId>>>,
-}
-
-impl Hub {
-    /// Claims `session` for a connection, unless one has it already.
-    #[must_use]
-    pub fn claim(&self, session: SessionId) -> bool {
-        self.connected.lock().unwrap_or_else(PoisonError::into_inner).insert(session)
-    }
-
-    /// Gives `session` up: its connection closed.
-    pub fn release(&self, session: SessionId) {
-        self.connected.lock().unwrap_or_else(PoisonError::into_inner).remove(&session);
-    }
 }
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
@@ -106,7 +94,7 @@ impl Hub {
 pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>) -> Hub {
     let descriptor: Arc<[u8]> = channel.descriptor().into();
     let (commands, queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, commands, stats: Arc::clone(&stats), connected: Arc::new(Mutex::new(BTreeSet::new())) };
+    let hub = Hub { folder: folder.to_owned(), descriptor, commands, stats: Arc::clone(&stats) };
     let (to_application, from_application) = link.map_or((None, None), |link| (Some(link.to), Some(link.from)));
     let task = Task { folder: folder.to_owned(), outboxes: BTreeMap::new(), to_application, starts: 0, dropped: 0, events: Histogram::default(), stats, start };
     tokio::spawn(task.run(channel, queue, from_application));
@@ -141,7 +129,7 @@ async fn sleep_until(at: Option<Instant>) {
 /// The channel's task's own state: where its effects go.
 struct Task {
     folder: String,
-    outboxes: BTreeMap<SessionId, mpsc::Sender<Outbound>>,
+    outboxes: BTreeMap<ConnectionId, mpsc::Sender<Outbound>>,
     to_application: Option<mpsc::Sender<Vec<u8>>>,
     /// How many times the program has started.
     starts: u64,
@@ -208,14 +196,14 @@ impl Task {
     fn handle(&mut self, event: Event, channel: &mut Channel) -> bool {
         let now = self.now();
         match event {
-            Event::Command(Command::Opened { session, outbox }) => {
-                self.outboxes.insert(session, outbox);
-                channel.opened(session, now);
+            Event::Command(Command::Opened { connection, session, outbox }) => {
+                self.outboxes.insert(connection, outbox);
+                channel.opened(connection, session, now);
             }
-            Event::Command(Command::Received { session, bytes }) => channel.received(session, &bytes, now),
-            Event::Command(Command::Closed { session }) => {
-                self.outboxes.remove(&session);
-                channel.closed(session, now);
+            Event::Command(Command::Received { connection, bytes }) => channel.received(connection, &bytes, now),
+            Event::Command(Command::Closed { connection }) => {
+                self.outboxes.remove(&connection);
+                channel.closed(connection, now);
             }
             Event::Command(Command::Shutdown { done }) => {
                 for outbox in self.outboxes.values() {
@@ -254,8 +242,8 @@ impl Task {
     fn apply(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::Send { session, bytes } => self.send(session, Outbound::Bytes(bytes)),
-                Effect::Close { session } => self.send(session, Outbound::Close(CLOSE_PROTOCOL_ERROR)),
+                Effect::Send { connection, bytes } => self.send(connection, Outbound::Bytes(bytes)),
+                Effect::Close { connection } => self.send(connection, Outbound::Close(CLOSE_PROTOCOL_ERROR)),
                 Effect::ToProgram { line } => {
                     let Some(to) = self.to_application.as_ref() else { continue };
                     if to.try_send(line).is_err() {
@@ -272,11 +260,11 @@ impl Task {
         }
     }
 
-    /// Queues `outbound` for `session`, dropping it when the queue is
+    /// Queues `outbound` for `connection`, dropping it when the queue is
     /// full: a connection that far behind is the slowest client's, not the
     /// channel's, problem.
-    fn send(&self, session: SessionId, outbound: Outbound) {
-        if let Some(outbox) = self.outboxes.get(&session) {
+    fn send(&self, connection: ConnectionId, outbound: Outbound) {
+        if let Some(outbox) = self.outboxes.get(&connection) {
             let _ = outbox.try_send(outbound);
         }
     }
