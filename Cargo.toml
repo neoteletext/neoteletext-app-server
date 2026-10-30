@@ -43,6 +43,14 @@ neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-engine", 
 schemars = { version = "=1.2.3", default-features = false, features = ["derive"] }
 serde = { version = "=1.0.229", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["alloc"] }
+# The protocol's strict reader (REQ-1475), chosen by the engineer when the
+# owner left it to them on 30 October 2026 ("fully solve and complete ...
+# in any way you think correct"): serde_path_to_error (MIT or Apache-2.0)
+# names the path of the first fault serde finds, and unicode-normalization
+# (MIT or Apache-2.0, and Unicode-3.0 for its tables) checks that text is
+# in normalisation form C. Default features off: no standard library.
+serde_path_to_error = { version = "=0.1.20", default-features = false }
+unicode-normalization = { version = "=0.1.26", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
 # (decision 5).

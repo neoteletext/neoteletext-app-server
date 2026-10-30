@@ -17,7 +17,7 @@ use neoteletext_input::cursor::BLOCK;
 use neoteletext_web::base64;
 
 use crate::frame::append_page;
-use crate::protocol::{self, PackedLine, Page};
+use crate::protocol::{self, M29Line, PackedLine, Page, X27Line, X27NibblesLine, X28Line};
 
 /// Packet numbers of the packed lines (EN 300 706 clause 7.1, table 1).
 const PACKET_LINKS: u8 = 27;
@@ -172,20 +172,20 @@ fn fill(model: &mut PageFile, subpage: &Page) {
     }
     for line in &subpage.packets {
         let raw = match line {
-            PackedLine::X27Nibbles { designation, nibbles } => {
+            PackedLine::X27Nibbles(X27NibblesLine { designation, nibbles }) => {
                 let mut values = [0_u8; protocol::NIBBLES];
                 for (slot, &nibble) in values.iter_mut().zip(nibbles) {
                     *slot = nibble;
                 }
                 RawPacket { number: PACKET_LINKS, designation: *designation, body: RawBody::Nibbles(values) }
             }
-            PackedLine::X27 { designation, triplets: values } => {
+            PackedLine::X27(X27Line { designation, triplets: values }) => {
                 RawPacket { number: PACKET_LINKS, designation: *designation, body: RawBody::Triplets(triplets(values)) }
             }
-            PackedLine::X28 { designation, triplets: values } => {
+            PackedLine::X28(X28Line { designation, triplets: values }) => {
                 RawPacket { number: PACKET_PAGE_ENHANCEMENT, designation: *designation, body: RawBody::Triplets(triplets(values)) }
             }
-            PackedLine::M29 { designation, triplets: values } => {
+            PackedLine::M29(M29Line { designation, triplets: values }) => {
                 RawPacket { number: PACKET_MAGAZINE_ENHANCEMENT, designation: *designation, body: RawBody::Triplets(triplets(values)) }
             }
         };

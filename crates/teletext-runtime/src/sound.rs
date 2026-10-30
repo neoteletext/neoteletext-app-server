@@ -16,7 +16,7 @@ use neoteletext_audio::{CHANNELS, Codec, IMA_BLOCK_LARGE, IMA_BLOCK_SMALL, OPUS_
 use neoteletext_opus::{DecodeError, Decoder, FRAME_SAMPLES, PacketError};
 use neoteletext_web::base64;
 
-use crate::protocol::{Rule, Sound};
+use crate::protocol::{BlocksSound, GainSound, LiveSound, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, Rule, Sound, StopSound};
 
 /// A command's operations (the engine's `audio.md` section 4.4).
 const PLAY: u8 = 1;
@@ -90,7 +90,7 @@ impl Sounds {
     /// The records of `sound`.
     pub(crate) fn records(&mut self, sound: &Sound) -> Result<Vec<Vec<u8>>, Refused> {
         match sound {
-            Sound::Opus { handle, generation, packet_bytes, samples, packets, .. } => {
+            Sound::Opus(OpusSound { handle, generation, packet_bytes, samples, packets, .. }) => {
                 let packets = bytes_of(packets);
                 self.check_opus(*packet_bytes, &packets)?;
                 let sound = Encoded::opus(*handle, *generation, *packet_bytes, &packets, *samples).map_err(encoding)?;
@@ -98,31 +98,31 @@ impl Sounds {
                 records.extend(sound.data_records());
                 Ok(records)
             }
-            Sound::OpusLive { handle, generation, packet_bytes, .. } => {
+            Sound::OpusLive(OpusLiveSound { handle, generation, packet_bytes, .. }) => {
                 let sound = Encoded::live(*handle, *generation, Codec::Opus, OPUS_RATE, *packet_bytes).map_err(encoding)?;
                 Ok(alloc::vec![sound.object_record().map_err(encoding)?])
             }
-            Sound::OpusPackets { handle, generation, packet_bytes, first, packets, .. } => {
+            Sound::OpusPackets(OpusPacketsSound { handle, generation, packet_bytes, first, packets, .. }) => {
                 let packets = bytes_of(packets);
                 self.check_opus(*packet_bytes, &packets)?;
                 let sound = Encoded::live(*handle, *generation, Codec::Opus, OPUS_RATE, *packet_bytes).map_err(encoding)?;
                 sound.packet_records(*first, &packets).map_err(encoding)
             }
-            Sound::Object { handle, generation, rate, pcm, .. } => {
+            Sound::Object(ObjectSound { handle, generation, rate, pcm, .. }) => {
                 let sound = Encoded::new(*handle, *generation, Codec::ImaAdpcm, *rate, IMA_BLOCK_SMALL, &samples(pcm)).map_err(encoding)?;
                 let mut records = alloc::vec![sound.object_record().map_err(encoding)?];
                 records.extend(sound.data_records());
                 Ok(records)
             }
-            Sound::Live { handle, generation, rate, .. } => {
+            Sound::Live(LiveSound { handle, generation, rate, .. }) => {
                 let sound = Encoded::live(*handle, *generation, Codec::ImaAdpcm, *rate, IMA_BLOCK_LARGE).map_err(encoding)?;
                 Ok(alloc::vec![sound.object_record().map_err(encoding)?])
             }
-            Sound::Blocks { handle, generation, rate, first, pcm, .. } => {
+            Sound::Blocks(BlocksSound { handle, generation, rate, first, pcm, .. }) => {
                 let sound = Encoded::live(*handle, *generation, Codec::ImaAdpcm, *rate, IMA_BLOCK_LARGE).map_err(encoding)?;
                 Ok(sound.live_records(*first, &samples(pcm)))
             }
-            Sound::Play { channel, handle, generation, gain, fade_ms, r#loop, after, duck, page, .. } => {
+            Sound::Play(PlaySound { channel, handle, generation, gain, fade_ms, r#loop, after, duck, page, .. }) => {
                 let mut flags = 0;
                 if *r#loop {
                     flags |= FLAG_LOOP;
@@ -144,7 +144,7 @@ impl Sounds {
                 };
                 Ok(alloc::vec![command.record()])
             }
-            Sound::Stop { channel, fade_ms, .. } => {
+            Sound::Stop(StopSound { channel, fade_ms, .. }) => {
                 let command = Command {
                     channel: *channel,
                     sequence: self.next(*channel)?,
@@ -159,7 +159,7 @@ impl Sounds {
                 };
                 Ok(alloc::vec![command.record()])
             }
-            Sound::Gain { channel, gain, fade_ms, .. } => {
+            Sound::Gain(GainSound { channel, gain, fade_ms, .. }) => {
                 let command = Command {
                     channel: *channel,
                     sequence: self.next(*channel)?,
@@ -188,14 +188,14 @@ impl Sounds {
 /// Who a sound is for.
 pub(crate) const fn audience(sound: &Sound) -> &crate::protocol::Connections {
     match sound {
-        Sound::Opus { connections, .. }
-        | Sound::OpusLive { connections, .. }
-        | Sound::OpusPackets { connections, .. }
-        | Sound::Object { connections, .. }
-        | Sound::Live { connections, .. }
-        | Sound::Blocks { connections, .. }
-        | Sound::Play { connections, .. }
-        | Sound::Stop { connections, .. }
-        | Sound::Gain { connections, .. } => connections,
+        Sound::Opus(OpusSound { connections, .. })
+        | Sound::OpusLive(OpusLiveSound { connections, .. })
+        | Sound::OpusPackets(OpusPacketsSound { connections, .. })
+        | Sound::Object(ObjectSound { connections, .. })
+        | Sound::Live(LiveSound { connections, .. })
+        | Sound::Blocks(BlocksSound { connections, .. })
+        | Sound::Play(PlaySound { connections, .. })
+        | Sound::Stop(StopSound { connections, .. })
+        | Sound::Gain(GainSound { connections, .. }) => connections,
     }
 }

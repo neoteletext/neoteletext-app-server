@@ -26,8 +26,10 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod check;
+mod read;
 
 pub use check::Refusal;
+pub use read::read;
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
@@ -666,6 +668,8 @@ pub enum Rule {
     /// A character text may not have: a control or a bidirectional
     /// formatting character.
     ForbiddenCharacter,
+    /// Text not in Unicode normalisation form C.
+    NotNfc,
     /// Not exact base64 (RFC 4648 section 4, padded, no whitespace).
     NotBase64,
     /// Bytes of the wrong length once decoded.
@@ -685,7 +689,9 @@ pub enum Rule {
 // ------------------------------------------------------- program to server
 
 /// A message from a program to the server.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+// Read by the reader, which follows `type` to the message's own type
+// (`read.rs`).
+#[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProgramMessage {
     /// The answer to `connected` (REQ-1471).
@@ -1046,42 +1052,64 @@ pub struct Triplet {
 }
 
 /// A packed line other than X/26, by its packet.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(tag = "packet", rename_all = "snake_case", deny_unknown_fields)]
+// Read by the reader, which follows `packet` to the line's own type, so a
+// fault keeps its full path (`read.rs`).
+#[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
+#[serde(tag = "packet", rename_all = "snake_case")]
 pub enum PackedLine {
     /// X/27 of designation code 1 to 3: thirty-nine values of four bits.
-    X27Nibbles {
-        /// 1 to 3.
-        #[schemars(range(min = 1, max = 3))]
-        designation: u8,
-        /// The values, 0 to 15 each.
-        #[schemars(length(min = NIBBLES, max = NIBBLES))]
-        nibbles: Vec<u8>,
-    },
+    X27Nibbles(X27NibblesLine),
     /// X/27 of designation code 4 to 15: thirteen triplets.
-    X27 {
-        /// 4 to 15.
-        #[schemars(range(min = 4, max = DESIGNATION_MAX))]
-        designation: u8,
-        /// The triplets.
-        triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
-    },
+    X27(X27Line),
     /// X/28: thirteen triplets.
-    X28 {
-        /// 0 to 15.
-        #[schemars(range(max = DESIGNATION_MAX))]
-        designation: u8,
-        /// The triplets.
-        triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
-    },
+    X28(X28Line),
     /// M/29, the magazine's: thirteen triplets.
-    M29 {
-        /// 0 to 15.
-        #[schemars(range(max = DESIGNATION_MAX))]
-        designation: u8,
-        /// The triplets.
-        triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
-    },
+    M29(M29Line),
+}
+
+/// X/27 of designation code 1 to 3: thirty-nine values of four bits.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct X27NibblesLine {
+    /// 1 to 3.
+    #[schemars(range(min = 1, max = 3))]
+    pub designation: u8,
+    /// The values, 0 to 15 each.
+    #[schemars(length(min = NIBBLES, max = NIBBLES))]
+    pub nibbles: Vec<u8>,
+}
+
+/// X/27 of designation code 4 to 15: thirteen triplets.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct X27Line {
+    /// 4 to 15.
+    #[schemars(range(min = 4, max = DESIGNATION_MAX))]
+    pub designation: u8,
+    /// The triplets.
+    pub triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
+}
+
+/// X/28: thirteen triplets.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct X28Line {
+    /// 0 to 15.
+    #[schemars(range(max = DESIGNATION_MAX))]
+    pub designation: u8,
+    /// The triplets.
+    pub triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
+}
+
+/// M/29, the magazine's: thirteen triplets.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct M29Line {
+    /// 0 to 15.
+    #[schemars(range(max = DESIGNATION_MAX))]
+    pub designation: u8,
+    /// The triplets.
+    pub triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
 }
 
 /// The input cursor (INPUT.md section 7.1).
@@ -1099,147 +1127,195 @@ pub struct Cursor {
 }
 
 /// `sound`, by `kind` (the engine's audio profile, `SERVER.md` section 9).
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+// Read by the reader, which follows `kind` to the sound's own type
+// (`read.rs`).
+#[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Sound {
     /// A stored Opus sound (decision 21).
-    Opus {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Every packet's length, 1 to 40 bytes.
-        #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-        packet_bytes: u16,
-        /// Its length in samples at 48 kHz.
-        #[schemars(range(max = MOST_SAMPLES))]
-        samples: u32,
-        /// Its packets back to back, exact base64, at most two minutes.
-        packets: Base64,
-    },
+    Opus(OpusSound),
     /// A live Opus sound's object.
-    OpusLive {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Every packet's length.
-        #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-        packet_bytes: u16,
-    },
+    OpusLive(OpusLiveSound),
     /// A live Opus sound's next packets.
-    OpusPackets {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Every packet's length.
-        #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-        packet_bytes: u16,
-        /// The first packet's block number.
-        first: u16,
-        /// The packets, exact base64.
-        packets: Base64,
-    },
+    OpusPackets(OpusPacketsSound),
     /// A stored sound as 16-bit samples, which the server encodes as IMA
     /// ADPCM, for receivers that decode no Opus.
-    Object {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Its sample rate, one of the profile's.
-        #[schemars(extend("enum" = SAMPLE_RATES))]
-        rate: u32,
-        /// 16-bit little-endian mono samples, exact base64, at most two
-        /// minutes.
-        pcm: Base64,
-    },
+    Object(ObjectSound),
     /// A live sound's object.
-    Live {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Its sample rate.
-        #[schemars(extend("enum" = SAMPLE_RATES))]
-        rate: u32,
-    },
+    Live(LiveSound),
     /// A live sound's next blocks of samples.
-    Blocks {
-        /// Who it is for.
-        connections: Connections,
-        /// Its handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// Its sample rate.
-        #[schemars(extend("enum" = SAMPLE_RATES))]
-        rate: u32,
-        /// The first block's number.
-        first: u16,
-        /// The samples, exact base64.
-        pcm: Base64,
-    },
+    Blocks(BlocksSound),
     /// Play a sound on an audio channel.
-    Play {
-        /// Who it is for.
-        connections: Connections,
-        /// The audio channel, 0 to 3.
-        #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-        channel: u8,
-        /// The sound's handle.
-        handle: u8,
-        /// Its generation.
-        generation: u16,
-        /// The gain, 0 to 100.
-        #[schemars(range(max = MOST_GAIN))]
-        gain: u8,
-        /// The fade in, in milliseconds.
-        fade_ms: u16,
-        /// It loops.
-        r#loop: bool,
-        /// It plays after the sound playing ends.
-        after: bool,
-        /// How far other channels duck under it, 0 to 6.
-        #[schemars(range(max = MOST_DUCK))]
-        duck: u8,
-        /// The page it belongs to, or none for the whole service.
-        page: Option<PageNumber>,
-    },
+    Play(PlaySound),
     /// Stop an audio channel.
-    Stop {
-        /// Who it is for.
-        connections: Connections,
-        /// The audio channel, 0 to 3.
-        #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-        channel: u8,
-        /// The fade out, in milliseconds.
-        fade_ms: u16,
-    },
+    Stop(StopSound),
     /// Change an audio channel's gain.
-    Gain {
-        /// Who it is for.
-        connections: Connections,
-        /// The audio channel, 0 to 3.
-        #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-        channel: u8,
-        /// The gain, 0 to 100.
-        #[schemars(range(max = MOST_GAIN))]
-        gain: u8,
-        /// The fade, in milliseconds.
-        fade_ms: u16,
-    },
+    Gain(GainSound),
+}
+
+/// A stored Opus sound (decision 21).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpusSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Every packet's length, 1 to 40 bytes.
+    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
+    pub packet_bytes: u16,
+    /// Its length in samples at 48 kHz.
+    #[schemars(range(max = MOST_SAMPLES))]
+    pub samples: u32,
+    /// Its packets back to back, exact base64, at most two minutes.
+    pub packets: Base64,
+}
+
+/// A live Opus sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpusLiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Every packet's length.
+    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
+    pub packet_bytes: u16,
+}
+
+/// A live Opus sound's next packets.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpusPacketsSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Every packet's length.
+    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
+    pub packet_bytes: u16,
+    /// The first packet's block number.
+    pub first: u16,
+    /// The packets, exact base64.
+    pub packets: Base64,
+}
+
+/// A stored sound as 16-bit samples, which the server encodes as IMA
+/// ADPCM, for receivers that decode no Opus.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Its sample rate, one of the profile's.
+    #[schemars(extend("enum" = SAMPLE_RATES))]
+    pub rate: u32,
+    /// 16-bit little-endian mono samples, exact base64, at most two
+    /// minutes.
+    pub pcm: Base64,
+}
+
+/// A live sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Its sample rate.
+    #[schemars(extend("enum" = SAMPLE_RATES))]
+    pub rate: u32,
+}
+
+/// A live sound's next blocks of samples.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BlocksSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Its sample rate.
+    #[schemars(extend("enum" = SAMPLE_RATES))]
+    pub rate: u32,
+    /// The first block's number.
+    pub first: u16,
+    /// The samples, exact base64.
+    pub pcm: Base64,
+}
+
+/// Play a sound on an audio channel.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlaySound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The audio channel, 0 to 3.
+    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
+    pub channel: u8,
+    /// The sound's handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The gain, 0 to 100.
+    #[schemars(range(max = MOST_GAIN))]
+    pub gain: u8,
+    /// The fade in, in milliseconds.
+    pub fade_ms: u16,
+    /// It loops.
+    pub r#loop: bool,
+    /// It plays after the sound playing ends.
+    pub after: bool,
+    /// How far other channels duck under it, 0 to 6.
+    #[schemars(range(max = MOST_DUCK))]
+    pub duck: u8,
+    /// The page it belongs to, or none for the whole service.
+    pub page: Option<PageNumber>,
+}
+
+/// Stop an audio channel.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StopSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The audio channel, 0 to 3.
+    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
+    pub channel: u8,
+    /// The fade out, in milliseconds.
+    pub fade_ms: u16,
+}
+
+/// Change an audio channel's gain.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GainSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The audio channel, 0 to 3.
+    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
+    pub channel: u8,
+    /// The gain, 0 to 100.
+    #[schemars(range(max = MOST_GAIN))]
+    pub gain: u8,
+    /// The fade, in milliseconds.
+    pub fade_ms: u16,
 }
 
 /// `cookie`: sets or clears one of the program's cookies for a connection
@@ -1344,20 +1420,6 @@ pub struct Packets {
 }
 
 // ------------------------------------------------------------ the wire
-
-/// Reads one line from a program, without its newline: the message, or
-/// why it is refused whole.
-///
-/// # Errors
-/// Any rule of REQ-1475 broken, the first found.
-pub fn read(line: &[u8]) -> Result<ProgramMessage, Refusal> {
-    if line.len() > LONGEST_LINE {
-        return Err(Refusal::whole(None, Rule::LineTooLong, format!("{} bytes, at most {LONGEST_LINE}", line.len())));
-    }
-    let message: ProgramMessage = serde_json::from_slice(line).map_err(|error| check::serde_refusal(line, &error))?;
-    check::message(&message)?;
-    Ok(message)
-}
 
 /// One line for a program, with its newline.
 #[must_use]

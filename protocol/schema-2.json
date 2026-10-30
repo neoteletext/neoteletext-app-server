@@ -2193,6 +2193,11 @@
           "type": "string"
         },
         {
+          "const": "not_nfc",
+          "description": "Text not in Unicode normalisation form C.",
+          "type": "string"
+        },
+        {
           "const": "not_base64",
           "description": "Not exact base64 (RFC 4648 section 4, padded, no whitespace).",
           "type": "string"

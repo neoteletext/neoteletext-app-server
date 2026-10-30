@@ -12,11 +12,16 @@ use core::fmt;
 use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_core::policy::is_safe_output_char;
+use neoteletext_formats::log::LogRefused;
 use neoteletext_web::base64;
+use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
 use super::{
     AuthorLog, COLUMNS, Connections, Cookie, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage,
     Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
+};
+use super::{
+    BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
 };
 
 /// Why a message was refused: what `refused` carries back.
@@ -113,7 +118,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Index(Index { connections, magazines }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_magazines(&root.field("magazines"), magazines))
         }
-        ProgramMessage::Goto(_) => Ok(()),
+        ProgramMessage::Goto(goto) => check_connection(&root.field("connection"), goto.connection),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -123,27 +128,6 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         }
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
-}
-
-/// A refusal of a line serde could not read as a message.
-pub(crate) fn serde_refusal(line: &[u8], error: &serde_json::Error) -> Refusal {
-    // The type, if the line is an object that names one the protocol has.
-    #[derive(serde::Deserialize)]
-    struct Typed {
-        #[serde(rename = "type")]
-        kind: MessageType,
-    }
-    let message = serde_json::from_slice::<Typed>(line).ok().map(|typed| typed.kind);
-    let text = error.to_string();
-    let rule = match error.classify() {
-        serde_json::error::Category::Data if text.starts_with("unknown field") => Rule::UnknownField,
-        serde_json::error::Category::Data if text.starts_with("missing field") => Rule::MissingField,
-        serde_json::error::Category::Data if text.starts_with("duplicate field") => Rule::DuplicateField,
-        serde_json::error::Category::Data if text.starts_with("unknown variant") => Rule::NotListed,
-        serde_json::error::Category::Data => Rule::WrongType,
-        serde_json::error::Category::Io | serde_json::error::Category::Syntax | serde_json::error::Category::Eof => Rule::Syntax,
-    };
-    Refusal::whole(message, rule, text)
 }
 
 // ----------------------------------------------------------- the pieces
@@ -161,13 +145,28 @@ fn check_text(path: &Path<'_>, text: &str, least: usize, most: usize) -> Checked
     if let Some((place, character)) = text.chars().enumerate().find(|&(_, character)| !is_safe_output_char(character)) {
         return Err(fault(path, Rule::ForbiddenCharacter, format!("U+{:04X} at character {place}", u32::from(character))));
     }
-    Ok(())
+    check_nfc(path, text)
+}
+
+/// Text in Unicode normalisation form C (REQ-1475 item 6; Unicode Standard
+/// Annex 15): the quick check settles almost every text, the full check the
+/// rest.
+fn check_nfc(path: &Path<'_>, text: &str) -> Checked {
+    let normal = match is_nfc_quick(text.chars()) {
+        IsNormalized::Yes => true,
+        IsNormalized::No => false,
+        IsNormalized::Maybe => is_nfc(text),
+    };
+    if normal { Ok(()) } else { Err(fault(path, Rule::NotNfc, "not in Unicode normalisation form C".to_string())) }
 }
 
 /// Exact base64's bytes (RFC 4648 section 4): padded, no whitespace, and
 /// canonical, the text the bytes encode to. `most` bounds the decoded
 /// length before anything is decoded.
 fn check_base64(path: &Path<'_>, text: &str, most: usize) -> Result<Vec<u8>, Fault> {
+    if !text.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')) {
+        return Err(fault(path, Rule::NotBase64, "a character outside base64's alphabet (RFC 4648 section 4)".to_string()));
+    }
     if text.len() > base64::encoded_len(most) {
         return Err(fault(path, Rule::TooLong, format!("over {most} bytes once decoded")));
     }
@@ -182,6 +181,16 @@ fn check_base64(path: &Path<'_>, text: &str, most: usize) -> Result<Vec<u8>, Fau
     Ok(bytes)
 }
 
+/// A connection's number: 1 to 2^53 less one, which every language's
+/// JSON reader holds exactly.
+fn check_connection(path: &Path<'_>, connection: super::ConnectionId) -> Checked {
+    if (1..=super::SAFE_INTEGER_LIMIT).contains(&connection) {
+        Ok(())
+    } else {
+        Err(fault(path, Rule::OutOfRange, format!("{connection}, 1 to {}", super::SAFE_INTEGER_LIMIT)))
+    }
+}
+
 fn check_connections(path: &Path<'_>, connections: &Connections) -> Checked {
     let Connections::Listed(listed) = connections else { return Ok(()) };
     if listed.is_empty() {
@@ -189,6 +198,9 @@ fn check_connections(path: &Path<'_>, connections: &Connections) -> Checked {
     }
     if listed.len() > super::MOST_NAMED_CONNECTIONS {
         return Err(fault(path, Rule::TooLong, format!("{} connections, at most {}", listed.len(), super::MOST_NAMED_CONNECTIONS)));
+    }
+    for (index, &connection) in listed.iter().enumerate() {
+        check_connection(&path.item(index), connection)?;
     }
     Ok(())
 }
@@ -261,6 +273,7 @@ fn check_magazines(path: &Path<'_>, magazines: &[Magazine]) -> Checked {
 }
 
 fn check_reply(root: &Path<'_>, reply: &Reply) -> Checked {
+    check_connection(&root.field("connection"), reply.connection)?;
     check_magazines(&root.field("magazines"), &reply.magazines)?;
     let Some(page) = &reply.selected else { return Ok(()) };
     let at = root.field("selected");
@@ -324,6 +337,7 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
     let enhancements = path.field("enhancements");
     for (index, packet) in subpage.enhancements.iter().enumerate() {
         let at = enhancements.item(index);
+        check_designation(&at.field("designation"), packet.designation, 0..=FOUR_BITS)?;
         if subpage.enhancements.iter().take(index).any(|earlier| earlier.designation == packet.designation) {
             return Err(fault(&at.field("designation"), Rule::Duplicate, format!("designation code {} twice", packet.designation)));
         }
@@ -333,7 +347,8 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
     for (index, line) in subpage.packets.iter().enumerate() {
         let at = packets.item(index);
         match line {
-            PackedLine::X27Nibbles { nibbles, .. } => {
+            PackedLine::X27Nibbles(X27NibblesLine { designation, nibbles }) => {
+                check_designation(&at.field("designation"), *designation, X27_NIBBLES)?;
                 if nibbles.len() != super::NIBBLES {
                     return Err(fault(&at.field("nibbles"), Rule::WrongLength, format!("{} values, {}", nibbles.len(), super::NIBBLES)));
                 }
@@ -341,15 +356,15 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
                     return Err(fault(&at.field("nibbles").item(place), Rule::OutOfRange, "four bits".to_string()));
                 }
             }
-            PackedLine::X27 { triplets, .. } | PackedLine::X28 { triplets, .. } | PackedLine::M29 { triplets, .. } => {
+            PackedLine::X27(X27Line { designation, triplets }) => {
+                check_designation(&at.field("designation"), *designation, X27_TRIPLETS)?;
+                check_triplets(&at.field("triplets"), triplets)?;
+            }
+            PackedLine::X28(X28Line { designation, triplets }) | PackedLine::M29(M29Line { designation, triplets }) => {
+                check_designation(&at.field("designation"), *designation, 0..=FOUR_BITS)?;
                 check_triplets(&at.field("triplets"), triplets)?;
             }
         }
-    }
-    // The bounds serde does not hold: the schema states them all.
-    let designations = subpage.enhancements.iter().map(|packet| packet.designation).chain(subpage.packets.iter().map(PackedLine::designation));
-    if let Some(designation) = designations.into_iter().find(|&designation| designation > FOUR_BITS) {
-        return Err(fault(path, Rule::OutOfRange, format!("designation code {designation}, 0 to 15")));
     }
     if let Some(region) = subpage.character_set.region
         && region > FOUR_BITS
@@ -359,12 +374,29 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
     if subpage.character_set.national_option > THREE_BITS {
         return Err(fault(&path.field("character_set").field("national_option"), Rule::OutOfRange, "0 to 7".to_string()));
     }
-    if let Some(cursor) = subpage.cursor
-        && (usize::from(cursor.row) >= super::ROWS || usize::from(cursor.column) >= COLUMNS)
-    {
-        return Err(fault(&path.field("cursor"), Rule::OutOfRange, format!("row {} column {}: rows 0 to 24, columns 0 to 39", cursor.row, cursor.column)));
+    if let Some(cursor) = subpage.cursor {
+        if usize::from(cursor.row) >= super::ROWS {
+            return Err(fault(&path.field("cursor").field("row"), Rule::OutOfRange, format!("{}: rows 0 to 24", cursor.row)));
+        }
+        if usize::from(cursor.column) >= COLUMNS {
+            return Err(fault(&path.field("cursor").field("column"), Rule::OutOfRange, format!("{}: columns 0 to 39", cursor.column)));
+        }
     }
     Ok(())
+}
+
+/// Packet X/27's designation codes 1 to 3, which carry nibbles, and 4 to
+/// 15, which carry triplets (the engine's `RawBody`; EN 300 706 clause
+/// 9.6).
+const X27_NIBBLES: core::ops::RangeInclusive<u8> = 1..=3;
+const X27_TRIPLETS: core::ops::RangeInclusive<u8> = 4..=FOUR_BITS;
+
+fn check_designation(path: &Path<'_>, designation: u8, allowed: core::ops::RangeInclusive<u8>) -> Checked {
+    if allowed.contains(&designation) {
+        Ok(())
+    } else {
+        Err(fault(path, Rule::OutOfRange, format!("designation code {designation}, {} to {}", allowed.start(), allowed.end())))
+    }
 }
 
 /// What a link target is (Appendix E.1, the web-native concept section 3).
@@ -472,15 +504,21 @@ impl PackedLine {
     #[must_use]
     pub const fn designation(&self) -> u8 {
         match *self {
-            Self::X27Nibbles { designation, .. } | Self::X27 { designation, .. } | Self::X28 { designation, .. } | Self::M29 { designation, .. } => designation,
+            Self::X27Nibbles(X27NibblesLine { designation, .. })
+            | Self::X27(X27Line { designation, .. })
+            | Self::X28(X28Line { designation, .. })
+            | Self::M29(M29Line { designation, .. }) => designation,
         }
     }
 }
 
 fn check_triplets(path: &Path<'_>, triplets: &[super::Triplet]) -> Checked {
     for (index, triplet) in triplets.iter().enumerate() {
-        if triplet.address > ADDRESS_BITS || triplet.mode > MODE_BITS || triplet.data > SEVEN_BITS {
-            return Err(fault(&path.item(index), Rule::OutOfRange, "address 0 to 63, mode 0 to 31, data 0 to 127".to_string()));
+        let at = path.item(index);
+        for (name, value, most) in [("address", triplet.address, ADDRESS_BITS), ("mode", triplet.mode, MODE_BITS), ("data", triplet.data, SEVEN_BITS)] {
+            if value > most {
+                return Err(fault(&at.field(name), Rule::OutOfRange, format!("{value}, 0 to {most}")));
+            }
         }
     }
     Ok(())
@@ -504,7 +542,7 @@ const MOST_OPUS_BYTES: usize = super::MOST_SAMPLES / neoteletext_opus::FRAME_SAM
 
 fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
     match sound {
-        Sound::Opus { connections, packet_bytes, packets, .. } | Sound::OpusPackets { connections, packet_bytes, packets, .. } => {
+        Sound::Opus(OpusSound { connections, packet_bytes, packets, .. }) | Sound::OpusPackets(OpusPacketsSound { connections, packet_bytes, packets, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_packet_bytes(&root.field("packet_bytes"), *packet_bytes)?;
             let bytes = check_base64(&root.field("packets"), packets, MOST_OPUS_BYTES)?;
@@ -513,11 +551,11 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             }
             Ok(())
         }
-        Sound::OpusLive { connections, packet_bytes, .. } => {
+        Sound::OpusLive(OpusLiveSound { connections, packet_bytes, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_packet_bytes(&root.field("packet_bytes"), *packet_bytes)
         }
-        Sound::Object { connections, rate, pcm, .. } | Sound::Blocks { connections, rate, pcm, .. } => {
+        Sound::Object(ObjectSound { connections, rate, pcm, .. }) | Sound::Blocks(BlocksSound { connections, rate, pcm, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_rate(&root.field("rate"), *rate)?;
             let bytes = check_base64(&root.field("pcm"), pcm, MOST_PCM_BYTES)?;
@@ -526,11 +564,11 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             }
             Ok(())
         }
-        Sound::Live { connections, rate, .. } => {
+        Sound::Live(LiveSound { connections, rate, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_rate(&root.field("rate"), *rate)
         }
-        Sound::Play { connections, channel, gain, duck, .. } => {
+        Sound::Play(PlaySound { connections, channel, gain, duck, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;
             check_gain(&root.field("gain"), *gain)?;
@@ -539,11 +577,11 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             }
             Ok(())
         }
-        Sound::Stop { connections, channel, .. } => {
+        Sound::Stop(StopSound { connections, channel, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)
         }
-        Sound::Gain { connections, channel, gain, .. } => {
+        Sound::Gain(GainSound { connections, channel, gain, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;
             check_gain(&root.field("gain"), *gain)
@@ -566,6 +604,7 @@ fn check_gain(path: &Path<'_>, gain: u8) -> Checked {
 }
 
 fn check_cookie(root: &Path<'_>, cookie: &Cookie) -> Checked {
+    check_connection(&root.field("connection"), cookie.connection)?;
     check_text(&root.field("name"), &cookie.name, 1, super::COOKIE_BYTES)?;
     if cookie.name.starts_with('_') {
         return Err(fault(&root.field("name"), Rule::Reserved, "names starting _ are the server's".to_string()));
@@ -579,9 +618,13 @@ fn check_cookie(root: &Path<'_>, cookie: &Cookie) -> Checked {
 
 fn check_author_log(root: &Path<'_>, log: &AuthorLog) -> Checked {
     check_connections(&root.field("connections"), &log.connections)?;
-    neoteletext_formats::log::check(log.text.as_bytes())
-        .map(|_| ())
-        .map_err(|refused| fault(&root.field("text"), Rule::ForbiddenCharacter, format!("{refused:?}")))
+    let rule = |refused: LogRefused| match refused {
+        LogRefused::Empty => Rule::TooShort,
+        LogRefused::TooLong => Rule::TooLong,
+        LogRefused::Character | LogRefused::NotUtf8 | LogRefused::Level => Rule::ForbiddenCharacter,
+    };
+    neoteletext_formats::log::check(log.text.as_bytes()).map_err(|refused| fault(&root.field("text"), rule(refused), format!("{refused:?}")))?;
+    check_nfc(&root.field("text"), &log.text)
 }
 
 fn check_log(root: &Path<'_>, log: &Log) -> Checked {
