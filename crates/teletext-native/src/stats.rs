@@ -52,8 +52,8 @@ const CHANNEL_TOTALS: [(&str, Kind); 13] = [
     ("opens", Kind::Counter),
     ("inputs", Kind::Counter),
     ("keys", Kind::Counter),
-    ("shared_published", Kind::Counter),
-    ("own_published", Kind::Counter),
+    ("pages_sent", Kind::Counter),
+    ("refused", Kind::Counter),
     ("gotos", Kind::Counter),
     ("sound_records", Kind::Counter),
     ("lines_to_application", Kind::Counter),
@@ -394,8 +394,8 @@ impl ServerStats {
             .integer("opens", number(stats.total_opens()))
             .integer("inputs", number(stats.inputs))
             .integer("keys", number(stats.keys))
-            .integer("shared_published", number(stats.shared_published))
-            .integer("own_published", number(stats.own_published))
+            .integer("pages_sent", number(stats.pages_sent))
+            .integer("refused", number(stats.refused))
             .integer("gotos", number(stats.gotos))
             .integer("sound_records", number(stats.sound_records))
             .integer("lines_to_application", number(stats.lines_to_application))
@@ -468,7 +468,7 @@ impl ServerStats {
             ("teletext_channel_viewers", "Viewers connected now.", |figures| figures.stats.viewers),
             ("teletext_channel_viewers_peak", "The most viewers connected at once.", |figures| figures.stats.viewers_peak),
             ("teletext_channel_sessions_waiting", "Sessions waiting for their viewer to come back.", |figures| figures.stats.sessions_waiting),
-            ("teletext_channel_ready", "Whether the channel has pages to serve.", |figures| u64::from(figures.ready)),
+            ("teletext_channel_ready", "Whether the channel's program is running.", |figures| u64::from(figures.ready)),
         ];
         for (name, help, value) in gauges {
             family(name, "gauge", help, &each(value));
@@ -479,8 +479,8 @@ impl ServerStats {
             ("teletext_channel_page_opens_total", "Pages opened.", |figures| figures.stats.total_opens()),
             ("teletext_channel_inputs_total", "Input events from viewers.", |figures| figures.stats.inputs),
             ("teletext_channel_keys_total", "Key presses from viewers.", |figures| figures.stats.keys),
-            ("teletext_channel_shared_published_total", "Shared pages published.", |figures| figures.stats.shared_published),
-            ("teletext_channel_own_published_total", "Pages published for one viewer.", |figures| figures.stats.own_published),
+            ("teletext_channel_pages_sent_total", "Sub-pages sent to connections, each copy counted.", |figures| figures.stats.pages_sent),
+            ("teletext_channel_refused_total", "Lines from the program refused.", |figures| figures.stats.refused),
             ("teletext_channel_gotos_total", "Viewers sent to a page.", |figures| figures.stats.gotos),
             ("teletext_channel_sound_records_total", "Audio records sent.", |figures| figures.stats.sound_records),
             ("teletext_channel_program_lines_sent_total", "Lines sent to the channel's program.", |figures| figures.stats.lines_to_application),
@@ -542,8 +542,8 @@ fn channel_now(figures: &ChannelFigures) -> Totals {
         ("opens", stats.total_opens()),
         ("inputs", stats.inputs),
         ("keys", stats.keys),
-        ("shared_published", stats.shared_published),
-        ("own_published", stats.own_published),
+        ("pages_sent", stats.pages_sent),
+        ("refused", stats.refused),
         ("gotos", stats.gotos),
         ("sound_records", stats.sound_records),
         ("lines_to_application", stats.lines_to_application),

@@ -13,6 +13,7 @@
 //! The wire is one JSON object a line (REQ-1479).
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -647,6 +648,7 @@ pub struct Refused {
 pub enum MessageType {
     Reply,
     Page,
+    Subpages,
     Index,
     Goto,
     Sound,
@@ -695,8 +697,7 @@ pub enum Rule {
     NotBase64,
     /// Bytes of the wrong length once decoded.
     WrongLength,
-    /// A selected page not in the index, or whose sub-pages disagree with
-    /// its count.
+    /// A selected page not in the index.
     NotInIndex,
     /// A connection that is not open.
     UnknownConnection,
@@ -716,8 +717,10 @@ pub enum Rule {
 pub enum ProgramMessage {
     /// The answer to `connected` (REQ-1471).
     Reply(Reply),
-    /// A page, to the connections named (REQ-1472, REQ-1473).
-    Page(PageMessage),
+    /// One sub-page, to the connections named (REQ-1472, REQ-1473).
+    Page(Box<PageMessage>),
+    /// A page's sub-page list (REQ-1503).
+    Subpages(SubPages),
     /// A change to the magazines and their pages.
     Index(Index),
     /// Sends one view of a connection to a page.
@@ -742,6 +745,7 @@ impl ProgramMessage {
         match self {
             Self::Reply(_) => MessageType::Reply,
             Self::Page(_) => MessageType::Page,
+            Self::Subpages(_) => MessageType::Subpages,
             Self::Index(_) => MessageType::Index,
             Self::Goto(_) => MessageType::Goto,
             Self::Sound(_) => MessageType::Sound,
@@ -763,20 +767,21 @@ pub struct Reply {
     /// The channel's magazines for this viewer (REQ-1477).
     #[schemars(length(max = limits::MAGAZINES))]
     pub magazines: Vec<Magazine>,
-    /// The page each view selected, or the initial page for a view that
-    /// selected none.
+    /// For each view, the sub-page it shows: the one it selected, the
+    /// page's current one for a page selection (3F7F), or the initial
+    /// page's for a view that selected none.
     #[schemars(length(max = MAX_VIEWS))]
     pub selected: Vec<ViewPage>,
 }
 
-/// A view's page, in a reply.
+/// A view's sub-page, in a reply.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ViewPage {
     /// The view, 0 to 15.
     #[schemars(range(max = LAST_VIEW))]
     pub view: u8,
-    /// Its page.
+    /// The sub-page it shows.
     pub page: Page,
 }
 
@@ -812,15 +817,51 @@ pub struct IndexEntry {
     pub subpages: u16,
 }
 
-/// `page`.
+/// `page`: one sub-page. It reaches only the views of the connections
+/// named that show it: those that selected it, and those that selected
+/// its page with 3F7F, for which it is the page's current sub-page
+/// (DEC-1500 items 2 and 4).
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PageMessage {
     /// Who it is for.
     pub connections: Connections,
-    /// The page.
+    /// The sub-page.
     pub page: Page,
 }
+
+/// `subpages`: a page's list of sub-pages (DEC-1500 item 3, REQ-1503),
+/// sent with the answer to a page selection and whenever the list changes;
+/// relayed as the SUBPAGES record to the connections named whose views
+/// show the page and do not hold this version.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubPages {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The page.
+    pub page: PageNumber,
+    /// The list's version, which the program changes whenever the list
+    /// changes.
+    pub version: u32,
+    /// The sub-pages in the page's order, each sub-code at most once.
+    #[schemars(length(min = 1, max = limits::MAX_SUBPAGES))]
+    pub subpages: Vec<SubPageEntry>,
+}
+
+/// One entry of a page's sub-page list.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubPageEntry {
+    /// Its sub-code, 0000 to 3F7E.
+    pub sub: SubCode,
+    /// Its title, at most a row's 40 characters, or none.
+    #[schemars(length(max = SUBPAGE_TITLE_CHARACTERS))]
+    pub title: Option<String>,
+}
+
+/// The longest sub-page title: a teletext row (REQ-1503).
+pub const SUBPAGE_TITLE_CHARACTERS: usize = COLUMNS;
 
 /// `index`.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
@@ -849,23 +890,16 @@ pub struct Goto {
     pub sub: SubCode,
 }
 
-/// A page, as the engine's page model (`PageFile`), field by field
-/// (REQ-1478).
+/// One sub-page of a page, as the engine's page model (`PageFile`), field
+/// by field (REQ-1478). A sub-page travels alone, never with the others of
+/// its page (DEC-1500, REQ-1501): a page of one sub-page is a page whose
+/// list has one entry.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
-    /// Its number, never a reserved one.
+    /// The page's number, never a reserved one.
     pub page: PageNumber,
-    /// Its sub-pages, in ascending order of sub-code.
-    #[schemars(length(min = 1, max = limits::MAX_SUBPAGES))]
-    pub subpages: Vec<SubPage>,
-}
-
-/// One sub-page.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SubPage {
-    /// Its sub-code, 0000 to 3F7E.
+    /// The sub-page's sub-code, 0000 to 3F7E.
     pub sub: SubCode,
     /// Rows 0 to 24, each 40 character codes of seven bits as exact
     /// base64 of 40 bytes; none for a blank row. Row 0's columns 0 to 7
@@ -1379,7 +1413,7 @@ pub fn line(message: &ServerMessage) -> Vec<u8> {
 /// Both directions, for the schema.
 #[derive(JsonSchema)]
 #[serde(untagged)]
-#[allow(dead_code, reason = "only its schema is used")]
+#[allow(dead_code, clippy::large_enum_variant, reason = "only its schema is used")]
 enum Protocol {
     Server(ServerMessage),
     Program(ProgramMessage),

@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use neoteletext_web::consts::{SHA256_BLOCK_BYTES, SHA256_DIGEST_BYTES};
 use neoteletext_web::sha256::{Digest, Sha256, parse_hex, to_hex};
 
-use crate::channel::SessionId;
+use crate::protocol::SessionId;
 
 /// The cookie's name: names beginning `_` are the server's
 /// (`SERVER.md` section 8.2).

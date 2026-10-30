@@ -40,13 +40,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "store_reader"
-path = "fuzz_targets/store_reader.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "session_cookie"
 path = "fuzz_targets/session_cookie.rs"
 test = false

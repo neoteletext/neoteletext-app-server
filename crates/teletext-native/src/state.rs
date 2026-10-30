@@ -1,21 +1,16 @@
 //! What the server keeps through a restart, in its state directory
-//! (requirements 5.2, 5.5 and 8.3): each channel's records under
-//! `channels/<folder>/`, named by their keys; the session cookie's keys;
-//! and the accumulated figures. Every file is written to a temporary file
+//! (requirements 5.5 and 8.3): the session cookie's keys and the
+//! accumulated figures. No channel's content is kept (REQ-1474). Every file is written to a temporary file
 //! and renamed into place, so a crash leaves the old file or the new one,
 //! never half of either.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use teletext_runtime::json;
 use teletext_runtime::session_cookie::{KEY_BYTES, Key};
-use teletext_runtime::store::MOST_RECORD_BYTES;
-use teletext_runtime::{StoreKey, json};
 
-/// The channels' records, a folder each.
-const CHANNELS: &str = "channels";
 /// The session cookie's key, and the one before it (requirement 5.5).
 const KEY_FILE: &str = "session.key";
 const PREVIOUS_KEY_FILE: &str = "session.key.previous";
@@ -38,9 +33,6 @@ const OWNER_ONLY_FILE: u32 = 0o600;
 #[cfg(unix)]
 const OWNER_ONLY_FOLDER: u32 = 0o700;
 
-/// A change to a channel's records: bytes to keep, or none to forget.
-pub type Changes = BTreeMap<StoreKey, Option<Vec<u8>>>;
-
 /// The state directory.
 #[derive(Clone, Debug)]
 pub struct StateDirectory {
@@ -61,54 +53,6 @@ impl StateDirectory {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    fn channel(&self, folder: &str) -> PathBuf {
-        self.root.join(CHANNELS).join(folder)
-    }
-
-    /// Every record kept for the channel `folder`, by key; a file whose
-    /// name is no key, or which is over the largest record, is named in
-    /// the second list, for the log, and left alone.
-    #[must_use]
-    pub fn records(&self, folder: &str) -> (Vec<(StoreKey, Vec<u8>)>, Vec<String>) {
-        let mut records = Vec::new();
-        let mut ignored = Vec::new();
-        let Ok(entries) = fs::read_dir(self.channel(folder)) else { return (records, ignored) };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(key) = StoreKey::parse(&name) else {
-                ignored.push(name);
-                continue;
-            };
-            match read_bounded(&entry.path(), u64::try_from(MOST_RECORD_BYTES).unwrap_or(u64::MAX)) {
-                Ok(bytes) => records.push((key, bytes)),
-                Err(error) => ignored.push(format!("{name}: {error}")),
-            }
-        }
-        records.sort_by_key(|(key, _)| *key);
-        (records, ignored)
-    }
-
-    /// Keeps and forgets the channel `folder`'s records as `changes` say.
-    ///
-    /// # Errors
-    /// The first file that could not be written or removed.
-    pub fn apply(&self, folder: &str, changes: &Changes) -> Result<(), String> {
-        let folder = self.channel(folder);
-        make_folder(&folder).map_err(|error| format!("cannot make {}: {error}", folder.display()))?;
-        for (key, change) in changes {
-            let path = folder.join(key.name());
-            match change {
-                Some(bytes) => write_whole(&path, bytes, false)?,
-                None => match fs::remove_file(&path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(format!("cannot remove {}: {error}", path.display())),
-                },
-            }
-        }
-        Ok(())
     }
 
     /// The session cookie's keys: the current, made and kept if there is

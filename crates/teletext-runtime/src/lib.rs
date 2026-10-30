@@ -6,10 +6,10 @@
 //! desktop and server system, in a Cloudflare Durable Object, and in
 //! WebAssembly, and its tests run with no network and a clock they set.
 //!
-//! It speaks what the NeoTeletext browser speaks today (the engine's
-//! channel layout, decision E.70; INPUT.md version 2), so the browser
-//! needs no change: pages go as T42 packets, one page to a WebSocket
-//! message, which the browser's decoder completes at the message's end.
+//! Downstream to a receiver is a T42 stream and nothing else (DEC-1459);
+//! upstream is INPUT.md's events. The channel's program speaks the typed
+//! JSON protocol of [`protocol`] (DEC-1482), and the server keeps none of
+//! a channel's content: the program owns every page.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -29,29 +29,20 @@
 
 extern crate alloc;
 
-pub mod application;
 pub mod channel;
 pub mod frame;
-mod held;
 pub mod input;
 pub mod json;
+mod page;
 pub mod protocol;
-pub mod remote;
-pub mod screen;
-mod session;
 pub mod session_cookie;
+mod sound;
 pub mod stats;
-pub mod store;
 
-pub use application::{Application, Audience, Context, Level, Owner, PageEntry};
-pub use channel::{Channel, ChannelConfig, Effect, SESSION_GRACE_MS, SessionId};
+pub use channel::{Channel, ChannelConfig, Effect, Level, PROGRAM_REPLY_LIMIT_MS, SESSION_GRACE_MS};
 pub use input::{Input, Named};
-pub use remote::Remote;
-pub use screen::{Colour, Screen};
+pub use protocol::{ConnectionId, SessionId};
 pub use stats::ChannelStats;
-pub use store::{StoreError, StoreKey};
 
 /// The engine's packet, 42 bytes on the wire (EN 300 706 clause 7.1).
 pub use neoteletext_core::packet::Packet;
-/// The engine's page model, which applications publish.
-pub use neoteletext_formats::page::PageFile;

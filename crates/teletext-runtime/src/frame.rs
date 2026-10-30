@@ -1,9 +1,8 @@
-//! Page frames (`SERVER.md` section 5.2): one page, all its sub-pages, as
-//! the engine encodes them, with the erase bit set so the page replaces
-//! what the receiver held, and in serial magazine mode, so the frame
-//! stands alone. The browser's decoder completes the page at the end of
-//! the WebSocket message that carries it; a page larger than one message
-//! may hold goes in several, cut between its sub-pages ([`messages`]).
+//! Page frames (`SERVER.md` section 5.2): one sub-page as the engine
+//! encodes it (REQ-1501), with the erase bit set so it replaces what the
+//! receiver held, and in serial magazine mode, so the frame stands alone;
+//! and the cutting of a long run of records into WebSocket messages a
+//! receiver takes ([`messages`]).
 
 use alloc::vec::Vec;
 
@@ -12,16 +11,6 @@ use neoteletext_core::packet::{Decoded, Packet, decode};
 use neoteletext_core::types::ControlBits;
 use neoteletext_formats::encode::encode_page;
 use neoteletext_formats::page::PageFile;
-
-/// The packets of `subpages`, one after another, as one frame.
-#[must_use]
-pub fn page_frame(subpages: &[PageFile]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for subpage in subpages {
-        append_page(&mut bytes, subpage);
-    }
-    bytes
-}
 
 /// Appends one sub-page's packets to `bytes`.
 pub fn append_page(bytes: &mut Vec<u8>, page: &PageFile) {
@@ -78,6 +67,3 @@ pub fn messages(bytes: &[u8], limit: usize) -> Vec<&[u8]> {
     }
     parts
 }
-
-#[cfg(test)]
-mod tests;

@@ -10,17 +10,15 @@
 //!   service of its own and connects, and connects again after it or the
 //!   server restarts.
 //!
-//! Each time a program starts it declares its pages, and its channel is
-//! told (requirement 5.3); its channel pages stay as last published while
-//! it is away (section 7.5).
+//! Each time a program starts its channel is told, and sends it `start`
+//! and `connected` for each viewer connected (REQ-1481); while it is away
+//! its channel has no pages to show (DEC-1482).
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use teletext_runtime::PageEntry;
 use teletext_runtime::json::{self, Value};
-use teletext_runtime::remote::declared_pages;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
@@ -28,7 +26,7 @@ use tokio::sync::mpsc;
 /// The longest line either side may send, which `start` tells a program:
 /// a page of TTI is under 4 KB, a two-minute sound's samples in base64
 /// about 15 MB.
-pub use teletext_runtime::remote::LONGEST_LINE;
+pub use teletext_runtime::protocol::LONGEST_LINE;
 /// The longest line of a program's standard error logged whole; the rest
 /// of a longer one is cut (requirement 7.5).
 pub const LONGEST_ERROR_LINE: usize = 64 * 1024;
@@ -38,8 +36,6 @@ pub const LONGEST_ERROR_LINE: usize = 64 * 1024;
 pub const WAITING_LINES: usize = 4_096;
 /// Lines from the program that may wait for the channel.
 const ARRIVING_LINES: usize = 1_024;
-/// How long a program has to declare its pages.
-const DECLARE_WITHIN: Duration = Duration::from_secs(30);
 /// The first pause before a restart.
 const FIRST_PAUSE: Duration = Duration::from_secs(1);
 /// The longest pause before a restart.
@@ -117,13 +113,12 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
 /// What the program sends the channel.
 #[derive(Debug)]
 pub enum FromApplication {
-    /// The program started and declared these pages: its first line, each
-    /// time it starts (requirement 5.3).
-    Declared(Vec<PageEntry>),
+    /// The program started, or connected: it is to be sent `start`.
+    Started,
     /// A line, without its newline.
     Line(Vec<u8>),
     /// The program ended or went: lines for it are dropped until it
-    /// declares its pages again.
+    /// starts again.
     Ended,
 }
 
@@ -173,32 +168,25 @@ async fn supervise(folder: String, command: Vec<String>, directory: PathBuf, arr
     let mut pause = FIRST_PAUSE;
     loop {
         let (ended, ran) = match launch(&folder, &command, &directory) {
-            Ok((mut child, stdin, mut stdout, stderr)) => {
+            Ok((mut child, stdin, stdout, stderr)) => {
                 tracing::info!(target: "program", channel = folder, program = command.first().map(String::as_str), "the program started");
                 tokio::spawn(log_errors(folder.clone(), stderr));
-                match declare(&mut stdout).await {
-                    Ok(pages) => {
-                        tracing::info!(target: "program", channel = folder, pages = pages.len(), "the program declared its pages");
-                        if !started(pages, &arrived, &mut outgoing).await {
-                            return;
-                        }
-                        pause = FIRST_PAUSE;
-                        let began = tokio::time::Instant::now();
-                        let reason = relay(stdout, stdin, &arrived, &mut outgoing).await;
-                        let _ = child.kill().await;
-                        if arrived.send(FromApplication::Ended).await.is_err() {
-                            return;
-                        }
-                        (reason, began.elapsed())
-                    }
-                    Err(error) => {
-                        let _ = child.kill().await;
-                        (error, Duration::ZERO)
-                    }
+                if !started(&arrived, &mut outgoing).await {
+                    return;
                 }
+                let began = tokio::time::Instant::now();
+                let reason = relay(stdout, stdin, &arrived, &mut outgoing).await;
+                let _ = child.kill().await;
+                if arrived.send(FromApplication::Ended).await.is_err() {
+                    return;
+                }
+                (reason, began.elapsed())
             }
             Err(error) => (error, Duration::ZERO),
         };
+        if ran >= STEADY {
+            pause = FIRST_PAUSE;
+        }
         let wait = pause_after(ran, pause);
         tracing::info!(target: "program", channel = folder, reason = ended, restart_in_ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX), "the program ended");
         tokio::time::sleep(wait).await;
@@ -211,16 +199,16 @@ async fn supervise(folder: String, command: Vec<String>, directory: PathBuf, arr
     }
 }
 
-/// The program declared `pages`: lines left from before it are dropped,
-/// since it is told of every viewer afresh, and its channel is told.
-/// False when the channel has stopped.
-async fn started(pages: Vec<PageEntry>, arrived: &mpsc::Sender<FromApplication>, outgoing: &mut mpsc::Receiver<Vec<u8>>) -> bool {
+/// The program started: lines left from before it are dropped, since it
+/// is told of every viewer afresh, and its channel is told. False when the
+/// channel has stopped.
+async fn started(arrived: &mpsc::Sender<FromApplication>, outgoing: &mut mpsc::Receiver<Vec<u8>>) -> bool {
     while outgoing.try_recv().is_ok() {}
-    arrived.send(FromApplication::Declared(pages)).await.is_ok()
+    arrived.send(FromApplication::Started).await.is_ok()
 }
 
-/// The pause before starting a program again that ran `ran` after
-/// declaring its pages: none after a steady run, else the back-off's.
+/// The pause before starting a program again that ran `ran`: none after a
+/// steady run, else the back-off's.
 fn pause_after(ran: Duration, pause: Duration) -> Duration {
     if ran >= STEADY { Duration::ZERO } else { pause }
 }
@@ -249,15 +237,6 @@ async fn log_errors(folder: String, stderr: ChildStderr) {
     while let Ok(Some((line, cut))) = read_line_cut(&mut reader, LONGEST_ERROR_LINE).await {
         tracing::info!(target: "program", channel = folder, cut, "{}", String::from_utf8_lossy(&line));
     }
-}
-
-/// Reads the program's first line, its pages, within [`DECLARE_WITHIN`].
-async fn declare<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Vec<PageEntry>, String> {
-    let line = tokio::time::timeout(DECLARE_WITHIN, read_line(reader))
-        .await
-        .map_err(|_| format!("declared no pages within {} s", DECLARE_WITHIN.as_secs()))??
-        .ok_or("ended before declaring its pages")?;
-    declared_pages(&line)
 }
 
 /// One line of at most [`LONGEST_LINE`] bytes, without its newline; `None`
@@ -370,16 +349,9 @@ async fn await_connections(folder: String, listener: tokio::net::UnixListener, a
             }
         };
         let (reading, writing) = stream.into_split();
-        let mut reader = BufReader::new(reading);
-        let pages = match declare(&mut reader).await {
-            Ok(pages) => pages,
-            Err(error) => {
-                tracing::warn!(target: "program", channel = folder, reason = error, "the program connected and did not declare its pages");
-                continue;
-            }
-        };
-        tracing::info!(target: "program", channel = folder, pages = pages.len(), "the program connected and declared its pages");
-        if !started(pages, &arrived, &mut outgoing).await {
+        let reader = BufReader::new(reading);
+        tracing::info!(target: "program", channel = folder, "the program connected");
+        if !started(&arrived, &mut outgoing).await {
             return;
         }
         let relaying = relay(reader, writing, &arrived, &mut outgoing);

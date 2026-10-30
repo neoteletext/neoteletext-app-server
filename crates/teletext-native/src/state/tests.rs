@@ -6,29 +6,6 @@ fn scratch(name: &str) -> PathBuf {
     folder
 }
 
-/// What a channel keeps is written under its keys and read back; what it
-/// forgets is gone; a file that is no key is named and left alone
-/// (requirement 5.2).
-#[test]
-fn records_are_kept_read_back_and_forgotten() {
-    let state = StateDirectory::open(&scratch("records")).unwrap();
-    let mut changes = Changes::new();
-    changes.insert(StoreKey::Page(0x100), Some(b"front".to_vec()));
-    changes.insert(StoreKey::Pages(0), Some(b"pages".to_vec()));
-    state.apply("hackaday", &changes).unwrap();
-    fs::write(state.root().join("channels/hackaday/notes.txt"), b"mine").unwrap();
-    let (records, ignored) = state.records("hackaday");
-    assert_eq!(records, [(StoreKey::Page(0x100), b"front".to_vec()), (StoreKey::Pages(0), b"pages".to_vec())]);
-    assert_eq!(ignored, ["notes.txt"]);
-    let mut forget = Changes::new();
-    forget.insert(StoreKey::Page(0x100), None);
-    forget.insert(StoreKey::Page(0x200), None);
-    state.apply("hackaday", &forget).unwrap();
-    assert_eq!(state.records("hackaday").0, [(StoreKey::Pages(0), b"pages".to_vec())]);
-    assert_eq!(state.records("elsewhere").0, []);
-    assert!(!state.root().join("channels/hackaday/page-100.new").exists(), "no temporary file left");
-}
-
 /// The session key is made once, kept for its owner alone, and the same
 /// at the next start; a previous key is read when there is one
 /// (requirement 5.5).

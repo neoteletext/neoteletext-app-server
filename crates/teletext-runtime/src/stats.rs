@@ -1,5 +1,5 @@
 //! What a channel counts about itself, for its operator's log and for its
-//! application to show (`docs/applications.md`, `stats`). Counts only:
+//! program to show (`docs/applications.md`, `stats`). Counts only:
 //! nothing that identifies a viewer, no address, no text typed.
 
 use alloc::collections::BTreeMap;
@@ -23,10 +23,10 @@ pub struct ChannelStats {
     pub inputs: u64,
     /// Key presses among them.
     pub keys: u64,
-    /// Shared pages published.
-    pub shared_published: u64,
-    /// Pages published for one viewer.
-    pub own_published: u64,
+    /// Pages sent to a connection, each copy counted.
+    pub pages_sent: u64,
+    /// Lines from the program refused (REQ-1475).
+    pub refused: u64,
     /// Viewers sent to another page by the application.
     pub gotos: u64,
     /// Audio records sent: sound objects, their data and commands.

@@ -7,16 +7,13 @@ fn scratch(name: &str) -> PathBuf {
     folder
 }
 
-/// A program in `sh` that writes a line to its standard error, declares a
-/// page, echoes the first line it is sent back as a log line, publishes
-/// once, then runs `then`.
+/// A program in `sh` that writes a line to its standard error, echoes the
+/// first line it is sent back as a log line, then runs `then`.
 fn program(then: &str) -> Vec<String> {
     let script = format!(
         r#"printf 'warming up\n' >&2
-printf '%s\n' '{{"type":"pages","pages":[{{"page":"100","title":"Front"}}]}}'
 read line
 printf '{{"type":"log","text":"got %s"}}\n' "$(printf '%s' "$line" | tr -d '"{{}}')"
-printf '%s\n' '{{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,1,Hello\n"}}'
 {then}"#
     );
     vec!["sh".to_owned(), "-c".to_owned(), script]
@@ -71,29 +68,21 @@ async fn next(link: &mut Link) -> FromApplication {
     tokio::time::timeout(Duration::from_secs(10), link.from.recv()).await.unwrap().unwrap()
 }
 
-fn pages_of(arrived: FromApplication) -> Vec<u16> {
-    let FromApplication::Declared(pages) = arrived else { panic!("a declaration, not {arrived:?}") };
-    pages.iter().map(|entry| entry.number).collect()
-}
-
-/// The program declares its pages, which reach the channel; it hears what
-/// the channel sends and is heard; its standard error is logged with its
-/// channel; when it ends the channel is told, and when it is started again
-/// it declares its pages again (requirements 5.3 and 7.5).
+/// The program's start reaches the channel; it hears what the channel
+/// sends and is heard; its standard error is logged with its channel; when
+/// it ends the channel is told, and it is started again (requirement 7.5).
 #[tokio::test]
 async fn a_program_is_started_heard_and_started_again() {
     let captured = Captured::default();
     let _log = captured.install();
     let mut link = start(spec("test", Program::Command { command: program("exit 0"), directory: scratch("run") })).unwrap();
-    assert_eq!(pages_of(next(&mut link).await), [0x100]);
+    assert!(matches!(next(&mut link).await, FromApplication::Started));
     link.to.send(b"{\"type\":\"start\"}\n".to_vec()).await.unwrap();
     let FromApplication::Line(echo) = next(&mut link).await else { panic!("a line first") };
     assert_eq!(String::from_utf8(echo).unwrap(), r#"{"type":"log","text":"got type:start"}"#);
-    let FromApplication::Line(publish) = next(&mut link).await else { panic!("then the page") };
-    assert!(publish.starts_with(br#"{"type":"publish""#));
     assert!(matches!(next(&mut link).await, FromApplication::Ended));
-    // After the first pause it runs again and declares its pages again.
-    assert_eq!(pages_of(next(&mut link).await), [0x100]);
+    // After the first pause it runs again.
+    assert!(matches!(next(&mut link).await, FromApplication::Started));
     let events = captured.events();
     assert!(
         events.iter().any(|event| field(event, &["target"]) == Some("program")
@@ -103,16 +92,9 @@ async fn a_program_is_started_heard_and_started_again() {
     );
 }
 
-/// A program's first line must declare its pages; anything else, or
-/// nothing, is refused.
+/// A program that cannot be started says why.
 #[tokio::test]
-async fn a_program_must_declare_its_pages_first() {
-    let declared = declare(&mut BufReader::new(&br#"{"type":"pages","pages":[{"page":"200","title":"A"}]}"#[..])).await.unwrap();
-    assert_eq!(declared.iter().map(|entry| entry.number).collect::<Vec<_>>(), [0x200]);
-    let error = declare(&mut BufReader::new(&b"{\"type\":\"log\",\"text\":\"hello\"}\n"[..])).await.unwrap_err();
-    assert!(error.contains("the first line must be"), "{error}");
-    let error = declare(&mut BufReader::new(&b""[..])).await.unwrap_err();
-    assert!(error.contains("ended before declaring"), "{error}");
+async fn a_program_that_cannot_start_says_why() {
     let Err(error) = launch("test", &["/no/such/program".to_owned()], &scratch("refuse")) else { panic!("it cannot start") };
     assert!(error.contains("cannot start"), "{error}");
 }
@@ -131,14 +113,14 @@ async fn a_long_line_of_standard_error_is_cut() {
 }
 
 /// Lines queued for a program that ended are dropped when the next one
-/// declares, so none reaches it before `start` (requirement 5.3).
+/// starts, so none reaches it before `start`.
 #[tokio::test]
 async fn lines_for_an_ended_program_are_dropped() {
     let (to, mut outgoing) = mpsc::channel(WAITING_LINES);
     let (arrived, mut from) = mpsc::channel(ARRIVING_LINES);
     to.send(b"{\"type\":\"join\",\"session\":1}\n".to_vec()).await.unwrap();
-    assert!(started(Vec::new(), &arrived, &mut outgoing).await);
-    assert!(matches!(from.recv().await, Some(FromApplication::Declared(_))));
+    assert!(started(&arrived, &mut outgoing).await);
+    assert!(matches!(from.recv().await, Some(FromApplication::Started)));
     assert!(outgoing.try_recv().is_err(), "nothing left for the new program");
 }
 
@@ -153,8 +135,8 @@ fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
 }
 
 /// A program that runs as a service of its own connects to its channel's
-/// socket, which only its owner may reach; declares; hears `start`; is
-/// heard; and, when it goes and comes back, declares again. A second
+/// socket, which only its owner may reach; is told to the channel; hears
+/// `start`; is heard; and, when it goes and comes back, is told again. A second
 /// program while one is connected is closed (requirement 6.2).
 #[cfg(unix)]
 #[tokio::test]
@@ -175,8 +157,7 @@ async fn a_program_connects_to_its_socket() {
         let stream = UnixStream::connect(&path).await.unwrap();
         let (reading, mut writing) = stream.into_split();
         let mut reading = BufReader::new(reading);
-        writing.write_all(b"{\"type\":\"pages\",\"pages\":[{\"page\":\"100\",\"title\":\"Front\"}]}\n").await.unwrap();
-        assert_eq!(pages_of(next(&mut link).await), [0x100], "round {round}");
+        assert!(matches!(next(&mut link).await, FromApplication::Started), "round {round}");
         link.to.send(b"{\"type\":\"start\"}\n".to_vec()).await.unwrap();
         let mut heard = String::new();
         reading.read_line(&mut heard).await.unwrap();

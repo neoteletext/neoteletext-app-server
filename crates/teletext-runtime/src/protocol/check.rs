@@ -16,7 +16,7 @@ use neoteletext_web::base64;
 
 use super::{
     AuthorLog, COLUMNS, Connections, Cookie, Index, Log, MAX_VIEWS, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage,
-    ProgramMessage, Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPage, TITLE_CHARACTERS,
+    ProgramMessage, Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
 
 /// Why a message was refused: what `refused` carries back.
@@ -105,9 +105,11 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
     let root = Path::Root;
     let checked = match message {
         ProgramMessage::Reply(reply) => check_reply(&root, reply),
-        ProgramMessage::Page(PageMessage { connections, page }) => {
+        ProgramMessage::Page(message) => {
+            let PageMessage { connections, page } = message.as_ref();
             check_connections(&root.field("connections"), connections).and_then(|()| check_page(&root.field("page"), page))
         }
+        ProgramMessage::Subpages(list) => check_subpages(&root, list),
         ProgramMessage::Index(Index { connections, magazines }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_magazines(&root.field("magazines"), magazines))
         }
@@ -280,16 +282,8 @@ fn check_reply(root: &Path<'_>, reply: &Reply) -> Checked {
         let page = &view_page.page;
         check_page(&at.field("page"), page)?;
         let listed = reply.magazines.iter().flat_map(|magazine| magazine.pages.iter()).find(|entry| entry.page == page.page);
-        match listed {
-            None => return Err(fault(&at.field("page").field("page"), Rule::NotInIndex, format!("{:03X} is not in magazines", page.page.0))),
-            Some(entry) if usize::from(entry.subpages) != page.subpages.len() => {
-                return Err(fault(
-                    &at.field("page").field("subpages"),
-                    Rule::NotInIndex,
-                    format!("{} sub-pages, and the index says {}", page.subpages.len(), entry.subpages),
-                ));
-            }
-            Some(_) => {}
+        if listed.is_none() {
+            return Err(fault(&at.field("page").field("page"), Rule::NotInIndex, format!("{:03X} is not in magazines", page.page.0)));
         }
     }
     Ok(())
@@ -299,32 +293,39 @@ pub(crate) fn check_page(path: &Path<'_>, page: &Page) -> Checked {
     if page.page.is_reserved() {
         return Err(fault(&path.field("page"), Rule::Reserved, format!("{:03X} is reserved by the standard (EN 300 706 Annex A.10)", page.page.0)));
     }
-    let subpages = path.field("subpages");
-    if page.subpages.is_empty() {
-        return Err(fault(&subpages, Rule::TooShort, "a page has a sub-page at least".to_string()));
+    let sub = page.sub.0;
+    if sub > limits::LAST_SUBPAGE_CODE {
+        return Err(fault(&path.field("sub"), Rule::OutOfRange, format!("{sub:04X}: 3F7F means any sub-page, never one")));
     }
-    if page.subpages.len() > limits::MAX_SUBPAGES {
-        return Err(fault(&subpages, Rule::TooLong, format!("{} sub-pages, at most {}", page.subpages.len(), limits::MAX_SUBPAGES)));
+    check_subpage(path, page)
+}
+
+fn check_subpages(root: &Path<'_>, list: &SubPages) -> Checked {
+    check_connections(&root.field("connections"), &list.connections)?;
+    if list.page.is_reserved() {
+        return Err(fault(&root.field("page"), Rule::Reserved, format!("{:03X} is reserved by the standard (EN 300 706 Annex A.10)", list.page.0)));
     }
-    let mut last: Option<u16> = None;
-    for (index, subpage) in page.subpages.iter().enumerate() {
-        let at = subpages.item(index);
-        let sub = subpage.sub.0;
-        if sub > limits::LAST_SUBPAGE_CODE {
-            return Err(fault(&at.field("sub"), Rule::OutOfRange, format!("{sub:04X}: 3F7F means any sub-page, never one")));
+    let entries = root.field("subpages");
+    if list.subpages.is_empty() || list.subpages.len() > limits::MAX_SUBPAGES {
+        return Err(fault(&entries, Rule::OutOfRange, format!("{} sub-pages, 1 to {}", list.subpages.len(), limits::MAX_SUBPAGES)));
+    }
+    let mut seen = alloc::collections::BTreeSet::new();
+    for (index, entry) in list.subpages.iter().enumerate() {
+        let at = entries.item(index);
+        if entry.sub.0 > limits::LAST_SUBPAGE_CODE {
+            return Err(fault(&at.field("sub"), Rule::OutOfRange, format!("{:04X}: 3F7F means any sub-page, never one", entry.sub.0)));
         }
-        if let Some(last) = last
-            && sub <= last
-        {
-            return Err(fault(&at.field("sub"), if sub == last { Rule::Duplicate } else { Rule::NotAscending }, format!("{sub:04X} after {last:04X}")));
+        if !seen.insert(entry.sub.0) {
+            return Err(fault(&at.field("sub"), Rule::Duplicate, format!("{:04X} twice", entry.sub.0)));
         }
-        last = Some(sub);
-        check_subpage(&at, subpage)?;
+        if let Some(title) = &entry.title {
+            check_text(&at.field("title"), title, 0, super::SUBPAGE_TITLE_CHARACTERS)?;
+        }
     }
     Ok(())
 }
 
-fn check_subpage(path: &Path<'_>, subpage: &SubPage) -> Checked {
+fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
     let rows = path.field("rows");
     for (index, row) in subpage.rows.iter().enumerate() {
         let Some(row) = row else { continue };
@@ -660,4 +661,12 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
         }
     }
     Ok(())
+}
+
+/// The decoded bytes of a base64 field already checked.
+pub(crate) fn bytes_of(text: &str) -> Vec<u8> {
+    let mut bytes = alloc::vec![0_u8; base64::decoded_len_max(text.len())];
+    let length = base64::decode(text.as_bytes(), &mut bytes).unwrap_or(0);
+    bytes.truncate(length);
+    bytes
 }

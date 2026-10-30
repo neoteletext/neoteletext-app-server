@@ -1,6 +1,5 @@
-//! One WebSocket connection: its input to the channel, what is its own
-//! from the channel, and the shared pages, which it catches up on by
-//! itself from the channel's log (decision 7).
+//! One WebSocket connection: its input to the channel, and what the
+//! channel sends it, from its own queue.
 //!
 //! **Keepalive** (requirement 11.3): the receiver pings a connection it
 //! has heard nothing on for a while and is answered here; this side pings
@@ -9,7 +8,6 @@
 //! all comes back. Both are WebSocket control frames (RFC 6455 sections
 //! 5.5.2 and 5.5.3), which a receiver never displays.
 
-use std::collections::BTreeSet;
 use std::io::IoSlice;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,16 +56,13 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
     let stats = Arc::clone(&hub.stats);
     stats.connected();
     tracing::debug!(target: "connection", channel = hub.folder, session, "opened");
-    let mut generation = hub.generation.clone();
-    let mut sent = *generation.borrow_and_update();
-    let mut own: BTreeSet<u16> = BTreeSet::new();
     let mut reader = Reader::new();
     reader.feed(early);
     let mut buffer = vec![0_u8; READ_BYTES];
     // When anything was last heard, and when this side pinged since.
     let mut heard = Instant::now();
     let mut pinged: Option<Instant> = None;
-    let mut open = send_pages(&mut writing, hub.pages.all(), &own, &stats).await;
+    let mut open = true;
     while open {
         let due = pinged.map_or_else(|| heard.checked_add(PING_AFTER), |at| at.checked_add(DEAD_AFTER_PING)).unwrap_or(heard);
         tokio::select! {
@@ -84,8 +79,6 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
             }
             outbound = own_queue.recv() => match outbound {
                 Some(Outbound::Bytes(bytes)) => open = write_binary(&mut writing, &bytes, &stats).await,
-                Some(Outbound::Own(page)) => { own.insert(page); }
-                Some(Outbound::Disown(page)) => { own.remove(&page); }
                 Some(Outbound::Close(code)) => {
                     // RFC 6455 section 5.5.1: the status code first, two bytes.
                     let _ = write(&mut writing, Opcode::Close, &code.to_be_bytes(), &stats).await;
@@ -94,18 +87,6 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut reading: 
                 }
                 None => open = false,
             },
-            changed = generation.changed() => {
-                if changed.is_err() {
-                    break;
-                }
-                let now = *generation.borrow_and_update();
-                let pages = match hub.pages.changed_since(sent) {
-                    Some(changed) => changed.into_iter().filter_map(|page| hub.pages.frame(page).map(|frame| (page, frame))).collect(),
-                    None => hub.pages.all(),
-                };
-                sent = now;
-                open = send_pages(&mut writing, pages, &own, &stats).await;
-            }
             () = tokio::time::sleep_until(due) => {
                 if pinged.is_some() {
                     // RFC 6455 section 7.1.7: a peer that answers nothing
@@ -137,7 +118,7 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
                     return false;
                 }
             }
-            // `subscribe all`: every connection is sent every shared page.
+            // Upstream is binary input alone (INPUT.md).
             Ok(Some(Message::Text(_) | Message::Pong)) => {}
             Ok(Some(Message::Ping(payload))) => {
                 if !write(writing, Opcode::Pong, &payload, stats).await {
@@ -154,16 +135,6 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
             }
         }
     }
-}
-
-/// Sends shared pages, but not those the session owns.
-async fn send_pages<W: AsyncWrite + Unpin>(writing: &mut W, pages: Vec<(u16, Arc<[u8]>)>, own: &BTreeSet<u16>, stats: &ServerStats) -> bool {
-    for (page, frame) in pages {
-        if !own.contains(&page) && !write_binary(writing, &frame, stats).await {
-            return false;
-        }
-    }
-    true
 }
 
 /// Writes binary bytes as one message, or as several when they are more

@@ -1,8 +1,13 @@
-//! Input as an application sees it: the engine's INPUT.md events
-//! (`neoteletext_input::event`), with each functional key named.
+//! Input as a program sees it: the engine's INPUT.md events
+//! (`neoteletext_input::event`), with each functional key named, and as
+//! the protocol's `input` event.
 
-use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction};
+use alloc::string::{String, ToString};
+
+use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction};
 use neoteletext_input::keys;
+
+use crate::protocol::{self, Buttons, HoverAction, InputEvent, KeyAction, KeyName, MouseAction};
 
 #[cfg(test)]
 mod tests;
@@ -133,12 +138,12 @@ impl<'a> Input<'a> {
             Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), text: key.text, base: key.base }),
             // Gone is not a release (INPUT.md, MOUSE action 3): the protocol
             // for programs has no event for it, so they are not told.
-            Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Gone => None,
-            Item::Event(Event::Mouse(mouse)) if mouse.action == MouseAction::Move => {
+            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Gone => None,
+            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move => {
                 Some(Self::Moved { buttons: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
             Item::Event(Event::Mouse(mouse)) => {
-                Some(Self::Mouse { pressed: mouse.action == MouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
+                Some(Self::Mouse { pressed: mouse.action == EventMouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
             Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),
             Item::Event(Event::Hover { leave, column, row }) => Some(Self::Hover { entered: !leave, column, row }),
@@ -170,5 +175,88 @@ impl<'a> Input<'a> {
         let (Self::Text(text) | Self::Key { action: Action::Press | Action::Repeat, text: Some(text), .. }) = *self else { return None };
         let mut characters = text.chars();
         characters.next().filter(|character| !character.is_control() && characters.next().is_none())
+    }
+}
+
+/// A key's name as the protocol writes it: a W3C `KeyboardEvent.key`
+/// name (INPUT.md section 5.6), or the character of a character key.
+fn key_name(key: Named) -> String {
+    let name = match key {
+        Named::Up => "ArrowUp",
+        Named::Down => "ArrowDown",
+        Named::Left => "ArrowLeft",
+        Named::Right => "ArrowRight",
+        Named::Enter => "Enter",
+        Named::Escape => "Escape",
+        Named::Backspace => "Backspace",
+        Named::Delete => "Delete",
+        Named::Tab => "Tab",
+        Named::Home => "Home",
+        Named::End => "End",
+        Named::PageUp => "PageUp",
+        Named::PageDown => "PageDown",
+        Named::Character(character) => return character.to_string(),
+        Named::Other(code) => keys::name(code).unwrap_or("Unidentified"),
+    };
+    name.to_string()
+}
+
+/// A cell's column and row within the page's 40 by 25, or none: the
+/// protocol's bounds (REQ-1476).
+fn cell(column: u32, row: u32) -> Option<(u8, u8)> {
+    let column = u8::try_from(column).ok().filter(|&column| usize::from(column) < protocol::COLUMNS)?;
+    let row = u8::try_from(row).ok().filter(|&row| usize::from(row) < protocol::ROWS)?;
+    Some((column, row))
+}
+
+/// The buttons held, a bit each: 1 left, 2 middle, 4 right (INPUT.md
+/// section 5.2).
+const LEFT: u8 = 1;
+const MIDDLE: u8 = 2;
+const RIGHT: u8 = 4;
+/// The last button a press or release names: 2, the right (INPUT.md
+/// section 5.2: 0 left, 1 middle, 2 right).
+const LAST_BUTTON: u8 = 2;
+
+impl Input<'_> {
+    /// The event as the protocol sends it (REQ-1476), or none for one
+    /// outside its bounds: a cell beyond the page's 40 by 25.
+    #[must_use]
+    pub fn event(&self) -> Option<InputEvent> {
+        Some(match *self {
+            Self::Text(text) => InputEvent::Text { text: text.to_string() },
+            Self::Paste(text) => InputEvent::Paste { text: text.to_string() },
+            Self::Key { action, key, text, base } => InputEvent::Key {
+                action: match action {
+                    Action::Press => KeyAction::Press,
+                    Action::Repeat => KeyAction::Repeat,
+                    Action::Release => KeyAction::Release,
+                },
+                key: KeyName(key_name(key)),
+                text: text.map(ToString::to_string),
+                base: base.map(|base| base.to_string()),
+            },
+            Self::Mouse { pressed, button, column, row } => {
+                let (column, row) = cell(column, row)?;
+                let button = (button <= LAST_BUTTON).then_some(button)?;
+                InputEvent::Mouse { action: if pressed { MouseAction::Press } else { MouseAction::Release }, button: Some(button), buttons: None, column, row }
+            }
+            Self::Moved { buttons, column, row } => {
+                let (column, row) = cell(column, row)?;
+                let held = Buttons { left: buttons & LEFT != 0, middle: buttons & MIDDLE != 0, right: buttons & RIGHT != 0 };
+                InputEvent::Mouse { action: MouseAction::Move, button: None, buttons: Some(held), column, row }
+            }
+            Self::Wheel { dx, dy, column, row } => {
+                let (column, row) = cell(column, row)?;
+                let bounded = |delta: i32| i16::try_from(delta).unwrap_or(if delta < 0 { i16::MIN } else { i16::MAX });
+                InputEvent::Wheel { dx: bounded(dx), dy: bounded(dy), column, row }
+            }
+            Self::Hover { entered, column, row } => {
+                let (column, row) = cell(column, row)?;
+                InputEvent::Hover { action: if entered { HoverAction::Enter } else { HoverAction::Leave }, column, row }
+            }
+            Self::FocusIn => InputEvent::Focus,
+            Self::FocusOut => InputEvent::Blur,
+        })
     }
 }

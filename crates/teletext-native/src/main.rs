@@ -10,8 +10,8 @@
 //! channel's push WebSocket is named on (the engine requires the push
 //! address on the channel's own origin); `--channels` is the file of the
 //! channels it serves, each a program of its own, in any language
-//! (`docs/applications.md`); `--state` is where it keeps what survives a
-//! restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
+//! (`docs/applications.md`); `--state` is where it keeps the session
+//! cookie's keys and the accumulated figures across a restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
 //! without either); `--admin-listen` is where `/metrics`, `/healthz` and
 //! `/readyz` are served (none unless given); `--log-format` is how events
 //! are written, and `RUST_LOG` chooses which.
@@ -48,7 +48,7 @@ use teletext_native::state::{StateDirectory, random_key};
 use teletext_native::stats::ServerStats;
 use teletext_native::{admin, apps, hub};
 use teletext_runtime::session_cookie::first_session;
-use teletext_runtime::{Channel, ChannelConfig, Remote, SESSION_GRACE_MS};
+use teletext_runtime::{Channel, ChannelConfig, SESSION_GRACE_MS};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -131,9 +131,6 @@ fn main() -> ExitCode {
 
 async fn serve(arguments: Arguments) -> Result<(), String> {
     let start = tokio::time::Instant::now();
-    // The channels' randomness, for their games: the time is enough,
-    // nothing here is a secret.
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |since| u64::try_from(since.as_nanos() & u128::from(u64::MAX)).unwrap_or(1));
     let push = push_origin(&arguments.origin);
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let stats = Arc::new(ServerStats::default());
@@ -160,11 +157,8 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
             session_grace_ms: SESSION_GRACE_MS,
         };
         let link = apps::start(spec)?;
-        let mut channel = Channel::new(config, vec![Box::new(Remote::new(Vec::new()))], seed);
-        if let Some(kept) = &kept {
-            load(&mut channel, kept, &folder);
-        }
-        hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats), kept.clone()));
+        let channel = Channel::new(config);
+        hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats)));
     }
     let listener = TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?;
     if let Some(address) = &arguments.admin {
@@ -201,22 +195,6 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
     drop(listener);
     stop(&routes, kept.as_ref()).await;
     Ok(())
-}
-
-/// Gives `channel` what was kept for it, logging what was ignored.
-fn load(channel: &mut Channel, kept: &StateDirectory, folder: &str) {
-    let (records, ignored) = kept.records(folder);
-    let mut loaded = 0_usize;
-    for (key, bytes) in records {
-        match channel.load(key, &bytes) {
-            Ok(()) => loaded = loaded.saturating_add(1),
-            Err(error) => tracing::warn!(target: "state", channel = folder, key = key.name(), ?error, "a kept record was ignored"),
-        }
-    }
-    for name in ignored {
-        tracing::warn!(target: "state", channel = folder, file = name, "a file in the channel's state was ignored");
-    }
-    tracing::info!(target: "state", channel = folder, records = loaded, ready = channel.is_ready(), "loaded what was kept");
 }
 
 /// The session cookie's keys: kept in the state directory, or made for
@@ -298,7 +276,7 @@ async fn stop_signal() {
 }
 
 /// Stops cleanly (requirement 5.1): every channel closes its connections
-/// as a restart and keeps what it keeps, the connections finish closing,
+/// as a restart, the connections finish closing,
 /// and the figures are kept, all within [`STOP_WITHIN`].
 async fn stop(routes: &Routes, kept: Option<&StateDirectory>) {
     tracing::info!("stopping");

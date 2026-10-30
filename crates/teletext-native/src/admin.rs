@@ -30,7 +30,7 @@ pub fn answer(stats: &Arc<ServerStats>, request: &Request<Incoming>) -> Response
             if waiting.is_empty() {
                 text(StatusCode::OK, "text/plain", "ready\n".to_owned())
             } else {
-                text(StatusCode::SERVICE_UNAVAILABLE, "text/plain", format!("no pages yet: {}\n", waiting.join(", ")))
+                text(StatusCode::SERVICE_UNAVAILABLE, "text/plain", format!("no program running: {}\n", waiting.join(", ")))
             }
         }
         _ => text(StatusCode::NOT_FOUND, "text/plain", "not found\n".to_owned()),

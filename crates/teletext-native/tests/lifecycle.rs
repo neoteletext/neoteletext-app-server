@@ -69,11 +69,10 @@ fn channels(folder: &Path, script: &str) -> PathBuf {
     file
 }
 
-/// Declares page 100 and, once started, publishes it saying `text`.
+/// A program that logs `text` once started, and reads what it is sent,
+/// its output kept open: a program whose output closes has ended.
 fn publishing(text: &str) -> String {
-    format!(
-        r#"printf '%s\n' '{{"type":"pages","pages":[{{"page":"100","title":"Front"}}]}}'; read -r _; printf '%s\n' '{{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,1,{text}\n"}}'; exec cat >/dev/null"#
-    )
+    format!(r#"read -r _; printf '%s\n' '{{"type":"log","level":"info","event":"started","text":"{text}"}}'; while read -r _; do :; done"#)
 }
 
 /// Starts the server with `arguments` beside its address and origin.
@@ -216,22 +215,17 @@ fn a_session_continues_with_its_cookie() {
     }
 }
 
-/// The administration listener answers `/healthz`; `/readyz` is 503 until
-/// the channel's program declares its pages and 200 after; the channel is
-/// served meanwhile; `/metrics` is there, and not on the viewers' listener
-/// (requirements 5.3, 8.1 and 8.4).
+/// The administration listener answers `/healthz`, `/readyz` (200 once
+/// the channel's program runs) and `/metrics`, which is not on the
+/// viewers' listener (requirements 8.1 and 8.4).
 #[test]
 fn probes_and_metrics_are_on_the_administration_listener() {
     let folder = scratch("admin");
-    let gate = folder.join("declare");
-    let script = format!("while [ ! -e {gate:?} ]; do sleep 0.05; done; {}", publishing("Ready"));
-    let file = channels(&folder, &script);
+    let file = channels(&folder, &publishing("Ready"));
     let admin = format!("127.0.0.1:{}", free_port());
     let server = serve(&["--channels", &file.display().to_string(), "--admin-listen", &admin], &[], Stdio::null());
     assert_eq!(until_status(&admin, "/healthz", 200), b"ok\n");
-    assert_eq!(until_status(&admin, "/readyz", 503), b"no pages yet: ch\n");
-    assert_eq!(get(&server.address, "/ch/channel.json").map(|(status, _)| status), Some(200), "served before the program declares");
-    std::fs::write(&gate, b"").unwrap();
+    assert_eq!(get(&server.address, "/ch/channel.json").map(|(status, _)| status), Some(200));
     assert_eq!(until_status(&admin, "/readyz", 200), b"ready\n");
     let metrics = String::from_utf8(until_status(&admin, "/metrics", 200)).unwrap();
     assert!(metrics.contains("# TYPE teletext_connections gauge\n"), "{metrics}");

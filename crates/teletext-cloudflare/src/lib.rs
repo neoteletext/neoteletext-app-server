@@ -6,12 +6,11 @@
 //! - **Viewers** connect to `/<channel>/push`; the object accepts their
 //!   connections with the hibernation interface.
 //! - **The channel's program** connects to `/<channel>/program` with the
-//!   channel's secret (requirement 1.5) and speaks `docs/applications.md`,
-//!   one line a message; the object is the server of that WebSocket too,
-//!   and opens no connection itself.
-//! - **What survives** eviction and deployment is kept in the object's
-//!   SQLite storage through the runtime's `Store` and `Forget` effects
-//!   (requirement 5.2).
+//!   channel's secret (requirement 1.5) and speaks the protocol of
+//!   `docs/applications.md` (DEC-1482), one line a message; the object is
+//!   the server of that WebSocket too, and opens no connection itself.
+//! - **Nothing of the channel's content is kept** (REQ-1474): the object's
+//!   SQLite storage holds only its folder and its session key.
 //! - **Time** is the object's single alarm: the runtime's next deadline.
 //!   Nothing is sent for the time's sake (requirement 11.2), so a channel
 //!   whose pages do not change lets its object hibernate, watched or not.
@@ -37,13 +36,12 @@
 )]
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
-use teletext_runtime::remote::declared_pages;
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
-use teletext_runtime::{Channel, ChannelConfig, Effect, Level, Remote, SESSION_GRACE_MS, SessionId, StoreKey};
+use teletext_runtime::{Channel, ChannelConfig, Effect, Level, SESSION_GRACE_MS, SessionId};
 use worker::{
     Date, Env, Error, Headers, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
     durable_object, event,
@@ -73,10 +71,14 @@ const INITIAL_PAGE: u16 = 0x100;
 /// A Close's status: the other side broke the protocol (RFC 6455 section 7.4.1).
 const CLOSE_PROTOCOL_ERROR: u16 = 1002;
 /// The object's tables, a migration a version (the numbered migrations of
-/// the owner's SQLite rule): what the channel keeps, and the object's own
-/// names (its folder, its session key, the schema's version).
-const MIGRATIONS: [&str; 1] = ["CREATE TABLE kept (key TEXT PRIMARY KEY, record BLOB NOT NULL) STRICT; \
-     CREATE TABLE meta (name TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT;"];
+/// the owner's SQLite rule): the object's own names (its folder, its
+/// session key, the schema's version); migration 2 drops the pages kept
+/// before DEC-1482.
+const MIGRATIONS: [&str; 2] = [
+    "CREATE TABLE kept (key TEXT PRIMARY KEY, record BLOB NOT NULL) STRICT; \
+     CREATE TABLE meta (name TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT;",
+    "DROP TABLE kept;",
+];
 /// The meta row naming the schema's version.
 const SCHEMA: &str = "schema";
 /// The meta row naming the channel's folder, so an object woken by a
@@ -154,23 +156,14 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
     env.durable_object(CHANNEL_BINDING)?.id_from_name(folder)?.get_stub()?.fetch_with_request(request).await
 }
 
-/// A viewer's connection, as the object holds it.
-struct Viewer {
-    socket: WebSocket,
-    /// The pages its session owns: the shared page of each is not sent to it.
-    own: BTreeSet<u16>,
-}
-
 /// A channel's running state, made when the object wakes.
 struct Live {
     folder: String,
     channel: Channel,
     /// When the host's clock started, in milliseconds since the Unix epoch.
     started_ms: u64,
-    viewers: BTreeMap<SessionId, Viewer>,
+    viewers: BTreeMap<SessionId, WebSocket>,
     program: Option<WebSocket>,
-    /// The program has declared its pages on its connection.
-    declared: bool,
     next_session: SessionId,
     key: Key,
     /// Whether viewers reach the Worker over `https`.
@@ -186,53 +179,26 @@ impl Live {
     }
 
     /// Carries out the channel's effects.
-    fn apply(&mut self, sql: &SqlStorage) {
+    fn apply(&mut self) {
         for effect in self.channel.take_effects() {
             match effect {
-                Effect::Shared { page, frame } => {
-                    for viewer in self.viewers.values().filter(|viewer| !viewer.own.contains(&page)) {
-                        send_binary(&viewer.socket, &frame);
-                    }
-                }
-                Effect::Own { session, page } => {
-                    if let Some(viewer) = self.viewers.get_mut(&session) {
-                        viewer.own.insert(page);
-                    }
-                }
-                Effect::Disown { session, page } => {
-                    if let Some(viewer) = self.viewers.get_mut(&session) {
-                        viewer.own.remove(&page);
-                    }
-                }
                 Effect::Send { session, bytes } => {
-                    if let Some(viewer) = self.viewers.get(&session) {
-                        send_binary(&viewer.socket, &bytes);
+                    if let Some(socket) = self.viewers.get(&session) {
+                        send_binary(socket, &bytes);
                     }
                 }
                 Effect::Close { session } => {
-                    if let Some(viewer) = self.viewers.get(&session) {
-                        let _ = viewer.socket.close(Some(CLOSE_PROTOCOL_ERROR), Some("protocol error"));
+                    if let Some(socket) = self.viewers.get(&session) {
+                        let _ = socket.close(Some(CLOSE_PROTOCOL_ERROR), Some("protocol error"));
                     }
                 }
-                Effect::ToApplication { line, .. } => {
-                    if self.declared
-                        && let Some(program) = &self.program
-                    {
+                Effect::ToProgram { line } => {
+                    if let Some(program) = &self.program {
                         let text = String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(&line)).into_owned();
                         let _ = program.send_with_str(text);
                     }
                 }
-                Effect::Store { key, bytes } => {
-                    let stored = sql.exec("INSERT OR REPLACE INTO kept (key, record) VALUES (?, ?)", vec![key.name().into(), bytes.into()]);
-                    if let Err(error) = stored {
-                        log(Level::Error, &self.folder, "store_failed", &format!("{}: {error}", key.name()));
-                    }
-                }
-                Effect::Forget { key } => {
-                    let _ = sql.exec("DELETE FROM kept WHERE key = ?", vec![key.name().into()]);
-                }
                 Effect::Log { level, event, text } => log(level, &self.folder, event, &text),
-                Effect::Withdrawn { .. } | Effect::Contents => {}
             }
         }
     }
@@ -353,47 +319,36 @@ impl ChannelObject {
             epoch_at_start_ms: started_ms,
             session_grace_ms: SESSION_GRACE_MS,
         };
-        let mut channel = Channel::new(config, vec![Box::new(Remote::new(Vec::new()))], started_ms);
-        for row in sql.exec("SELECT key, record FROM kept", None)?.raw() {
-            let mut values = row?.into_iter();
-            let (Some(SqlStorageValue::String(name)), Some(SqlStorageValue::Blob(record))) = (values.next(), values.next()) else { continue };
-            let loaded = StoreKey::parse(&name).ok_or(teletext_runtime::StoreError::Invalid).and_then(|key| channel.load(key, &record));
-            if let Err(error) = loaded {
-                log(Level::Warn, &folder, "record_ignored", &format!("{name}: {error:?}"));
-            }
-        }
+        let channel = Channel::new(config);
         let mut live = Live {
             folder,
             channel,
             started_ms,
             viewers: BTreeMap::new(),
             program: self.state.get_websockets_with_tag(PROGRAM_TAG).into_iter().next(),
-            declared: false,
             next_session: first_session(started_ms),
             key,
             secure: origin.starts_with("https://"),
             alarm: None,
         };
-        // A program still connected declared its pages before; they were kept.
-        live.declared = live.program.is_some() && live.channel.is_ready();
-        // Viewers still connected after an eviction: each starts afresh,
-        // sent every shared page again.
+        // Viewers still connected after an eviction each start afresh, and a
+        // program still connected is started again, told of each.
         for socket in self.state.get_websockets_with_tag(VIEWER_TAG) {
             let Ok(Some(session)) = socket.deserialize_attachment::<SessionId>() else { continue };
             Self::welcome(&mut live, session, socket);
         }
-        live.apply(&sql);
+        if live.program.is_some() {
+            let now = live.now();
+            live.channel.program_started(now);
+        }
+        live.apply();
         *self.live.borrow_mut() = Some(live);
         Ok(())
     }
 
-    /// A viewer's connection for `session` opened: every shared page goes
-    /// to it, then whatever its session owns.
+    /// A viewer's connection for `session` opened: its program is told.
     fn welcome(live: &mut Live, session: SessionId, socket: WebSocket) {
-        for (_, frame) in live.channel.shared_frames() {
-            send_binary(&socket, frame.as_ref());
-        }
-        live.viewers.insert(session, Viewer { socket, own: BTreeSet::new() });
+        live.viewers.insert(session, socket);
         let now = live.now();
         live.channel.opened(session, now);
     }
@@ -421,11 +376,10 @@ impl ChannelObject {
 
     /// Runs `work` on the live channel, then carries out its effects.
     fn with_live<T>(&self, work: impl FnOnce(&mut Live) -> T) -> Result<T> {
-        let sql = self.state.storage().sql();
         let mut live = self.live.borrow_mut();
         let live = live.as_mut().ok_or_else(|| failure("the channel is not awake"))?;
         let answer = work(live);
-        live.apply(&sql);
+        live.apply();
         Ok(answer)
     }
 
@@ -463,7 +417,9 @@ impl ChannelObject {
         self.state.accept_websocket_with_tags(&pair.server, &[PROGRAM_TAG]);
         self.with_live(|live| {
             live.program = Some(pair.server);
-            live.declared = false;
+            let now = live.now();
+            live.channel.program_started(now);
+            log(Level::Info, &live.folder, "program_connected", "the program connected");
         })?;
         Response::from_websocket(pair.client)
     }
@@ -521,22 +477,7 @@ impl worker::DurableObject for ChannelObject {
             match message {
                 WebSocketIncomingMessage::String(text) if program => {
                     for line in text.split('\n').map(str::trim_end).filter(|line| !line.is_empty()) {
-                        if live.declared {
-                            live.channel.from_application(0, line.as_bytes(), now);
-                            continue;
-                        }
-                        match declared_pages(line.as_bytes()) {
-                            Ok(pages) => {
-                                live.channel.declared(0, pages);
-                                live.declared = true;
-                                live.channel.application_started(0, now);
-                                log(Level::Info, &live.folder, "program_declared", "the program declared its pages");
-                            }
-                            Err(refusal) => {
-                                log(Level::Warn, &live.folder, "program_refused", &refusal);
-                                let _ = socket.close(Some(CLOSE_PROTOCOL_ERROR), Some("the first line must declare the pages"));
-                            }
-                        }
+                        live.channel.from_program(line.as_bytes(), now);
                     }
                 }
                 WebSocketIncomingMessage::Binary(bytes) if !program => {
@@ -561,7 +502,8 @@ impl worker::DurableObject for ChannelObject {
 
 impl ChannelObject {
     /// A WebSocket closed: a viewer's session waits for its viewer; the
-    /// program's lines are dropped until it connects again.
+    /// program's lines are dropped until it connects again, and its
+    /// channel is unavailable meanwhile.
     async fn gone(&self, socket: &WebSocket) -> Result<()> {
         self.wake(None)?;
         let program = self.is_program(socket);
@@ -569,7 +511,7 @@ impl ChannelObject {
         self.with_live(|live| {
             if program {
                 live.program = None;
-                live.declared = false;
+                live.channel.program_ended();
                 log(Level::Info, &live.folder, "program_gone", "the program went");
             } else if let Some(session) = session
                 && live.viewers.remove(&session).is_some()

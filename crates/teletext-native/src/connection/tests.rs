@@ -1,7 +1,7 @@
 use super::*;
 use crate::hub::spawn;
 use crate::websocket::{FIN, MASKED};
-use teletext_runtime::{Channel, ChannelConfig, Remote};
+use teletext_runtime::{Channel, ChannelConfig};
 use tokio::io::DuplexStream;
 
 /// The server's Ping, which has no payload: two bytes.
@@ -30,8 +30,8 @@ fn connected() -> DuplexStream {
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
     };
-    let channel = Channel::new(config, vec![Box::new(Remote::new(Vec::new()))], 1);
-    let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()), None);
+    let channel = Channel::new(config);
+    let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()));
     let (receiver, server) = tokio::io::duplex(IN_FLIGHT);
     let (reading, writing) = tokio::io::split(server);
     tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1).await });
