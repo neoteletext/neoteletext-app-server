@@ -69,6 +69,13 @@ pub(crate) fn encode(page: &Page) -> Encoded {
     Encoded { packets: packets.as_chunks::<PACKET_BYTES>().0.to_vec(), update_header, cursor: model.cursor }
 }
 
+/// The sub-page's header alone, without the erase bit: a frame that
+/// changes nothing of the page, for a sub-page whose links alone changed,
+/// which its LINKS record, or its absence, then carries (DEC-1517).
+pub(crate) fn header_only(new: &Encoded) -> Change {
+    new.update_header.map_or(Change::Whole, |header| Change::Rows(header.to_vec()))
+}
+
 /// Packet X/0, the header.
 const HEADER: u8 = 0;
 /// The rows' packets, X/1 to X/25.

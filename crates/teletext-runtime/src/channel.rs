@@ -137,6 +137,9 @@ struct Shown {
     packets: Vec<[u8; PACKET_BYTES]>,
     /// Its cursor.
     cursor: Option<CursorLine>,
+    /// Its Link Extension links as last sent, which its packets do not
+    /// carry: they travel as its LINKS record (REQ-1494).
+    links: protocol::LinkExtension,
 }
 
 /// One open connection: all the channel holds of a viewer (REQ-1474).
@@ -771,10 +774,16 @@ impl Channel {
             state.selection = Some(Selection { page: page.page, sub: page.sub });
             state.selection_due = None;
             let change = match &state.shown {
-                Some(kept) if kept.page == number && kept.sub == sub => crate::page::changes(&kept.packets, &encoded),
+                Some(kept) if kept.page == number && kept.sub == sub => match crate::page::changes(&kept.packets, &encoded) {
+                    // Links alone changed: a frame of the header without the
+                    // erase bit, then its LINKS record, or none when every
+                    // link was removed (DEC-1517).
+                    Change::Nothing if kept.links != page.link_extension => crate::page::header_only(&encoded),
+                    change => change,
+                },
                 _ => Change::Whole,
             };
-            state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor });
+            state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor, links: page.link_extension.clone() });
             let mut bytes = match change {
                 Change::Nothing => continue,
                 Change::Whole => encoded.packets.concat(),
