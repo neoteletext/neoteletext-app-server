@@ -7,8 +7,8 @@
 #   2. the TypeScript channels and the neoteletext.com home page, copied from
 #      their working trees beside this repository, the channels' libraries
 #      installed from their vendor/; the old Hackaday channel, Python, with
-#      a pinned uv and the engine's tools it runs (neottx and the picture
-#      converter), its own downloads on the container never touched;
+#      a pinned uv and the engine's neottx for its QR codes; and the Hackaday
+#      dataset both Hackaday channels read, and nothing else (DEC-1568);
 #   3. the channels file, the service, and the container's Caddy, which
 #      serves the home page on neoteletext.com and www and proxies
 #      app.neoteletext.com to the server;
@@ -35,7 +35,11 @@ hackaday_tree=${NEOTELETEXT_HACKADAY_TREE:-$devel/neoteletext-server-channel-hac
 # The old Hackaday channel, Python, beside the Python kit.
 python_channels=neoteletext-server-channels
 # The development machine's uv, so uv.lock is read by the version that wrote it.
-uv_version=0.8.17
+uv_version=0.13.6
+# The Hackaday dataset both Hackaday channels read, and only it (DEC-1568):
+# the development machine's folder, copied to the container in its own layout.
+dataset_source=$devel/neoteletext-hackaday
+dataset=$app/data/neoteletext-hackaday
 # The engine the server is pinned to builds the neottx the old channel runs.
 engine_rev=$(sed -n 's/^neoteletext-core = .*rev = "\([0-9a-f]*\)".*/\1/p' "$repo/Cargo.toml")
 musl=x86_64-unknown-linux-musl
@@ -49,6 +53,7 @@ source_of() { if [ "$1" = neoteletext-server-channel-hackaday ]; then echo "$hac
 
 for c in "${channels[@]}"; do [ -d "$(source_of "$c")" ] || die "$(source_of "$c") not found"; done
 for c in neoteletext-www "$python_channels"; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
+[ -f "$dataset_source/analysis.sqlite" ] && [ -f "$dataset_source/hackaday.sqlite" ] || die "no Hackaday dataset in $dataset_source"
 [ -n "$engine_rev" ] || die "no engine rev in $repo/Cargo.toml"
 
 say "backups on the container, stamped $stamp"
@@ -86,9 +91,16 @@ rsync -a --delete "$devel/neoteletext-www/public/" "$target:$app/current/www/"
 ssh "$target" "set -e; cd $app/current
     for c in ${channels[*]}; do (cd \$c && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --silent); done"
 
+say "the Hackaday dataset into $dataset"
+# Compared by content: the container's copy began as hard links to files
+# with their own times. SQLite's -wal and -shm belong to the reader.
+# shellcheck disable=SC2029
+ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/data $dataset"
+rsync -a --checksum --exclude '*.sqlite-wal' --exclude '*.sqlite-shm' --exclude '*.bak-*' "$dataset_source/" "$target:$dataset/"
+
 say "the old Hackaday channel, uv, and the engine's tools into $app/tools"
-# The channel's downloads (cache, sounds, people) are the container's own:
-# excluded, so rsync neither sends nor deletes them.
+# The channel's former downloads (cache) and its local sounds and people are
+# the container's own: excluded, so rsync neither sends nor deletes them.
 rsync -a --delete --exclude .git --exclude tmp --exclude .venv --exclude __pycache__ --exclude .mypy_cache \
     --exclude .ruff_cache --exclude .pytest_cache --exclude /hackaday/cache --exclude /hackaday/sounds --exclude /hackaday/people \
     "$devel/$python_channels/" "$target:$app/current/$python_channels/"
@@ -118,9 +130,6 @@ glibc_there=$(ssh "$target" "ldd --version | head -1 | awk '{print \$NF}'")
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/tools"
 # shellcheck disable=SC2029
 ssh "$builder" "cat neottx-build/target/release/neottx" | ssh "$target" "install -m 755 /dev/stdin $app/tools/neottx"
-# shellcheck disable=SC2029
-ssh "$builder" "cat neottx-build/scripts/image-to-teletext.py" | ssh "$target" "install -m 644 /dev/stdin $app/tools/image-to-teletext.py
-    cd ~ && uv run --quiet $app/tools/image-to-teletext.py --help >/dev/null"
 
 say "the data, once: the Hackaday archive and the pictures from ~/incoming"
 # The copy into ~/incoming ends by writing ~/incoming/.complete; nothing is
@@ -140,8 +149,8 @@ ssh "$target" 'set -e
 say "the channels file, the service and the container's Caddy"
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
-  {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts"],"directory":"current/neoteletext-server-channel-hackaday"},
-  {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","HACKADAY_CONVERTER=$app/tools/image-to-teletext.py","UV=/usr/local/bin/uv","uv","run","--frozen","--no-dev","python","-m","hackaday"],"directory":"current/$python_channels/hackaday"},
+  {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday"},
+  {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-demosite"},
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
 ]}
