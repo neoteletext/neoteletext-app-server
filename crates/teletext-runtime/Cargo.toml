@@ -14,6 +14,9 @@ neoteletext-input.workspace = true
 neoteletext-audio.workspace = true
 neoteletext-web.workspace = true
 neoteletext-opus.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

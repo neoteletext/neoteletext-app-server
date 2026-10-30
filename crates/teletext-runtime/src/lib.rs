@@ -35,6 +35,7 @@ pub mod frame;
 mod held;
 pub mod input;
 pub mod json;
+pub mod protocol;
 pub mod remote;
 pub mod screen;
 mod session;

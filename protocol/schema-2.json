@@ -1,0 +1,2749 @@
+{
+  "$defs": {
+    "AuthorLevel": {
+      "description": "An author's log line's level, as TTI's `LG` writes it.",
+      "oneOf": [
+        {
+          "const": "E",
+          "description": "An error.",
+          "type": "string"
+        },
+        {
+          "const": "W",
+          "description": "A warning.",
+          "type": "string"
+        },
+        {
+          "const": "I",
+          "description": "Information.",
+          "type": "string"
+        }
+      ]
+    },
+    "Budgets": {
+      "additionalProperties": false,
+      "description": "The server's own bounds.",
+      "properties": {
+        "author_log_bytes": {
+          "description": "The longest author's log line, in bytes of UTF-8.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line_bytes": {
+          "description": "The longest line, in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "log_characters": {
+          "description": "The longest operator's log line, in characters.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "named_connections": {
+          "description": "The connections one message may name.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reply_limit_ms": {
+          "description": "How long the server waits for an answer to `connected` or\n`selected`, in milliseconds (REQ-1481).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title_characters": {
+          "description": "The longest title, magazine name or section, in characters.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line_bytes",
+        "title_characters",
+        "author_log_bytes",
+        "log_characters",
+        "named_connections",
+        "reply_limit_ms"
+      ],
+      "type": "object"
+    },
+    "Buttons": {
+      "additionalProperties": false,
+      "description": "The mouse buttons held.",
+      "properties": {
+        "left": {
+          "description": "The left button.",
+          "type": "boolean"
+        },
+        "middle": {
+          "description": "The middle button.",
+          "type": "boolean"
+        },
+        "right": {
+          "description": "The right button.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "left",
+        "middle",
+        "right"
+      ],
+      "type": "object"
+    },
+    "CharacterSet": {
+      "additionalProperties": false,
+      "description": "The page's default character set (EN 300 706 clause 15, table 32).",
+      "properties": {
+        "national_option": {
+          "description": "The national option, C12 to C14 of the header, 0 to 7.",
+          "format": "uint8",
+          "maximum": 7,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "region": {
+          "description": "The region, bits 3 to 6 of the default set's designation, carried\nin packet X/28/0; none for no packet X/28/0.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "national_option"
+      ],
+      "type": "object"
+    },
+    "Connections": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Everyone",
+          "description": "`\"all\"`: every connection open."
+        },
+        {
+          "description": "The connections named, at most [`MOST_NAMED_CONNECTIONS`].",
+          "items": {
+            "format": "uint64",
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "type": "array"
+        }
+      ],
+      "description": "Who a message is for: every open connection of the channel, or the\nconnections named. A connection named that has closed is passed over\n(REQ-1473)."
+    },
+    "Control": {
+      "additionalProperties": false,
+      "description": "The control bits C4 to C11 of a page header (EN 300 706 clause\n9.3.1.3). The server sets C4 and C11 itself on every page it sends, so\nthat each replaces the last and stands alone (`SERVER.md` section 5.2).",
+      "properties": {
+        "erase": {
+          "description": "C4, erase page.",
+          "type": "boolean"
+        },
+        "inhibit_display": {
+          "description": "C10, inhibit display.",
+          "type": "boolean"
+        },
+        "interrupted_sequence": {
+          "description": "C9, interrupted sequence.",
+          "type": "boolean"
+        },
+        "magazine_serial": {
+          "description": "C11, magazine serial.",
+          "type": "boolean"
+        },
+        "newsflash": {
+          "description": "C5, newsflash.",
+          "type": "boolean"
+        },
+        "subtitle": {
+          "description": "C6, subtitle.",
+          "type": "boolean"
+        },
+        "suppress_header": {
+          "description": "C7, suppress header.",
+          "type": "boolean"
+        },
+        "update": {
+          "description": "C8, update indicator.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "erase",
+        "newsflash",
+        "subtitle",
+        "suppress_header",
+        "update",
+        "interrupted_sequence",
+        "inhibit_display",
+        "magazine_serial"
+      ],
+      "type": "object"
+    },
+    "CookiePair": {
+      "additionalProperties": false,
+      "description": "A cookie as a request carries it.",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value.",
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Cursor": {
+      "additionalProperties": false,
+      "description": "The input cursor (INPUT.md section 7.1).",
+      "properties": {
+        "block": {
+          "description": "A block cursor rather than an underline.",
+          "type": "boolean"
+        },
+        "column": {
+          "description": "Its column, 0 to 39.",
+          "format": "uint8",
+          "maximum": 39,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "row": {
+          "description": "Its row, 0 to 24.",
+          "format": "uint8",
+          "maximum": 24,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "block"
+      ],
+      "type": "object"
+    },
+    "Enhancement": {
+      "additionalProperties": false,
+      "description": "A packet X/26 (EN 300 706 clause 12.3).",
+      "properties": {
+        "designation": {
+          "description": "Its designation code, 0 to 15.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "triplets": {
+          "description": "Its thirteen triplets.",
+          "items": {
+            "$ref": "#/$defs/Triplet"
+          },
+          "maxItems": 13,
+          "minItems": 13,
+          "type": "array"
+        }
+      },
+      "required": [
+        "designation",
+        "triplets"
+      ],
+      "type": "object"
+    },
+    "Everyone": {
+      "description": "`\"all\"`.",
+      "oneOf": [
+        {
+          "const": "all",
+          "description": "Every open connection.",
+          "type": "string"
+        }
+      ]
+    },
+    "HoverAction": {
+      "description": "The pointer came onto a control or went off it.",
+      "oneOf": [
+        {
+          "const": "enter",
+          "description": "Came onto it.",
+          "type": "string"
+        },
+        {
+          "const": "leave",
+          "description": "Went off it.",
+          "type": "string"
+        }
+      ]
+    },
+    "IndexEntry": {
+      "additionalProperties": false,
+      "description": "A page of the index.",
+      "properties": {
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "Its number, in its magazine, never a reserved one."
+        },
+        "section": {
+          "description": "The heading a receiver shows it under, or none.",
+          "maxLength": 120,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subpages": {
+          "description": "How many sub-pages it has, 1 to 8,190.",
+          "format": "uint16",
+          "maximum": 8190,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "title": {
+          "description": "Its title, shown in a receiver's lists and overview.",
+          "maxLength": 120,
+          "type": "string"
+        }
+      },
+      "required": [
+        "page",
+        "title",
+        "subpages"
+      ],
+      "type": "object"
+    },
+    "InputEvent": {
+      "description": "An input event (INPUT.md), by `kind`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A key pressed, repeating or released: every one is sent.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/KeyAction",
+              "description": "What it did."
+            },
+            "base": {
+              "description": "The United States layout's character of the same key, when it\ndiffers from `key`.",
+              "maxLength": 1,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "key": {
+              "$ref": "#/$defs/KeyName",
+              "description": "Which key."
+            },
+            "kind": {
+              "const": "key",
+              "type": "string"
+            },
+            "text": {
+              "description": "The text the key produced, if any.",
+              "maxLength": 32,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A mouse button pressed or released, or the pointer moved, over the\npage.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/MouseAction",
+              "description": "What it did."
+            },
+            "button": {
+              "description": "The button pressed or released, 0 left, 1 middle, 2 right; none\nfor a move.",
+              "format": "uint8",
+              "maximum": 2,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "buttons": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Buttons"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The buttons held during a move; none for a press or release."
+            },
+            "column": {
+              "description": "The cell's column, 0 to 39.",
+              "format": "uint8",
+              "maximum": 39,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "mouse",
+              "type": "string"
+            },
+            "row": {
+              "description": "The cell's row, 0 to 24.",
+              "format": "uint8",
+              "maximum": 24,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "column",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The wheel turned over a cell, in 1/120ths of a line, positive right\nand down.",
+          "properties": {
+            "column": {
+              "description": "The cell's column.",
+              "format": "uint8",
+              "maximum": 39,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dx": {
+              "description": "Across.",
+              "format": "int16",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            },
+            "dy": {
+              "description": "Down.",
+              "format": "int16",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "wheel",
+              "type": "string"
+            },
+            "row": {
+              "description": "The cell's row.",
+              "format": "uint8",
+              "maximum": 24,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "dx",
+            "dy",
+            "column",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The pointer came onto one of the page's controls, or went off it.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/HoverAction",
+              "description": "Which."
+            },
+            "column": {
+              "description": "The control's first column.",
+              "format": "uint8",
+              "maximum": 39,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "hover",
+              "type": "string"
+            },
+            "row": {
+              "description": "The control's top row.",
+              "format": "uint8",
+              "maximum": 24,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "column",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Text that came from no key: an input method's, or a phone's.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "description": "Whole characters.",
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A paste: data, never keystrokes.",
+          "properties": {
+            "kind": {
+              "const": "paste",
+              "type": "string"
+            },
+            "text": {
+              "description": "What was pasted.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The keys came to the page.",
+          "properties": {
+            "kind": {
+              "const": "focus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The keys left it: let go of anything held.",
+          "properties": {
+            "kind": {
+              "const": "blur",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "KeyAction": {
+      "description": "What a key did.",
+      "oneOf": [
+        {
+          "const": "press",
+          "description": "Pressed.",
+          "type": "string"
+        },
+        {
+          "const": "repeat",
+          "description": "Repeating while held.",
+          "type": "string"
+        },
+        {
+          "const": "release",
+          "description": "Released.",
+          "type": "string"
+        }
+      ]
+    },
+    "KeyLink": {
+      "additionalProperties": false,
+      "description": "A key's link (`LN`).",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/LinkKey",
+          "description": "The key."
+        },
+        "label": {
+          "description": "The prompt: at most 9 characters for this service, 8 for another;\nnone for the Index key.",
+          "maxLength": 9,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "description": "Where it leads: `mpp`, `mpp:ssss`, `name:mpp`, `name:mpp:ssss`, an\n`http` or `https` address, or `web:` and one (Appendix E.1).",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[!-+\\--~]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "target"
+      ],
+      "type": "object"
+    },
+    "KeyName": {
+      "anyOf": [
+        {
+          "enum": [
+            "Accept",
+            "Again",
+            "AllCandidates",
+            "Alphanumeric",
+            "Alt",
+            "AltGraph",
+            "AltLeft",
+            "AltRight",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "Attn",
+            "AudioVolumeDown",
+            "AudioVolumeMute",
+            "AudioVolumeUp",
+            "Backspace",
+            "BrightnessDown",
+            "BrightnessUp",
+            "BrowserBack",
+            "BrowserFavorites",
+            "BrowserForward",
+            "BrowserHome",
+            "BrowserRefresh",
+            "BrowserSearch",
+            "BrowserStop",
+            "Cancel",
+            "CapsLock",
+            "ChannelDown",
+            "ChannelUp",
+            "Clear",
+            "Close",
+            "ClosedCaptionToggle",
+            "CodeInput",
+            "ColorF0Red",
+            "ColorF1Green",
+            "ColorF2Yellow",
+            "ColorF3Blue",
+            "ColorF4Grey",
+            "ColorF5Brown",
+            "Compose",
+            "ContextMenu",
+            "Control",
+            "ControlLeft",
+            "ControlRight",
+            "Convert",
+            "Copy",
+            "CrSel",
+            "Cut",
+            "DVR",
+            "Dead",
+            "Delete",
+            "Dimmer",
+            "Eject",
+            "End",
+            "Enter",
+            "EraseEof",
+            "Escape",
+            "ExSel",
+            "Execute",
+            "Exit",
+            "F1",
+            "F10",
+            "F11",
+            "F12",
+            "F13",
+            "F14",
+            "F15",
+            "F16",
+            "F17",
+            "F18",
+            "F19",
+            "F2",
+            "F20",
+            "F21",
+            "F22",
+            "F23",
+            "F24",
+            "F25",
+            "F26",
+            "F27",
+            "F28",
+            "F29",
+            "F3",
+            "F30",
+            "F31",
+            "F32",
+            "F33",
+            "F34",
+            "F35",
+            "F4",
+            "F5",
+            "F6",
+            "F7",
+            "F8",
+            "F9",
+            "FinalMode",
+            "Find",
+            "Fn",
+            "FnLock",
+            "GroupFirst",
+            "GroupLast",
+            "GroupNext",
+            "GroupPrevious",
+            "Guide",
+            "Help",
+            "Hibernate",
+            "Home",
+            "Hyper",
+            "HyperLeft",
+            "HyperRight",
+            "Info",
+            "Insert",
+            "InstantReplay",
+            "LogOff",
+            "MailForward",
+            "MailReply",
+            "MailSend",
+            "MediaApps",
+            "MediaAudioTrack",
+            "MediaClose",
+            "MediaFastForward",
+            "MediaLast",
+            "MediaPause",
+            "MediaPlay",
+            "MediaPlayPause",
+            "MediaRecord",
+            "MediaRewind",
+            "MediaSkipBackward",
+            "MediaSkipForward",
+            "MediaStepBackward",
+            "MediaStepForward",
+            "MediaStop",
+            "MediaTopMenu",
+            "MediaTrackNext",
+            "MediaTrackPrevious",
+            "Meta",
+            "MetaLeft",
+            "MetaRight",
+            "ModeChange",
+            "NavigateIn",
+            "NavigateNext",
+            "NavigateOut",
+            "NavigatePrevious",
+            "New",
+            "NextCandidate",
+            "NonConvert",
+            "NumLock",
+            "Numpad0",
+            "Numpad1",
+            "Numpad2",
+            "Numpad3",
+            "Numpad4",
+            "Numpad5",
+            "Numpad6",
+            "Numpad7",
+            "Numpad8",
+            "Numpad9",
+            "NumpadAdd",
+            "NumpadDecimal",
+            "NumpadDivide",
+            "NumpadEnter",
+            "NumpadEqual",
+            "NumpadMultiply",
+            "NumpadSubtract",
+            "Open",
+            "PageDown",
+            "PageUp",
+            "Paste",
+            "Pause",
+            "PinPToggle",
+            "Play",
+            "Power",
+            "PowerOff",
+            "PreviousCandidate",
+            "Print",
+            "PrintScreen",
+            "Process",
+            "Props",
+            "RandomToggle",
+            "Redo",
+            "Save",
+            "ScrollLock",
+            "Select",
+            "Settings",
+            "Shift",
+            "ShiftLeft",
+            "ShiftRight",
+            "SingleCandidate",
+            "SpellCheck",
+            "Standby",
+            "Subtitle",
+            "Super",
+            "SuperLeft",
+            "SuperRight",
+            "Symbol",
+            "SymbolLock",
+            "TV",
+            "Tab",
+            "Teletext",
+            "Undo",
+            "Unidentified",
+            "VideoModeNext",
+            "WakeUp",
+            "Wink",
+            "ZoomIn",
+            "ZoomOut",
+            "ZoomToggle"
+          ],
+          "type": "string"
+        },
+        {
+          "maxLength": 1,
+          "minLength": 1,
+          "type": "string"
+        }
+      ],
+      "description": "A W3C KeyboardEvent.key name, from the engine's table (INPUT.md section 5.6), or the one character of a character key."
+    },
+    "Link": {
+      "additionalProperties": false,
+      "description": "A link: a page and a sub-code.",
+      "properties": {
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "The page."
+        },
+        "sub": {
+          "$ref": "#/$defs/SubCode",
+          "description": "The sub-code, or 3F7F for any."
+        }
+      },
+      "required": [
+        "page",
+        "sub"
+      ],
+      "type": "object"
+    },
+    "LinkExtension": {
+      "additionalProperties": false,
+      "description": "A sub-page's Link Extension links (the engine's Appendix E; REQ-1478\nversion 3, REQ-1494).",
+      "properties": {
+        "keys": {
+          "description": "The keys' links, as TTI's `LN` lines: each key at most once.",
+          "items": {
+            "$ref": "#/$defs/KeyLink"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "numbers": {
+          "description": "Page numbers on the page that lead elsewhere, as TTI's `LK` lines.",
+          "items": {
+            "$ref": "#/$defs/NumberLink"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "texts": {
+          "description": "Runs of text on the page that lead elsewhere, as TTI's `LT` lines.",
+          "items": {
+            "$ref": "#/$defs/TextLink"
+          },
+          "maxItems": 8,
+          "type": "array"
+        }
+      },
+      "required": [
+        "keys",
+        "numbers",
+        "texts"
+      ],
+      "type": "object"
+    },
+    "LinkKey": {
+      "description": "A key of the Link Extension.",
+      "enum": [
+        "red",
+        "green",
+        "yellow",
+        "cyan",
+        "index"
+      ],
+      "type": "string"
+    },
+    "Magazine": {
+      "additionalProperties": false,
+      "description": "A magazine of the index (REQ-1477).",
+      "properties": {
+        "magazine": {
+          "description": "Its number, 1 to 8.",
+          "format": "uint8",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its name, which a receiver shows.",
+          "maxLength": 120,
+          "type": "string"
+        },
+        "pages": {
+          "description": "Its pages, in ascending order: at most 253, 251 in magazine 1.",
+          "items": {
+            "$ref": "#/$defs/IndexEntry"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "magazine",
+        "name",
+        "pages"
+      ],
+      "type": "object"
+    },
+    "MessageType": {
+      "description": "The types of message a program sends.",
+      "enum": [
+        "reply",
+        "page",
+        "index",
+        "goto",
+        "sound",
+        "cookie",
+        "author_log",
+        "log",
+        "packets"
+      ],
+      "type": "string"
+    },
+    "MouseAction": {
+      "description": "What the mouse did.",
+      "oneOf": [
+        {
+          "const": "press",
+          "description": "A button pressed.",
+          "type": "string"
+        },
+        {
+          "const": "release",
+          "description": "A button released.",
+          "type": "string"
+        },
+        {
+          "const": "move",
+          "description": "The pointer moved.",
+          "type": "string"
+        }
+      ]
+    },
+    "NumberLink": {
+      "additionalProperties": false,
+      "description": "A page number on the page that leads elsewhere (`LK`).",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "The page number as the page shows it."
+        },
+        "target": {
+          "description": "Where it leads, in a form of Appendix E.1, never `web:`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[!-+\\--~]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "target"
+      ],
+      "type": "object"
+    },
+    "OperatorLevel": {
+      "description": "An operator's log line's level.",
+      "enum": [
+        "error",
+        "warn",
+        "info",
+        "debug"
+      ],
+      "type": "string"
+    },
+    "PackedLine": {
+      "description": "A packed line other than X/26, by its packet.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "X/27 of designation code 1 to 3: thirty-nine values of four bits.",
+          "properties": {
+            "designation": {
+              "description": "1 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "nibbles": {
+              "description": "The values, 0 to 15 each.",
+              "items": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 39,
+              "minItems": 39,
+              "type": "array"
+            },
+            "packet": {
+              "const": "x27_nibbles",
+              "type": "string"
+            }
+          },
+          "required": [
+            "packet",
+            "designation",
+            "nibbles"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "X/27 of designation code 4 to 15: thirteen triplets.",
+          "properties": {
+            "designation": {
+              "description": "4 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 4,
+              "type": "integer"
+            },
+            "packet": {
+              "const": "x27",
+              "type": "string"
+            },
+            "triplets": {
+              "description": "The triplets.",
+              "items": {
+                "$ref": "#/$defs/Triplet"
+              },
+              "maxItems": 13,
+              "minItems": 13,
+              "type": "array"
+            }
+          },
+          "required": [
+            "packet",
+            "designation",
+            "triplets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "X/28: thirteen triplets.",
+          "properties": {
+            "designation": {
+              "description": "0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "packet": {
+              "const": "x28",
+              "type": "string"
+            },
+            "triplets": {
+              "description": "The triplets.",
+              "items": {
+                "$ref": "#/$defs/Triplet"
+              },
+              "maxItems": 13,
+              "minItems": 13,
+              "type": "array"
+            }
+          },
+          "required": [
+            "packet",
+            "designation",
+            "triplets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "M/29, the magazine's: thirteen triplets.",
+          "properties": {
+            "designation": {
+              "description": "0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "packet": {
+              "const": "m29",
+              "type": "string"
+            },
+            "triplets": {
+              "description": "The triplets.",
+              "items": {
+                "$ref": "#/$defs/Triplet"
+              },
+              "maxItems": 13,
+              "minItems": 13,
+              "type": "array"
+            }
+          },
+          "required": [
+            "packet",
+            "designation",
+            "triplets"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Page": {
+      "additionalProperties": false,
+      "description": "A page, as the engine's page model (`PageFile`), field by field\n(REQ-1478).",
+      "properties": {
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "Its number, never a reserved one."
+        },
+        "subpages": {
+          "description": "Its sub-pages, in ascending order of sub-code.",
+          "items": {
+            "$ref": "#/$defs/SubPage"
+          },
+          "maxItems": 8190,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "page",
+        "subpages"
+      ],
+      "type": "object"
+    },
+    "PageNumber": {
+      "description": "A page number: three hexadecimal digits in capitals, the magazine 1 to 8 first (EN 300 706 clause 7.1.2).",
+      "pattern": "^[1-8][0-9A-F]{2}$",
+      "type": "string"
+    },
+    "ProgramMessage": {
+      "description": "A message from a program to the server.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The answer to `connected` (REQ-1471).",
+          "properties": {
+            "connection": {
+              "description": "The connection whose `connected` this answers.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "magazines": {
+              "description": "The channel's magazines for this viewer (REQ-1477).",
+              "items": {
+                "$ref": "#/$defs/Magazine"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "selected": {
+              "description": "The page each view selected, or the initial page for a view that\nselected none.",
+              "items": {
+                "$ref": "#/$defs/ViewPage"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "type": {
+              "const": "reply",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "magazines",
+            "selected"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A page, to the connections named (REQ-1472, REQ-1473).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "page": {
+              "$ref": "#/$defs/Page",
+              "description": "The page."
+            },
+            "type": {
+              "const": "page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A change to the magazines and their pages.",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "magazines": {
+              "description": "The magazines, as a reply gives them.",
+              "items": {
+                "$ref": "#/$defs/Magazine"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "type": {
+              "const": "index",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "magazines"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Sends one view of a connection to a page.",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code, or 3F7F for the page."
+            },
+            "type": {
+              "const": "goto",
+              "type": "string"
+            },
+            "view": {
+              "description": "The view.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "view",
+            "page",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sound, its data, or a command.",
+          "oneOf": [
+            {
+              "description": "A stored Opus sound (decision 21).",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "opus",
+                  "type": "string"
+                },
+                "packet_bytes": {
+                  "description": "Every packet's length, 1 to 40 bytes.",
+                  "format": "uint16",
+                  "maximum": 40,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "packets": {
+                  "description": "Its packets back to back, exact base64, at most two minutes.",
+                  "type": "string"
+                },
+                "samples": {
+                  "description": "Its length in samples at 48 kHz.",
+                  "format": "uint32",
+                  "maximum": 5760000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "packet_bytes",
+                "samples",
+                "packets"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Opus sound's object.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "opus_live",
+                  "type": "string"
+                },
+                "packet_bytes": {
+                  "description": "Every packet's length.",
+                  "format": "uint16",
+                  "maximum": 40,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "packet_bytes"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Opus sound's next packets.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first packet's block number.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "opus_packets",
+                  "type": "string"
+                },
+                "packet_bytes": {
+                  "description": "Every packet's length.",
+                  "format": "uint16",
+                  "maximum": 40,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "packets": {
+                  "description": "The packets, exact base64.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "packet_bytes",
+                "first",
+                "packets"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored sound as 16-bit samples, which the server encodes as IMA\nADPCM, for receivers that decode no Opus.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "object",
+                  "type": "string"
+                },
+                "pcm": {
+                  "description": "16-bit little-endian mono samples, exact base64, at most two\nminutes.",
+                  "type": "string"
+                },
+                "rate": {
+                  "description": "Its sample rate, one of the profile's.",
+                  "enum": [
+                    8000,
+                    11025,
+                    16000,
+                    22050,
+                    24000,
+                    32000,
+                    44100,
+                    48000
+                  ],
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "rate",
+                "pcm"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live sound's object.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "live",
+                  "type": "string"
+                },
+                "rate": {
+                  "description": "Its sample rate.",
+                  "enum": [
+                    8000,
+                    11025,
+                    16000,
+                    22050,
+                    24000,
+                    32000,
+                    44100,
+                    48000
+                  ],
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "rate"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live sound's next blocks of samples.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "blocks",
+                  "type": "string"
+                },
+                "pcm": {
+                  "description": "The samples, exact base64.",
+                  "type": "string"
+                },
+                "rate": {
+                  "description": "Its sample rate.",
+                  "enum": [
+                    8000,
+                    11025,
+                    16000,
+                    22050,
+                    24000,
+                    32000,
+                    44100,
+                    48000
+                  ],
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "rate",
+                "first",
+                "pcm"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Play a sound on an audio channel.",
+              "properties": {
+                "after": {
+                  "description": "It plays after the sound playing ends.",
+                  "type": "boolean"
+                },
+                "channel": {
+                  "description": "The audio channel, 0 to 3.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "duck": {
+                  "description": "How far other channels duck under it, 0 to 6.",
+                  "format": "uint8",
+                  "maximum": 6,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "fade_ms": {
+                  "description": "The fade in, in milliseconds.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "gain": {
+                  "description": "The gain, 0 to 100.",
+                  "format": "uint8",
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "The sound's handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "play",
+                  "type": "string"
+                },
+                "loop": {
+                  "description": "It loops.",
+                  "type": "boolean"
+                },
+                "page": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PageNumber"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The page it belongs to, or none for the whole service."
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "channel",
+                "handle",
+                "generation",
+                "gain",
+                "fade_ms",
+                "loop",
+                "after",
+                "duck"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Stop an audio channel.",
+              "properties": {
+                "channel": {
+                  "description": "The audio channel, 0 to 3.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "fade_ms": {
+                  "description": "The fade out, in milliseconds.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "stop",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "channel",
+                "fade_ms"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Change an audio channel's gain.",
+              "properties": {
+                "channel": {
+                  "description": "The audio channel, 0 to 3.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "fade_ms": {
+                  "description": "The fade, in milliseconds.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "gain": {
+                  "description": "The gain, 0 to 100.",
+                  "format": "uint8",
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "gain",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "channel",
+                "gain",
+                "fade_ms"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "sound",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Sets or clears one of the program's cookies for a connection.",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "expires": {
+              "description": "`Expires`, in seconds since the Unix epoch, or none.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "http_only": {
+              "description": "`HttpOnly`.",
+              "type": "boolean"
+            },
+            "max_age": {
+              "description": "`Max-Age` in seconds, or none.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "name": {
+              "description": "Its name; names starting `_` are the server's.",
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "path": {
+              "description": "`Path`, or none.",
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "same_site": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SameSite"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`SameSite`, or none."
+            },
+            "secure": {
+              "description": "`Secure`.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "cookie",
+              "type": "string"
+            },
+            "value": {
+              "description": "Its value.",
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "name",
+            "value",
+            "secure",
+            "http_only"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A line for the developer console of the viewer's browser (the\nengine's REQ-INP-026).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "level": {
+              "$ref": "#/$defs/AuthorLevel",
+              "description": "Its level."
+            },
+            "page": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PageNumber"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The page it concerns, or none."
+            },
+            "text": {
+              "description": "Its text: UTF-8 of 1 to 200 bytes, no control or bidirectional\nformatting character (the engine's `log::check`).",
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "author_log",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "level",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A line for the server operator's log.",
+          "properties": {
+            "event": {
+              "description": "The kind of event, a name that does not change: lower case\nletters, digits and `_`.",
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/OperatorLevel",
+              "description": "Its level."
+            },
+            "text": {
+              "description": "What happened.",
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "log",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "level",
+            "event",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Raw teletext packets (`SERVER.md` section 7.4).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who they are for."
+            },
+            "packets": {
+              "description": "Whole 42-byte packets back to back, exact base64.",
+              "type": "string"
+            },
+            "type": {
+              "const": "packets",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "packets"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Rule": {
+      "description": "Why a message was refused: a closed list (REQ-1475).",
+      "oneOf": [
+        {
+          "const": "syntax",
+          "description": "Not one JSON object on one line.",
+          "type": "string"
+        },
+        {
+          "const": "line_too_long",
+          "description": "The line is longer than `budgets.line_bytes`.",
+          "type": "string"
+        },
+        {
+          "const": "unknown_field",
+          "description": "A field the message's type does not have.",
+          "type": "string"
+        },
+        {
+          "const": "missing_field",
+          "description": "A field the message's type needs is missing.",
+          "type": "string"
+        },
+        {
+          "const": "duplicate_field",
+          "description": "A field is given twice.",
+          "type": "string"
+        },
+        {
+          "const": "wrong_type",
+          "description": "A value of the wrong JSON type, or not in its format.",
+          "type": "string"
+        },
+        {
+          "const": "not_listed",
+          "description": "A value outside its closed list, a message's `type` among them.",
+          "type": "string"
+        },
+        {
+          "const": "out_of_range",
+          "description": "A number outside its range.",
+          "type": "string"
+        },
+        {
+          "const": "too_long",
+          "description": "Text or a list longer than its bound.",
+          "type": "string"
+        },
+        {
+          "const": "too_short",
+          "description": "Text or a list shorter than its bound, or empty.",
+          "type": "string"
+        },
+        {
+          "const": "not_ascending",
+          "description": "A list not in ascending order.",
+          "type": "string"
+        },
+        {
+          "const": "duplicate",
+          "description": "The same number, view or code twice.",
+          "type": "string"
+        },
+        {
+          "const": "reserved",
+          "description": "A page number the standard reserves.",
+          "type": "string"
+        },
+        {
+          "const": "wrong_magazine",
+          "description": "A page listed under another magazine.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden_character",
+          "description": "A character text may not have: a control or a bidirectional\nformatting character.",
+          "type": "string"
+        },
+        {
+          "const": "not_base64",
+          "description": "Not exact base64 (RFC 4648 section 4, padded, no whitespace).",
+          "type": "string"
+        },
+        {
+          "const": "wrong_length",
+          "description": "Bytes of the wrong length once decoded.",
+          "type": "string"
+        },
+        {
+          "const": "not_in_index",
+          "description": "A selected page not in the index, or whose sub-pages disagree with\nits count.",
+          "type": "string"
+        },
+        {
+          "const": "unknown_connection",
+          "description": "A connection that is not open.",
+          "type": "string"
+        },
+        {
+          "const": "not_awaited",
+          "description": "An answer to nothing the server asked: a second `reply`.",
+          "type": "string"
+        },
+        {
+          "const": "outside_profile",
+          "description": "A sound outside the profile the receivers decode.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_packet",
+          "description": "A raw packet the stream may not carry (REQ-1462).",
+          "type": "string"
+        }
+      ]
+    },
+    "SameSite": {
+      "description": "`SameSite` (RFC 6265bis section 4.1.2.7).",
+      "enum": [
+        "Strict",
+        "Lax",
+        "None"
+      ],
+      "type": "string"
+    },
+    "Selection": {
+      "additionalProperties": false,
+      "description": "A page and sub-code selected.",
+      "properties": {
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "The page."
+        },
+        "sub": {
+          "$ref": "#/$defs/SubCode",
+          "description": "The sub-code, or 3F7F for the page and none of its sub-pages."
+        }
+      },
+      "required": [
+        "page",
+        "sub"
+      ],
+      "type": "object"
+    },
+    "ServerMessage": {
+      "description": "A message from the server to a program.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The program is to serve its channel: sent once, when it starts.",
+          "properties": {
+            "budgets": {
+              "$ref": "#/$defs/Budgets",
+              "description": "The server's own bounds."
+            },
+            "epoch_ms": {
+              "description": "The time, in milliseconds since the Unix epoch (UTC).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "protocol": {
+              "const": 2,
+              "description": "The protocol's version.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "standard": {
+              "$ref": "#/$defs/Standard",
+              "description": "The standard's maxima, from the engine's `neoteletext_core::limits`."
+            },
+            "type": {
+              "const": "start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "protocol",
+            "epoch_ms",
+            "standard",
+            "budgets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A viewer's connection opened (REQ-1471); answer with `reply`.",
+          "properties": {
+            "connection": {
+              "description": "The connection: the program addresses it by this while it is open.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "cookies": {
+              "description": "The cookies the program set on earlier connections.",
+              "items": {
+                "$ref": "#/$defs/CookiePair"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            "selections": {
+              "description": "Each view's selection at the start; a view with none asks for the\nchannel's initial page.",
+              "items": {
+                "$ref": "#/$defs/ViewSelection"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            },
+            "session": {
+              "description": "The viewer's session, from its signed cookie (requirement 5.5).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "connected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "session",
+            "cookies",
+            "selections"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A view selected a page or a sub-page (REQ-1472); answer with `page`.",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code, or 3F7F for the page and none of its sub-pages."
+            },
+            "type": {
+              "const": "selected",
+              "type": "string"
+            },
+            "view": {
+              "description": "The view, 0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "view",
+            "page",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Input on a page (INPUT.md).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "$ref": "#/$defs/InputEvent",
+              "description": "What happened."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page with the keys."
+            },
+            "type": {
+              "const": "input",
+              "type": "string"
+            },
+            "view": {
+              "description": "The view, 0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "view",
+            "page",
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A view left a page, or its connection closed.",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page it left."
+            },
+            "type": {
+              "const": "left",
+              "type": "string"
+            },
+            "view": {
+              "description": "The view.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "view",
+            "page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A session ended, five minutes after its last connection closed.",
+          "properties": {
+            "session": {
+              "description": "The session.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "closed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The server's and the channel's figures, every ten seconds.",
+          "properties": {
+            "channel": {
+              "description": "The channel's figures."
+            },
+            "server": {
+              "description": "The server's figures."
+            },
+            "type": {
+              "const": "stats",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "server",
+            "channel"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A message the program sent was refused (REQ-1475).",
+          "properties": {
+            "detail": {
+              "description": "The fault in words.",
+              "type": "string"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MessageType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The type of the message refused, or none when it had none the\nprotocol knows."
+            },
+            "path": {
+              "description": "The path to the first fault, such as `magazines[2].pages[14].title`;\nempty for the message as a whole.",
+              "type": "string"
+            },
+            "rule": {
+              "$ref": "#/$defs/Rule",
+              "description": "The rule broken."
+            },
+            "type": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path",
+            "rule",
+            "detail"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Standard": {
+      "additionalProperties": false,
+      "description": "The standard's maxima (REQ-1031, `STANDARD-LIMITS.md` section 3).",
+      "properties": {
+        "decimal_subpages": {
+          "description": "Sub-codes a viewer can key, 0001 to 3979.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keyable_pages": {
+          "description": "Those a viewer can key, 100 to 899.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "magazines": {
+          "description": "Magazines 1 to 8 (EN 300 706 clause 7.1.2).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages": {
+          "description": "Page numbers that may carry a page: 00 to FF in each magazine, less\nthose the standard reserves (Annex A.10).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages_in_magazine_1": {
+          "description": "Pages magazine 1 may have, 1BE and 1F0 reserved too: 251.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages_per_magazine": {
+          "description": "Pages a magazine may have: 253.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subpages": {
+          "description": "Sub-pages a page may hold, 0001 to 3F7E.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "views": {
+          "description": "Views a connection may have.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "magazines",
+        "pages",
+        "pages_per_magazine",
+        "pages_in_magazine_1",
+        "keyable_pages",
+        "subpages",
+        "decimal_subpages",
+        "views"
+      ],
+      "type": "object"
+    },
+    "SubCode": {
+      "description": "A sub-code: four hexadecimal digits in capitals, 0000 to 3F7F, no bit outside the thirteen (EN 300 706 clause 9.3.1.2); 3F7F means any sub-page.",
+      "pattern": "^[0-3][0-9A-F][0-7][0-9A-F]$",
+      "type": "string"
+    },
+    "SubPage": {
+      "additionalProperties": false,
+      "description": "One sub-page.",
+      "properties": {
+        "character_set": {
+          "$ref": "#/$defs/CharacterSet",
+          "description": "The default character set."
+        },
+        "control": {
+          "$ref": "#/$defs/Control",
+          "description": "The control bits C4 to C11 (clause 9.3.1.3)."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The input cursor (INPUT.md section 7.1), or none."
+        },
+        "display_row_24": {
+          "description": "Packet X/27/0's link control: row 24 is displayed.",
+          "type": "boolean"
+        },
+        "enhancements": {
+          "description": "Packets X/26, at most one of each designation code.",
+          "items": {
+            "$ref": "#/$defs/Enhancement"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "link_extension": {
+          "$ref": "#/$defs/LinkExtension",
+          "description": "The TTI Link Extension's links that packets cannot carry (the\nengine's Appendix E; REQ-1494), sent as the sub-page's LINKS record."
+        },
+        "links": {
+          "description": "The six links of packet X/27/0 (EN 300 706 clause 9.6.1): red,\ngreen, yellow, cyan, the fifth and the index; none for a null link.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Link"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "type": "array"
+        },
+        "packets": {
+          "description": "Packets X/27 of designation codes 1 to 15, X/28 and M/29.",
+          "items": {
+            "$ref": "#/$defs/PackedLine"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "rows": {
+          "description": "Rows 0 to 24, each 40 character codes of seven bits as exact\nbase64 of 40 bytes; none for a blank row. Row 0's columns 0 to 7\nare the receiver's (EN 300 706 clause 9.3.1.4).",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "maxItems": 25,
+          "minItems": 25,
+          "type": "array"
+        },
+        "sub": {
+          "$ref": "#/$defs/SubCode",
+          "description": "Its sub-code, 0000 to 3F7E."
+        }
+      },
+      "required": [
+        "sub",
+        "rows",
+        "links",
+        "display_row_24",
+        "link_extension",
+        "control",
+        "character_set",
+        "enhancements",
+        "packets"
+      ],
+      "type": "object"
+    },
+    "TextLink": {
+      "additionalProperties": false,
+      "description": "A run of text on the page that leads elsewhere (`LT`).",
+      "properties": {
+        "column": {
+          "description": "Its first column, 0 to 39.",
+          "format": "uint8",
+          "maximum": 39,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "length": {
+          "description": "Its characters, keeping the run within the row's 40 columns.",
+          "format": "uint8",
+          "maximum": 40,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "row": {
+          "description": "Its row, 1 to 23.",
+          "format": "uint8",
+          "maximum": 23,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "target": {
+          "description": "Where it leads, in a form of Appendix E.1.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[!-+\\--~]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "length",
+        "target"
+      ],
+      "type": "object"
+    },
+    "Triplet": {
+      "additionalProperties": false,
+      "description": "A triplet, by its fields (EN 300 706 clause 12.3.1).",
+      "properties": {
+        "address": {
+          "description": "The address, 6 bits.",
+          "format": "uint8",
+          "maximum": 63,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "data": {
+          "description": "The data, 7 bits.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "description": "The mode, 5 bits.",
+          "format": "uint8",
+          "maximum": 31,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "mode",
+        "data"
+      ],
+      "type": "object"
+    },
+    "ViewPage": {
+      "additionalProperties": false,
+      "description": "A view's page, in a reply.",
+      "properties": {
+        "page": {
+          "$ref": "#/$defs/Page",
+          "description": "Its page."
+        },
+        "view": {
+          "description": "The view, 0 to 15.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view",
+        "page"
+      ],
+      "type": "object"
+    },
+    "ViewSelection": {
+      "additionalProperties": false,
+      "description": "One view's selection.",
+      "properties": {
+        "selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Selection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it selected, or none: the channel's initial page."
+        },
+        "view": {
+          "description": "The view, 0 to 15.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ServerMessage"
+    },
+    {
+      "$ref": "#/$defs/ProgramMessage"
+    }
+  ],
+  "description": "Both directions, for the schema.",
+  "title": "The NeoTeletext server's protocol with a channel's program, version 2"
+}
