@@ -47,6 +47,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "protocol_reader"
+path = "fuzz_targets/protocol_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "opus_sound"
 path = "fuzz_targets/opus_sound.rs"
 test = false
