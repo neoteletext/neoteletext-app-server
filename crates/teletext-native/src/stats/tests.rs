@@ -109,7 +109,6 @@ fn metrics_are_in_the_prometheus_text_format() {
         ("teletext_messages_sent_total", "counter"),
         ("teletext_sent_bytes_total", "counter"),
         ("teletext_http_requests_total", "counter"),
-        ("teletext_http_not_modified_total", "counter"),
         ("teletext_program_restarts_total", "counter"),
         ("teletext_channel_viewers", "gauge"),
         ("teletext_channel_sessions_waiting", "gauge"),

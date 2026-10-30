@@ -164,28 +164,18 @@ fn close_code(stream: &mut TcpStream) -> u16 {
 }
 
 /// A stopped server closes its viewers' connections with 1012 and exits
-/// with 0; started again with its state directory, it serves the page its
-/// program published before, although the program has not published it
-/// again (requirements 5.1, 5.2 and 5.3).
+/// with 0 (requirement 5.1).
 #[test]
-fn a_restart_closes_viewers_as_a_restart_and_serves_what_was_kept() {
+fn a_restart_closes_viewers_as_a_restart() {
     let folder = scratch("restart");
     let state = folder.join("state");
     let state_argument = state.display().to_string();
-    let first_channels = channels(&folder, &publishing("Kept across a restart"));
+    let first_channels = channels(&folder, &publishing("Closed as a restart"));
     let mut first = serve(&["--channels", &first_channels.display().to_string(), "--state", &state_argument], &[], Stdio::null());
-    let published = until_status(&first.address, "/ch/100.t42", 200);
+    until_status(&first.address, "/ch/channel.json", 200);
     let (mut viewer, _) = push(&first.address, None);
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), 1012, "service restart");
-
-    // A program that declares the page and never publishes it.
-    let silent = r#"printf '%s\n' '{"type":"pages","pages":[{"page":"100","title":"Front"}]}'; exec cat >/dev/null"#;
-    let second_channels = channels(&folder, silent);
-    let second = serve(&["--channels", &second_channels.display().to_string(), "--state", &state_argument], &[], Stdio::null());
-    assert_eq!(until_status(&second.address, "/ch/100.t42", 200), published, "the page as it was last published");
-    let contents = String::from_utf8(until_status(&second.address, "/ch/contents.txt", 200)).unwrap();
-    assert!(contents.contains("p\t100\tFront\n"), "{contents}");
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -268,7 +258,7 @@ fn the_log_is_json_lines_and_rust_log_chooses_the_level() {
     assert!(server.terminate().success());
 
     let mut quiet = serve(&[], &[("RUST_LOG", "warn")], Stdio::piped());
-    until_status(&quiet.address, "/", 200);
+    until_status(&quiet.address, "/", 404);
     assert!(quiet.terminate().success());
     let mut written = String::new();
     quiet.child.stderr.take().unwrap().read_to_string(&mut written).unwrap();

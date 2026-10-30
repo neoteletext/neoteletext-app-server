@@ -1,18 +1,16 @@
-//! The HTTP side: each channel's files in the engine's layout (decision
-//! E.70) with `ETag` and conditional requests, and the push WebSocket's
-//! upgrade (RFC 6455 section 4.2.2), after which the connection is served
-//! on the raw socket.
+//! The HTTP side on the viewers' address (DEC-1467): each channel's
+//! generated `channel.json` and its push WebSocket's upgrade (RFC 6455
+//! section 4.2.2), after which the connection is served on the raw socket.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::fmt::Write as _;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError};
 use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
-use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, COOKIE, ETAG, HeaderValue, IF_NONE_MATCH, SET_COOKIE, UPGRADE};
+use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, COOKIE, HeaderValue, SET_COOKIE, UPGRADE};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
@@ -85,71 +83,31 @@ fn now_s() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
 }
 
-/// Where the server's figures are served, beside the channels' folders.
-pub const STATS: &str = "stats.json";
-
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
-const T42_TYPE: &str = "application/x-teletext-t42";
+/// The channel's one file (DEC-1467 item 1).
+pub const DESCRIPTOR: &str = "channel.json";
 
-/// Answers one request.
+/// Answers one request on the viewers' address (DEC-1467): a channel's
+/// `channel.json` and its push WebSocket, and 404 for everything else, `/`
+/// included. The server serves no channel's files: every page comes over
+/// the connection.
 #[must_use]
 pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let path = request.uri().path().trim_start_matches('/').to_owned();
     let (folder, file) = path.split_once('/').unwrap_or((path.as_str(), ""));
     count(&routes.stats.requests);
-    if folder.is_empty() {
-        return listing(routes);
-    }
-    if folder == STATS && file.is_empty() {
-        let mut response = Response::new(Whole(Some(Bytes::from(routes.stats.document()))));
-        response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-        return response;
-    }
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
-    if file == PUSH {
-        return upgrade(routes, hub, request);
+    match file {
+        PUSH => upgrade(routes, hub, request),
+        DESCRIPTOR => {
+            let mut response = Response::new(Whole(Some(Bytes::copy_from_slice(&hub.descriptor))));
+            response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            response
+        }
+        _ => status(StatusCode::NOT_FOUND),
     }
-    let (content_type, body): (&str, Arc<[u8]>) = match file {
-        "channel.json" => ("application/json", Arc::clone(&hub.descriptor)),
-        "contents.txt" => ("text/plain", Arc::clone(&hub.contents.read().unwrap_or_else(PoisonError::into_inner))),
-        "index.t42" => (T42_TYPE, hub.pages.bundle().into()),
-        other => match hub.pages.file(other) {
-            Some(resource) => (resource.content_type, resource.body.into()),
-            None => return status(StatusCode::NOT_FOUND),
-        },
-    };
-    let response = file_response(&request, content_type, &body);
-    if response.status() == StatusCode::NOT_MODIFIED {
-        count(&routes.stats.not_modified);
-    }
-    response
-}
-
-/// A file, or 304 when the client holds it already.
-fn file_response(request: &Request<Incoming>, content_type: &str, body: &[u8]) -> Response<Whole> {
-    let tag = format!("\"{:016x}\"", fnv1a(body));
-    let held = request.headers().get(IF_NONE_MATCH).is_some_and(|value| value.as_bytes() == tag.as_bytes());
-    let mut response = if held { status(StatusCode::NOT_MODIFIED) } else { Response::new(Whole(Some(Bytes::copy_from_slice(body)))) };
-    let headers = response.headers_mut();
-    if let Ok(value) = HeaderValue::from_str(&tag) {
-        headers.insert(ETAG, value);
-    }
-    headers.insert(CONTENT_TYPE, HeaderValue::from_str(content_type).unwrap_or(HeaderValue::from_static("application/octet-stream")));
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    response
-}
-
-/// The channels this server has, as a plain list.
-fn listing(routes: &Routes) -> Response<Whole> {
-    let mut text = String::from("NeoTeletext server\n\n");
-    for folder in routes.hubs.keys() {
-        let _ = writeln!(text, "/{folder}/");
-    }
-    let mut response = Response::new(Whole(Some(Bytes::from(text))));
-    response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-    response
 }
 
 /// The push WebSocket: answers 101 and serves the upgraded socket.
@@ -220,12 +178,4 @@ fn status(code: StatusCode) -> Response<Whole> {
     let mut response = Response::new(Whole(None));
     *response.status_mut() = code;
     response
-}
-
-/// FNV-1a over `bytes`, for an `ETag`: a change of content changes it.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    // FNV-1a's 64-bit offset basis and prime (Fowler, Noll and Vo).
-    const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-    bytes.iter().fold(BASIS, |hash, &byte| (hash ^ u64::from(byte)).wrapping_mul(PRIME))
 }

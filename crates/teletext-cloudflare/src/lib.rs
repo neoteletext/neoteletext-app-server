@@ -38,7 +38,6 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
@@ -62,6 +61,8 @@ const SECRET_PREFIX: &str = "PROGRAM_SECRET_";
 /// The push WebSocket's path within a channel's folder (the engine's
 /// channel layout).
 const PUSH: &str = "push";
+/// The channel's one file (DEC-1467 item 1).
+const DESCRIPTOR: &str = "channel.json";
 /// The program's WebSocket's path within a channel's folder.
 const PROGRAM: &str = "program";
 /// The tags the object gives the connections it accepts.
@@ -136,14 +137,9 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
     let url = request.url()?;
     let (folder, file) = folder_and_file(url.path());
     let channels = channels(&env)?;
-    if folder.is_empty() {
-        let mut text = String::from("NeoTeletext server\n\n");
-        for (folder, _) in &channels {
-            let _ = writeln!(text, "/{folder}/");
-        }
-        return Response::ok(text);
-    }
-    if !channels.iter().any(|(served, _)| served == folder) {
+    // Only a channel's `channel.json`, its push WebSocket and its program's
+    // WebSocket (DEC-1467): no listing at `/`, no channel's files.
+    if !channels.iter().any(|(served, _)| served == folder) || ![DESCRIPTOR, PUSH, PROGRAM].contains(&file) {
         return Response::error("Not Found", 404);
     }
     if file == PROGRAM {
@@ -193,7 +189,7 @@ impl Live {
     fn apply(&mut self, sql: &SqlStorage) {
         for effect in self.channel.take_effects() {
             match effect {
-                Effect::Shared { page, frame, .. } => {
+                Effect::Shared { page, frame } => {
                     for viewer in self.viewers.values().filter(|viewer| !viewer.own.contains(&page)) {
                         send_binary(&viewer.socket, &frame);
                     }
@@ -472,14 +468,13 @@ impl ChannelObject {
         Response::from_websocket(pair.client)
     }
 
-    /// A file of the channel's layout.
-    fn resource(&self, file: &str) -> Result<Response> {
-        let resource = self.live.borrow().as_ref().and_then(|live| live.channel.resource(file));
-        let Some(resource) = resource else { return Response::error("Not Found", 404) };
+    /// The channel's `channel.json`, generated (DEC-1467 item 1).
+    fn descriptor(&self) -> Result<Response> {
+        let body = self.live.borrow().as_ref().map(|live| live.channel.descriptor()).unwrap_or_default();
         let headers = Headers::new();
-        headers.set("content-type", resource.content_type)?;
+        headers.set("content-type", "application/json")?;
         headers.set("cache-control", "no-cache")?;
-        Ok(Response::from_bytes(resource.body)?.with_headers(headers))
+        Ok(Response::from_bytes(body)?.with_headers(headers))
     }
 
     /// Whether `socket` is the program's.
@@ -500,7 +495,8 @@ impl worker::DurableObject for ChannelObject {
         let response = match file {
             PUSH => self.accept_viewer(&request),
             PROGRAM => self.accept_program(),
-            other => self.resource(other),
+            DESCRIPTOR => self.descriptor(),
+            _ => Response::error("Not Found", 404),
         };
         self.schedule().await?;
         response

@@ -1,7 +1,6 @@
 use super::*;
 use crate::{Channel, ChannelConfig, Effect, Packet};
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use neoteletext_core::consts::{DATA_BYTES, PACKET_BYTES, PACKET_ENHANCEMENT};
 use neoteletext_core::packet::{Decoded, decode};
@@ -282,25 +281,6 @@ fn bad_lines_are_refused_and_reported() {
     }
 }
 
-/// A page retitled names what it holds now in `contents.txt`.
-#[test]
-fn a_title_renames_a_page_in_the_contents() {
-    let mut channel = channel();
-    for page in ["100", "300"] {
-        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
-        channel.from_application(0, line.as_bytes(), 0);
-    }
-    channel.take_effects();
-    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
-    let effects = channel.take_effects();
-    assert_eq!(logs(&effects), Vec::<String>::new());
-    assert_eq!(effects.iter().filter(|effect| **effect == Effect::Contents).count(), 1, "the host is told to serve the contents anew");
-    let contents = String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
-    assert!(contents.contains("p\t300\tTiny Robot Arm...\n") && contents.contains("p\t100\tFront\n"), "{contents}");
-    channel.from_application(0, br#"{"type":"title","page":"300","title":"Tiny Robot Arm..."}"#, 0);
-    assert!(!channel.take_effects().contains(&Effect::Contents), "the same title again changes nothing");
-}
-
 /// A viewer's own copy released, the channel's copy is theirs again: the
 /// host is told, and the shared page is sent to them at once.
 #[test]
@@ -323,38 +303,6 @@ fn a_released_page_is_the_channels_again() {
     assert!(pages.iter().any(|(page, text)| *page == 0x100 && text.contains("Everyone's")), "{pages:?}");
     channel.from_application(0, release.as_bytes(), 0);
     assert!(!channel.take_effects().iter().any(|effect| matches!(effect, Effect::Disown { .. })), "a page not owned is not released twice");
-}
-
-/// A page that starts a section heads it in `contents.txt`, which names
-/// its magazine.
-#[test]
-fn a_section_heads_its_pages_in_the_contents() {
-    let pages = declared_pages(br#"{"type":"pages","pages":[{"page":"100","title":"Front"},{"page":"200","title":"Retro front","section":"Retrocomputing"},{"page":"201","title":"Challenge"}]}"#).unwrap();
-    assert_eq!(pages[1].section.as_deref(), Some("Retrocomputing"));
-    let config = ChannelConfig {
-        name: "test".to_string(),
-        push_address: "ws://127.0.0.1:1/test/push".to_string(),
-        initial_page: 0x100,
-        epoch_at_start_ms: 0,
-        session_grace_ms: 0,
-    };
-    let mut channel = Channel::new(config, alloc::vec![Box::new(Remote::new(pages))], 1);
-    let contents = |channel: &Channel| String::from_utf8(channel.resource("contents.txt").unwrap().body).unwrap();
-    assert_eq!(contents(&channel), "s\ttest\n", "nothing published, nothing listed");
-    for page in ["100", "201"] {
-        let line = alloc::format!(r#"{{"type":"publish","page":"{page}","owner":"channel","tti":"PN,{page}00\nOL,1,Page\n"}}"#);
-        channel.from_application(0, line.as_bytes(), 0);
-        assert!(channel.take_effects().contains(&Effect::Contents), "a page published for the first time is listed");
-    }
-    assert_eq!(
-        contents(&channel),
-        "s\ttest\np\t100\tFront\ns\tRetrocomputing\np\t201\tChallenge\n",
-        "200, not published, is left out; its section heads the next listed"
-    );
-    channel.from_application(0, br#"{"type":"publish","page":"201","owner":"channel","tti":"PN,20100\nOL,1,Again\n"}"#, 0);
-    assert!(!channel.take_effects().contains(&Effect::Contents), "published again, the contents are the same");
-    let too_long = alloc::format!(r#"{{"type":"pages","pages":[{{"page":"200","section":"{}"}}]}}"#, "x".repeat(TITLE_LIMIT + 1));
-    assert!(declared_pages(too_long.as_bytes()).is_err());
 }
 
 /// The channel counts viewers, what they open and press, and its lines,
@@ -475,54 +423,6 @@ fn a_viewer_who_comes_back_continues_their_session() {
     assert_eq!(types(&channel.take_effects()), ["open"]);
     assert_eq!((channel.stats().sessions_resumed, channel.stats().sessions_waiting, channel.stats().viewers), (1, 0, 1));
     assert_eq!(channel.next_wake(), None, "nothing waits");
-}
-
-/// What a channel keeps is served by a channel made afresh before its
-/// program declares anything, and a page its program no longer declares
-/// is withdrawn and forgotten when it does (requirements 5.2 and 5.3).
-#[test]
-fn kept_pages_are_served_before_the_program_declares() {
-    let mut first = channel();
-    let pages = first.entries().cloned().collect::<Vec<_>>();
-    first.declared(0, pages);
-    first.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nCU,5,6,7,0\nOL,1,Kept\n"}"#, 0);
-    first.from_application(0, br#"{"type":"title","page":"100","title":"Kept front"}"#, 0);
-    let mut kept = BTreeMap::new();
-    for effect in first.take_effects() {
-        match effect {
-            Effect::Store { key, bytes } => {
-                kept.insert(key, bytes);
-            }
-            Effect::Forget { key } => {
-                kept.remove(&key);
-            }
-            _ => {}
-        }
-    }
-    assert_eq!(
-        kept.keys().copied().collect::<Vec<_>>(),
-        [crate::StoreKey::Page(0x100), crate::StoreKey::SubPage { page: 0x100, subcode: 0 }, crate::StoreKey::Pages(0)]
-    );
-
-    let config = first.config().clone();
-    let mut second = Channel::new(config, alloc::vec![Box::new(Remote::new(Vec::new()))], 1);
-    assert!(!second.is_ready());
-    for (key, bytes) in &kept {
-        second.load(*key, bytes).unwrap();
-    }
-    assert!(second.is_ready());
-    let frame = first.shared_frames().find(|&(page, _)| page == 0x100).map(|(_, frame)| Arc::clone(frame)).unwrap();
-    assert!(second.take_effects().iter().any(|effect| matches!(effect, Effect::Shared { page: 0x100, frame: shared, .. } if *shared == frame)));
-    assert_eq!(second.resource("100.t42").unwrap().body, frame.to_vec());
-    let contents = String::from_utf8(second.resource("contents.txt").unwrap().body).unwrap();
-    assert!(contents.contains("p\t100\tKept front\n"), "{contents}");
-
-    second.declared(0, declared_pages(br#"{"type":"pages","pages":[{"page":"300","title":"Game"}]}"#).unwrap());
-    let effects = second.take_effects();
-    assert!(effects.contains(&Effect::Withdrawn { page: 0x100 }) && effects.contains(&Effect::Forget { key: crate::StoreKey::Page(0x100) }), "{effects:?}");
-    assert!(second.resource("100.t42").is_none());
-    second.from_application(0, br#"{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\n"}"#, 0);
-    assert_eq!(logs(&second.take_effects()).len(), 1, "a page no longer declared is refused");
 }
 
 /// The runtime's reports carry their level and a name that does not
@@ -725,86 +625,6 @@ fn a_whole_page_is_numbered_by_place_as_the_code_of_practice_numbers() {
     }
     channel.from_application(0, &publish_line(&tti_of(8_070, |_| 0), false), 0);
     assert_eq!(logs(&channel.take_effects()).len(), 1, "8,070 cannot be numbered by place");
-}
-
-/// Every sub-code a link can name, 0001 to 3F7E, put by its `SC` line, is
-/// held: the standard's 8,190 sub-pages on one page (requirement 3.1,
-/// REQ-NUM-020). A put keeps the page's other sub-pages; a remove ends
-/// those it names; ending the last ends the page.
-#[test]
-fn a_page_holds_the_standards_8190_subpages_put_by_subcode() {
-    let all: Vec<u16> = (limits::FIRST_SUBPAGE_CODE..=limits::LAST_SUBPAGE_CODE).filter(|&subcode| limits::is_sub_code(subcode)).collect();
-    assert_eq!(all.len(), 8_190);
-    let mut channel = channel();
-    for part in all.chunks(1_000) {
-        channel.from_application(0, &publish_line(&tti_of(part.len(), |index| part[index]), true), 0);
-    }
-    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
-    assert_eq!(subcodes_of(&channel, 0x100), all);
-
-    channel.from_application(0, &publish_line("PN,10000\nSC,0002\nOL,1,Changed\n", true), 0);
-    let effects = channel.take_effects();
-    let stored: Vec<crate::StoreKey> = effects.iter().filter_map(|effect| if let Effect::Store { key, .. } = effect { Some(*key) } else { None }).collect();
-    assert_eq!(stored, [crate::StoreKey::SubPage { page: 0x100, subcode: 2 }, crate::StoreKey::Page(0x100)], "one sub-page changed, one kept");
-    assert_eq!(subcodes_of(&channel, 0x100), all, "the others kept, in order");
-    let changed = channel.resource("100-0002.t42").unwrap().body;
-    assert!(texts(&changed)[0].1.contains("Changed"));
-
-    channel.from_application(0, br#"{"type":"remove","page":"100","owner":"channel","subpages":["0001","3F7E"]}"#, 0);
-    let effects = channel.take_effects();
-    assert!(effects.contains(&Effect::Forget { key: crate::StoreKey::SubPage { page: 0x100, subcode: 0x3F7E } }));
-    assert_eq!(subcodes_of(&channel, 0x100), all[1..all.len() - 1]);
-    let left: Vec<String> = all[1..all.len() - 1].iter().map(|subcode| alloc::format!("\"{subcode:04X}\"")).collect();
-    for part in left.chunks(4_000) {
-        let line = alloc::format!(r#"{{"type":"remove","page":"100","owner":"channel","subpages":[{}]}}"#, part.join(","));
-        channel.from_application(0, line.as_bytes(), 0);
-    }
-    let effects = channel.take_effects();
-    assert!(effects.contains(&Effect::Withdrawn { page: 0x100 }) && effects.contains(&Effect::Forget { key: crate::StoreKey::Page(0x100) }));
-    assert!(!channel.is_shared(0x100));
-
-    for bad in [
-        &br#"{"type":"remove","page":"100","owner":"channel","subpages":["4000"]}"#[..],
-        br#"{"type":"remove","page":"100","owner":"channel","subpages":["001"]}"#,
-        br#"{"type":"remove","page":"100","owner":"channel","subpages":[]}"#,
-        br#"{"type":"remove","page":"200","owner":"channel","subpages":["0001"]}"#,
-    ] {
-        channel.from_application(0, bad, 0);
-        assert_eq!(logs(&channel.take_effects()).len(), 1, "{}", String::from_utf8_lossy(bad));
-    }
-    channel.from_application(0, &publish_line(&tti_of(2, |_| 0x0005), true), 0);
-    assert_eq!(logs(&channel.take_effects()).len(), 1, "a put names each sub-page once");
-}
-
-/// A page of several sub-pages is served as files of its own (the
-/// engine's REQ-WEB-019 and decision E.132): `NNN.t42` and `index.t42`
-/// hold its first sub-page only, `NNN-SSSS.t42` each sub-page, and
-/// `NNN.sub` the catalogue the engine's reader reads, in the page's order;
-/// a page of one sub-page has no catalogue.
-#[test]
-fn a_pages_subpages_are_files_of_their_own() {
-    let mut channel = channel();
-    channel.from_application(0, &publish_line(&tti_of(3, |_| 0), false), 0);
-    channel.from_application(0, br#"{"type":"publish","page":"300","owner":"channel","tti":"PN,30000\nOL,1,Alone\n"}"#, 0);
-    assert_eq!(logs(&channel.take_effects()), Vec::<String>::new());
-    let page = channel.resource("100.t42").unwrap().body;
-    assert_eq!(texts(&page).len(), 1, "the first sub-page alone");
-    assert!(texts(&page)[0].1.contains("Sub-page 0"));
-    let second = channel.resource("100-0002.t42").unwrap().body;
-    assert!(texts(&second)[0].1.contains("Sub-page 1"));
-    assert!(channel.resource("100-0004.t42").is_none());
-    let index = channel.resource("index.t42").unwrap().body;
-    assert_eq!(texts(&index).iter().map(|(page, _)| *page).collect::<Vec<_>>(), [0x100, 0x300]);
-
-    let catalogue = channel.resource("100.sub").unwrap();
-    assert_eq!(catalogue.content_type, "text/plain");
-    let read: Vec<_> =
-        neoteletext_web::subpages::read(&catalogue.body).unwrap().map(|entry| entry.map(|entry| (entry.subcode.value(), entry.validator)).unwrap()).collect();
-    let files: Vec<_> =
-        (1..=3).map(|subcode| neoteletext_web::subpages::Validator::of(&channel.resource(&alloc::format!("100-{subcode:04X}.t42")).unwrap().body)).collect();
-    assert_eq!(read, [(1, files[0]), (2, files[1]), (3, files[2])]);
-    assert!(channel.resource("300.sub").is_none() && channel.resource("300-0000.t42").is_none(), "one sub-page, no catalogue");
-    assert!(texts(&channel.resource("300.t42").unwrap().body)[0].1.contains("Alone"));
 }
 
 /// Kept records come back in any order, and a page is served once its

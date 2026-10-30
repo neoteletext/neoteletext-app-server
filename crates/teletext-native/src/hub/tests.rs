@@ -25,21 +25,6 @@ async fn until(mut done: impl FnMut() -> bool) -> bool {
     .is_ok()
 }
 
-/// A page the program retitles is listed by its new title in the
-/// contents the host serves, without the channel starting again.
-#[tokio::test]
-async fn a_retitled_page_is_served_in_the_contents() {
-    let channel = Channel::new(config(), vec![Box::new(Remote::new(declared_pages(FRONT).unwrap()))], 1);
-    let (lines, from) = mpsc::channel(1);
-    let (to, _heard) = mpsc::channel(16);
-    let hub = spawn("test", channel, Instant::now(), Some(Link { from, to }), Arc::new(ServerStats::default()), None);
-    let served = || String::from_utf8(hub.contents.read().unwrap().to_vec()).unwrap();
-    lines.send(FromApplication::Line(br#"{"type":"publish","page":"200","owner":"channel","tti":"PN,20000\nOL,1,A robot arm\n"}"#.to_vec())).await.unwrap();
-    assert!(until(|| served().contains("p\t200\tStory 1\n")).await, "listed once published: {}", served());
-    lines.send(FromApplication::Line(br#"{"type":"title","page":"200","title":"A robot arm"}"#.to_vec())).await.unwrap();
-    assert!(until(|| served().contains("p\t200\tA robot arm\n")).await, "{}", served());
-}
-
 /// No line reaches a program before it declares its pages, nor after it
 /// ends; once it declares, it is sent `start` first (requirement 5.3).
 #[tokio::test]

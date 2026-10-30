@@ -24,7 +24,7 @@ use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, unit
 use crate::application::{Action, Application, Audience, Context, Level, Owner, PageEntry};
 use crate::held::Held;
 use crate::input::Input;
-use crate::layout::Part;
+use crate::json::Writer;
 use crate::session::Session;
 use crate::stats::{ChannelStats, count};
 use crate::store::{KeptPage, StoreError, StoreKey, page_record, pages_record, read_page, read_pages, read_subpage, subpage_record};
@@ -76,9 +76,6 @@ pub enum Effect {
         page: u16,
         /// Its frame, encoded once.
         frame: Arc<[u8]>,
-        /// Where each sub-page is in the frame, for the host that serves
-        /// the page's files itself ([`crate::layout::SharedPage`]).
-        parts: Arc<[Part]>,
     },
     /// The session owns this page from now on: the host stops sending it
     /// the shared page of that number.
@@ -88,7 +85,7 @@ pub enum Effect {
         /// The page.
         page: u16,
     },
-    /// A page was given a new title: the host serves `contents.txt` anew.
+    /// A page was given a new title.
     Contents,
     /// The session no longer owns this page: the host sends it the shared
     /// page of that number again.
@@ -252,7 +249,7 @@ impl Channel {
         let loaded = &self.loaded;
         let held = Held::of_encoded(kept.subcodes.iter().map(|&subcode| (subcode, loaded.get(&(page, subcode)).map_or(&[][..], Vec::as_slice))), kept.cursor);
         self.loaded.retain(|&(each, _), _| each != page);
-        self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame), parts: Arc::clone(&held.parts) });
+        self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
         self.shared.insert(page, held);
     }
 
@@ -294,6 +291,21 @@ impl Channel {
         &self.config
     }
 
+    /// The channel's `channel.json`, generated (DEC-1467 item 1): its name,
+    /// its initial page and its push WebSocket, which takes input. A
+    /// receiver reads it first to know the channel is live (the engine's
+    /// REQ-WEB-018), and then asks for nothing else over HTTP.
+    #[must_use]
+    pub fn descriptor(&self) -> Vec<u8> {
+        let mut push = Writer::nested();
+        push.text("address", &self.config.push_address).text("method", "websocket").boolean("input", true);
+        let mut descriptor = Writer::nested();
+        descriptor.text("name", &self.config.name).text("initial_page", &alloc::format!("{:03X}", self.config.initial_page)).object("push", push);
+        let mut bytes = descriptor.line();
+        bytes.pop();
+        bytes
+    }
+
     /// Every page the applications serve, in order.
     pub fn entries(&self) -> impl Iterator<Item = &PageEntry> {
         self.applications.iter().flat_map(|hosted| hosted.pages.iter())
@@ -308,11 +320,6 @@ impl Channel {
     /// The shared pages' frames, in page order.
     pub fn shared_frames(&self) -> impl Iterator<Item = (u16, &Arc<[u8]>)> {
         self.shared.iter().map(|(&page, held)| (page, &held.frame))
-    }
-
-    /// The shared pages, in page order.
-    pub(crate) fn shared_pages(&self) -> impl Iterator<Item = (u16, &Held)> {
-        self.shared.iter().map(|(&page, held)| (page, held))
     }
 
     /// Starts the applications: each publishes its shared pages.
@@ -650,7 +657,7 @@ impl Channel {
                 };
                 count(&mut self.stats.shared_published);
                 self.keep(page, &held);
-                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame), parts: Arc::clone(&held.parts) });
+                self.effects.push(Effect::Shared { page, frame: Arc::clone(&held.frame) });
                 // A page published for the first time is listed from now on.
                 if self.shared.insert(page, held).is_none() {
                     self.effects.push(Effect::Contents);

@@ -1,7 +1,7 @@
 //! The administration listener (decision 19): `/metrics` in the
 //! Prometheus text format (requirement 8.1), `/healthz` and `/readyz`
-//! (requirement 8.4), on an address of their own, never the one viewers
-//! reach.
+//! (requirement 8.4), and `/stats.json` (requirement 8.3, moved here by
+//! DEC-1467), on an address of their own, never the one viewers reach.
 
 use std::sync::Arc;
 
@@ -20,6 +20,10 @@ pub const METRICS_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 pub fn answer(stats: &Arc<ServerStats>, request: &Request<Incoming>) -> Response<Whole> {
     match request.uri().path() {
         "/metrics" => text(StatusCode::OK, METRICS_TYPE, stats.metrics()),
+        "/stats.json" => match String::from_utf8(stats.document()) {
+            Ok(document) => text(StatusCode::OK, "application/json", document),
+            Err(_) => text(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", "the figures are not UTF-8\n".to_owned()),
+        },
         "/healthz" => text(StatusCode::OK, "text/plain", "ok\n".to_owned()),
         "/readyz" => {
             let waiting = stats.not_ready();

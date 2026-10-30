@@ -263,7 +263,6 @@ async fn figures(stats: Arc<ServerStats>, kept: Option<StateDirectory>) {
             messages_sent = glance.messages_sent,
             bytes_sent = glance.bytes_sent,
             requests = glance.requests,
-            not_modified = glance.not_modified,
             viewers = glance.viewers,
             "figures"
         );

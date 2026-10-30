@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
-use teletext_runtime::layout::{Part, Resource, SharedPage, bundle, page_file};
 use teletext_runtime::{Channel, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
@@ -88,13 +87,10 @@ pub enum Outbound {
     Close(u16),
 }
 
-/// A shared page's latest frame, and where each of its sub-pages is in it.
-type Latest = (Arc<[u8]>, Arc<[Part]>);
-
-/// The shared pages, as every connection and request reads them.
+/// The shared pages, as every connection reads them.
 #[derive(Debug, Default)]
 pub struct Pages {
-    frames: RwLock<BTreeMap<u16, Latest>>,
+    frames: RwLock<BTreeMap<u16, Arc<[u8]>>>,
     log: Mutex<VecDeque<(u64, u16)>>,
 }
 
@@ -102,30 +98,13 @@ impl Pages {
     /// The latest frame of `page`.
     #[must_use]
     pub fn frame(&self, page: u16) -> Option<Arc<[u8]>> {
-        self.frames.read().unwrap_or_else(PoisonError::into_inner).get(&page).map(|(frame, _)| Arc::clone(frame))
+        self.frames.read().unwrap_or_else(PoisonError::into_inner).get(&page).map(Arc::clone)
     }
 
     /// Every page's latest frame.
     #[must_use]
     pub fn all(&self) -> Vec<(u16, Arc<[u8]>)> {
-        self.frames.read().unwrap_or_else(PoisonError::into_inner).iter().map(|(&page, (frame, _))| (page, Arc::clone(frame))).collect()
-    }
-
-    /// A page's file: `NNN.t42`, `NNN-SSSS.t42` or `NNN.sub`, as the
-    /// runtime lays them out (its `layout::SharedPage`), or none.
-    #[must_use]
-    pub fn file(&self, name: &str) -> Option<Resource> {
-        let (page, file) = page_file(name)?;
-        let frames = self.frames.read().unwrap_or_else(PoisonError::into_inner);
-        let (frame, parts) = frames.get(&page)?;
-        SharedPage { frame, parts }.file(file)
-    }
-
-    /// `index.t42`: every page's first sub-page, within a receiver's limit.
-    #[must_use]
-    pub fn bundle(&self) -> Vec<u8> {
-        let frames = self.frames.read().unwrap_or_else(PoisonError::into_inner);
-        bundle(frames.values().map(|(frame, parts)| SharedPage { frame, parts }.first()))
+        self.frames.read().unwrap_or_else(PoisonError::into_inner).iter().map(|(&page, frame)| (page, Arc::clone(frame))).collect()
     }
 
     /// The pages changed after generation `since`, each once, or none
@@ -144,8 +123,8 @@ impl Pages {
         Some(pages)
     }
 
-    fn set(&self, page: u16, frame: Arc<[u8]>, parts: Arc<[Part]>, generation: u64) {
-        self.frames.write().unwrap_or_else(PoisonError::into_inner).insert(page, (frame, parts));
+    fn set(&self, page: u16, frame: Arc<[u8]>, generation: u64) {
+        self.frames.write().unwrap_or_else(PoisonError::into_inner).insert(page, frame);
         let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         if log.len() == LOG_CAPACITY {
             log.pop_front();
@@ -164,10 +143,8 @@ impl Pages {
 pub struct Hub {
     /// The channel's folder.
     pub folder: String,
-    /// Its descriptor, which does not change.
+    /// Its `channel.json`, which does not change.
     pub descriptor: Arc<[u8]>,
-    /// Its contents file, made again when a page is retitled.
-    pub contents: Arc<RwLock<Arc<[u8]>>>,
     /// Its shared pages.
     pub pages: Arc<Pages>,
     /// The latest generation: every connection watches it.
@@ -201,15 +178,13 @@ impl Hub {
 /// keeps is written.
 #[must_use]
 pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>, kept: Option<StateDirectory>) -> Hub {
-    let descriptor: Arc<[u8]> = channel.resource("channel.json").map(|resource| resource.body).unwrap_or_default().into();
-    let contents = Arc::new(RwLock::new(contents_of(&channel)));
+    let descriptor: Arc<[u8]> = channel.descriptor().into();
     let pages = Arc::new(Pages::default());
     let (generation_sender, generation) = watch::channel(0_u64);
     let (commands, queue) = mpsc::channel::<Command>(COMMANDS);
     let hub = Hub {
         folder: folder.to_owned(),
         descriptor,
-        contents: Arc::clone(&contents),
         pages: Arc::clone(&pages),
         generation,
         commands,
@@ -231,16 +206,10 @@ pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>,
         kept,
         events: Histogram::default(),
         stats,
-        contents,
         start,
     };
     tokio::spawn(task.run(channel, queue, from_application));
     hub
-}
-
-/// The channel's `contents.txt`.
-fn contents_of(channel: &Channel) -> Arc<[u8]> {
-    channel.resource("contents.txt").map(|resource| resource.body).unwrap_or_default().into()
 }
 
 /// What woke the channel's task.
@@ -288,7 +257,6 @@ struct Task {
     kept: Option<StateDirectory>,
     events: Histogram,
     stats: Arc<ServerStats>,
-    contents: Arc<RwLock<Arc<[u8]>>>,
     /// The host's clock's zero.
     start: Instant,
 }
@@ -315,7 +283,7 @@ impl Task {
         record.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut keep = every(KEEP_EVERY_S);
         keep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        self.apply(channel.take_effects(), &channel);
+        self.apply(channel.take_effects());
         self.record(&channel);
         loop {
             let wake = channel.next_wake().and_then(|at| self.start.checked_add(Duration::from_millis(at)));
@@ -343,7 +311,7 @@ impl Task {
             if !self.handle(event, &mut channel).await {
                 return;
             }
-            self.apply(channel.take_effects(), &channel);
+            self.apply(channel.take_effects());
             self.events.observe(began.elapsed());
         }
     }
@@ -365,7 +333,7 @@ impl Task {
                 for outbox in self.outboxes.values() {
                     let _ = outbox.try_send(Outbound::Close(CLOSE_SERVICE_RESTART));
                 }
-                self.apply(channel.take_effects(), channel);
+                self.apply(channel.take_effects());
                 self.keep().await;
                 self.record(channel);
                 let _ = done.send(());
@@ -402,14 +370,14 @@ impl Task {
     /// the program into its queue while it runs; what is to be kept noted;
     /// and `contents.txt` made again from `channel` when a page changed
     /// its title.
-    fn apply(&mut self, effects: Vec<Effect>, channel: &Channel) {
+    fn apply(&mut self, effects: Vec<Effect>) {
         let mut changed = false;
         for effect in effects {
             match effect {
-                Effect::Contents => *self.contents.write().unwrap_or_else(PoisonError::into_inner) = contents_of(channel),
-                Effect::Shared { page, frame, parts } => {
+                Effect::Contents => {}
+                Effect::Shared { page, frame } => {
                     self.current = self.current.saturating_add(1);
-                    self.pages.set(page, frame, parts, self.current);
+                    self.pages.set(page, frame, self.current);
                     changed = true;
                 }
                 Effect::Withdrawn { page } => self.pages.remove(page),

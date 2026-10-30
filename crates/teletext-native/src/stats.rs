@@ -37,13 +37,12 @@ enum Kind {
 }
 
 /// The server's figures accumulated across restarts.
-const SERVER_TOTALS: [(&str, Kind); 7] = [
+const SERVER_TOTALS: [(&str, Kind); 6] = [
     ("connections_total", Kind::Counter),
     ("connections_peak", Kind::Peak),
     ("messages_sent", Kind::Counter),
     ("bytes_sent", Kind::Counter),
     ("requests", Kind::Counter),
-    ("not_modified", Kind::Counter),
     ("restarts", Kind::Counter),
 ];
 /// A channel's figures accumulated across restarts.
@@ -182,8 +181,6 @@ pub struct ServerStats {
     pub bytes_sent: AtomicU64,
     /// HTTP requests answered.
     pub requests: AtomicU64,
-    /// Of them, answered "not modified" from the client's `ETag`.
-    pub not_modified: AtomicU64,
     /// Applications started again after they ended.
     pub restarts: AtomicU64,
     /// Woken whenever a connection closes, for a stop that waits for them
@@ -208,7 +205,6 @@ impl Default for ServerStats {
             messages_sent: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
             requests: AtomicU64::new(0),
-            not_modified: AtomicU64::new(0),
             restarts: AtomicU64::new(0),
             closed: tokio::sync::Notify::new(),
             channels: Mutex::new(BTreeMap::new()),
@@ -304,7 +300,6 @@ impl ServerStats {
             ("messages_sent", load(&self.messages_sent)),
             ("bytes_sent", load(&self.bytes_sent)),
             ("requests", load(&self.requests)),
-            ("not_modified", load(&self.not_modified)),
             ("restarts", load(&self.restarts)),
         ];
         Totals { counts: counts.into_iter().map(|(name, value)| (name.to_owned(), value)).collect(), opens: BTreeMap::new() }
@@ -352,7 +347,6 @@ impl ServerStats {
             .integer("messages_sent", number(load(&self.messages_sent)))
             .integer("bytes_sent", number(load(&self.bytes_sent)))
             .integer("requests", number(load(&self.requests)))
-            .integer("not_modified", number(load(&self.not_modified)))
             .integer("restarts", number(load(&self.restarts)))
             .integer("memory_kb", memory_kb().map_or(-1, number));
         let channels = self.channels.lock().unwrap_or_else(PoisonError::into_inner);
@@ -432,7 +426,6 @@ impl ServerStats {
             messages_sent: load(&self.messages_sent),
             bytes_sent: load(&self.bytes_sent),
             requests: load(&self.requests),
-            not_modified: load(&self.not_modified),
             viewers: each.join(", "),
         }
     }
@@ -465,7 +458,6 @@ impl ServerStats {
         family("teletext_messages_sent_total", "counter", "WebSocket messages sent.", &one(load(&self.messages_sent)));
         family("teletext_sent_bytes_total", "counter", "Bytes sent in WebSocket messages.", &one(load(&self.bytes_sent)));
         family("teletext_http_requests_total", "counter", "HTTP requests answered.", &one(load(&self.requests)));
-        family("teletext_http_not_modified_total", "counter", "HTTP requests answered not modified.", &one(load(&self.not_modified)));
         family("teletext_program_restarts_total", "counter", "Programs started again after they ended.", &one(load(&self.restarts)));
 
         let channels = self.channels.lock().unwrap_or_else(PoisonError::into_inner).clone();
@@ -537,8 +529,6 @@ pub struct Glance {
     pub bytes_sent: u64,
     /// HTTP requests answered.
     pub requests: u64,
-    /// Of them, not modified.
-    pub not_modified: u64,
     /// Each channel's viewers and their peak.
     pub viewers: String,
 }
