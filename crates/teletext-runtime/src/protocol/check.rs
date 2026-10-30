@@ -605,13 +605,23 @@ fn check_gain(path: &Path<'_>, gain: u8) -> Checked {
 
 fn check_cookie(root: &Path<'_>, cookie: &Cookie) -> Checked {
     check_connection(&root.field("connection"), cookie.connection)?;
-    check_text(&root.field("name"), &cookie.name, 1, super::COOKIE_BYTES)?;
+    // A cookie's bound is in bytes (RFC 6265 section 6.1), its characters
+    // checked as every text's.
+    let field = |name: &'static str, text: &str, least: usize| -> Checked {
+        let at = root.field(name);
+        check_text(&at, text, least, super::COOKIE_BYTES)?;
+        if text.len() > super::COOKIE_BYTES {
+            return Err(fault(&at, Rule::TooLong, format!("{} bytes, at most {}", text.len(), super::COOKIE_BYTES)));
+        }
+        Ok(())
+    };
+    field("name", &cookie.name, 1)?;
     if cookie.name.starts_with('_') {
         return Err(fault(&root.field("name"), Rule::Reserved, "names starting _ are the server's".to_string()));
     }
-    check_text(&root.field("value"), &cookie.value, 0, super::COOKIE_BYTES)?;
+    field("value", &cookie.value, 0)?;
     if let Some(path) = &cookie.path {
-        check_text(&root.field("path"), path, 1, super::COOKIE_BYTES)?;
+        field("path", path, 1)?;
     }
     Ok(())
 }

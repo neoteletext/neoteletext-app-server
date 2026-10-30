@@ -27,4 +27,6 @@ fn a_cookie_names_the_field_at_fault() {
     text_field(&cookie(), "/name", "name", crate::protocol::COOKIE_BYTES);
     text_field(&cookie(), "/value", "value", crate::protocol::COOKIE_BYTES);
     text_field(&cookie(), "/path", "path", crate::protocol::COOKIE_BYTES);
+    // Its bound is in bytes: 2,049 characters of two bytes each are too many.
+    refused(&with(&cookie(), "/value", json!("\u{e9}".repeat(2_049))), "value", Rule::TooLong);
 }
