@@ -65,9 +65,9 @@ What reaches the program: while the browser sends keys to the channel, every eve
 {"type":"pages","pages":[{"page":"100","title":"Front page"},{"page":"101","title":"News"}]}
 ```
 
-At most 2,022 pages, each once: any of 100 to 8FE but those the standard reserves, page FF of each magazine (time filling, never a page), FD and FE of each magazine (the Magazine Inventory Page and the Magazine Organization Table), 1BE and 1F0 (EN 300 706 Annex A.10; the engine's REQ-NUM-008 and REQ-NUM-010). A title is at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's `contents.txt` lists the decimal ones. A program publishes only the pages it declared.
+At most 2,022 pages, each once: any of 100 to 8FE but those the standard reserves, page FF of each magazine (time filling, never a page), FD and FE of each magazine (the Magazine Inventory Page and the Magazine Organization Table), 1BE and 1F0 (EN 300 706 Annex A.10; the engine's REQ-NUM-008 and REQ-NUM-010). A title is at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's INDEX record lists the decimal ones (`SERVER.md` section 6.5; the server serves no `contents.txt`, DEC-1467). A program publishes only the pages it declared.
 
-A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. `contents.txt` then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
+A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. The INDEX record then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
 
 ### 3.2 `publish`
 
@@ -85,7 +85,7 @@ A page may start a section: `{"page":"200","title":"Retrocomputing","section":"R
   - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
 - **`keep`**, absent or `false`: the publication is the whole page, its sub-pages in the order given, the page's others ended. The server numbers them by place as the code of practice does (TR 100 287 clause 10.1; the engine's REQ-NUM-016 and REQ-NUM-019), whatever their `SC` lines say: one sub-page is 0000, a set of 2 to 79 is 0001 to 0079, and a larger set takes only sub-codes above 0079, the decimal ones first (0100 to 3979), so a whole page has at most 8,069 (`start`'s `numbered_subpages`).
 - **`keep: true`**: the publication puts the sub-pages it carries, each named by its `SC` line (any of 0000 to 3F7F, each once), and keeps the page's others as they were: one that has the sub-code of a sub-page the page has replaces it where it stands, and a new one goes before the first with a higher sub-code. So a page holds up to the standard's 8,190 sub-pages (`start`'s `subpages`), and changing one costs one. A put on a page not yet published makes the page of what it carries.
-- The server keeps and serves a page by its sub-pages: `NNN.t42` holds the first, and a page of several has `NNN-SSSS.t42` for each and the catalogue `NNN.sub` (the engine's REQ-WEB-019 and decision E.132).
+- The server keeps a page by its sub-pages, and sends them only on the channel's WebSocket (`SERVER.md` section 6.1): it serves no page or sub-page files (DEC-1467).
 - The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
 - Row 0's columns 8 to 39 are the program's (EN 300 706 clause 9.3.1.4; decision 22, and the requirements of section 11 in rdm): what an `OL,0` line puts there reaches the viewer as written, and the server writes nothing there. A program that wants a name, a date or a clock in the header writes it; without an `OL,0` line the row is blank. Columns 0 to 7 are the receiver's, where it shows the page's number; what a program puts there is never shown. The server sends no time-filling header: a clock on a page changes when the program publishes the page again.
 
@@ -133,7 +133,7 @@ One of:
 {"type":"title","page":"201","title":"A Robot Arm From Bits Of Wo..."}
 ```
 
-Gives one of the program's pages a new title, as `pages` does, for what the page holds now: `contents.txt` lists it from then on.
+Gives one of the program's pages a new title, as `pages` does, for what the page holds now: the INDEX record lists it from then on.
 
 ### 3.6 `release`
 
@@ -183,7 +183,7 @@ A channel whose program runs as a service of its own names a socket in place of 
 
 ## 7. Figures
 
-The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` at the server's root holds the same for every channel; the log has an event with the figures each minute. Each of `server` and `channel` also carries `all_time`: its counters and peaks since the server was first run with its state directory (requirement 8.3), and, for a channel, `pages_opened`, each page's opens. The same figures, since the process started, are at `/metrics` on the administration listener, in the Prometheus text format (requirement 8.1).
+The server counts, and never records who a viewer is: no address, no text typed. Every 10 seconds each program is sent `stats`; `/stats.json` on the administration listener holds the same for every channel (DEC-1467); the log has an event with the figures each minute. Each of `server` and `channel` also carries `all_time`: its counters and peaks since the server was first run with its state directory (requirement 8.3), and, for a channel, `pages_opened`, each page's opens. The same figures, since the process started, are at `/metrics` on the administration listener, in the Prometheus text format (requirement 8.1).
 
 - **`server`:**
   - `uptime_s`;
