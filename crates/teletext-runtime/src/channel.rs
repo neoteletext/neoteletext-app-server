@@ -683,6 +683,10 @@ impl Channel {
                     crate::page::Change::Whole => Arc::clone(&whole),
                     crate::page::Change::Rows(bytes) => Arc::from(bytes),
                 };
+                // Every frame of a sub-page with Link Extension links,
+                // whole or changed rows, is followed by its LINKS record,
+                // and a frame of one without links by none (REQ-1494),
+                // once the engine encodes the record (TODO-1497).
                 // Views of one connection share its stream: the same bytes
                 // go once.
                 if !queued.contains(&bytes) {

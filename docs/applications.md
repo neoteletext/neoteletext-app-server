@@ -1,167 +1,102 @@
 # teletext-server: applications in any language
 
-How a channel's application, a program in any language, talks to the server. It is `SERVER.md` section 7 as built, protocol version 1. The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
+How a channel's application, a program in any language, talks to the server. It is `SERVER.md` section 7 as built, protocol version 2 (DEC-1482). The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
 
 ## 1. Process
 
 - **Two transports carry the same lines** (requirements 6.1, 6.2 and 6.4):
   - **standard input and output:** the server starts each channel's program named by a `command` in the channels file (section 6), in its own folder, with `NEOTELETEXT_CHANNEL` set to the channel's folder;
-  - **a Unix domain socket:** a channel named with a `socket` is served to the program that connects to it, which runs as a service of its own and so outlives a restart of the server. The socket and its folder are their owner's alone. One program at a time; when it goes, or the server restarts, it connects again and declares its pages again.
+  - **a Unix domain socket:** a channel named with a `socket` is served to the program that connects to it, which runs as a service of its own and so outlives a restart of the server. The socket and its folder are their owner's alone. One program at a time; when it goes, or the server restarts, it connects again and is sent `start` again.
 - **One program serves every viewer** of its channel, multiplexed by session (`SERVER.md` section 7.1).
 - **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB. A program's standard error becomes the server's log, a line an event with its channel, cut at 64 KiB (requirement 7.5).
-- **The first line the program writes declares its pages** (section 3.1), within 30 seconds, each time it starts. The server then sends `start`. Until then the channel serves the pages the server kept from before (requirement 5.2); a page the program no longer declares is withdrawn.
-- **`start` ends every session the program knew** (requirement 9.1): it is then told of every session there is.
-- **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more after declaring its pages was ended, not failing, and is started again at once. Its channel pages stay as last published meanwhile. When it is running again it declares its pages again and is sent `start`, and publishes afresh. Each viewer's own copies of its pages are dropped, and it is sent `join` for every viewer connected and `open` for each viewer on one of its pages, so it draws them again.
+- **When the program starts** (or connects to its socket) the server sends it `start`, then `connected` for every connection open. While no program runs, the channel has nothing to show (DEC-1482).
+- **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more was ended, not failing, and is started again at once.
 - **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (`SERVER.md` section 7.5). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
-- **Every line the program sends is checked whole** and refused whole when it is not valid, with the reason in the server's log. Nothing of a refused line is acted on.
+- **Every line the program sends is checked whole** and refused whole when it is not valid: the program is sent `refused`, and the reason goes to the server's log. Nothing of a refused line is acted on.
 - **Timers are the program's own:** it has a clock, so the protocol has no `tick`.
 
 ## 2. Server to program
 
+Protocol version 2 (DEC-1482). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-2.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
+
+Common shapes:
+- `connection`: a whole number from 1, naming one open connection; `session`: a whole number, the viewer's session, which outlives connections (requirement 5.5). Both below 2^53.
+- `page`: three hexadecimal digits in capitals, magazine 1 to 8 first, `"100"` to `"8FF"`; `sub`: four, `"0000"` to `"3F7F"`, where `"3F7F"` means the page and none of its sub-pages in particular (EN 300 706 clause 9.6.1).
+- `view`: 0 to 15, one browser tab showing the channel. Until the browser's SELECT is built, every event is of view 0, and the page it opens is its selection, with `sub` `"3F7F"`.
+- `connections`: `"all"`, every open connection, or a list of 1 to 4,096 connections; a connection named that has closed is passed over.
+
 | `type` | Fields | When |
 |---|---|---|
-| `start` | `protocol` (1), `epoch_ms`, `standard`, `budgets` (below) | The program is to publish its channel pages |
-| `join` | `session` | A session began: a viewer connected without a session to continue |
-| `open` | `session`, `page` | The viewer opened one of the program's pages |
-| `leave` | `session`, `page` | The viewer left it, or their connection closed |
-| `input` | `session`, `page`, `event` | Input on the page open, from INPUT.md |
-| `close` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
-| `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7, for a page to show |
+| `start` | `protocol` (2), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
+| `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selections` (`view`, and `selection`: `page` and `sub`, or `null` for the channel's initial page) | A viewer's connection opened; answer with `reply` (REQ-1471) |
+| `selected` | `connection`, `view`, `page`, `sub` | A view selected a page (`sub` 3F7F: send its current sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1500) |
+| `input` | `connection`, `view`, `page`, `event` | Input on the page with the keys (INPUT.md) |
+| `left` | `connection`, `view`, `page` | A view left a page, or its connection closed |
+| `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
+| `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7 |
+| `refused` | `message` (its `type`, or `null`), `path` (such as `page.rows[3]`, empty for the whole), `rule` (a closed list: `syntax`, `unknown_field`, `missing_field`, `wrong_type`, `not_listed`, `out_of_range`, `too_long`, `too_short`, `not_ascending`, `duplicate`, `reserved`, `wrong_magazine`, `forbidden_character`, `not_base64`, `wrong_length`, `not_in_index`, `unknown_connection`, `not_awaited`, `outside_profile`, `invalid_packet`, and the rest the schema lists), `detail` | A line the program sent was refused whole; nothing of it was done (REQ-1475) |
 
-`standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own:
+`standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199, `views` 16. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`).
 
-| Field | Value | What |
-|---|---|---|
-| `magazines` | 8 | Magazines 1 to 8 (EN 300 706 clause 7.1.2) |
-| `pages` | 2,022 | Page numbers that may carry a page: 00 to FE in each magazine, less those the standard reserves (section 3.1) |
-| `keyable_pages` | 800 | Those a viewer can key, 100 to 899 |
-| `subpages` | 8,190 | Sub-pages a page may hold, 0001 to 3F7E, put by their sub-codes (section 3.2) |
-| `numbered_subpages` | 8,069 | Sub-pages a whole page may have, numbered by place as the code of practice numbers them (section 3.2) |
-| `decimal_subpages` | 3,199 | Sub-codes a viewer can key, 0001 to 3979 |
-
-`budgets` is the server's own bounds: `line_bytes`, the longest line (16 MiB, section 1), and `title_characters`, the longest title (120, section 3.1).
-
-`session` is a whole number, never reused, across restarts too, and below 2^53, so a TypeScript program reads it exactly (requirement 5.4). A session outlives its connection (requirement 5.5): a viewer who comes back within 5 minutes, or later while their browser keeps the session's cookie (30 days, renewed at each connection), continues it, and the program is told `open` when they open a page, not `join` again. A program may keep what it knows of a viewer under the session's number (requirement 9.2). `page` is three hexadecimal digits, `"100"` to `"8FF"`.
-
-`event.kind` is one of:
-
-| `kind` | Fields |
-|---|---|
-| `text` | `text`: whole characters that came from no key: an input method's committed text, or a phone's (INPUT.md section 5.3) |
-| `key` | `action` (`press`, `repeat`, `release`), `key`: a W3C `KeyboardEvent.key` name such as `ArrowUp`, `PageDown`, `F1`, `ColorF0Red`, or the character of a character key; `text` when the key produced text, `base` when it differs from `key` (INPUT.md section 5.5). Every press, repeat and release is sent, the keys that only modify or lock and the dead key included: a program that types takes `text` from presses and repeats, and ignores releases for typing |
-| `mouse` | `action` (`press`, `release`, `move`), `column`, `row`; on a press or release `pressed` and `button` (0 left, 1 middle, 2 right); on a move `buttons`, those held, a bit each (1 left, 2 middle, 4 right). Every press and release over the page, and every move over it, a button held or not (INPUT.md section 6.3) |
-| `wheel` | `dx`, `dy` in 1/120ths of a line (down positive), `column`, `row`, while the pointer is over the page |
-| `hover` | `action` (`enter`, `leave`), `entered` (true on `enter`), `column`, `row`: the pointer came onto one of the page's controls or went off it, and the cell is the control's first, its top-left, as the page declares it (INPUT.md sections 5.4 and 7.3). Moving from one control to the next is a `leave`, then an `enter`. The browser draws the control's look under the pointer itself; a program uses a hover for anything else, such as saying on the page what the control does. One whose page has changed since may find no control there now, and ignores it |
-| `paste` | `text` |
-| `focus`, `blur` | The keys came to the page or left it |
-
-What reaches the program: while the browser sends keys to the channel, every event goes, every key, digits and colour keys included, every click and move over the page, and every hover of a control (INPUT.md sections 6.3 and 9.1). There are no input modes to ask for (withdrawn on 27 October 2026): a program ignores what it does not use. A program selects pages for the viewer itself: three digits or the coloured keys on a page that has no other use for them answer with `goto` (INPUT.md section 9.4).
+`event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `goto` (INPUT.md section 9.4).
 
 ## 3. Program to server
 
-### 3.1 `pages`, the first line
-
-```json
-{"type":"pages","pages":[{"page":"100","title":"Front page"},{"page":"101","title":"News"}]}
-```
-
-At most 2,022 pages, each once: any of 100 to 8FE but those the standard reserves, page FF of each magazine (time filling, never a page), FD and FE of each magazine (the Magazine Inventory Page and the Magazine Organization Table), 1BE and 1F0 (EN 300 706 Annex A.10; the engine's REQ-NUM-008 and REQ-NUM-010). A title is at most 120 characters (the engine's `contents::MAX_TITLE`), without control characters. The channel's INDEX record lists the decimal ones (`SERVER.md` section 6.5; the server serves no `contents.txt`, DEC-1467). A program publishes only the pages it declared.
-
-A page may start a section: `{"page":"200","title":"Retrocomputing","section":"Retrocomputing"}`. The INDEX record then heads it and the pages after it with the section's name, at most 120 characters, which a receiver shows as the name of the page's magazine.
-
-### 3.2 `publish`
-
-```json
-{"type":"publish","page":"100","owner":"channel","tti":"PN,10000\nOL,1,..."}
-```
-
-- **`owner`** is `"channel"`, one shared copy sent to every viewer, encoded once; or a session number, that viewer's own copy of the page from now on (`SERVER.md` section 7.3).
-- **`tti`** is the page in TTI, the engine's page format (`neoteletext-engine` REQ-INP-013), read by the engine's TTI reader:
-  - `PN,mppss`: starts each sub-page. The page number comes from `page`, whatever the line says.
-  - `SC,ssss`: the sub-page's sub-code, four hexadecimal digits; see `keep`.
-  - `OL,row,text`: a row, 0 to 24. Control codes (0x00 to 0x1F) are written as ESC (0x1B) followed by the code plus 0x40; every other character is 0x20 to 0x7F of the page's character set.
-  - `FL,red,green,yellow,cyan,link5,index`: Fastext links, hexadecimal; `8FF` for none. It also shows row 24.
-  - `CU,row,column,width,flags`: the input cursor and its echo (INPUT.md section 7.1).
-  - `SC`, `PS`, `LK`, `LT` and the rest as the engine reads them.
-- **`keep`**, absent or `false`: the publication is the whole page, its sub-pages in the order given, the page's others ended. The server numbers them by place as the code of practice does (TR 100 287 clause 10.1; the engine's REQ-NUM-016 and REQ-NUM-019), whatever their `SC` lines say: one sub-page is 0000, a set of 2 to 79 is 0001 to 0079, and a larger set takes only sub-codes above 0079, the decimal ones first (0100 to 3979), so a whole page has at most 8,069 (`start`'s `numbered_subpages`).
-- **`keep: true`**: the publication puts the sub-pages it carries, each named by its `SC` line (any of 0000 to 3F7F, each once), and keeps the page's others as they were: one that has the sub-code of a sub-page the page has replaces it where it stands, and a new one goes before the first with a higher sub-code. So a page holds up to the standard's 8,190 sub-pages (`start`'s `subpages`), and changing one costs one. A put on a page not yet published makes the page of what it carries.
-- The server keeps a page by its sub-pages, and sends them only on the channel's WebSocket (`SERVER.md` section 6.1): it serves no page or sub-page files (DEC-1467).
-- The server sends the page with the erase bit set and in serial magazine mode, so each copy replaces the last.
-- Row 0's columns 8 to 39 are the program's (EN 300 706 clause 9.3.1.4; decision 22, and the requirements of section 11 in rdm): what an `OL,0` line puts there reaches the viewer as written, and the server writes nothing there. A program that wants a name, a date or a clock in the header writes it; without an `OL,0` line the row is blank. Columns 0 to 7 are the receiver's, where it shows the page's number; what a program puts there is never shown. The server sends no time-filling header: a clock on a page changes when the program publishes the page again.
-
-### 3.2a `remove`
-
-```json
-{"type":"remove","page":"100","owner":"channel","subpages":["0002","0A10"]}
-```
-
-Ends the sub-pages of those sub-codes, four hexadecimal digits each, 1 to 8,190 of them; the page's others are kept. A sub-code the page does not have is ignored. A page left with none is no longer served, as if never published.
-
-### 3.3 `goto`
-
-```json
-{"type":"goto","session":7,"page":"300"}
-```
-
-Sends the viewer to a page of the channel (INPUT.md section 7.1, REQ-INT-113).
-
-### 3.4 `sound`
-
-The engine's audio profile (`SERVER.md` section 9; the engine's `audio.md`). `to` is `{"session":7}` for one viewer or `{"page":"501"}` for everyone with that page open.
-
-**Sound for the desktop is Opus** (decision 21). The browser on macOS, Windows and Linux decodes Opus alone (the engine's decision E.131, the browser's decision 121), in one profile (the engine's E.123): mono, 48 kHz, one 20 ms frame a packet, at most 160 bytes, bare or padded, and at constant rate, every packet of a sound one length, at most 40 bytes, the profile's 16 kbit/s. The program encodes; the server checks every packet with the engine's own decoder and refuses the whole line if one is outside the profile, then carries the packets unchanged as codec 2 (E.124). A constant-rate encoder writes them, such as `ffmpeg -c:a libopus -b:a 16k -vbr off -frame_duration 20`, its packets read out of the Ogg file after its two header packets.
-
-**PCM becomes IMA ADPCM, for microcontroller receivers** such as tellyboy, which decode no Opus (E.131): `object`, `live` and `blocks` are kept for them, and are silent in the desktop browser.
-
-One of:
-
-| Member | Fields | Becomes |
+| `type` | Fields | What |
 |---|---|---|
-| `opus` | `handle` 0–255, `generation`, `packet_bytes` 1–40, `samples` (the sound's length: its last packet's frame may run past it), `packets`: base64 of the packets back to back, at most two minutes | A stored Opus sound, codec 2 |
-| `opus_live` | `handle`, `generation`, `packet_bytes` 1–40 | A live Opus sound's object |
-| `opus_packets` | `handle`, `generation`, `packet_bytes`, `first` (the first packet's block number), `packets` | A live Opus sound's next packets, one a block, in order |
-| `object` | `handle` 0–255, `generation`, `rate` (8000, 11025, 16000, 22050, 24000, 32000, 44100 or 48000), `pcm`: base64 of 16-bit little-endian mono samples, at most two minutes | A stored sound, encoded here as IMA ADPCM in 256-byte blocks |
-| `live` | `handle`, `generation`, `rate` | A live sound's object (`audio.md` section 8.3) |
-| `blocks` | `handle`, `generation`, `rate`, `first` (block number), `pcm` | Live blocks of 1,017 samples each, encoded here in 512-byte blocks |
-| `play` | `channel` 0–3, `handle`, `generation`, `gain` 0–100 (100 if absent), `fade_ms`, `loop`, `after`, `duck` 0–6, `page` (the page it belongs to, or none for the whole service) | A command. The server numbers each channel's commands, so the latest wins |
-| `stop` | `channel`, `fade_ms` | A command |
-| `gain` | `channel`, `gain`, `fade_ms` | A command |
+| `reply` | `connection`, `magazines`, `selected` (`view`, `page`: one sub-page) | The answer to `connected`, exactly once: the channel's index for this viewer, and the sub-page each view shows. Each page in `selected` must be listed in `magazines` |
+| `page` | `connections`, `page`: one sub-page | A sub-page. It reaches only the views of those connections that show it: views that selected it, and views that selected its page with 3F7F, for which it becomes the current sub-page (DEC-1500) |
+| `subpages` | `connections`, `page`, `version`, `subpages` (`sub`, `title` of at most 40 characters or `null`), each sub-code once, in the page's order | A page's sub-page list, with the answer to a page selection and whenever it changes |
+| `index` | `connections`, `magazines` | The index changed: a page added, removed, retitled, its section or sub-page count changed |
+| `goto` | `connection`, `view`, `page`, `sub` | Sends a view to a page (INPUT.md section 7.1) |
+| `sound` | `kind`, `connections`, and the kind's fields (below) | A sound, its data, or a command |
+| `cookie` | `connection`, `name`, `value`, `path`, `max_age`, `expires`, `same_site` (`Strict`, `Lax`, `None`), `secure`, `http_only` | Sets one of the program's cookies; names starting `_` are the server's |
+| `author_log` | `connections`, `level` (`E`, `W` or `I`), `text` (1 to 200 bytes), `page` or `null` | A line for the developer console of the viewer's browser |
+| `log` | `level` (`error`, `warn`, `info`, `debug`), `event` (lower case, digits and `_`), `text` | A line for the server's log |
+| `packets` | `connections`, `packets`: base64 of whole 42-byte packets | Raw packets (`SERVER.md` section 7.4) |
 
-### 3.5 `title`
+**`magazines`** (REQ-1477): at most 8, in ascending `magazine` (1 to 8), each with a `name` (at most 120 characters) and `pages`: 1 to 253 (251 in magazine 1), ascending, each `page` in that magazine and never reserved (mFD, mFE, mFF, 1BE, 1F0), with a `title` and a `section` (at most 120 characters, `section` `null` for none) and `subpages`, its count, 1 to 8,190. The index is page-level: sub-pages are never listed in it.
 
-```json
-{"type":"title","page":"201","title":"A Robot Arm From Bits Of Wo..."}
-```
+**A sub-page** (`page`, REQ-1478), every field required:
+- `page`, and `sub`, 0000 to 3F7E;
+- `rows`: 25 entries, rows 0 to 24, each exact base64 (RFC 4648 section 4, padded) of 40 seven-bit character codes, or `null` for a blank row. Row 0's columns 8 to 39 are the program's header text; columns 0 to 7 are the receiver's;
+- `links`: the six X/27/0 links, red, green, yellow, cyan, the fifth and the index, each `{page, sub}` or `null`; `display_row_24`, X/27/0's flag;
+- `link_extension` (the engine's Appendix E, REQ-1494): `keys` (each `key` `red`, `green`, `yellow`, `cyan` or `index` at most once, a `target` and a `label` of at most 9 characters, 8 for another service, `null` for the Index key), `numbers` (at most 8: `number`, a page number on the page, and a `target`, never `web:`) and `texts` (at most 8: `row` 1 to 23, `column` 0 to 39, `length` keeping the run within 40 columns, and a `target`). A target is `mpp`, `mpp:ssss`, `name:mpp`, `name:mpp:ssss`, an `http` or `https` address, or `web:` and one: printable ASCII without spaces or commas, at most 256 bytes;
+- `control`: C4 to C11 as `erase`, `newsflash`, `subtitle`, `suppress_header`, `update`, `interrupted_sequence`, `inhibit_display`, `magazine_serial`. The server sets C4 and C11 itself;
+- `character_set`: `region` 0 to 15, carried in X/28/0, or `null`; `national_option` 0 to 7, C12 to C14;
+- `enhancements`: at most 16 packets X/26, each `designation` 0 to 15 once, and 13 `triplets` of `address` (6 bits), `mode` (5 bits) and `data` (7 bits);
+- `packets`: at most 16 other packed lines by `packet`: `x27_nibbles` (designation 1 to 3, 39 values of 4 bits), `x27` (designation 4 to 15), `x28` and `m29` (designation 0 to 15), each of 13 triplets;
+- `cursor`: `{row, column, block}` or `null` (INPUT.md section 7.1).
 
-Gives one of the program's pages a new title, as `pages` does, for what the page holds now: the INDEX record lists it from then on.
+The server encodes the sub-page with the engine's encoder and sends it alone (REQ-1501). A view is sent it whole the first time after its selection changes, and after that only its header, the rows that changed and the enhancement group when any of it changed; nothing when nothing changed (DEC-1499).
 
-### 3.6 `release`
+**`sound`** (`SERVER.md` section 9; the engine's audio profile), by `kind`, each with `connections`:
 
-```json
-{"type":"release","session":7,"page":"100"}
-```
+| `kind` | Fields |
+|---|---|
+| `opus` | `handle` 0–255, `generation`, `packet_bytes` 1–40, `samples`, `packets`: base64 of the packets back to back, at most two minutes. Every packet is checked with the engine's decoder against the profile (decision 21) |
+| `opus_live` | `handle`, `generation`, `packet_bytes` |
+| `opus_packets` | `handle`, `generation`, `packet_bytes`, `first`, `packets` |
+| `object` | `handle`, `generation`, `rate` (8000, 11025, 16000, 22050, 24000, 32000, 44100 or 48000), `pcm`: base64 of 16-bit little-endian mono samples, at most two minutes; encoded here as IMA ADPCM |
+| `live` | `handle`, `generation`, `rate` |
+| `blocks` | `handle`, `generation`, `rate`, `first`, `pcm` |
+| `play` | `channel` 0–3, `handle`, `generation`, `gain` 0–100, `fade_ms`, `loop`, `after`, `duck` 0–6, `page` or `null` |
+| `stop` | `channel`, `fade_ms` |
+| `gain` | `channel`, `gain`, `fade_ms` |
 
-Drops the session's own copy of a page: from now on it sees the channel's copy, as every viewer does, and is sent it at once. For a page shown to one viewer for a while, such as a greeting.
-
-### 3.7 `log`
-
-```json
-{"type":"log","text":"fetched 7 posts"}
-```
-
-A line for the server's log.
+**Not yet relayed** (phase 2, with the engine's encoders): the index as index records, `subpages` as the SUBPAGES record, `author_log` as LOG records, `cookie` as a SET_COOKIE record, the Link Extension as the LINKS record, and DENIED "unavailable" when an answer is late. They are checked now and refused when wrong.
 
 ## 4. Pages and sessions
 
-- A session's own copy of a page replaces the channel's for that viewer from its first `publish`, until the session ends or the program releases it (section 3.6).
-- A program keeps each session's state itself and forgets it on `close` (`SERVER.md` section 8.4).
-- The server keeps each page's latest copy. A program publishes again only when the page changes. A shared page's change costs the same whatever the number of viewers (decision 7).
+- The server keeps no page (REQ-1474): only what each open connection is, and for each view the last version of the sub-page it shows, to send its changes (DEC-1499). A program sends a sub-page again to the connections that should see it whenever it changes; a connection that opens later is sent nothing of it until the program answers its `connected`.
+- A channel can differ for every viewer: the program answers each connection and selection as it chooses.
+- A program keeps each session's state itself and forgets it on `closed` (`SERVER.md` section 8.4).
 
 ## 5. Kits
 
 The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The channels file, the old Hackaday channel in Python and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13); and each TypeScript channel is a repository of its own beside it: `neoteletext-server-channel-hackaday` (decision 14), `-demosite` and `-uicomponentsdemo` (decision 16).
 
-- **TypeScript** (`neottx-server-ts-protocol`, in `~/devel/neottx-server-ts-protocol`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), the TTI writer, sounds, and the line loop. The component library over it, `neottx-server-ts-ui-components`, is in `~/devel/neottx-server-ts-ui-components`.
+- **TypeScript** (`neottx-server-ts-protocol`, in `~/devel/neottx-server-ts-protocol`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), sounds, and the line loop; it is being rewritten to protocol version 2 (TODO-1484). The component library over it, `neottx-server-ts-ui-components`, is in `~/devel/neottx-server-ts-ui-components`.
 - **Python** (`kits/python`): the same, thinner.
 
 ## 6. The channels file
@@ -189,7 +124,7 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `uptime_s`;
   - `connections`, `connections_peak` and `connections_total`;
   - `messages_sent` and `bytes_sent` (WebSocket);
-  - `requests` and `not_modified` (HTTP; answered from the client's `ETag`);
+  - `requests` (HTTP: `channel.json` and the WebSocket upgrade);
   - `restarts` (of programs);
   - `memory_kb` (resident, where the system says; -1 elsewhere);
   - `channels`, and `viewers` by channel folder.
@@ -197,6 +132,6 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `viewers`, `viewers_peak` and `viewers_total`;
   - `opens`, and `most_opened`: ten page numbers with how often each was opened;
   - `inputs` and `keys`;
-  - `shared_published` and `own_published`;
+  - `pages_sent` (sub-pages sent, each copy counted) and `refused` (lines from the program refused);
   - `gotos`, `sound_records`, `lines_to_application`, `lines_from_application` and `lines_dropped`;
   - `sessions_waiting`, sessions whose viewer may come back, and `sessions_resumed`.
