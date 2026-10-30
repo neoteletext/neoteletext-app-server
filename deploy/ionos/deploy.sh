@@ -115,7 +115,9 @@ ssh "$target" "set -e
             && sudo install -m 755 uv-x86_64-unknown-linux-gnu/uv uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/)
         rm -rf \$d
     fi
-    cd $app/current/$python_channels && uv python install --quiet \$(cat .python-version) && uv sync --quiet --frozen --no-dev"
+    # The environment is made afresh, from the lock: a kept one keeps the
+    # Python it was made with, a release candidate on the first deploy.
+    cd $app/current/$python_channels && uv python install --quiet \$(cat .python-version) && rm -rf .venv && uv sync --quiet --frozen --no-dev"
 # A glibc build: the musl one needs a musl C compiler, which the builder
 # lacks, for the TLS that neottx's qr and keyboard commands bring.
 # shellcheck disable=SC2029
