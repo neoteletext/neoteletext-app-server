@@ -23,6 +23,7 @@ Common shapes:
 - `connection`: a whole number from 1, naming one open connection: one browser tab, with one selection (DEC-1527); `session`: a whole number, the viewer's session, which outlives connections and is shared by a viewer's tabs (requirement 5.5). Both below 2^53.
 - `page`: three hexadecimal digits in capitals, magazine 1 to 8 first, `"100"` to `"8FF"`; `sub`: four, `"0000"` to `"3F7F"`, where `"3F7F"` means the page and none of its sub-pages in particular (EN 300 706 clause 9.6.1).
 - A connection's **selection** is a page with `sub` `"3F7F"`, answered with the page's first sub-page in ascending sub-code order (0000 when the page has it), which then becomes the selection; or one sub-page. A sub-page never changes by itself: no rotation (DEC-1526).
+- Text, in every field, is UTF-8 in Unicode normalisation form C, with no control character (C0, DEL, C1) and no bidirectional formatting character, within the field's length.
 - `connections`: `"all"`, every open connection, or a list of 1 to 4,096 connections; a connection named that has closed is passed over.
 
 | `type` | Fields | When |
@@ -34,7 +35,7 @@ Common shapes:
 | `left` | `connection`, `page` | The connection's selection left a page, or the connection closed |
 | `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7 |
-| `refused` | `message` (its `type`, or `null`), `path` (such as `page.rows[3]`, empty for the whole), `rule` (a closed list: `syntax`, `unknown_field`, `missing_field`, `wrong_type`, `not_listed`, `out_of_range`, `too_long`, `too_short`, `not_ascending`, `duplicate`, `reserved`, `wrong_magazine`, `forbidden_character`, `not_base64`, `wrong_length`, `not_in_index`, `unknown_connection`, `not_awaited`, `outside_profile`, `invalid_packet`, and the rest the schema lists), `detail` | A line the program sent was refused whole; nothing of it was done (REQ-1475) |
+| `refused` | `message` (its `type`, or `null`), `path` of the first fault (such as `page.rows[3]` or `magazines[2].pages[14].title`; for an unknown field, the field itself; empty for the message as a whole), `rule` (a closed list: `syntax`, `unknown_field`, `missing_field`, `wrong_type`, `not_listed`, `out_of_range`, `too_long`, `too_short`, `not_ascending`, `duplicate`, `reserved`, `wrong_magazine`, `forbidden_character`, `not_nfc`, `not_base64`, `wrong_length`, `not_in_index`, `unknown_connection`, `not_awaited`, `outside_profile`, `invalid_packet`, and the rest the schema lists), `detail` | A line the program sent was refused whole; nothing of it was done (REQ-1475) |
 
 `standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`).
 
