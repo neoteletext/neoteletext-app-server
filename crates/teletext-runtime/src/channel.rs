@@ -22,7 +22,7 @@ use neoteletext_audio::encode::packets;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
@@ -43,9 +43,10 @@ use crate::stats::{ChannelStats, count};
 const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
-/// (INPUT.md section 6.2). There are no modes to agree: every event is
+/// (INPUT.md section 6.2): PAGE, the cursor record, and SELECT, the tab's
+/// selection (REQ-INT-140). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (section 6.3).
-const USED: u32 = PAGE_CAP | CURSOR_CAP;
+const USED: u32 = PAGE_CAP | CURSOR_CAP | SELECT_CAP;
 
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
@@ -139,6 +140,7 @@ struct Shown {
 }
 
 /// One open connection: all the channel holds of a viewer (REQ-1474).
+#[allow(clippy::struct_excessive_bools, reason = "four independent facts of the connection: welcomed, SELECT agreed, announced, replied")]
 struct Connection {
     /// Its session; a session may have several connections, one a tab
     /// (DEC-1527).
@@ -149,6 +151,9 @@ struct Connection {
     decoder: Option<Box<StreamDecoder<MAX_STREAM_ITEM>>>,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
+    /// The receiver agreed SELECT: its selections come as SELECT, and
+    /// PAGE says only which page has the keys.
+    selects: bool,
     /// The input count acted on, modulo 65 536 (INPUT.md section 7.1).
     acked: u16,
     /// The page with the keys, as PAGE last said; 0 for none.
@@ -185,6 +190,7 @@ impl Connection {
             session,
             decoder: None,
             welcomed: false,
+            selects: false,
             acked: 0,
             keys: 0,
             went: None,
@@ -498,6 +504,7 @@ impl Channel {
         match *item {
             Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps),
             Item::Event(Event::Page(page)) => self.page_open(connection, page, now),
+            Item::Event(Event::Select(select)) => self.selected(connection, select.page, select.sub, now),
             _ => {
                 let Some(input) = Input::of(item) else { return };
                 let Some(event) = input.event() else { return };
@@ -521,21 +528,40 @@ impl Channel {
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
+            state.selects = caps & SELECT_CAP != 0;
             self.send(connection, Arc::from(&packet.bytes[..]));
         }
     }
 
-    /// PAGE: the page with the keys changed. Until the receiver's SELECT is
-    /// wired here (the engine's TODO-1489), a PAGE of a page other than the
-    /// one selected stands for a selection of that page with 3F7F.
+    /// PAGE: the page with the keys changed. From a receiver that has not
+    /// agreed SELECT, a PAGE of a page other than the one selected also
+    /// stands for a selection of that page with 3F7F.
     fn page_open(&mut self, connection: ConnectionId, page: u16, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.went = None;
         state.keys = page;
-        if page == 0 || state.selection.is_some_and(|selection| selection.page.0 == page) {
+        if state.selects || page == 0 || state.selection.is_some_and(|selection| selection.page.0 == page) {
             return;
         }
         self.select(connection, Selection { page: PageNumber(page), sub: ANY_SUBPAGE }, now);
+    }
+
+    /// SELECT (`INPUT.md` section 5.4, REQ-INT-140): the tab selected a page
+    /// with 3F7F, which asks again for its first sub-page even when the tab
+    /// shows another of the page (DEC-1526 item 3), or one sub-page, or,
+    /// with page 0, no page of the channel.
+    fn selected(&mut self, connection: ConnectionId, page: u16, sub: u16, now: u64) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        if page == 0 {
+            let Some(before) = state.selection.take() else { return };
+            state.shown = None;
+            state.selection_due = None;
+            if state.announced {
+                self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
+            }
+            return;
+        }
+        self.select(connection, Selection { page: PageNumber(page), sub: protocol::SubCode(sub) }, now);
     }
 
     /// The connection selected a page (sub-code 3F7F) or one sub-page: the
