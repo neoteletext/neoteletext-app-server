@@ -33,8 +33,8 @@ pub struct ChannelStats {
     /// Input dropped because it was stamped with a page other than the
     /// connection's selection (REQ-1557).
     pub stale_input: u64,
-    /// Viewers sent to another page by the application.
-    pub gotos: u64,
+    /// Viewers the application redirected, to a page or another channel.
+    pub redirects: u64,
     /// Audio records sent: sound objects, their data and commands.
     pub sound_records: u64,
     /// Lines sent to the application's process.

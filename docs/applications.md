@@ -1,6 +1,6 @@
 # teletext-server: applications in any language
 
-How a channel's application, a program in any language, talks to the server. It is `SERVER.md` section 7 as built, protocol version 2 (DEC-1482). The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
+How a channel's application, a program in any language, talks to the server. It is `SERVER.md` section 7 as built, protocol version 3 (DEC-1482, DEC-1683). The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
 
 ## 1. Process
 
@@ -17,7 +17,7 @@ How a channel's application, a program in any language, talks to the server. It 
 
 ## 2. Server to program
 
-Protocol version 2 (DEC-1482). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-2.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
+Protocol version 3 (DEC-1482, DEC-1683). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-3.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
 
 Common shapes:
 - `connection`: a whole number from 1, naming one open connection: one browser tab, with one selection (DEC-1527); `session`: a whole number, the viewer's session, which outlives connections and is shared by a viewer's tabs (requirement 5.5). Both below 2^53.
@@ -39,7 +39,7 @@ Common shapes:
 
 `standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`).
 
-`event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `goto` (INPUT.md section 9.4).
+`event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `redirect` (INPUT.md section 9.4).
 
 ## 3. Program to server
 
@@ -49,7 +49,7 @@ Common shapes:
 | `page` | `connections`, `page`: one sub-page | A sub-page. It reaches only those connections whose selection shows it: those that selected it, and those that selected its page with 3F7F and await its first sub-page, whose selection it becomes (DEC-1526) |
 | `subpages` | `connections`, `page`, `version` (0 to 65,535), `subpages` (`sub`, `title` of at most 40 characters or `null`), each sub-code once, in ascending order | A page's sub-page list, with the answer to a page selection and whenever it changes; sent to the connections named whose selection shows the page and that do not hold that version |
 | `index` | `connections`, `magazines` | The index changed: a page added, removed, retitled, its section or sub-page count changed |
-| `goto` | `connection`, `page`, `sub` | Sends the connection to a page (INPUT.md section 7.1): a selection, so the program is then sent `selected` for it |
+| `redirect` | `connection`, and `page` and `sub`, or `address` (at most 1,015 bytes, an `http` or `https` address, `MAX_ADDRESS` of `INPUT.md` section 7.11) | Sends the viewer elsewhere, with no action from them (DEC-1683). With a page, a page redirect: a selection, so the program is then sent `selected` for it. With an address, to another channel, after the receiver's one-second notice (REQ-1686): no selection changes, and the program is sent `left` when the viewer goes. Naming both or neither is refused. It is neither an HTTP redirect (REQ-701) nor anything a viewer can refuse, but a viewer's own choice overrides it |
 | `sound` | `kind`, `connections`, and the kind's fields (below) | A sound, its data, or a command |
 | `cookie` | `connection`, `name`, `value`, `path`, `max_age` (seconds, 0 removing it, `null` for the browser's session), `same_site` (`Strict`, `Lax`, `None`), `secure`, `http_only` | Sets one of the program's cookies; names starting `_` are the server's |
 | `author_log` | `connections`, `level` (`E`, `W` or `I`), `text` (1 to 200 bytes), `page` or `null` | A line for the developer console of the viewer's browser |
@@ -134,5 +134,5 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `opens`, and `most_opened`: ten page numbers with how often each was opened;
   - `inputs` and `keys`;
   - `pages_sent` (sub-pages sent, each copy counted) and `refused` (lines from the program refused);
-  - `gotos`, `sound_records`, `lines_to_application`, `lines_from_application` and `lines_dropped`;
+  - `redirects`, `sound_records`, `lines_to_application`, `lines_from_application` and `lines_dropped`;
   - `sessions_waiting`, sessions whose viewer may come back, and `sessions_resumed`.

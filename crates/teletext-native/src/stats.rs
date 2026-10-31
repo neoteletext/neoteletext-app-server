@@ -55,7 +55,7 @@ const CHANNEL_TOTALS: [(&str, Kind); 14] = [
     ("pages_sent", Kind::Counter),
     ("refused", Kind::Counter),
     ("stale_input", Kind::Counter),
-    ("gotos", Kind::Counter),
+    ("redirects", Kind::Counter),
     ("sound_records", Kind::Counter),
     ("lines_to_application", Kind::Counter),
     ("lines_from_application", Kind::Counter),
@@ -399,7 +399,7 @@ impl ServerStats {
             .integer("refused", number(stats.refused))
             .integer("invalid_packets", number(stats.invalid_packets))
             .integer("stale_input", number(stats.stale_input))
-            .integer("gotos", number(stats.gotos))
+            .integer("redirects", number(stats.redirects))
             .integer("sound_records", number(stats.sound_records))
             .integer("lines_to_application", number(stats.lines_to_application))
             .integer("lines_from_application", number(stats.lines_from_application))
@@ -485,7 +485,7 @@ impl ServerStats {
             ("teletext_channel_pages_sent_total", "Sub-pages sent to connections, each copy counted.", |figures| figures.stats.pages_sent),
             ("teletext_channel_refused_total", "Lines from the program refused.", |figures| figures.stats.refused),
             ("teletext_channel_stale_input_total", "Input dropped for a page no longer selected.", |figures| figures.stats.stale_input),
-            ("teletext_channel_gotos_total", "Viewers sent to a page.", |figures| figures.stats.gotos),
+            ("teletext_channel_redirects_total", "Viewers the application redirected.", |figures| figures.stats.redirects),
             ("teletext_channel_sound_records_total", "Audio records sent.", |figures| figures.stats.sound_records),
             ("teletext_channel_program_lines_sent_total", "Lines sent to the channel's program.", |figures| figures.stats.lines_to_application),
             ("teletext_channel_program_lines_received_total", "Lines from the channel's program.", |figures| figures.stats.lines_from_application),
@@ -549,7 +549,7 @@ fn channel_now(figures: &ChannelFigures) -> Totals {
         ("pages_sent", stats.pages_sent),
         ("refused", stats.refused),
         ("stale_input", stats.stale_input),
-        ("gotos", stats.gotos),
+        ("redirects", stats.redirects),
         ("sound_records", stats.sound_records),
         ("lines_to_application", stats.lines_to_application),
         ("lines_from_application", stats.lines_from_application),

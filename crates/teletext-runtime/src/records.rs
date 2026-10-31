@@ -1,7 +1,7 @@
 //! What a program sends that is not page content, as the engine's records
 //! on data channel 12 (REQ-1480; `INPUT.md` section 7): the index, a
-//! page's SUBPAGES list, the author's LOG lines, typed `SET_COOKIE` and a
-//! sub-page's LINKS. Each is written by the engine's encoder, which checks
+//! page's SUBPAGES list, the author's LOG lines, typed `SET_COOKIE`, a
+//! sub-page's LINKS and a REDIRECT. Each is written by the engine's encoder, which checks
 //! what it writes with its reader, never by hand here; this module only
 //! turns the protocol's types into the encoder's.
 //!
@@ -21,11 +21,12 @@ use neoteletext_web::cookie::SameSite as EngineSameSite;
 use neoteletext_web::records::cookie::SetCookie;
 use neoteletext_web::records::index::{IndexMagazine, IndexPage};
 use neoteletext_web::records::links::SubPageLinks;
+use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::records::subpages::SubPageEntry;
-use neoteletext_web::records::{index, links, log, subpages};
+use neoteletext_web::records::{index, links, log, redirect as redirect_record, subpages};
 
 use crate::page::address;
-use crate::protocol::{AuthorLevel, AuthorLog, Cookie, LinkKey, Magazine, Page, SameSite, SubPages};
+use crate::protocol::{AuthorLevel, AuthorLog, Cookie, LinkKey, Magazine, Page, Redirect, SameSite, SubPages};
 
 /// The audio and input service the records go on (the reference channel's,
 /// INPUT.md section 7).
@@ -83,6 +84,21 @@ pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>
     };
     let mut written = None;
     let bytes = collect(|out| written = Some(log::encode(level, line.page.map(|page| address(page.0)), &line.text, SERVICE, *record_id, out)));
+    written.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;
+    *record_id = record_id.wrapping_add(1);
+    Ok(bytes)
+}
+
+/// A redirect, in its form, as its REDIRECT record (`INPUT.md` section
+/// 7.11). The protocol's check left one of its two forms.
+pub(crate) fn redirect(redirect: &Redirect, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    let record = match (redirect.page, redirect.sub, redirect.address.as_deref()) {
+        (Some(page), Some(sub), None) => RedirectRecord::Page { page: address(page.0), subcode: EngineSubCode::new(sub.0) },
+        (None, None, Some(address)) => RedirectRecord::Address(address),
+        _ => return Err(String::from("a redirect names a page or an address")),
+    };
+    let mut written = None;
+    let bytes = collect(|out| written = Some(redirect_record::encode(record, SERVICE, *record_id, out)));
     written.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;
     *record_id = record_id.wrapping_add(1);
     Ok(bytes)

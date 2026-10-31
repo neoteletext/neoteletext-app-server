@@ -966,7 +966,7 @@
         "page",
         "subpages",
         "index",
-        "goto",
+        "redirect",
         "sound",
         "cookie",
         "author_log",
@@ -1409,6 +1409,15 @@
           "additionalProperties": false,
           "description": "Sends a connection to a page.",
           "properties": {
+            "address": {
+              "default": null,
+              "description": "Another channel's address, at most the engine's\n[`MAX_ADDRESS`](neoteletext_web::records::redirect::MAX_ADDRESS) bytes:\nthe most a REDIRECT record carries.",
+              "maxLength": 1015,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "connection": {
               "description": "The connection.",
               "format": "uint64",
@@ -1417,23 +1426,37 @@
               "type": "integer"
             },
             "page": {
-              "$ref": "#/$defs/PageNumber",
-              "description": "The page."
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PageNumber"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The page of this channel."
             },
             "sub": {
-              "$ref": "#/$defs/SubCode",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SubCode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
               "description": "The sub-code, or 3F7F for the page."
             },
             "type": {
-              "const": "goto",
+              "const": "redirect",
               "type": "string"
             }
           },
           "required": [
             "type",
-            "connection",
-            "page",
-            "sub"
+            "connection"
           ],
           "type": "object"
         },
@@ -2280,7 +2303,7 @@
               "type": "integer"
             },
             "protocol": {
-              "const": 2,
+              "const": 3,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2711,5 +2734,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 2"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 3"
 }

@@ -33,8 +33,9 @@ pub use read::read;
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
-/// publishing for everyone.
-pub const PROTOCOL: u32 = 2;
+/// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
+/// (DEC-1683), and which could name no other channel.
+pub const PROTOCOL: u32 = 3;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -634,7 +635,7 @@ pub enum MessageType {
     Page,
     Subpages,
     Index,
-    Goto,
+    Redirect,
     Sound,
     Cookie,
     AuthorLog,
@@ -712,7 +713,7 @@ pub enum ProgramMessage {
     /// A change to the magazines and their pages.
     Index(Index),
     /// Sends a connection to a page.
-    Goto(Goto),
+    Redirect(Redirect),
     /// A sound, its data, or a command.
     Sound(Sound),
     /// Sets or clears one of the program's cookies for a connection.
@@ -735,7 +736,7 @@ impl ProgramMessage {
             Self::Page(_) => MessageType::Page,
             Self::Subpages(_) => MessageType::Subpages,
             Self::Index(_) => MessageType::Index,
-            Self::Goto(_) => MessageType::Goto,
+            Self::Redirect(_) => MessageType::Redirect,
             Self::Sound(_) => MessageType::Sound,
             Self::Cookie(_) => MessageType::Cookie,
             Self::AuthorLog(_) => MessageType::AuthorLog,
@@ -851,18 +852,28 @@ pub struct Index {
     pub magazines: Vec<Magazine>,
 }
 
-/// `goto`: moves the connection's selection to a page, which is itself a
-/// selection (DEC-1526 item 4).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+/// `redirect`: sends the connection's viewer to a page of this channel,
+/// which is itself a selection (DEC-1526 item 4), or to another channel's
+/// address, which changes no selection (REQ-1688). It names `page` and `sub`
+/// or `address`, never both (`check`).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Goto {
+pub struct Redirect {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The page.
-    pub page: PageNumber,
+    /// The page of this channel.
+    #[serde(default)]
+    pub page: Option<PageNumber>,
     /// The sub-code, or 3F7F for the page.
-    pub sub: SubCode,
+    #[serde(default)]
+    pub sub: Option<SubCode>,
+    /// Another channel's address, at most the engine's
+    /// [`MAX_ADDRESS`](neoteletext_web::records::redirect::MAX_ADDRESS) bytes:
+    /// the most a REDIRECT record carries.
+    #[serde(default)]
+    #[schemars(length(max = neoteletext_web::records::redirect::MAX_ADDRESS))]
+    pub address: Option<String>,
 }
 
 /// One sub-page of a page, as the engine's page model (`PageFile`), field

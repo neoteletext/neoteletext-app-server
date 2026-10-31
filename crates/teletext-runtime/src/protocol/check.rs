@@ -14,11 +14,12 @@ use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_core::policy::is_safe_output_char;
 use neoteletext_formats::log::LogRefused;
 use neoteletext_web::base64;
+use neoteletext_web::records::redirect::{MAX_ADDRESS, RedirectRecord, encode};
 use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
 use super::{
     AuthorLog, COLUMNS, Connections, Cookie, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage,
-    Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
+    Redirect, Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
 use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
@@ -118,7 +119,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Index(Index { connections, magazines }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_magazines(&root.field("magazines"), magazines))
         }
-        ProgramMessage::Goto(goto) => check_connection(&root.field("connection"), goto.connection),
+        ProgramMessage::Redirect(redirect) => check_redirect(&root, redirect),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -635,6 +636,27 @@ fn check_author_log(root: &Path<'_>, log: &AuthorLog) -> Checked {
     };
     neoteletext_formats::log::check(log.text.as_bytes()).map_err(|refused| fault(&root.field("text"), rule(refused), format!("{refused:?}")))?;
     check_nfc(&root.field("text"), &log.text)
+}
+
+/// A redirect names a page and its sub-code, or an address, and the
+/// engine's encoder alone says what an address may be (REQ-1688).
+fn check_redirect(root: &Path<'_>, redirect: &Redirect) -> Checked {
+    check_connection(&root.field("connection"), redirect.connection)?;
+    let both = |field: &'static str| fault(&root.field(field), Rule::UnknownField, "a redirect names a page or an address, never both".to_string());
+    let missing = |field: &'static str| fault(&root.field(field), Rule::MissingField, "a redirect names a page and its sub-code, or an address".to_string());
+    match (redirect.page, redirect.sub, redirect.address.as_deref()) {
+        (Some(_), Some(_), None) => Ok(()),
+        (None, None, Some(address)) if address.len() > MAX_ADDRESS => {
+            Err(fault(&root.field("address"), Rule::TooLong, format!("{} bytes, at most {MAX_ADDRESS}", address.len())))
+        }
+        (None, None, Some(address)) => encode(RedirectRecord::Address(address), 0, 0, &mut |_| {})
+            .map(|_| ())
+            .map_err(|refused| fault(&root.field("address"), Rule::ForbiddenCharacter, format!("{refused:?}"))),
+        (Some(_), _, Some(_)) => Err(both("page")),
+        (None, Some(_), Some(_)) => Err(both("sub")),
+        (Some(_), None, None) => Err(missing("sub")),
+        (None, _, None) => Err(missing("page")),
+    }
 }
 
 fn check_log(root: &Path<'_>, log: &Log) -> Checked {

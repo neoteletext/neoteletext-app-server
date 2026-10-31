@@ -772,16 +772,21 @@ impl Channel {
                     records::index(state.index_generation, &index.magazines, &mut state.record_id)
                 })?;
             }
-            // A goto is itself a selection (DEC-1526 item 4): the receiver
-            // goes to the page of the cursor record, and the program is
-            // asked for it.
-            ProgramMessage::Goto(goto) => {
-                let Some(state) = self.connections.get_mut(&goto.connection) else { return Ok(()) };
-                count(&mut self.stats.gotos);
-                if let Some(bytes) = state.cursor_packet(goto.page.0) {
-                    self.send(goto.connection, bytes);
+            // A page redirect is itself a selection (DEC-1526 item 4): the
+            // receiver goes to the record's page, and the program is asked
+            // for it. A redirect to another channel changes no selection:
+            // the receiver leaves, or stays, by its own rules (REQ-1688).
+            ProgramMessage::Redirect(redirect) => {
+                if !self.connections.contains_key(&redirect.connection) {
+                    return Ok(());
                 }
-                self.select(goto.connection, Selection { page: goto.page, sub: goto.sub }, now);
+                self.send_records(&[redirect.connection], kind, |state| records::redirect(&redirect, &mut state.record_id))?;
+                count(&mut self.stats.redirects);
+                match (redirect.page, redirect.sub, redirect.address) {
+                    (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, now),
+                    (_, _, Some(address)) => self.log(Level::Info, "redirect", format!("connection {} sent to {address}", redirect.connection)),
+                    _ => {}
+                }
             }
             ProgramMessage::Sound(sound) => {
                 let records = self.sounds.records(&sound).map_err(|(rule, detail)| refuse("", rule, detail))?;

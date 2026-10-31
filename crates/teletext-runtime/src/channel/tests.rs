@@ -8,9 +8,12 @@ extern crate std;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_core::packet::Packet;
 use neoteletext_input::VERSION;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, Select, Stamp, write};
+use neoteletext_web::records::TYPE_REDIRECT;
 use serde_json::{Value, json};
 
 use super::{Channel, ChannelConfig, Effect, STALE_INPUT_REPORT_SECONDS};
@@ -213,17 +216,65 @@ fn gone_releases_a_held_button_marked_lost() {
     assert_eq!((&lines[0]["event"]["action"], &lines[0]["event"]["column"], &lines[0]["lost"]), (&json!("release"), &json!(7), &json!(true)));
 }
 
-/// REQ-207: a program's `goto` is a selection, and lets go too.
+/// REQ-207: a program's page redirect is a selection, and lets go too.
 #[test]
-fn a_goto_releases_what_is_held() {
+fn a_page_redirect_releases_what_is_held() {
     let mut channel = selected();
     channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 1);
     let _ = channel.take_effects();
-    channel.from_program(&line(&json!({"type": "goto", "connection": CONNECTION, "page": "200", "sub": "3F7F"})), 2);
+    channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "page": "200", "sub": "3F7F"})), 2);
     let effects = channel.take_effects();
     let order: Vec<String> = told(&effects).iter().map(|line| line["type"].as_str().unwrap().into()).collect();
     assert_eq!(order, ["input", "left", "selected"], "released before the page goes");
     assert_eq!(inputs(&effects)[0]["lost"], json!(true));
+}
+
+/// The types of the records on data channel 12 in `bytes` that begin there.
+fn record_types(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .as_chunks::<PACKET_BYTES>()
+        .0
+        .iter()
+        .filter_map(|bytes| neoteletext_audio::idl::fragment(&Packet { bytes: *bytes })?.ok())
+        .filter(|fragment| fragment.index == 0)
+        .filter_map(|fragment| fragment.data.get(1).copied())
+        .collect()
+}
+
+/// What `effects` send `connection`, back to back.
+fn sent_to(effects: &[Effect], connection: u64) -> Vec<u8> {
+    effects
+        .iter()
+        .filter_map(|effect| if let Effect::Send { connection: to, bytes } = effect { (*to == connection).then(|| bytes.to_vec()) } else { None })
+        .flatten()
+        .collect()
+}
+
+/// DEC-1689, REQ-1688 item 2: a page redirect reaches the receiver as a
+/// REDIRECT record and selects the page, and no cursor record names it.
+#[test]
+fn a_page_redirect_sends_a_redirect_record_and_selects_the_page() {
+    let mut channel = selected();
+    let _ = channel.take_effects();
+    channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "page": "200", "sub": "3F7F"})), 2);
+    let effects = channel.take_effects();
+    assert_eq!(record_types(&sent_to(&effects, CONNECTION)), [TYPE_REDIRECT], "and no cursor record");
+    let lines = told(&effects);
+    assert_eq!((&lines.last().unwrap()["type"], &lines.last().unwrap()["page"]), (&json!("selected"), &json!("200")));
+}
+
+/// REQ-1688 item 2: a redirect to another channel sends the record, tells
+/// the operator, and changes no selection.
+#[test]
+fn a_redirect_to_another_channel_changes_no_selection() {
+    let mut channel = selected();
+    let _ = channel.take_effects();
+    channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "address": "https://elsewhere.example/channel/"})), 2);
+    let effects = channel.take_effects();
+    assert_eq!(record_types(&sent_to(&effects, CONNECTION)), [TYPE_REDIRECT]);
+    assert!(told(&effects).is_empty(), "the program is told nothing: the viewer has not gone");
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Log { event: "redirect", text, .. } if text.contains("elsewhere.example"))));
+    assert_eq!(channel.stats().redirects, 1);
 }
 
 /// REQ-207 item 4: a connection lost gives the program the releases the
