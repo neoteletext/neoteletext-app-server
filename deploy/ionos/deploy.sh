@@ -28,10 +28,6 @@ edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
 channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo)
-# Hackaday's protocol 2 port is in a worktree until it is merged into the
-# repository's main, whose working tree holds other uncommitted work
-# (TODO-1541); on the container it keeps the repository's name.
-hackaday_tree=${NEOTELETEXT_HACKADAY_TREE:-$devel/neoteletext-server-channel-hackaday-protocol2}
 # The old Hackaday channel, Python, beside the Python kit.
 python_channels=neoteletext-server-channels
 # The development machine's uv, so uv.lock is read by the version that wrote it.
@@ -49,10 +45,8 @@ build=1
 [ "${1:-}" = "--no-build" ] && build=0
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-source_of() { if [ "$1" = neoteletext-server-channel-hackaday ]; then echo "$hackaday_tree"; else echo "$devel/$1"; fi; }
 
-for c in "${channels[@]}"; do [ -d "$(source_of "$c")" ] || die "$(source_of "$c") not found"; done
-for c in neoteletext-www "$python_channels"; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
+for c in "${channels[@]}" neoteletext-www "$python_channels"; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
 [ -f "$dataset_source/analysis.sqlite" ] && [ -f "$dataset_source/hackaday.sqlite" ] || die "no Hackaday dataset in $dataset_source"
 [ -n "$engine_rev" ] || die "no engine rev in $repo/Cargo.toml"
 
@@ -84,7 +78,7 @@ ssh "$builder" "cat teletext-server-check/target/$musl/release/teletext-server" 
 say "the channels and the home page into $app/current, the channels' user's"
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current"
 for c in "${channels[@]}"; do
-    rsync -a --delete --exclude node_modules --exclude tmp --exclude .git "$(source_of "$c")/" "$target:$app/current/$c/"
+    rsync -a --delete --exclude node_modules --exclude tmp --exclude .git --exclude .idea "$devel/$c/" "$target:$app/current/$c/"
 done
 rsync -a --delete "$devel/neoteletext-www/public/" "$target:$app/current/www/"
 # shellcheck disable=SC2029
