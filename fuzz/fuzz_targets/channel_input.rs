@@ -11,12 +11,12 @@ const STEP: u64 = 50;
 const SENDERS: u8 = 3;
 /// The sender byte that is the program's.
 const PROGRAM: u8 = 2;
-/// Each connection's first message: HELLO with version 3 and the CURSOR and
+/// Each connection's first message: HELLO with version 5 and the CURSOR and
 /// SELECT capabilities, then SELECT of page 100, sub-code 0000 (INPUT.md
 /// sections 5.4 and 6.1). Stamped input can then match the selection, so
 /// the fuzzer reaches the stamp check, what is held and its releases, and
 /// not only the drop of input with nothing selected.
-const OPENING: [u8; 13] = [0xFF, 0x09, 3, 0x80, 0x80, 0x88, 0x02, 0xFF, 0x40, 3, 0x80, 0x02, 0];
+const OPENING: [u8; 13] = [0xFF, 0x09, 5, 0x80, 0x80, 0x88, 0x02, 0xFF, 0x40, 3, 0x80, 0x02, 0];
 
 fuzz_target!(|data: &[u8]| {
     let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: SESSION_GRACE_MS };
