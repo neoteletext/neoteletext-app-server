@@ -236,5 +236,5 @@ $NAME is up. Check:
       Hostname $CONTAINER_ADDR
       User $USERNAME
       ProxyJump crowdwaveaudio
-      IdentityFile ~/devel/certs/templates_www_ohio.pem
+      IdentityFile ~/.ssh/crowdwave2_ed25519
 EOF
