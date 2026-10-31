@@ -172,6 +172,8 @@ struct Connection {
     /// What it selected: a page and a sub-code, the sub-code 3F7F until
     /// the program answers with the page's first sub-page (DEC-1526).
     selection: Option<Selection>,
+    /// The query of the address it opened, for its program (REQ-1674).
+    query: Option<String>,
     /// The sub-page its selection shows, as last sent.
     shown: Option<Shown>,
     /// The program running now was told of it with `connected`.
@@ -190,7 +192,7 @@ struct Connection {
 }
 
 impl Connection {
-    const fn new(session: SessionId) -> Self {
+    fn new(session: SessionId, query: Option<String>) -> Self {
         Self {
             session,
             decoder: None,
@@ -200,6 +202,7 @@ impl Connection {
             pointer: (0, 0),
             record_id: 0,
             selection: None,
+            query,
             shown: None,
             announced: false,
             replied: false,
@@ -402,14 +405,14 @@ impl Channel {
         state.announced = true;
         state.replied = false;
         state.reply_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
-        let message = Connected { connection, session: state.session, cookies: Vec::new(), selection: state.selection };
+        let message = Connected { connection, session: state.session, cookies: Vec::new(), selection: state.selection, query: state.query.clone() };
         self.tell(&ServerMessage::Connected(message));
     }
 
     /// A connection the host numbered `connection` opened for `session`,
     /// which it continues or starts (requirement 5.5). The host never
     /// reuses a connection's number while the channel runs.
-    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, now: u64) {
+    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, query: Option<String>, now: u64) {
         let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
         if state.waiting_since.take().is_some() {
             self.stats.resumed();
@@ -417,7 +420,7 @@ impl Channel {
             self.stats.joined();
         }
         state.open = state.open.saturating_add(1);
-        self.connections.insert(connection, Connection::new(session));
+        self.connections.insert(connection, Connection::new(session, query));
         self.announce(connection, now);
     }
 

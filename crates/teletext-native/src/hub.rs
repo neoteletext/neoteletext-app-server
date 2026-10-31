@@ -42,6 +42,8 @@ pub enum Command {
         /// Its session, which it continues or starts (requirement 5.5);
         /// a session may have several connections, one a tab (DEC-1527).
         session: SessionId,
+        /// The query of the address it opened (REQ-1674).
+        query: Option<String>,
         /// Its queue.
         outbox: mpsc::Sender<Outbound>,
     },
@@ -196,9 +198,9 @@ impl Task {
     fn handle(&mut self, event: Event, channel: &mut Channel) -> bool {
         let now = self.now();
         match event {
-            Event::Command(Command::Opened { connection, session, outbox }) => {
+            Event::Command(Command::Opened { connection, session, query, outbox }) => {
                 self.outboxes.insert(connection, outbox);
-                channel.opened(connection, session, now);
+                channel.opened(connection, session, query, now);
             }
             Event::Command(Command::Received { connection, bytes }) => channel.received(connection, &bytes, now),
             Event::Command(Command::Closed { connection }) => {

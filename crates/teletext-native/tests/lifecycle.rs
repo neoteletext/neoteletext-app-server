@@ -115,9 +115,14 @@ fn until_status(address: &str, path: &str, status: u16) -> Vec<u8> {
 
 /// A push connection, open, and its response's `Set-Cookie`, if any.
 fn push(address: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
+    push_to(address, "/ch/push", cookie)
+}
+
+/// A push connection to `target`, open, and its response's `Set-Cookie`.
+fn push_to(address: &str, target: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
     let mut stream = TcpStream::connect(address).unwrap();
     let cookie = cookie.map(|cookie| format!("Cookie: {cookie}\r\n")).unwrap_or_default();
-    write!(stream, "GET /ch/push HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Version: 13\r\n{cookie}\r\n").unwrap();
+    write!(stream, "GET {target} HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Version: 13\r\n{cookie}\r\n").unwrap();
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
         let mut byte = [0_u8; 1];
@@ -181,6 +186,56 @@ fn a_restart_closes_viewers_as_a_restart() {
 /// A connection presenting its session's cookie continues that session,
 /// a second connection, another tab, while the first is open included
 /// (DEC-1527); a forged cookie is ignored (requirement 5.5).
+/// REQ-1661 item 4: a request target of 8,000 octets is answered, and hyper,
+/// which holds 65,534 octets at most, answers a longer one with 414.
+#[test]
+fn a_long_request_target_is_answered() {
+    let folder = scratch("target");
+    let file = channels(&folder, &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/ch/channel.json", 200);
+    let path = |length: usize| format!("/ch/{}", "a".repeat(length - "/ch/".len()));
+    assert_eq!(get(&server.address, &path(8_000)).map(|(status, _)| status), Some(404), "no such file, but answered");
+    assert_eq!(get(&server.address, &path(65_000)).map(|(status, _)| status), Some(404));
+    assert_eq!(get(&server.address, &path(66_000)).map(|(status, _)| status), Some(414));
+}
+
+/// REQ-1674: a push connection's query reaches the program in `connected`,
+/// exactly as written, and one that breaks its rules is refused and never
+/// reaches it.
+#[test]
+fn a_query_reaches_the_program_in_connected() {
+    let folder = scratch("query");
+    let heard = folder.join("heard");
+    let script = format!(r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard:?}; done"#);
+    let file = channels(&folder, &script);
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/ch/channel.json", 200);
+
+    let long = "q".repeat(8_001);
+    let bad = format!(
+        "GET /ch/push?{long} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    let mut stream = TcpStream::connect(&server.address).unwrap();
+    stream.write_all(bad.as_bytes()).unwrap();
+    let mut answer = [0_u8; 12];
+    stream.read_exact(&mut answer).unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 400");
+
+    let _open = push_to(&server.address, "/ch/push?id=7&b=%20x", None);
+    let started = Instant::now();
+    let told = loop {
+        let told = std::fs::read_to_string(&heard).unwrap_or_default();
+        if told.contains("connected") {
+            break told;
+        }
+        assert!(started.elapsed() < WITHIN, "the program was told nothing");
+        std::thread::sleep(RETRY);
+    };
+    assert!(told.contains(r#""query":"id=7&b=%20x""#), "{told}");
+    assert_eq!(told.matches("connected").count(), 1, "the refused one never reached it: {told}");
+}
+
 #[test]
 fn a_session_continues_with_its_cookie() {
     let folder = scratch("cookie");

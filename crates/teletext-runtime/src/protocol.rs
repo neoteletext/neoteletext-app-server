@@ -395,6 +395,18 @@ pub struct Connected {
     /// initial page. A connection is one browser tab with one selection
     /// (DEC-1527).
     pub selection: Option<Selection>,
+    /// The query of the address the viewer opened, without its `?`, exactly
+    /// as received, or none (REQ-1674). The server does not interpret it:
+    /// it is untrusted text from the viewer.
+    #[schemars(length(min = 1, max = QUERY_BYTES), regex(pattern = "^[!-~]+$"))]
+    pub query: Option<String>,
+}
+
+/// Whether `query` is one a connection may carry (REQ-1674 item 3,
+/// REQ-1475): within the address's bound, and printable ASCII.
+#[must_use]
+pub fn valid_query(query: &str) -> bool {
+    !query.is_empty() && query.len() <= QUERY_BYTES && query.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 /// A cookie as a request carries it.
@@ -996,8 +1008,12 @@ pub struct TextLink {
     pub target: String,
 }
 
-/// The longest link target: the engine's `LINK_ADDRESS_BYTES`, 256 bytes.
-pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_ADDRESS_BYTES;
+/// The longest link target: the engine's, the longest address of REQ-1661
+/// and a `web:` mark.
+pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_TARGET_BYTES;
+/// The longest query a connection carries: the whole address's bound
+/// (REQ-1674 item 3).
+pub const QUERY_BYTES: usize = limits::MAX_URL_LENGTH;
 /// The longest label of a key's link to this service (Appendix E.1).
 pub const LINK_LABEL_CHARACTERS: usize = 9;
 /// The longest label of a key's link to another service: one fewer, for

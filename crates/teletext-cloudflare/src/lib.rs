@@ -40,6 +40,7 @@ use std::collections::BTreeMap;
 
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
+use teletext_runtime::protocol::valid_query;
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
 use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, Level, SESSION_GRACE_MS, SessionId};
 use worker::{
@@ -336,7 +337,9 @@ impl ChannelObject {
         for socket in self.state.get_websockets_with_tag(VIEWER_TAG) {
             let Ok(Some((connection, session))) = socket.deserialize_attachment::<(ConnectionId, SessionId)>() else { continue };
             live.next_connection = live.next_connection.max(connection.saturating_add(1));
-            Self::welcome(&mut live, connection, session, socket);
+            // A socket's attachment holds 2 KiB, less than a query may be,
+            // so a viewer starting afresh here has none (REQ-1674).
+            Self::welcome(&mut live, connection, session, None, socket);
         }
         if live.program.is_some() {
             let now = live.now();
@@ -348,10 +351,10 @@ impl ChannelObject {
     }
 
     /// A viewer's connection for `session` opened: its program is told.
-    fn welcome(live: &mut Live, connection: ConnectionId, session: SessionId, socket: WebSocket) {
+    fn welcome(live: &mut Live, connection: ConnectionId, session: SessionId, query: Option<String>, socket: WebSocket) {
         live.viewers.insert(connection, socket);
         let now = live.now();
-        live.channel.opened(connection, session, now);
+        live.channel.opened(connection, session, query, now);
     }
 
     /// Sets the object's alarm to when it is next needed, if that changed.
@@ -386,6 +389,12 @@ impl ChannelObject {
 
     /// A viewer's push WebSocket (requirement 5.5 for its session).
     fn accept_viewer(&self, request: &Request) -> Result<Response> {
+        // REQ-1674: the query is the program's, and it is not read here
+        // beyond its rules, or logged.
+        let query = request.url()?.query().map(str::to_owned);
+        if query.as_deref().is_some_and(|query| !valid_query(query)) {
+            return Response::error("Bad Request", 400);
+        }
         let pair = WebSocketPair::new()?;
         let cookie = request.headers().get("cookie")?;
         // Several tabs may share a session (DEC-1527).
@@ -399,7 +408,7 @@ impl ChannelObject {
         })?;
         self.state.accept_websocket_with_tags(&pair.server, &[VIEWER_TAG]);
         pair.server.serialize_attachment((connection, session))?;
-        self.with_live(|live| Self::welcome(live, connection, session, pair.server))?;
+        self.with_live(|live| Self::welcome(live, connection, session, query, pair.server))?;
         let headers = Headers::new();
         headers.set("set-cookie", &set_cookie)?;
         Ok(Response::from_websocket(pair.client)?.with_headers(headers))

@@ -16,6 +16,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
 use teletext_runtime::SessionId;
+use teletext_runtime::protocol::valid_query;
 use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
@@ -120,6 +121,12 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
     let Some(key) = request.headers().get("sec-websocket-key").map(|value| value.as_bytes().to_vec()).filter(|_| wants) else {
         return status(StatusCode::UPGRADE_REQUIRED);
     };
+    // REQ-1674: the query is the program's, and it is not read here beyond
+    // its rules, or logged.
+    let query = request.uri().query().map(str::to_owned);
+    if query.as_deref().is_some_and(|query| !valid_query(query)) {
+        return status(StatusCode::BAD_REQUEST);
+    }
     let accept = neoteletext_web::ws::accept_for(&key);
     let (session, set_cookie) = session_for(routes, &hub, &request);
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
@@ -128,7 +135,7 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
         let Ok(upgraded) = pending.await else { return };
         // The raw socket: no HTTP buffers stay with the connection.
         let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
-        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session).await;
+        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session, query).await;
     });
     let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();

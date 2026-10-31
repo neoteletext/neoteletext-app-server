@@ -413,16 +413,16 @@ enum Target {
 
 /// A link target's kind, read by the engine's own parser of TTI's link
 /// targets (`tti::link_destination`), or none for a target in no form of
-/// Appendix E.1: printable ASCII without spaces or commas, of at most 256
-/// bytes.
+/// Appendix E.1: printable ASCII without spaces or commas, of at most
+/// [`LINK_TARGET_BYTES`](super::LINK_TARGET_BYTES) bytes.
 fn target(text: &str) -> Option<Target> {
     if text.len() > super::LINK_TARGET_BYTES || !text.bytes().all(|byte| byte.is_ascii_graphic() && byte != b',') {
         return None;
     }
-    let destination = neoteletext_formats::tti::link_destination(text.as_bytes())?;
-    Some(if destination.is_web() {
+    let (destination, address) = neoteletext_formats::tti::parse_target(text.as_bytes())?;
+    Some(if address.is_some_and(|address| address.starts_with(neoteletext_formats::page::WEB_MARK)) {
         Target::Web
-    } else if !destination.service.is_empty() || !destination.url.is_empty() {
+    } else if !destination.service.is_empty() || address.is_some() {
         Target::Elsewhere
     } else {
         Target::Here

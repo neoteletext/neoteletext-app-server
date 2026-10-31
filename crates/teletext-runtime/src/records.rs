@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use neoteletext_core::packet::Packet;
 use neoteletext_core::types::SubCode as EngineSubCode;
 use neoteletext_formats::log::LogLevel;
-use neoteletext_formats::page::{LinkKey as EngineLinkKey, LinkLine, NumberLink as EngineNumberLink, TextLink as EngineTextLink};
+use neoteletext_formats::page::{LinkKey as EngineLinkKey, LinkLine, LinkText, NumberLink as EngineNumberLink, TextLink as EngineTextLink};
 use neoteletext_formats::text::Text;
 use neoteletext_formats::tti::link_destination;
 use neoteletext_web::cookie::SameSite as EngineSameSite;
@@ -143,7 +143,8 @@ pub(crate) fn sub_page_links(page: &Page, record_id: &mut u8) -> Result<Vec<u8>,
     if !has_links(page) {
         return Ok(Vec::new());
     }
-    let destination = |target: &str| link_destination(target.as_bytes()).ok_or_else(|| alloc::format!("target {target}"));
+    let mut addresses = LinkText::new();
+    let mut destination = |target: &str| link_destination(target.as_bytes(), &mut addresses).ok_or_else(|| alloc::format!("target {target}"));
     let mut keys = Vec::new();
     for link in &page.link_extension.keys {
         let to = destination(&link.target)?;
@@ -165,7 +166,7 @@ pub(crate) fn sub_page_links(page: &Page, record_id: &mut u8) -> Result<Vec<u8>,
     for link in &page.link_extension.texts {
         texts.push(EngineTextLink { row: link.row, column: link.column, length: link.length, destination: destination(&link.target)?, line: 0 });
     }
-    let links = SubPageLinks { keys: &keys, numbers: &numbers, texts: &texts };
+    let links = SubPageLinks { keys: &keys, numbers: &numbers, texts: &texts, addresses: &addresses };
     let mut sent = None;
     let bytes = collect(|out| sent = Some(links::encode(address(page.page.0), EngineSubCode::new(page.sub.0), links, SERVICE, *record_id, out)));
     let sent = sent.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;

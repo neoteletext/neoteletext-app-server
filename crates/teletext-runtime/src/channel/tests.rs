@@ -37,7 +37,7 @@ fn channel() -> Channel {
         ChannelConfig { name: "Test".into(), push_address: "ws://127.0.0.1/test/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(CONNECTION, 1, 0);
+    channel.opened(CONNECTION, 1, None, 0);
     let _ = channel.take_effects();
     channel
 }
@@ -288,7 +288,7 @@ fn a_lost_connection_releases_what_is_held() {
     let lines = told(&channel.take_effects());
     assert_eq!((&lines[0]["type"], &lines[0]["lost"], &lines[1]["type"], &lines[1]["lost"]), (&json!("input"), &json!(true), &json!("input"), &json!(true)));
     assert_eq!(lines[2]["type"], json!("left"));
-    channel.opened(2, 1, 3);
+    channel.opened(2, 1, None, 3);
     let _ = channel.take_effects();
     channel.closed(2, 4);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "the new connection held nothing");
@@ -333,4 +333,16 @@ fn a_receiver_without_select_is_shown_the_initial_page() {
     channel.received(CONNECTION, &message(&[Item::Text("hi")]), 2);
     let lines = inputs(&channel.take_effects());
     assert_eq!((&lines[0]["page"], &lines[0]["sub"]), (&json!("100"), &json!("0000")), "{lines:?}");
+}
+
+/// REQ-1674 item 2: `connected` carries the query as it came, and none for a
+/// connection with none.
+#[test]
+fn connected_carries_the_address_s_query() {
+    let mut channel = channel();
+    channel.opened(2, 1, Some("id=7&b=%20x".into()), 1);
+    channel.opened(3, 1, None, 2);
+    let messages = told(&channel.take_effects());
+    let queries: Vec<_> = messages.iter().filter(|message| message["type"] == "connected").map(|message| message["query"].clone()).collect();
+    assert_eq!(queries, [Value::from("id=7&b=%20x"), Value::Null]);
 }

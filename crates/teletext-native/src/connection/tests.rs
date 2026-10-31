@@ -34,7 +34,7 @@ fn connected() -> DuplexStream {
     let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()));
     let (receiver, server) = tokio::io::duplex(IN_FLIGHT);
     let (reading, writing) = tokio::io::split(server);
-    tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1, 1).await });
+    tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1, 1, None).await });
     receiver
 }
 

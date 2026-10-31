@@ -24,14 +24,14 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false, features = ["tti"] }
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
-neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
+neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false }
+neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false, features = ["tti", "alloc"] }
+neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false }
+neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
-neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "053ebcdf073a9ac779f45ffba1e66163168f5bac", default-features = false }
+neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the

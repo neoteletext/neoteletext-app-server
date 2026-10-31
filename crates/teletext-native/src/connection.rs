@@ -38,9 +38,9 @@ pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US)
 
 /// Serves one connection until it closes: `stream` is the socket hyper
 /// upgraded, and `early` what hyper had read past the upgrade.
-pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId) {
+pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId, query: Option<String>) {
     let (reading, writing) = stream.into_split();
-    serve_halves(reading, writing, early, hub, connection, session).await;
+    serve_halves(reading, writing, early, hub, connection, session, query).await;
 }
 
 /// `serve` on the connection's two halves. The tests serve an in-memory
@@ -54,9 +54,10 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     hub: Hub,
     connection: ConnectionId,
     session: SessionId,
+    query: Option<String>,
 ) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
-    if hub.commands.send(Command::Opened { connection, session, outbox }).await.is_err() {
+    if hub.commands.send(Command::Opened { connection, session, query, outbox }).await.is_err() {
         return;
     }
     let stats = Arc::clone(&hub.stats);

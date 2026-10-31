@@ -14,7 +14,7 @@ use neoteletext_formats::page::PageFile;
 
 /// Appends one sub-page's packets to `bytes`.
 pub fn append_page(bytes: &mut Vec<u8>, page: &PageFile) {
-    let mut whole = *page;
+    let mut whole = page.clone();
     let control = whole.control();
     whole.set_control(ControlBits(control.0 | C4_ERASE | C11_SERIAL));
     encode_page(&whole, &mut |packet| bytes.extend_from_slice(&packet.bytes));

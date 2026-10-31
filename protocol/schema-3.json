@@ -625,7 +625,7 @@
         },
         "target": {
           "description": "Where it leads: `mpp`, `mpp:ssss`, `name:mpp`, `name:mpp:ssss`, an\n`http` or `https` address, or `web:` and one (Appendix E.1).",
-          "maxLength": 256,
+          "maxLength": 8004,
           "minLength": 1,
           "pattern": "^[!-+\\--~]+$",
           "type": "string"
@@ -1005,7 +1005,7 @@
         },
         "target": {
           "description": "Where it leads, in a form of Appendix E.1, never `web:`.",
-          "maxLength": 256,
+          "maxLength": 8004,
           "minLength": 1,
           "pattern": "^[!-+\\--~]+$",
           "type": "string"
@@ -1412,7 +1412,7 @@
             "address": {
               "default": null,
               "description": "Another channel's address, at most the engine's\n[`MAX_ADDRESS`](neoteletext_web::records::redirect::MAX_ADDRESS) bytes:\nthe most a REDIRECT record carries.",
-              "maxLength": 1015,
+              "maxLength": 8000,
               "type": [
                 "string",
                 "null"
@@ -2346,6 +2346,16 @@
               "maxItems": 50,
               "type": "array"
             },
+            "query": {
+              "description": "The query of the address the viewer opened, without its `?`, exactly\nas received, or none (REQ-1674). The server does not interpret it:\nit is untrusted text from the viewer.",
+              "maxLength": 8000,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "selection": {
               "anyOf": [
                 {
@@ -2676,7 +2686,7 @@
         },
         "target": {
           "description": "Where it leads, in a form of Appendix E.1.",
-          "maxLength": 256,
+          "maxLength": 8004,
           "minLength": 1,
           "pattern": "^[!-+\\--~]+$",
           "type": "string"
