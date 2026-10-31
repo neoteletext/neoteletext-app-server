@@ -27,7 +27,7 @@ target=neoteletext      # ~/.ssh/config alias: 10.70.0.18 via crowdwaveaudio
 edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
-channels=(neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo)
+channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo)
 # Hackaday's protocol 2 port is in a worktree until it is merged into the
 # repository's main, whose working tree holds other uncommitted work
 # (TODO-1541); on the container it keeps the repository's name.
@@ -151,6 +151,7 @@ ssh "$target" 'set -e
 say "the channels file, the service and the container's Caddy"
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
+  {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com"},
   {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday"},
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-demosite"},
@@ -210,4 +211,4 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
 say "inside the container"
 ssh "$target" 'sleep 3; systemctl is-active neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.json %{http_code}\n" http://127.0.0.1:8090/$c/channel.json; done'
+    for c in home hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.json %{http_code}\n" http://127.0.0.1:8090/$c/channel.json; done'
