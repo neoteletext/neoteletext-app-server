@@ -20,7 +20,7 @@ libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
 # The engine's base64, to write the packets as a program does.
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "6154460e9b5d74511f4b891572a4cc543371925e", default-features = false }
+neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-engine", rev = "1e7d8dc40879e801fb3288a3bf06eda40a73b629", default-features = false }
 
 [profile.release]
 debug = 1

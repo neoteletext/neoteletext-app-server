@@ -66,9 +66,9 @@ pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
 pub struct ChannelConfig {
     /// Its name.
     pub name: String,
-    /// The push WebSocket's address, on the channel's own origin (the
-    /// engine's descriptor rule).
-    pub push_address: String,
+    /// The channel's address, ending in `/`: its origin and folder, which
+    /// its small page names.
+    pub address: String,
     /// The page a viewer starts on.
     pub initial_page: u16,
     /// The time the host's clock started, in milliseconds since the Unix
@@ -174,6 +174,8 @@ struct Connection {
     selection: Option<Selection>,
     /// The query of the address it opened, for its program (REQ-1674).
     query: Option<String>,
+    /// The page parameters of its selection (REQ-1693 item 6).
+    parameters: Option<String>,
     /// The sub-page its selection shows, as last sent.
     shown: Option<Shown>,
     /// The program running now was told of it with `connected`.
@@ -203,6 +205,7 @@ impl Connection {
             record_id: 0,
             selection: None,
             query,
+            parameters: None,
             shown: None,
             announced: false,
             replied: false,
@@ -286,18 +289,25 @@ impl Channel {
     }
 
     /// The channel's `channel.json`, generated (DEC-1467 item 1): its name,
-    /// its initial page and its push WebSocket, which takes input. A
-    /// receiver reads it first to know the channel is live (the engine's
-    /// REQ-WEB-018), and then asks for nothing else over HTTP.
+    /// its initial page and its push WebSocket, which takes input, always
+    /// at `<channel>push` (REQ-1693 item 2). A receiver reads it first to
+    /// know the channel is live (the engine's REQ-WEB-018), and then asks
+    /// for nothing else over HTTP.
     #[must_use]
     pub fn descriptor(&self) -> Vec<u8> {
         let mut push = Writer::nested();
-        push.text("address", &self.config.push_address).text("method", "websocket").boolean("input", true);
+        push.text("method", "websocket").boolean("input", true);
         let mut descriptor = Writer::nested();
         descriptor.text("name", &self.config.name).text("initial_page", &format!("{:03X}", self.config.initial_page)).object("push", push);
         let mut bytes = descriptor.line();
         bytes.pop();
         bytes
+    }
+
+    /// What a web browser shows at the channel's address (DEC-1669).
+    #[must_use]
+    pub fn page(&self) -> Vec<u8> {
+        crate::landing::page(&self.config.name, &self.config.address).into_bytes()
     }
 
     /// Whether the channel's program is running, so it serves its viewers
@@ -405,7 +415,14 @@ impl Channel {
         state.announced = true;
         state.replied = false;
         state.reply_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
-        let message = Connected { connection, session: state.session, cookies: Vec::new(), selection: state.selection, query: state.query.clone() };
+        let message = Connected {
+            connection,
+            session: state.session,
+            cookies: Vec::new(),
+            selection: state.selection,
+            query: state.query.clone(),
+            parameters: state.parameters.clone(),
+        };
         self.tell(&ServerMessage::Connected(message));
     }
 
@@ -522,7 +539,7 @@ impl Channel {
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
         match *item {
             Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps),
-            Item::Event(Event::Select(select)) => self.selected(connection, select.page, select.sub, now),
+            Item::Event(Event::Select(select, parameters)) => self.selected(connection, select.page, select.sub, parameters, now),
             _ => self.input(connection, item, now),
         }
     }
@@ -617,12 +634,14 @@ impl Channel {
     /// SELECT (`INPUT.md` section 5.4, REQ-INT-140): the tab selected a page
     /// with 3F7F, which asks again for its first sub-page even when the tab
     /// shows another of the page (DEC-1526 item 3), or one sub-page, or,
-    /// with page 0, no page of the channel.
-    fn selected(&mut self, connection: ConnectionId, page: u16, sub: u16, now: u64) {
+    /// with page 0, no page of the channel. The engine's decoder has
+    /// checked the parameters.
+    fn selected(&mut self, connection: ConnectionId, page: u16, sub: u16, parameters: &str, now: u64) {
         if page == 0 {
             self.release_held(connection);
             let Some(state) = self.connections.get_mut(&connection) else { return };
             let Some(before) = state.selection.take() else { return };
+            state.parameters = None;
             state.shown = None;
             state.selection_due = None;
             if state.announced {
@@ -630,21 +649,25 @@ impl Channel {
             }
             return;
         }
-        self.select(connection, Selection { page: PageNumber(page), sub: protocol::SubCode(sub) }, now);
+        let parameters = (!parameters.is_empty()).then(|| parameters.into());
+        self.select(connection, Selection { page: PageNumber(page), sub: protocol::SubCode(sub) }, parameters, now);
     }
 
     /// The connection selected a page (sub-code 3F7F) or one sub-page: the
     /// program is told it left the page it had, and asked for the new one
     /// (REQ-1472), after the releases of whatever it held (REQ-207). What was
     /// kept of the sub-page shown is dropped, so the first sub-page after a
-    /// new selection goes whole (DEC-1499).
-    fn select(&mut self, connection: ConnectionId, selection: Selection, now: u64) {
-        if self.connections.get(&connection).is_none_or(|state| state.selection == Some(selection)) {
+    /// new selection goes whole (DEC-1499). Parameters belong to one
+    /// selection, so the same page with others is a new selection, and one
+    /// with none leaves them behind (REQ-1693 item 6).
+    fn select(&mut self, connection: ConnectionId, selection: Selection, parameters: Option<String>, now: u64) {
+        if self.connections.get(&connection).is_none_or(|state| state.selection == Some(selection) && state.parameters == parameters) {
             return;
         }
         self.release_held(connection);
         let Some(state) = self.connections.get_mut(&connection) else { return };
         let before = state.selection.replace(selection);
+        state.parameters.clone_from(&parameters);
         state.shown = None;
         let announced = state.announced;
         if announced {
@@ -660,7 +683,7 @@ impl Channel {
         {
             self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
         }
-        self.tell(&ServerMessage::Selected(Selected { connection, page: selection.page, sub: selection.sub }));
+        self.tell(&ServerMessage::Selected(Selected { connection, page: selection.page, sub: selection.sub, parameters }));
     }
 
     /// After a message's input: the cursor record says what was acted on.
@@ -786,7 +809,7 @@ impl Channel {
                 self.send_records(&[redirect.connection], kind, |state| records::redirect(&redirect, &mut state.record_id))?;
                 count(&mut self.stats.redirects);
                 match (redirect.page, redirect.sub, redirect.address) {
-                    (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, now),
+                    (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, None, now),
                     (_, _, Some(address)) => self.log(Level::Info, "redirect", format!("connection {} sent to {address}", redirect.connection)),
                     _ => {}
                 }

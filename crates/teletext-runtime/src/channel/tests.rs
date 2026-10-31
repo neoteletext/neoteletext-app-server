@@ -29,12 +29,14 @@ const ON: Stamp = Stamp { page: 0x100, sub: 0 };
 const OTHER: Stamp = Stamp { page: 0x200, sub: 0 };
 /// Another sub-page of page 100.
 const OTHER_SUB: Stamp = Stamp { page: 0x100, sub: 1 };
+/// No particular sub-page (EN 300 706 clause 9.6.1).
+const ANY: u16 = 0x3F7F;
 /// `a`, by key.
 const A: KeyCode = KeyCode::Character('a');
 
 fn channel() -> Channel {
     let config =
-        ChannelConfig { name: "Test".into(), push_address: "ws://127.0.0.1/test/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(CONNECTION, 1, None, 0);
@@ -58,7 +60,11 @@ fn hello() -> Item<'static> {
 }
 
 fn select(page: u16, sub: u16) -> Item<'static> {
-    Item::Event(Event::Select(Select::new(page, sub).unwrap()))
+    select_with(page, sub, "")
+}
+
+fn select_with(page: u16, sub: u16, parameters: &str) -> Item<'_> {
+    Item::Event(Event::Select(Select::new(page, sub).unwrap(), parameters))
 }
 
 fn key(on: Stamp, action: Action, lost: bool) -> Item<'static> {
@@ -345,4 +351,68 @@ fn connected_carries_the_address_s_query() {
     let messages = told(&channel.take_effects());
     let queries: Vec<_> = messages.iter().filter(|message| message["type"] == "connected").map(|message| message["query"].clone()).collect();
     assert_eq!(queries, [Value::from("id=7&b=%20x"), Value::Null]);
+}
+
+/// The `selected` lines the program was told, as page and parameters.
+fn selections(effects: &[Effect]) -> Vec<(Value, Value)> {
+    told(effects).iter().filter(|line| line["type"] == "selected").map(|line| (line["page"].clone(), line["parameters"].clone())).collect()
+}
+
+/// REQ-1693 item 6: a page's parameters reach the program with their
+/// selection, and choosing anything else leaves them behind.
+#[test]
+fn page_parameters_go_with_their_selection_alone() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[hello()]), 0);
+    let _ = channel.take_effects();
+    let parameters = "a=1&b=%20x";
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, parameters)]), 0);
+    assert_eq!(selections(&channel.take_effects()), [(json!("302"), json!(parameters))]);
+    channel.received(CONNECTION, &message(&[select(0x303, ANY)]), 0);
+    assert_eq!(selections(&channel.take_effects()), [(json!("303"), json!(null))]);
+    channel.received(CONNECTION, &message(&[select(0x302, ANY)]), 0);
+    assert_eq!(selections(&channel.take_effects()), [(json!("302"), json!(null))]);
+}
+
+/// REQ-1693 item 6: parameters are part of the selection, so the same page
+/// with others is told, and the same again is not.
+#[test]
+fn the_same_page_with_other_parameters_is_a_selection() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=1")]), 0);
+    assert_eq!(selections(&channel.take_effects()), []);
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=2")]), 0);
+    assert_eq!(selections(&channel.take_effects()), [(json!("302"), json!("a=2"))]);
+}
+
+/// A program that starts again is told the selection with its parameters.
+#[test]
+fn connected_carries_the_selections_parameters() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    channel.program_ended();
+    let _ = channel.take_effects();
+    channel.program_started(1);
+    let lines = told(&channel.take_effects());
+    let connected = lines.iter().find(|line| line["type"] == "connected").unwrap();
+    assert_eq!((&connected["selection"]["page"], &connected["parameters"]), (&json!("302"), &json!("a=1")));
+}
+
+/// A redirect is a selection of its own, which leaves parameters behind.
+#[test]
+fn a_page_redirect_leaves_parameters_behind() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "page": "303", "sub": "3F7F"})), 0);
+    assert_eq!(selections(&channel.take_effects()), [(json!("303"), json!(null))]);
+}
+
+/// REQ-1693 item 2: the push address is fixed, so `channel.json` never names one.
+#[test]
+fn the_descriptor_names_no_push_address() {
+    let descriptor: Value = serde_json::from_slice(&channel().descriptor()).unwrap();
+    assert_eq!(descriptor["push"], json!({"method": "websocket", "input": true}));
 }

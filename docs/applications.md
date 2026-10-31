@@ -17,7 +17,7 @@ How a channel's application, a program in any language, talks to the server. It 
 
 ## 2. Server to program
 
-Protocol version 3 (DEC-1482, DEC-1683). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-3.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
+Protocol version 4 (DEC-1482, DEC-1683, DEC-1715). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-4.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
 
 Common shapes:
 - `connection`: a whole number from 1, naming one open connection: one browser tab, with one selection (DEC-1527); `session`: a whole number, the viewer's session, which outlives connections and is shared by a viewer's tabs (requirement 5.5). Both below 2^53.
@@ -28,9 +28,9 @@ Common shapes:
 
 | `type` | Fields | When |
 |---|---|---|
-| `start` | `protocol` (2), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
-| `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selection` (`page` and `sub`, or `null` for the channel's initial page), `query` (the query of the address the viewer opened, without its `?`, exactly as written, or `null`: untrusted text from the viewer, at most 8,000 bytes of printable ASCII, which the server neither reads nor logs, REQ-1674) | A viewer's connection opened; answer with `reply` (REQ-1471) |
-| `selected` | `connection`, `page`, `sub` | The connection selected a page (`sub` 3F7F: send its first sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1526) |
+| `start` | `protocol` (4), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
+| `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selection` (`page` and `sub`, or `null` for the channel's initial page), `query` (the query of the address the viewer opened, without its `?`, exactly as written, or `null`: untrusted text from the viewer, at most 8,000 bytes of printable ASCII, which the server neither reads nor logs, REQ-1674), `parameters` (the page parameters of `selection`, as in `selected`, or `null`) | A viewer's connection opened; answer with `reply` (REQ-1471) |
+| `selected` | `connection`, `page`, `sub`, `parameters` (what follows `?` in the fragment of the address selected, exactly as written, or `null`: untrusted text from the viewer, at most 8,000 bytes of printable ASCII with no `#`, which belongs to this one selection and which the server neither reads nor logs, REQ-1693 item 6) | The connection selected a page (`sub` 3F7F: send its first sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1526) |
 | `input` | `connection`, `page`, `sub`, `lost`, `event` | Input on the page on screen (INPUT.md). `page` and `sub` are the page and sub-code the viewer was looking at, the connection's selection: input stamped with anything else is dropped before it reaches you (REQ-1557), except a release, which names the page that held it. `lost` is `true` on a release the page lost, the key or button not having come up: the viewer moved away, the keys left the page, or the connection went (REQ-207). A game can tell "the player let go" from "the player left". A lost mouse release is no click |
 | `left` | `connection`, `page` | The connection's selection left a page, or the connection closed |
 | `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |

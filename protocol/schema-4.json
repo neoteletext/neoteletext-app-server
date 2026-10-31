@@ -2303,7 +2303,7 @@
               "type": "integer"
             },
             "protocol": {
-              "const": 3,
+              "const": 4,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2345,6 +2345,16 @@
               },
               "maxItems": 50,
               "type": "array"
+            },
+            "parameters": {
+              "description": "The page parameters of `selection`, or none (see [`Selected`]).",
+              "maxLength": 8000,
+              "minLength": 1,
+              "pattern": "^[!-\"$-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "query": {
               "description": "The query of the address the viewer opened, without its `?`, exactly\nas received, or none (REQ-1674). The server does not interpret it:\nit is untrusted text from the viewer.",
@@ -2401,6 +2411,16 @@
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
+            },
+            "parameters": {
+              "description": "The page parameters of the address selected, without their `?`,\nexactly as written, or none (the channel URL map's REQ-1693 item 6).\nThey belong to this one selection: the next one that has none says\nso here. The server does not interpret them: they are untrusted text\nfrom the viewer.",
+              "maxLength": 8000,
+              "minLength": 1,
+              "pattern": "^[!-\"$-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "sub": {
               "$ref": "#/$defs/SubCode",
@@ -2744,5 +2764,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 3"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 4"
 }

@@ -11,10 +11,10 @@ const LENGTHS: u8 = 42;
 
 fuzz_target!(|data: &[u8]| {
     let Some((&length, packets)) = data.split_first() else { return };
-    let config = ChannelConfig { name: "Fuzz".into(), push_address: "ws://127.0.0.1/fuzz/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(1, 1, 0);
+    channel.opened(1, 1, None, 0);
     let _ = channel.take_effects();
     let mut encoded = vec![0_u8; neoteletext_web::base64::encoded_len(packets.len())];
     let Ok(written) = neoteletext_web::base64::encode(packets, &mut encoded) else { return };

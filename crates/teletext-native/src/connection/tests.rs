@@ -25,7 +25,7 @@ const IN_FLIGHT: usize = 64 * 1024;
 fn connected() -> DuplexStream {
     let config = ChannelConfig {
         name: "test".to_owned(),
-        push_address: "ws://127.0.0.1:1/test/push".to_owned(),
+        address: "http://127.0.0.1:1/test/".to_owned(),
         initial_page: 0x100,
         epoch_at_start_ms: 0,
         session_grace_ms: 0,

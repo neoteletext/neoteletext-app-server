@@ -35,7 +35,7 @@ pub use read::read;
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
 /// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
 /// (DEC-1683), and which could name no other channel.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -400,6 +400,9 @@ pub struct Connected {
     /// it is untrusted text from the viewer.
     #[schemars(length(min = 1, max = QUERY_BYTES), regex(pattern = "^[!-~]+$"))]
     pub query: Option<String>,
+    /// The page parameters of `selection`, or none (see [`Selected`]).
+    #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
+    pub parameters: Option<String>,
 }
 
 /// Whether `query` is one a connection may carry (REQ-1674 item 3,
@@ -432,7 +435,7 @@ pub struct Selection {
 }
 
 /// `selected` (REQ-1472).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Selected {
     /// The connection.
@@ -442,6 +445,13 @@ pub struct Selected {
     pub page: PageNumber,
     /// The sub-code, or 3F7F for the page and none of its sub-pages.
     pub sub: SubCode,
+    /// The page parameters of the address selected, without their `?`,
+    /// exactly as written, or none (the channel URL map's REQ-1693 item 6).
+    /// They belong to this one selection: the next one that has none says
+    /// so here. The server does not interpret them: they are untrusted text
+    /// from the viewer.
+    #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
+    pub parameters: Option<String>,
 }
 
 /// `input`.
@@ -1014,6 +1024,10 @@ pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_TARGET_BYTE
 /// The longest query a connection carries: the whole address's bound
 /// (REQ-1674 item 3).
 pub const QUERY_BYTES: usize = limits::MAX_URL_LENGTH;
+/// The longest page parameters of a selection (`INPUT.md` section 5.4).
+pub const PARAMETERS_BYTES: usize = neoteletext_input::MAX_PAGE_PARAMETERS;
+/// Page parameters are printable ASCII with no `#` (`INPUT.md` section 5.4).
+const PARAMETERS_PATTERN: &str = "^[!-\"$-~]+$";
 /// The longest label of a key's link to this service (Appendix E.1).
 pub const LINK_LABEL_CHARACTERS: usize = 9;
 /// The longest label of a key's link to another service: one fewer, for

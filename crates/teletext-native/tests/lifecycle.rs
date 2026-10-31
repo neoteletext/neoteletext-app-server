@@ -64,8 +64,13 @@ fn free_port() -> u16 {
 
 /// A channels file for one channel, `ch`, whose program runs `script` in `sh`.
 fn channels(folder: &Path, script: &str) -> PathBuf {
+    channel_in(folder, "ch", script)
+}
+
+/// A channels file for one channel in `channel`.
+fn channel_in(folder: &Path, channel: &str, script: &str) -> PathBuf {
     let file = folder.join("channels.json");
-    std::fs::write(&file, format!(r#"{{"channels":[{{"folder":"ch","name":"Channel","command":["sh","-c",{script:?}]}}]}}"#)).unwrap();
+    std::fs::write(&file, format!(r#"{{"channels":[{{"folder":"{channel}","name":"Channel","command":["sh","-c",{script:?}]}}]}}"#)).unwrap();
     file
 }
 
@@ -97,6 +102,21 @@ fn get(address: &str, path: &str) -> Option<(u16, Vec<u8>)> {
     let head = String::from_utf8_lossy(&response[..end]).into_owned();
     let status = head.split(' ').nth(1)?.parse().ok()?;
     Some((status, response[end + 4..].to_vec()))
+}
+
+/// GET `target`: the whole head of the response and its body.
+fn fetched(address: &str, target: &str) -> (String, Vec<u8>) {
+    let mut stream = TcpStream::connect(address).unwrap();
+    write!(stream, "GET {target} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let end = response.windows(4).position(|window| window == b"\r\n\r\n").unwrap();
+    (String::from_utf8_lossy(&response[..end]).into_owned(), response[end + 4..].to_vec())
+}
+
+/// A header of a response's head.
+fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().find_map(|line| line.split_once(": ").filter(|(found, _)| found.eq_ignore_ascii_case(name)).map(|(_, value)| value))
 }
 
 /// GET `path` until it answers `status`.
@@ -183,9 +203,58 @@ fn a_restart_closes_viewers_as_a_restart() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// A connection presenting its session's cookie continues that session,
-/// a second connection, another tab, while the first is open included
-/// (DEC-1527); a forged cookie is ignored (requirement 5.5).
+/// REQ-1693's Verification: a running server against the one table.
+#[test]
+fn a_channels_address_answers_as_the_conformance_table_says() {
+    let folder = scratch("map");
+    let file = channel_in(&folder, "home", &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/home/channel.json", 200);
+    let mut rows = 0;
+    for line in neoteletext_web::map::CONFORMANCE.lines().filter(|line| line.starts_with("answer\t")) {
+        let columns: Vec<&str> = line.split('\t').collect();
+        let [_, target, status, location] = columns[..] else { panic!("{line}") };
+        let (head, _) = fetched(&server.address, target);
+        assert_eq!(head.split(' ').nth(1), Some(status), "{line}: {head}");
+        assert_eq!(header(&head, "location"), Some(location).filter(|location| *location != "-"), "{line}: {head}");
+        rows += 1;
+    }
+    assert!(rows >= 18, "{rows} rows");
+}
+
+/// DEC-1669: the small page names the channel, offers the browser, and may
+/// run only its own script; REQ-1693 item 2: `channel.json` names no address.
+#[test]
+fn a_web_browser_is_offered_the_channel() {
+    let folder = scratch("page");
+    let file = channel_in(&folder, "home", &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/home/channel.json", 200);
+    let (head, body) = fetched(&server.address, "/home/");
+    let page = String::from_utf8(body).unwrap();
+    assert!(page.contains(&format!(r#"href="neoteletext://http://{}/home/""#, server.address)), "{page}");
+    assert!(header(&head, "content-type").is_some_and(|kind| kind.starts_with("text/html")), "{head}");
+    assert!(header(&head, "content-security-policy").is_some_and(|policy| policy.starts_with("default-src 'none'")), "{head}");
+    assert_eq!(header(&head, "strict-transport-security"), None);
+    let (_, descriptor) = fetched(&server.address, "/home/channel.json");
+    let descriptor = String::from_utf8(descriptor).unwrap();
+    assert!(!descriptor.contains("address"), "{descriptor}");
+}
+
+/// A web browser's page is for reading: nothing else reaches it.
+#[test]
+fn only_a_read_reaches_the_page() {
+    let folder = scratch("post");
+    let file = channel_in(&folder, "home", &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/home/channel.json", 200);
+    let mut stream = TcpStream::connect(&server.address).unwrap();
+    write!(stream, "POST /home/ HTTP/1.1\r\nHost: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", server.address).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert_eq!(response.split(' ').nth(1), Some("404"), "{response}");
+}
+
 /// REQ-1661 item 4: a request target of 8,000 octets is answered, and hyper,
 /// which holds 65,534 octets at most, answers a longer one with 414.
 #[test]
@@ -236,6 +305,9 @@ fn a_query_reaches_the_program_in_connected() {
     assert_eq!(told.matches("connected").count(), 1, "the refused one never reached it: {told}");
 }
 
+/// A connection presenting its session's cookie continues that session,
+/// a second connection, another tab, while the first is open included
+/// (DEC-1527); a forged cookie is ignored (requirement 5.5).
 #[test]
 fn a_session_continues_with_its_cookie() {
     let folder = scratch("cookie");

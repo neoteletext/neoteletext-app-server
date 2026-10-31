@@ -1,6 +1,7 @@
-//! The HTTP side on the viewers' address (DEC-1467): each channel's
-//! generated `channel.json` and its push WebSocket's upgrade (RFC 6455
-//! section 4.2.2), after which the connection is served on the raw socket.
+//! The HTTP side on the viewers' address (DEC-1467, REQ-1693 item 7): each
+//! channel's small page, the redirect to it, its generated `channel.json`
+//! and its push WebSocket's upgrade (RFC 6455 section 4.2.2), after which
+//! the connection is served on the raw socket.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -10,12 +11,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
-use hyper::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, COOKIE, HeaderValue, SET_COOKIE, UPGRADE};
-use hyper::{Request, Response, StatusCode};
+use hyper::header::{
+    CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, REFERRER_POLICY, SET_COOKIE, UPGRADE,
+    X_CONTENT_TYPE_OPTIONS,
+};
+use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
 use teletext_runtime::SessionId;
+use teletext_runtime::landing::{self, Route, route};
 use teletext_runtime::protocol::valid_query;
 use teletext_runtime::session_cookie::{self, Key};
 
@@ -88,31 +93,48 @@ fn now_s() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
 }
 
-/// The push WebSocket's path within a channel's folder.
-pub const PUSH: &str = "push";
-/// The channel's one file (DEC-1467 item 1).
-pub const DESCRIPTOR: &str = "channel.json";
-
-/// Answers one request on the viewers' address (DEC-1467): a channel's
-/// `channel.json` and its push WebSocket, and 404 for everything else, `/`
-/// included. The server serves no channel's files: every page comes over
-/// the connection.
+/// Answers one request on the viewers' address (REQ-1693 item 7), and 404
+/// for everything else, `/` included. The server serves no channel's files:
+/// every page comes over the connection.
 #[must_use]
 pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
-    let path = request.uri().path().trim_start_matches('/').to_owned();
-    let (folder, file) = path.split_once('/').unwrap_or((path.as_str(), ""));
+    let (folder, asked) = route(request.uri().path());
     count(&routes.stats.requests);
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
-    match file {
-        PUSH => upgrade(routes, hub, request),
-        DESCRIPTOR => {
+    let reads = matches!(*request.method(), Method::GET | Method::HEAD);
+    match asked {
+        Route::Page if reads => page(&hub),
+        Route::ToFolder if reads => to_folder(&hub, request.uri().query()),
+        Route::Descriptor => {
             let mut response = Response::new(Whole(Some(Bytes::copy_from_slice(&hub.descriptor))));
             response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             response
         }
-        _ => status(StatusCode::NOT_FOUND),
+        Route::Push => upgrade(routes, hub, request),
+        Route::Page | Route::ToFolder | Route::Missing => status(StatusCode::NOT_FOUND),
     }
+}
+
+/// The small page a web browser shows at the channel's address (DEC-1669).
+fn page(hub: &Hub) -> Response<Whole> {
+    let mut response = Response::new(Whole(Some(Bytes::copy_from_slice(&hub.page))));
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(landing::CONTENT_SECURITY_POLICY));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    response
+}
+
+/// The folder without its final `/`, sent to `<channel>`. A fragment stays
+/// with the viewer's browser (RFC 9110 section 10.2.2).
+fn to_folder(hub: &Hub, query: Option<&str>) -> Response<Whole> {
+    let Ok(location) = HeaderValue::from_str(&landing::folder_location(&hub.folder, query)) else { return status(StatusCode::NOT_FOUND) };
+    let mut response = status(StatusCode::PERMANENT_REDIRECT);
+    response.headers_mut().insert(LOCATION, location);
+    response
 }
 
 /// The push WebSocket: answers 101 and serves the upgraded socket.

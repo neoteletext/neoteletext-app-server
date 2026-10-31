@@ -40,11 +40,12 @@ use std::collections::BTreeMap;
 
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
+use teletext_runtime::landing::{self, Route, route};
 use teletext_runtime::protocol::valid_query;
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
 use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, Level, SESSION_GRACE_MS, SessionId};
 use worker::{
-    Date, Env, Error, Headers, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
+    Date, Env, Error, Headers, Method, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
     durable_object, event,
 };
 
@@ -57,11 +58,6 @@ const ORIGIN_VARIABLE: &str = "ORIGIN";
 /// Each channel's program's secret is the Worker secret of this name and
 /// the channel's folder, upper case, `-` as `_`: `PROGRAM_SECRET_HACKADAY`.
 const SECRET_PREFIX: &str = "PROGRAM_SECRET_";
-/// The push WebSocket's path within a channel's folder (the engine's
-/// channel layout).
-const PUSH: &str = "push";
-/// The channel's one file (DEC-1467 item 1).
-const DESCRIPTOR: &str = "channel.json";
 /// The program's WebSocket's path within a channel's folder.
 const PROGRAM: &str = "program";
 /// The tags the object gives the connections it accepts.
@@ -121,10 +117,9 @@ fn channels(env: &Env) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// The folder and the file a path names: `/hackaday/100.t42`.
-fn folder_and_file(path: &str) -> (&str, &str) {
-    let path = path.trim_start_matches('/');
-    path.split_once('/').unwrap_or((path, ""))
+/// The path of a channel's program, `/<folder>/program`, when `path` is one.
+fn program_of(path: &str) -> Option<&str> {
+    path.strip_prefix('/')?.strip_suffix(PROGRAM)?.strip_suffix('/')
 }
 
 /// Whether two secrets are the same, in time that does not depend on
@@ -138,14 +133,23 @@ fn same_secret(left: &[u8], right: &[u8]) -> bool {
 #[event(fetch)]
 async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<Response> {
     let url = request.url()?;
-    let (folder, file) = folder_and_file(url.path());
+    let (folder, asked) = route(url.path());
+    let program = program_of(url.path());
+    let folder = program.unwrap_or(folder);
     let channels = channels(&env)?;
-    // Only a channel's `channel.json`, its push WebSocket and its program's
-    // WebSocket (DEC-1467): no listing at `/`, no channel's files.
-    if !channels.iter().any(|(served, _)| served == folder) || ![DESCRIPTOR, PUSH, PROGRAM].contains(&file) {
+    // The answers of REQ-1693 item 7 and the program's WebSocket: no listing
+    // at `/`, no channel's files.
+    let reads = request.method() == Method::Get || request.method() == Method::Head;
+    let answered = program.is_some() || asked == Route::Descriptor || asked == Route::Push || (reads && asked != Route::Missing);
+    if !channels.iter().any(|(served, _)| served == folder) || !answered {
         return Response::error("Not Found", 404);
     }
-    if file == PROGRAM {
+    if program.is_none() && asked == Route::ToFolder {
+        let mut response = Response::empty()?.with_status(308);
+        response.headers_mut().set("location", &landing::folder_location(folder, url.query()))?;
+        return Ok(response);
+    }
+    if program.is_some() {
         let name = format!("{SECRET_PREFIX}{}", folder.to_uppercase().replace('-', "_"));
         let expected = env.secret(&name).map(|secret| secret.to_string()).unwrap_or_default();
         let presented = request.headers().get("authorization")?.unwrap_or_default();
@@ -310,11 +314,10 @@ impl ChannelObject {
         };
         let name = channels(&self.env)?.into_iter().find(|(served, _)| *served == folder).map_or_else(|| folder.clone(), |(_, name)| name);
         let origin = self.env.var(ORIGIN_VARIABLE)?.to_string();
-        let push = origin.strip_prefix("https://").map_or_else(|| origin.replacen("http://", "ws://", 1), |rest| format!("wss://{rest}"));
         let started_ms = epoch_ms();
         let config = ChannelConfig {
             name,
-            push_address: format!("{push}/{folder}/{PUSH}"),
+            address: format!("{origin}/{folder}/"),
             initial_page: INITIAL_PAGE,
             epoch_at_start_ms: started_ms,
             session_grace_ms: SESSION_GRACE_MS,
@@ -439,6 +442,19 @@ impl ChannelObject {
         Ok(Response::from_bytes(body)?.with_headers(headers))
     }
 
+    /// The small page a web browser shows at the channel's address
+    /// (DEC-1669).
+    fn page(&self) -> Result<Response> {
+        let body = self.live.borrow().as_ref().map(|live| live.channel.page()).unwrap_or_default();
+        let headers = Headers::new();
+        headers.set("content-type", "text/html; charset=utf-8")?;
+        headers.set("cache-control", "no-cache")?;
+        headers.set("content-security-policy", landing::CONTENT_SECURITY_POLICY)?;
+        headers.set("x-content-type-options", "nosniff")?;
+        headers.set("referrer-policy", "no-referrer")?;
+        Ok(Response::from_bytes(body)?.with_headers(headers))
+    }
+
     /// Whether `socket` is the program's.
     fn is_program(&self, socket: &WebSocket) -> bool {
         self.state.get_tags(socket).iter().any(|tag| tag == PROGRAM_TAG)
@@ -452,13 +468,15 @@ impl worker::DurableObject for ChannelObject {
 
     async fn fetch(&self, request: Request) -> Result<Response> {
         let url = request.url()?;
-        let (folder, file) = folder_and_file(url.path());
-        self.wake(Some(folder))?;
-        let response = match file {
-            PUSH => self.accept_viewer(&request),
-            PROGRAM => self.accept_program(),
-            DESCRIPTOR => self.descriptor(),
-            _ => Response::error("Not Found", 404),
+        let (folder, asked) = route(url.path());
+        let program = program_of(url.path());
+        self.wake(Some(program.unwrap_or(folder)))?;
+        let response = match asked {
+            _ if program.is_some() => self.accept_program(),
+            Route::Push => self.accept_viewer(&request),
+            Route::Descriptor => self.descriptor(),
+            Route::Page => self.page(),
+            Route::ToFolder | Route::Missing => Response::error("Not Found", 404),
         };
         self.schedule().await?;
         response

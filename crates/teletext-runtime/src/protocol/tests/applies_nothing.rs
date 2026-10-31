@@ -11,7 +11,7 @@ use crate::{Channel, ChannelConfig, Effect};
 #[test]
 fn a_refused_line_applies_nothing() {
     let config =
-        ChannelConfig { name: "Test".into(), push_address: "ws://127.0.0.1/test/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(1, 1, None, 0);

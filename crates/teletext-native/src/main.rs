@@ -42,7 +42,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use teletext_native::http::{Cookies, PUSH, Routes, answer};
+use teletext_native::http::{Cookies, Routes, answer};
 use teletext_native::logging::{self, Format};
 use teletext_native::state::{StateDirectory, random_key};
 use teletext_native::stats::ServerStats;
@@ -98,11 +98,6 @@ fn arguments() -> Result<Arguments, String> {
     Ok(parsed)
 }
 
-/// The WebSocket scheme of an HTTP origin.
-fn push_origin(origin: &str) -> String {
-    origin.strip_prefix("https://").map_or_else(|| origin.replacen("http://", "ws://", 1), |rest| format!("wss://{rest}"))
-}
-
 fn main() -> ExitCode {
     let arguments = match arguments() {
         Ok(arguments) => arguments,
@@ -131,7 +126,6 @@ fn main() -> ExitCode {
 
 async fn serve(arguments: Arguments) -> Result<(), String> {
     let start = tokio::time::Instant::now();
-    let push = push_origin(&arguments.origin);
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let stats = Arc::new(ServerStats::default());
     let kept = arguments.state.as_deref().map(StateDirectory::open).transpose()?;
@@ -151,7 +145,7 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         let folder = spec.folder.clone();
         let config = ChannelConfig {
             name: spec.name.clone(),
-            push_address: format!("{push}/{folder}/{PUSH}"),
+            address: format!("{}/{folder}/", arguments.origin),
             initial_page: 0x100,
             epoch_at_start_ms,
             session_grace_ms: SESSION_GRACE_MS,

@@ -14,10 +14,10 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(message) = &read {
         assert!(check::message(message).is_ok(), "accepted, then refused: {message:?}");
     }
-    let config = ChannelConfig { name: "Fuzz".into(), push_address: "ws://127.0.0.1/fuzz/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(1, 1, 0);
+    channel.opened(1, 1, None, 0);
     let _ = channel.take_effects();
     channel.from_program(data, 0);
     let effects = channel.take_effects();

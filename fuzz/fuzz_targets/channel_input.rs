@@ -19,11 +19,11 @@ const PROGRAM: u8 = 2;
 const OPENING: [u8; 13] = [0xFF, 0x09, 3, 0x80, 0x80, 0x88, 0x02, 0xFF, 0x40, 3, 0x80, 0x02, 0];
 
 fuzz_target!(|data: &[u8]| {
-    let config = ChannelConfig { name: "Fuzz".into(), push_address: "ws://127.0.0.1/fuzz/push".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: SESSION_GRACE_MS };
+    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: SESSION_GRACE_MS };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(1, 1, 0);
-    channel.opened(2, 1, 0);
+    channel.opened(1, 1, None, 0);
+    channel.opened(2, 1, None, 0);
     channel.received(1, &OPENING, 0);
     channel.received(2, &OPENING, 0);
     let mut now = 0_u64;
