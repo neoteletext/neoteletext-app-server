@@ -30,6 +30,9 @@ pub struct ChannelStats {
     /// Packets not sent because they failed the stream's packet check: a
     /// fault of the server or the engine (REQ-1462).
     pub invalid_packets: u64,
+    /// Input dropped because it was stamped with a page other than the
+    /// connection's selection (REQ-1557).
+    pub stale_input: u64,
     /// Viewers sent to another page by the application.
     pub gotos: u64,
     /// Audio records sent: sound objects, their data and commands.

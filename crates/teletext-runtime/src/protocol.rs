@@ -438,8 +438,17 @@ pub struct InputMessage {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The page with the keys.
+    /// The page on screen when it happened: the event's stamp, which is the
+    /// connection's selection, or for a release the page that held it
+    /// (REQ-1557). Focus and raw text carry no stamp, and are for the
+    /// selection as it stands.
     pub page: PageNumber,
+    /// The sub-code on screen when it happened.
+    pub sub: SubCode,
+    /// A release the page lost: the key or button did not come up, the page
+    /// lost the input or the connection went (REQ-207). A game can tell
+    /// "the player let go" from "the player left".
+    pub lost: bool,
     /// What happened.
     pub event: InputEvent,
 }
@@ -1452,4 +1461,4 @@ pub fn schema() -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

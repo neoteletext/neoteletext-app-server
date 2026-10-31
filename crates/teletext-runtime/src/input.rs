@@ -4,7 +4,8 @@
 
 use alloc::string::{String, ToString};
 
-use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction};
+use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction, Stamp};
+use neoteletext_input::held::Released;
 use neoteletext_input::keys;
 
 use crate::protocol::{self, Buttons, HoverAction, InputEvent, KeyAction, KeyName, MouseAction};
@@ -59,7 +60,7 @@ impl Named {
     }
 }
 
-/// One thing the viewer did on the page with the keys.
+/// One thing the viewer did on the page.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Input<'a> {
     /// Text typed: whole characters, no control characters.
@@ -130,7 +131,7 @@ pub enum Input<'a> {
 
 impl<'a> Input<'a> {
     /// The input an item is, if an application acts on it; the session's
-    /// own events (HELLO, PAGE, RESIZE) are the runtime's.
+    /// own events (HELLO, SELECT, RESIZE) are the runtime's.
     #[must_use]
     pub fn of(item: &Item<'a>) -> Option<Self> {
         match *item {
@@ -146,8 +147,8 @@ impl<'a> Input<'a> {
                 Some(Self::Mouse { pressed: mouse.action == EventMouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
             }
             Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),
-            Item::Event(Event::Hover { leave, column, row }) => Some(Self::Hover { entered: !leave, column, row }),
-            Item::Event(Event::Paste(text)) => Some(Self::Paste(text)),
+            Item::Event(Event::Hover { leave, column, row, .. }) => Some(Self::Hover { entered: !leave, column, row }),
+            Item::Event(Event::Paste { text, .. }) => Some(Self::Paste(text)),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
             Item::Event(_) => None,
@@ -175,6 +176,64 @@ impl<'a> Input<'a> {
         let (Self::Text(text) | Self::Key { action: Action::Press | Action::Repeat, text: Some(text), .. }) = *self else { return None };
         let mut characters = text.chars();
         characters.next().filter(|character| !character.is_control() && characters.next().is_none())
+    }
+}
+
+/// The page and sub-code an item says were on screen, if it carries a
+/// stamp (REQ-1555): focus and the session's own events have none, and
+/// raw text cannot.
+#[must_use]
+pub(crate) const fn stamp(item: &Item<'_>) -> Option<Stamp> {
+    let Item::Event(event) = item else { return None };
+    match event {
+        Event::Key(key) => Some(key.on),
+        Event::Mouse(mouse) => Some(mouse.on),
+        Event::Wheel(wheel) => Some(wheel.on),
+        Event::Touch(touch) => Some(touch.on),
+        Event::Paste { on, .. } | Event::Compose { on, .. } | Event::Hover { on, .. } => Some(*on),
+        _ => None,
+    }
+}
+
+/// Whether an item lets go of something: never dropped for its stamp, so
+/// nothing stays held (REQ-1555 item 4).
+#[must_use]
+pub(crate) const fn releases(item: &Item<'_>) -> bool {
+    match item {
+        Item::Event(Event::Key(key)) => matches!(key.action, Action::Release),
+        Item::Event(Event::Mouse(mouse)) => matches!(mouse.action, EventMouseAction::Release | EventMouseAction::Gone),
+        Item::Event(Event::Touch(touch)) => matches!(touch.action, EventMouseAction::Release | EventMouseAction::Gone),
+        _ => false,
+    }
+}
+
+/// Whether an item is a release the receiver marked as lost (REQ-207).
+#[must_use]
+pub(crate) const fn marked_lost(item: &Item<'_>) -> bool {
+    matches!(item, Item::Event(Event::Key(key)) if key.lost)
+}
+
+/// A release the page lost, as the protocol sends it, or none for a TOUCH
+/// contact, which programs are not told of (TODO-1525). `at` is where the
+/// pointer last was: a lost button has no place of its own.
+#[must_use]
+pub(crate) fn lost_release(released: Released, at: (u8, u8)) -> Option<InputEvent> {
+    match released {
+        Released::Key(key) => Some(InputEvent::Key { action: KeyAction::Release, key: KeyName(key_name(Named::of(key))), text: None, base: None }),
+        Released::Button(button) => {
+            let button = (button <= LAST_BUTTON).then_some(button)?;
+            Some(InputEvent::Mouse { action: MouseAction::Release, button: Some(button), buttons: None, column: at.0, row: at.1 })
+        }
+        Released::Contact(_) => None,
+    }
+}
+
+/// A pointer event's cell within the page, if the item has one.
+#[must_use]
+pub(crate) fn pointer_cell(item: &Item<'_>) -> Option<(u8, u8)> {
+    match item {
+        Item::Event(Event::Mouse(mouse)) => cell(mouse.at.column, mouse.at.row),
+        _ => None,
     }
 }
 

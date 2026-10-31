@@ -1,11 +1,14 @@
 use super::*;
-use neoteletext_input::event::{Device, Mouse, MouseAction, Point, Wheel};
+use neoteletext_input::event::{Device, Mouse, MouseAction, Point, Stamp, Wheel};
+
+/// Page 100, sub-code 0000.
+const ON: Stamp = Stamp { page: 0x100, sub: 0 };
 
 /// The wheel reaches an application with its turn and its cell, which it
 /// needs to scroll what is under the pointer.
 #[test]
 fn the_wheel_is_input() {
-    let wheel = Wheel { dx: 0, dy: -240, at: Point { column: 10, row: 5, pixels: None, mods: 0 } };
+    let wheel = Wheel { on: ON, dx: 0, dy: -240, at: Point { column: 10, row: 5, pixels: None, mods: 0 } };
     assert_eq!(Input::of(&Item::Event(Event::Wheel(wheel))), Some(Input::Wheel { dx: 0, dy: -240, column: 10, row: 5 }));
 }
 
@@ -14,9 +17,9 @@ fn the_wheel_is_input() {
 #[test]
 fn a_drag_is_input() {
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
-    let moved = Mouse { action: MouseAction::Move, button: 1, at, device: Device::Mouse };
+    let moved = Mouse { on: ON, action: MouseAction::Move, button: 1, at, device: Device::Mouse };
     assert_eq!(Input::of(&Item::Event(Event::Mouse(moved))), Some(Input::Moved { buttons: 1, column: 39, row: 12 }));
-    let pressed = Mouse { action: MouseAction::Press, button: 0, at, device: Device::Mouse };
+    let pressed = Mouse { on: ON, action: MouseAction::Press, button: 0, at, device: Device::Mouse };
     assert_eq!(Input::of(&Item::Event(Event::Mouse(pressed))), Some(Input::Mouse { pressed: true, button: 0, column: 39, row: 12 }));
 }
 
@@ -25,7 +28,7 @@ fn a_drag_is_input() {
 #[test]
 fn a_pointer_gone_is_not_a_release() {
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
-    let gone = Mouse { action: MouseAction::Gone, button: 1, at, device: Device::Mouse };
+    let gone = Mouse { on: ON, action: MouseAction::Gone, button: 1, at, device: Device::Mouse };
     assert_eq!(Input::of(&Item::Event(Event::Mouse(gone))), None);
 }
 
@@ -33,8 +36,8 @@ fn a_pointer_gone_is_not_a_release() {
 /// or left, which it needs to say what the control under the pointer does.
 #[test]
 fn a_hover_is_input() {
-    assert_eq!(Input::of(&Item::Event(Event::Hover { leave: false, column: 2, row: 20 })), Some(Input::Hover { entered: true, column: 2, row: 20 }));
-    assert_eq!(Input::of(&Item::Event(Event::Hover { leave: true, column: 2, row: 20 })), Some(Input::Hover { entered: false, column: 2, row: 20 }));
+    assert_eq!(Input::of(&Item::Event(Event::Hover { on: ON, leave: false, column: 2, row: 20 })), Some(Input::Hover { entered: true, column: 2, row: 20 }));
+    assert_eq!(Input::of(&Item::Event(Event::Hover { on: ON, leave: true, column: 2, row: 20 })), Some(Input::Hover { entered: false, column: 2, row: 20 }));
 }
 
 /// Typing comes from a key's press or repeat with its text, and from raw

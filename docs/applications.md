@@ -31,7 +31,7 @@ Common shapes:
 | `start` | `protocol` (2), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
 | `connected` | `connection`, `session`, `cookies` (`name`, `value` pairs), `selection` (`page` and `sub`, or `null` for the channel's initial page) | A viewer's connection opened; answer with `reply` (REQ-1471) |
 | `selected` | `connection`, `page`, `sub` | The connection selected a page (`sub` 3F7F: send its first sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1526) |
-| `input` | `connection`, `page`, `event` | Input on the page with the keys (INPUT.md) |
+| `input` | `connection`, `page`, `sub`, `lost`, `event` | Input on the page on screen (INPUT.md). `page` and `sub` are the page and sub-code the viewer was looking at, the connection's selection: input stamped with anything else is dropped before it reaches you (REQ-1557), except a release, which names the page that held it. `lost` is `true` on a release the page lost, the key or button not having come up: the viewer moved away, the keys left the page, or the connection went (REQ-207). A game can tell "the player let go" from "the player left". A lost mouse release is no click |
 | `left` | `connection`, `page` | The connection's selection left a page, or the connection closed |
 | `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7 |

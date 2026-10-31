@@ -46,7 +46,7 @@ const SERVER_TOTALS: [(&str, Kind); 6] = [
     ("restarts", Kind::Counter),
 ];
 /// A channel's figures accumulated across restarts.
-const CHANNEL_TOTALS: [(&str, Kind); 13] = [
+const CHANNEL_TOTALS: [(&str, Kind); 14] = [
     ("viewers_total", Kind::Counter),
     ("viewers_peak", Kind::Peak),
     ("opens", Kind::Counter),
@@ -54,6 +54,7 @@ const CHANNEL_TOTALS: [(&str, Kind); 13] = [
     ("keys", Kind::Counter),
     ("pages_sent", Kind::Counter),
     ("refused", Kind::Counter),
+    ("stale_input", Kind::Counter),
     ("gotos", Kind::Counter),
     ("sound_records", Kind::Counter),
     ("lines_to_application", Kind::Counter),
@@ -397,6 +398,7 @@ impl ServerStats {
             .integer("pages_sent", number(stats.pages_sent))
             .integer("refused", number(stats.refused))
             .integer("invalid_packets", number(stats.invalid_packets))
+            .integer("stale_input", number(stats.stale_input))
             .integer("gotos", number(stats.gotos))
             .integer("sound_records", number(stats.sound_records))
             .integer("lines_to_application", number(stats.lines_to_application))
@@ -474,7 +476,7 @@ impl ServerStats {
         for (name, help, value) in gauges {
             family(name, "gauge", help, &each(value));
         }
-        let counters: [Figure; 13] = [
+        let counters: [Figure; 14] = [
             ("teletext_channel_viewers_total", "Viewers that connected.", |figures| figures.stats.viewers_total),
             ("teletext_channel_sessions_resumed_total", "Sessions a viewer came back to.", |figures| figures.stats.sessions_resumed),
             ("teletext_channel_page_opens_total", "Pages opened.", |figures| figures.stats.total_opens()),
@@ -482,6 +484,7 @@ impl ServerStats {
             ("teletext_channel_keys_total", "Key presses from viewers.", |figures| figures.stats.keys),
             ("teletext_channel_pages_sent_total", "Sub-pages sent to connections, each copy counted.", |figures| figures.stats.pages_sent),
             ("teletext_channel_refused_total", "Lines from the program refused.", |figures| figures.stats.refused),
+            ("teletext_channel_stale_input_total", "Input dropped for a page no longer selected.", |figures| figures.stats.stale_input),
             ("teletext_channel_gotos_total", "Viewers sent to a page.", |figures| figures.stats.gotos),
             ("teletext_channel_sound_records_total", "Audio records sent.", |figures| figures.stats.sound_records),
             ("teletext_channel_program_lines_sent_total", "Lines sent to the channel's program.", |figures| figures.stats.lines_to_application),
@@ -545,6 +548,7 @@ fn channel_now(figures: &ChannelFigures) -> Totals {
         ("keys", stats.keys),
         ("pages_sent", stats.pages_sent),
         ("refused", stats.refused),
+        ("stale_input", stats.stale_input),
         ("gotos", stats.gotos),
         ("sound_records", stats.sound_records),
         ("lines_to_application", stats.lines_to_application),

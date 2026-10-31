@@ -27,7 +27,7 @@ mod sound;
 mod subpages;
 
 /// The line a program would send for `value`.
-fn line(value: &Value) -> Vec<u8> {
+pub(crate) fn line(value: &Value) -> Vec<u8> {
     serde_json::to_vec(value).unwrap()
 }
 
@@ -49,7 +49,7 @@ fn refused(value: &Value, path: &str, rule: Rule) -> Refusal {
 
 /// `value` with the field at the JSON pointer `pointer` set to `new`,
 /// added when absent.
-fn with(value: &Value, pointer: &str, new: Value) -> Value {
+pub(crate) fn with(value: &Value, pointer: &str, new: Value) -> Value {
     let mut changed = value.clone();
     let (parent, key) = pointer.rsplit_once('/').unwrap();
     let holder = if parent.is_empty() { &mut changed } else { changed.pointer_mut(parent).unwrap() };
@@ -130,7 +130,7 @@ fn triplets() -> Value {
 }
 
 /// A sub-page with every kind of field filled.
-fn subpage() -> Value {
+pub(crate) fn subpage() -> Value {
     let mut rows: Vec<Value> = alloc::vec![Value::Null; 25];
     rows[0] = json!(spaces());
     rows[1] = json!(spaces());

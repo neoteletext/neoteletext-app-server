@@ -22,12 +22,13 @@ use neoteletext_audio::encode::packets;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
-use neoteletext_input::caps::{CURSOR_CAP, PAGE_CAP, SELECT_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
-use neoteletext_input::event::{Event, Item, MAX_STREAM_ITEM, StreamDecoder, units};
+use neoteletext_input::event::{Action, Event, Item, MAX_STREAM_ITEM, Stamp, StreamDecoder, units};
+use neoteletext_input::held::{Held, Released};
 
-use crate::input::Input;
+use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
@@ -43,10 +44,16 @@ use crate::stats::{ChannelStats, count};
 const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
-/// (INPUT.md section 6.2): PAGE, the cursor record, and SELECT, the tab's
+/// (INPUT.md section 6.2): the cursor record, and SELECT, the tab's
 /// selection (REQ-INT-140). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (section 6.3).
-const USED: u32 = PAGE_CAP | CURSOR_CAP | SELECT_CAP;
+const USED: u32 = CURSOR_CAP | SELECT_CAP;
+
+/// How often the operator is told of input dropped for its stamp, at most
+/// (REQ-1557): the interval of invalid packets (REQ-1462).
+pub const STALE_INPUT_REPORT_SECONDS: u64 = neoteletext_web::consts::INVALID_PACKET_REPORT_SECONDS;
+/// [`STALE_INPUT_REPORT_SECONDS`] on the host's clock.
+const STALE_INPUT_REPORT_MS: u64 = STALE_INPUT_REPORT_SECONDS * 1_000;
 
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
@@ -143,7 +150,6 @@ struct Shown {
 }
 
 /// One open connection: all the channel holds of a viewer (REQ-1474).
-#[allow(clippy::struct_excessive_bools, reason = "four independent facts of the connection: welcomed, SELECT agreed, announced, replied")]
 struct Connection {
     /// Its session; a session may have several connections, one a tab
     /// (DEC-1527).
@@ -154,17 +160,13 @@ struct Connection {
     decoder: Option<Box<StreamDecoder<MAX_STREAM_ITEM>>>,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
-    /// The receiver agreed SELECT: its selections come as SELECT, and
-    /// PAGE says only which page has the keys.
-    selects: bool,
     /// The input count acted on, modulo 65 536 (INPUT.md section 7.1).
     acked: u16,
-    /// The page with the keys, as PAGE last said; 0 for none.
-    keys: u16,
-    /// A page the program sent the viewer to, until PAGE says it is open:
-    /// acknowledgements name it meanwhile, since the receiver goes to the
-    /// page of the last cursor record it reads (INPUT.md section 7.1).
-    went: Option<u16>,
+    /// What it holds: keys and buttons down, whose releases the program is
+    /// owed if the page loses the input (REQ-207).
+    held: Held,
+    /// Where the pointer last was, column and row: a lost button's place.
+    pointer: (u8, u8),
     /// The next record number on the audio and input service.
     record_id: u8,
     /// What it selected: a page and a sub-code, the sub-code 3F7F until
@@ -193,10 +195,9 @@ impl Connection {
             session,
             decoder: None,
             welcomed: false,
-            selects: false,
             acked: 0,
-            keys: 0,
-            went: None,
+            held: Held::new(),
+            pointer: (0, 0),
             record_id: 0,
             selection: None,
             shown: None,
@@ -251,6 +252,10 @@ pub struct Channel {
     sounds: Sounds,
     effects: Vec<Effect>,
     stats: ChannelStats,
+    /// Stale input not yet told to the operator.
+    stale_unreported: u64,
+    /// When the operator was last told of stale input.
+    stale_reported_at: Option<u64>,
 }
 
 impl Channel {
@@ -266,6 +271,8 @@ impl Channel {
             sounds: Sounds::default(),
             effects: Vec::new(),
             stats: ChannelStats::default(),
+            stale_unreported: 0,
+            stale_reported_at: None,
         }
     }
 
@@ -414,11 +421,15 @@ impl Channel {
         self.announce(connection, now);
     }
 
-    /// A connection closed: the program is told its selection left its
-    /// page, and when it was its session's last, the session waits for its
-    /// viewer for the channel's grace (requirement 5.5); the program is
-    /// told it ended with `closed` only when the grace passes.
+    /// A connection closed: the program is given the releases of whatever
+    /// it held, marked lost (REQ-207: the viewer cannot send them now, and
+    /// a connection that resumes starts with nothing held), and told its
+    /// selection left its page, and when it was its session's last, the
+    /// session waits for its viewer for the channel's grace (requirement
+    /// 5.5); the program is told it ended with `closed` only when the grace
+    /// passes.
     pub fn closed(&mut self, connection: ConnectionId, now: u64) {
+        self.release_held(connection);
         let Some(state) = self.connections.remove(&connection) else { return };
         if state.announced
             && let Some(selection) = state.selection
@@ -444,6 +455,7 @@ impl Channel {
     /// A binary message from a connection: its input stream (INPUT.md).
     pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        let acked = state.acked;
         let mut decoder = state.decoder.take().unwrap_or_else(|| Box::new(StreamDecoder::<MAX_STREAM_ITEM>::default()));
         let result = decoder.push(bytes, &mut |item| self.item(connection, &item, now));
         if result.is_err() {
@@ -451,10 +463,12 @@ impl Channel {
             self.effects.push(Effect::Close { connection });
             return;
         }
-        if let Some(state) = self.connections.get_mut(&connection) {
-            state.decoder = Some(decoder);
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        state.decoder = Some(decoder);
+        // A message of no input units is never acknowledged (section 7.1).
+        if state.acked != acked {
+            self.acknowledge(connection);
         }
-        self.acknowledge(connection);
     }
 
     /// The time asked for has come: sessions whose grace passed end, and
@@ -503,23 +517,85 @@ impl Channel {
     fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
-        let keys = state.keys;
         match *item {
             Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps),
-            Item::Event(Event::Page(page)) => self.page_open(connection, page, now),
             Item::Event(Event::Select(select)) => self.selected(connection, select.page, select.sub, now),
-            _ => {
-                let Some(input) = Input::of(item) else { return };
-                let Some(event) = input.event() else { return };
-                if keys == 0 {
-                    return;
-                }
-                count(&mut self.stats.inputs);
-                if matches!(input, Input::Key { action: neoteletext_input::event::Action::Press, .. } | Input::Text(_)) {
-                    count(&mut self.stats.keys);
-                }
-                self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(keys), event }));
-            }
+            _ => self.input(connection, item, now),
+        }
+    }
+
+    /// Input from a viewer, checked against the page on screen (REQ-1555,
+    /// REQ-1557). What is stamped with the connection's selection goes to
+    /// the program. A press or anything else stamped with another page is
+    /// dropped and counted: the viewer aimed it at a page no longer
+    /// selected. A release is never dropped, since it lets go of what the
+    /// connection holds, and focus is always acted on (REQ-1553: neither
+    /// touches the selection). Raw text, which cannot carry a stamp, is for
+    /// the selection as it stands.
+    fn input(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let selection = state.selection;
+        let stamp = input::stamp(item);
+        let elsewhere = match stamp {
+            Some(on) => selection.is_none_or(|selection| selection.page.0 != on.page || selection.sub.0 != on.sub),
+            None => matches!(item, Item::Text(_)) && selection.is_none(),
+        };
+        if elsewhere && !input::releases(item) {
+            self.stale_input(now);
+            return;
+        }
+        if let Some(cell) = input::pointer_cell(item) {
+            state.pointer = cell;
+        }
+        let before = state.held;
+        let mut owed = Vec::new();
+        state.held.take(item, &mut |released, on| owed.push((released, on)));
+        let let_go = before != state.held;
+        self.lost(connection, owed);
+        // A late release of what a selection change already let go.
+        if elsewhere && !let_go {
+            return;
+        }
+        let Some(input) = Input::of(item) else { return };
+        let Some(event) = input.event() else { return };
+        let on = stamp.map(|on| (on.page, on.sub)).or_else(|| selection.map(|selection| (selection.page.0, selection.sub.0)));
+        let Some((page, sub)) = on else { return };
+        count(&mut self.stats.inputs);
+        if matches!(input, Input::Key { action: Action::Press, .. } | Input::Text(_)) {
+            count(&mut self.stats.keys);
+        }
+        let lost = input::marked_lost(item);
+        self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(page), sub: protocol::SubCode(sub), lost, event }));
+    }
+
+    /// Input dropped for its stamp: counted, and the operator told at most
+    /// once in [`STALE_INPUT_REPORT_SECONDS`] (REQ-1557).
+    fn stale_input(&mut self, now: u64) {
+        count(&mut self.stats.stale_input);
+        count(&mut self.stale_unreported);
+        if self.stale_reported_at.is_none_or(|at| at.saturating_add(STALE_INPUT_REPORT_MS) <= now) {
+            self.stale_reported_at = Some(now);
+            let dropped = core::mem::take(&mut self.stale_unreported);
+            self.log(Level::Warn, "stale_input", format!("dropped {dropped} input events stamped with a page no longer selected"));
+        }
+    }
+
+    /// Everything `connection` holds is let go: the page lost the input.
+    fn release_held(&mut self, connection: ConnectionId) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let mut owed = Vec::new();
+        state.held.release_all(&mut |released, on| owed.push((released, on)));
+        self.lost(connection, owed);
+    }
+
+    /// Gives the program the releases `owed`, marked lost, each for the page
+    /// that held it (REQ-207).
+    fn lost(&mut self, connection: ConnectionId, owed: Vec<(Released, Stamp)>) {
+        let Some(at) = self.connections.get(&connection).map(|state| state.pointer) else { return };
+        for (released, on) in owed {
+            let Some(event) = input::lost_release(released, at) else { continue };
+            count(&mut self.stats.inputs);
+            self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(on.page), sub: protocol::SubCode(on.sub), lost: true, event }));
         }
     }
 
@@ -531,22 +607,8 @@ impl Channel {
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
-            state.selects = caps & SELECT_CAP != 0;
             self.send(connection, Arc::from(&packet.bytes[..]));
         }
-    }
-
-    /// PAGE: the page with the keys changed. From a receiver that has not
-    /// agreed SELECT, a PAGE of a page other than the one selected also
-    /// stands for a selection of that page with 3F7F.
-    fn page_open(&mut self, connection: ConnectionId, page: u16, now: u64) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
-        state.went = None;
-        state.keys = page;
-        if state.selects || page == 0 || state.selection.is_some_and(|selection| selection.page.0 == page) {
-            return;
-        }
-        self.select(connection, Selection { page: PageNumber(page), sub: ANY_SUBPAGE }, now);
     }
 
     /// SELECT (`INPUT.md` section 5.4, REQ-INT-140): the tab selected a page
@@ -554,8 +616,9 @@ impl Channel {
     /// shows another of the page (DEC-1526 item 3), or one sub-page, or,
     /// with page 0, no page of the channel.
     fn selected(&mut self, connection: ConnectionId, page: u16, sub: u16, now: u64) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
         if page == 0 {
+            self.release_held(connection);
+            let Some(state) = self.connections.get_mut(&connection) else { return };
             let Some(before) = state.selection.take() else { return };
             state.shown = None;
             state.selection_due = None;
@@ -569,14 +632,16 @@ impl Channel {
 
     /// The connection selected a page (sub-code 3F7F) or one sub-page: the
     /// program is told it left the page it had, and asked for the new one
-    /// (REQ-1472). What was kept of the sub-page shown is dropped, so the
-    /// first sub-page after a new selection goes whole (DEC-1499).
+    /// (REQ-1472), after the releases of whatever it held (REQ-207). What was
+    /// kept of the sub-page shown is dropped, so the first sub-page after a
+    /// new selection goes whole (DEC-1499).
     fn select(&mut self, connection: ConnectionId, selection: Selection, now: u64) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
-        let before = state.selection.replace(selection);
-        if before == Some(selection) {
+        if self.connections.get(&connection).is_none_or(|state| state.selection == Some(selection)) {
             return;
         }
+        self.release_held(connection);
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let before = state.selection.replace(selection);
         state.shown = None;
         let announced = state.announced;
         if announced {
@@ -601,7 +666,7 @@ impl Channel {
         if !state.welcomed {
             return;
         }
-        let page = state.went.unwrap_or(state.keys);
+        let page = state.selection.map_or(0, |selection| selection.page.0);
         if let Some(bytes) = state.cursor_packet(page) {
             self.send(connection, bytes);
         }
@@ -713,7 +778,6 @@ impl Channel {
             ProgramMessage::Goto(goto) => {
                 let Some(state) = self.connections.get_mut(&goto.connection) else { return Ok(()) };
                 count(&mut self.stats.gotos);
-                state.went = Some(goto.page.0);
                 if let Some(bytes) = state.cursor_packet(goto.page.0) {
                     self.send(goto.connection, bytes);
                 }
@@ -795,7 +859,6 @@ impl Channel {
                 Err(fault) => faults.push(fault),
             }
             if state.welcomed
-                && state.keys == number
                 && let Some(cursor) = state.cursor_packet(number)
             {
                 bytes.extend_from_slice(&cursor);
@@ -855,3 +918,6 @@ fn cursor_of(page: u16, acked: u16, line: Option<&CursorLine>) -> Cursor {
     // engine's E.134).
     Cursor { page, acked, place, flags: line.map_or(0, |line| line.flags & BLOCK) }
 }
+
+#[cfg(test)]
+mod tests;

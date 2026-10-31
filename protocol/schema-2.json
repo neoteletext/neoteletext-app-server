@@ -2401,9 +2401,17 @@
               "$ref": "#/$defs/InputEvent",
               "description": "What happened."
             },
+            "lost": {
+              "description": "A release the page lost: the key or button did not come up, the page\nlost the input or the connection went (REQ-207). A game can tell\n\"the player let go\" from \"the player left\".",
+              "type": "boolean"
+            },
             "page": {
               "$ref": "#/$defs/PageNumber",
-              "description": "The page with the keys."
+              "description": "The page on screen when it happened: the event's stamp, which is the\nconnection's selection, or for a release the page that held it\n(REQ-1557). Focus and raw text carry no stamp, and are for the\nselection as it stands."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code on screen when it happened."
             },
             "type": {
               "const": "input",
@@ -2414,6 +2422,8 @@
             "type",
             "connection",
             "page",
+            "sub",
+            "lost",
             "event"
           ],
           "type": "object"
