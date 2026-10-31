@@ -28,6 +28,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+neoteletext-input.workspace = true
 # tokio's own clock that tests stop and move on, for the keepalive's
 # timings (`connection/tests.rs`); no other crate.
 tokio = { workspace = true, features = ["test-util"] }

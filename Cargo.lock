@@ -791,6 +791,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "neoteletext-core",
+ "neoteletext-input",
  "neoteletext-web",
  "teletext-runtime",
  "tokio",

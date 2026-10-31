@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use neoteletext_input::caps::SELECT_CAP;
+use neoteletext_input::event::{Event, Item, Select, write as write_item};
 use teletext_runtime::json::{self, Value};
 
 /// How long the server and its program have to start, or to stop.
@@ -18,6 +20,10 @@ const WITHIN: Duration = Duration::from_secs(30);
 const RETRY: Duration = Duration::from_millis(50);
 /// The WebSocket key of RFC 6455 section 1.3's example.
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+/// A final binary frame's first byte (RFC 6455 section 5.2).
+const BINARY_FINAL: u8 = 0x82;
+/// The mask bit with the length 126, which says two length bytes follow.
+const MASKED_LONG: u8 = 0xFE;
 /// A Close frame's opcode (RFC 6455 section 5.2).
 const CLOSE: u8 = 0x8;
 
@@ -201,6 +207,51 @@ fn a_restart_closes_viewers_as_a_restart() {
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), 1012, "service restart");
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// The items as one masked binary WebSocket message (RFC 6455 section 5.2),
+/// with a key of zeros, so that the masked payload is the payload.
+fn send_input(stream: &mut TcpStream, items: &[Item<'_>]) {
+    let mut payload = Vec::new();
+    for item in items {
+        let mut one = [0_u8; neoteletext_input::MAX_MESSAGE];
+        let length = write_item(item, &mut one).unwrap();
+        payload.extend_from_slice(&one[..length]);
+    }
+    let length = u16::try_from(payload.len()).unwrap().to_be_bytes();
+    stream.write_all(&[BINARY_FINAL, MASKED_LONG, length[0], length[1], 0, 0, 0, 0]).unwrap();
+    stream.write_all(&payload).unwrap();
+}
+
+/// REQ-1693 item 6: page parameters of the longest length reach the program
+/// through a real socket, and the next selection leaves them behind.
+#[test]
+fn page_parameters_reach_the_program_in_selected() {
+    let folder = scratch("parameters");
+    let heard = folder.join("heard");
+    let script = format!(r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard:?}; done"#);
+    let file = channels(&folder, &script);
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, "/ch/channel.json", 200);
+    let (mut viewer, _) = push(&server.address, None);
+    let parameters = format!("a={}", "x".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - 2));
+    let select = |page, parameters| Item::Event(Event::Select(Select::new(page, 0x3F7F).unwrap(), parameters));
+    let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None });
+    send_input(&mut viewer, &[hello, select(0x302, &parameters)]);
+    send_input(&mut viewer, &[select(0x303, "")]);
+    let started = Instant::now();
+    let told = loop {
+        let told = std::fs::read_to_string(&heard).unwrap_or_default();
+        if told.matches("\"selected\"").count() == 2 {
+            break told;
+        }
+        assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
+        std::thread::sleep(RETRY);
+    };
+    let selected: Vec<Value> =
+        told.lines().map(|line| json::parse(line.as_bytes()).unwrap()).filter(|line| line.get("type").and_then(Value::text) == Some("selected")).collect();
+    assert_eq!(selected[0].get("parameters").and_then(Value::text), Some(parameters.as_str()));
+    assert_eq!(selected[1].get("parameters").and_then(Value::text), None);
 }
 
 /// REQ-1693's Verification: a running server against the one table.
