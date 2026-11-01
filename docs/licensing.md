@@ -25,6 +25,7 @@ GPL and AGPL, in any form.
 |---|---|---|---|
 | The engine's crates (`neoteletext-core`, `-formats`, `-input`, `-audio`, `-web`, `-opus`) | MIT | Teletext itself; `neoteletext-opus`, the engine's integer port of libopus's decoder, checks programs' Opus packets (decision 21) | Decision 1 |
 | `tokio`, `hyper`, `hyper-util` | MIT | The native host | Decision 5 |
+| `listenfd` (and on Windows alone what it brings, `uuid` and `winapi`, checked by `cargo deny`) | Apache-2.0 | systemd's socket activation in the native host | DEC-1767 |
 | `tracing`, `tracing-subscriber` (and what they bring: `tracing-core`, `tracing-serde`, `serde`, `serde_json`, `sharded-slab`, `thread_local`, `smallvec` and others, all MIT or Apache-2.0, checked by `cargo deny`) | MIT | The native host's log | Decision 18 |
 | `worker` (workers-rs), `wasm-bindgen`, `getrandom` (and what they bring: `js-sys`, `web-sys`, `wasm-bindgen-futures`, `serde`, `serde-wasm-bindgen` and others, checked by `cargo deny`) | Apache-2.0; MIT or Apache-2.0 | The Cloudflare host, `wasm32-unknown-unknown` only | Decision 20 |
 | `wrangler`, `worker-build` | MIT or Apache-2.0; Apache-2.0 | Building, running locally and deploying the Cloudflare host; development only, never linked | Decision 20 |
