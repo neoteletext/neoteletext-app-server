@@ -185,8 +185,10 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         None => TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?,
     };
     let listening = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
+    let mut administering = None;
     if let Some(address) = &arguments.admin {
         let admin = TcpListener::bind(address).await.map_err(|error| format!("cannot listen on {address} for administration: {error}"))?;
+        administering = Some(admin.local_addr().map_err(|error| format!("cannot read the address administered on: {error}"))?.to_string());
         tokio::spawn(administer(admin, Arc::clone(&stats)));
     }
     tracing::info!(
@@ -195,7 +197,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         origin = arguments.origin,
         channels = hubs.keys().cloned().collect::<Vec<_>>().join(", "),
         state = kept.as_ref().map(|kept| kept.root().display().to_string()),
-        admin = arguments.admin,
+        admin = administering,
         "serving"
     );
     let routes = Arc::new(Routes {

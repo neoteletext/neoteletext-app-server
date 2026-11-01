@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use neoteletext_core::consts::{LINK_SCHEME, PACKET_BYTES};
@@ -33,6 +33,8 @@ const BINARY_FINAL: u8 = 0x82;
 const MASKED_LONG: u8 = 0xFE;
 /// A Close frame's opcode (RFC 6455 section 5.2).
 const CLOSE: u8 = 0x8;
+/// Lets the kernel choose the port.
+const ANY_LOCAL_PORT: &str = "127.0.0.1:0";
 /// What stands where systemd does (`sd_listen_fds(3)`): standard input is
 /// the one place safe Rust can put a descriptor in a child, so the shell
 /// moves it to descriptor 3, the first systemd passes, and names itself in
@@ -85,11 +87,6 @@ fn scratch(name: &str) -> PathBuf {
     folder
 }
 
-/// A port nothing listens on now.
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 /// A channels file for one channel, `ch`, whose program runs `script` in `sh`.
 fn channels(folder: &Path, script: &str) -> PathBuf {
     channel_in(folder, "ch", script)
@@ -108,30 +105,47 @@ fn publishing(text: &str) -> String {
     format!(r#"read -r _; printf '%s\n' '{{"type":"log","level":"info","event":"started","text":"{text}"}}'; while read -r _; do :; done"#)
 }
 
-/// Starts the server with `arguments` beside its address and origin.
+/// Starts the server with `arguments`, on a listening socket this test made.
+///
+/// A port found by binding and closing, for the server to bind again, is not
+/// the server's. On macOS a socket is made close-on-exec only after it is made,
+/// so a sibling test starting a process in that moment hands it the listener
+/// for as long as it runs: the port then stays listening with nothing
+/// accepting, and the server cannot bind it (`Address already in use`, in 11
+/// of 11 failures seen on 1 November 2026). Passing the socket leaves no moment
+/// when the port is nobody's, and a copy in another process takes nothing from
+/// this server's queue.
 fn serve(arguments: &[&str], environment: &[(&str, &str)], stderr: Stdio) -> Server {
-    let address = format!("127.0.0.1:{}", free_port());
-    let mut command = Command::new(env!("CARGO_BIN_EXE_teletext-server"));
-    command.args(["--listen", &address, "--origin", &format!("http://{address}")]).args(arguments).stdin(Stdio::null()).stdout(Stdio::null()).stderr(stderr);
-    command.env_remove("RUST_LOG").env_remove("STATE_DIRECTORY");
-    for (name, value) in environment {
-        command.env(name, value);
-    }
-    Server { child: command.spawn().unwrap(), address }
+    activated(&TcpListener::bind(ANY_LOCAL_PORT).unwrap(), 1, arguments, environment, stderr)
 }
 
 /// Starts the server as systemd starts a socket-activated service, on
-/// `socket` with `count` descriptors announced. `--listen` names `unused`,
-/// which a server that takes the socket must leave alone.
-fn activated(socket: &TcpListener, count: usize, unused: &str, arguments: &[&str], stderr: Stdio) -> Server {
+/// `socket` with `count` descriptors announced. `--listen` names `socket`'s
+/// own address, which stays bound, so a server that bound `--listen` as well
+/// as or instead of taking the socket could not start.
+fn activated(socket: &TcpListener, count: usize, arguments: &[&str], environment: &[(&str, &str)], stderr: Stdio) -> Server {
     let address = socket.local_addr().unwrap().to_string();
     let descriptor = OwnedFd::from(socket.try_clone().unwrap());
     let mut command = Command::new("sh");
     command.args(["-c", AS_SYSTEMD, "sh", &count.to_string(), env!("CARGO_BIN_EXE_teletext-server")]);
-    command.args(["--listen", unused, "--origin", &format!("http://{address}")]).args(arguments);
+    command.args(["--listen", &address, "--origin", &format!("http://{address}")]).args(arguments);
     command.stdin(Stdio::from(descriptor)).stdout(Stdio::null()).stderr(stderr);
     command.env_remove("RUST_LOG").env_remove("STATE_DIRECTORY");
+    command.envs(environment.iter().copied());
     Server { child: command.spawn().unwrap(), address }
+}
+
+/// The server's `serving` line, which its start writes once it listens. A
+/// program's start may be logged first.
+fn serving_line(stderr: &mut BufReader<ChildStderr>) -> Value {
+    loop {
+        let mut line = String::new();
+        assert_ne!(stderr.read_line(&mut line).unwrap(), 0, "the server ended without serving");
+        let event = json::parse(line.trim_end().as_bytes()).unwrap();
+        if event.get("fields").and_then(|fields| fields.get("message")).and_then(Value::text) == Some("serving") {
+            return event;
+        }
+    }
 }
 
 /// Connects and asks for `path`, whether or not anything is accepting: a
@@ -291,20 +305,18 @@ fn connections_made_during_a_restart_wait_on_the_passed_socket() {
     let file = channels(&folder, &publishing("Hello")).display().to_string();
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = socket.local_addr().unwrap().to_string();
-    let unused = format!("127.0.0.1:{}", free_port());
 
     let before_the_server = ask(&address, &settings("ch"));
-    let mut first = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let mut first = activated(&socket, 1, &["--channels", &file], &[], Stdio::null());
     let response = response_to(before_the_server);
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    assert!(TcpStream::connect(&unused).is_err(), "the server listens on --listen as well");
 
     let (mut viewer, _) = push(&address, None);
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), CLOSE_RESTARTING, "try again");
 
     let during_the_restart = ask(&address, &settings("ch"));
-    let _second = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let _second = activated(&socket, 1, &["--channels", &file], &[], Stdio::null());
     let response = response_to(during_the_restart);
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     let _ = std::fs::remove_dir_all(&folder);
@@ -319,8 +331,7 @@ fn a_program_does_not_inherit_the_passed_socket() {
     let script = format!(r"if (: <&3) 2>/dev/null; then echo open; else echo closed; fi > {told:?}; {}", publishing("Hello"));
     let file = channels(&folder, &script).display().to_string();
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
-    let unused = format!("127.0.0.1:{}", free_port());
-    let _server = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let _server = activated(&socket, 1, &["--channels", &file], &[], Stdio::null());
     let started = Instant::now();
     let descriptor = loop {
         let descriptor = std::fs::read_to_string(&told).unwrap_or_default();
@@ -339,8 +350,7 @@ fn a_program_does_not_inherit_the_passed_socket() {
 #[test]
 fn a_second_passed_socket_is_refused() {
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
-    let unused = format!("127.0.0.1:{}", free_port());
-    let mut server = activated(&socket, 2, &unused, &[], Stdio::piped());
+    let mut server = activated(&socket, 2, &[], &[], Stdio::piped());
     assert!(!server.exited().success());
     let mut written = String::new();
     server.child.stderr.take().unwrap().read_to_string(&mut written).unwrap();
@@ -721,12 +731,14 @@ fn a_session_continues_with_its_cookie() {
 fn probes_and_metrics_are_on_the_administration_listener() {
     let folder = scratch("admin");
     let file = channels(&folder, &publishing("Ready"));
-    let admin = format!("127.0.0.1:{}", free_port());
-    let server = serve(&["--channels", &file.display().to_string(), "--admin-listen", &admin], &[], Stdio::null());
-    assert_eq!(until_status(&admin, "/healthz", 200), b"ok\n");
+    let mut server = serve(&["--channels", &file.display().to_string(), "--admin-listen", ANY_LOCAL_PORT], &[], Stdio::piped());
+    let mut stderr = BufReader::new(server.child.stderr.take().unwrap());
+    let serving = serving_line(&mut stderr);
+    let admin = serving.get("fields").and_then(|fields| fields.get("admin")).and_then(Value::text).unwrap();
+    assert_eq!(until_status(admin, "/healthz", 200), b"ok\n");
     assert_eq!(get(&server.address, &settings("ch")).map(|(status, _)| status), Some(200));
-    assert_eq!(until_status(&admin, "/readyz", 200), b"ready\n");
-    let metrics = String::from_utf8(until_status(&admin, "/metrics", 200)).unwrap();
+    assert_eq!(until_status(admin, "/readyz", 200), b"ready\n");
+    let metrics = String::from_utf8(until_status(admin, "/metrics", 200)).unwrap();
     assert!(metrics.contains("# TYPE teletext_connections gauge\n"), "{metrics}");
     assert!(metrics.contains("teletext_channel_ready{channel=\"ch\"} 1\n"), "{metrics}");
     assert_eq!(get(&server.address, "/metrics").map(|(status, _)| status), Some(404), "not where viewers reach");
@@ -735,10 +747,20 @@ fn probes_and_metrics_are_on_the_administration_listener() {
 
 /// With standard error a pipe, the server writes one JSON object a line,
 /// and its start is an `INFO` event; `RUST_LOG=warn` leaves it out
-/// (requirements 7.1 and 7.2).
+/// (requirements 7.1 and 7.2). With no socket passed it binds `--listen`,
+/// and names what it bound.
 #[test]
 fn the_log_is_json_lines_and_rust_log_chooses_the_level() {
-    let mut server = serve(&[], &[], Stdio::piped());
+    let child = Command::new(env!("CARGO_BIN_EXE_teletext-server"))
+        .args(["--listen", ANY_LOCAL_PORT])
+        .env_remove("RUST_LOG")
+        .env_remove("STATE_DIRECTORY")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut server = Server { child, address: String::new() };
     let mut stderr = BufReader::new(server.child.stderr.take().unwrap());
     let mut line = String::new();
     stderr.read_line(&mut line).unwrap();
@@ -746,7 +768,9 @@ fn the_log_is_json_lines_and_rust_log_chooses_the_level() {
     assert_eq!(event.get("level").and_then(Value::text), Some("INFO"), "{line}");
     let fields = event.get("fields").unwrap();
     assert_eq!(fields.get("message").and_then(Value::text), Some("serving"), "{line}");
-    assert_eq!(fields.get("listen").and_then(Value::text), Some(server.address.as_str()), "{line}");
+    let address = fields.get("listen").and_then(Value::text).unwrap();
+    assert!(!address.ends_with(":0"), "the port it was given, not the one it has: {line}");
+    until_status(address, "/", 404);
     assert!(event.get("timestamp").and_then(Value::text).is_some(), "{line}");
     assert!(server.terminate().success());
 
