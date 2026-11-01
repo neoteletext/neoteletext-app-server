@@ -589,19 +589,72 @@ fn an_unnumbered_change_does_not_answer_a_selection() {
 /// program at once, or at the deadline: here with DENIED.
 #[test]
 fn a_program_may_end_a_selection_with_a_status() {
-    use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
     let mut channel = channel();
     channel.received(CONNECTION, &message(&[select(0x8FC, ANY)]), 1);
     let _ = channel.take_effects();
     channel.from_program(&line(&json!({"type": "denied", "connection": CONNECTION, "request": 2, "status": 404})), 2);
-    let bytes = sent_to(&channel.take_effects(), CONNECTION);
+    assert_eq!(denied_in(&sent_to(&channel.take_effects(), CONNECTION)), Some((404, String::from("8FC"))));
+    assert_eq!(channel.next_wake(), None, "and no deadline is left");
+}
+
+/// The status and place of the DENIED record in `bytes`.
+fn denied_in(bytes: &[u8]) -> Option<(u16, String)> {
+    use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
     let mut reader = RecordReader::new();
-    let denied = bytes.as_chunks::<PACKET_BYTES>().0.iter().find_map(|packet| match reader.push(&Packet { bytes: *packet }) {
+    bytes.as_chunks::<PACKET_BYTES>().0.iter().find_map(|packet| match reader.push(&Packet { bytes: *packet }) {
         Read::Record(ChannelRecord::Denied(record)) => Some((record.status, record.place.into())),
         _ => None,
-    });
-    assert_eq!(denied, Some((404, String::from("8FC"))));
-    assert_eq!(channel.next_wake(), None, "and no deadline is left");
+    })
+}
+
+/// `INPUT.md` section 5.4: every selection has an ending, so a SELECT that
+/// repeats one DENIED ended is asked of the program again and has its own,
+/// as `neottx probe <channel>8FC` needs (REQ-1882). It leaves no page.
+#[test]
+fn a_selection_repeated_after_denied_has_its_own_ending() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[select(0x8FC, ANY)]), 1);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&json!({"type": "denied", "connection": CONNECTION, "request": 2, "status": 404})), 2);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[select(0x8FC, ANY)]), 3);
+    let lines = told(&channel.take_effects());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!((&lines[0]["type"], &lines[0]["request"], &lines[0]["path"]), (&json!("selected"), &json!(3), &json!("8FC")), "{lines:?}");
+    assert_eq!(channel.next_wake(), Some(3 + PROGRAM_REPLY_LIMIT_MS));
+    channel.from_program(&line(&json!({"type": "denied", "connection": CONNECTION, "request": 3, "status": 404})), 4);
+    assert_eq!(denied_in(&sent_to(&channel.take_effects(), CONNECTION)), Some((404, String::from("8FC"))));
+}
+
+/// `INPUT.md` section 5.4: the deadline's DENIED 503 is an ending too, and
+/// with no program running the repeat ends at the deadline it is given.
+#[test]
+fn a_selection_repeated_after_the_deadline_has_its_own_ending() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[select(0x8FC, ANY)]), 1);
+    channel.deadline(1 + PROGRAM_REPLY_LIMIT_MS);
+    let _ = channel.take_effects();
+    channel.program_ended();
+    channel.received(CONNECTION, &message(&[select(0x8FC, ANY)]), 2 + PROGRAM_REPLY_LIMIT_MS);
+    channel.deadline(2 + PROGRAM_REPLY_LIMIT_MS);
+    assert_eq!(denied_in(&sent_to(&channel.take_effects(), CONNECTION)), Some((503, String::from("8FC"))));
+}
+
+/// `INPUT.md` section 15.6: while a selection stands, a SELECT that repeats
+/// it is no new selection: not while it is awaited, and not once it is
+/// shown, nor when DENIED was followed by a page, which ended it again.
+#[test]
+fn a_selection_that_stands_is_not_asked_again() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 1);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 2);
+    assert_eq!(told(&channel.take_effects()), Vec::<Value>::new(), "while awaited");
+    channel.from_program(&line(&json!({"type": "denied", "connection": CONNECTION, "request": 2, "status": 503})), 3);
+    channel.from_program(&line(&json!({"type": "page", "connections": [CONNECTION], "request": 2, "page": subpage()})), 4);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[select(0x100, 0)]), 5);
+    assert_eq!(told(&channel.take_effects()), Vec::<Value>::new(), "the page DENIED was followed by stands");
 }
 
 /// REQ-1481, DEC-1759 lesson 12: a selection with no program running ends at

@@ -172,6 +172,26 @@ struct Shown {
     links: protocol::LinkExtension,
 }
 
+/// How a connection's selection stands (`INPUT.md` section 5.4, REQ-1481).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ending {
+    /// A page answered it, or there is nothing to answer.
+    Answered,
+    /// It must end by this time: passing it sends DENIED 503.
+    Due(u64),
+    /// DENIED ended it, and nothing was shown since. The selection stands,
+    /// since a later page for it is still shown, but a SELECT repeating it
+    /// has nothing to wait on, and so asks again.
+    Denied,
+}
+
+impl Ending {
+    /// When it must end, while it has not.
+    const fn due(self) -> Option<u64> {
+        if let Self::Due(due) = self { Some(due) } else { None }
+    }
+}
+
 /// One open connection: all the channel holds of a viewer (REQ-1474).
 struct Connection {
     /// Its session; a session may have several connections, one a tab
@@ -205,10 +225,9 @@ struct Connection {
     announced: bool,
     /// The program answered that `connected`.
     replied: bool,
-    /// When its selection must have ended, while it has not: a page or
-    /// DENIED clears it, and passing it sends DENIED 503 (`INPUT.md`
-    /// section 5.4, REQ-1481).
-    answer_due: Option<u64>,
+    /// How its selection has ended, or when it must (`INPUT.md` section
+    /// 5.4, REQ-1481).
+    ending: Ending,
     /// The index's sending, numbered for the receiver (`INPUT.md`
     /// section 7.5).
     index_generation: u16,
@@ -233,7 +252,7 @@ impl Connection {
             shown: None,
             announced: false,
             replied: false,
-            answer_due: None,
+            ending: Ending::Answered,
             index_generation: 0,
             list_held: None,
         }
@@ -496,7 +515,7 @@ impl Channel {
         let due = self.answer_due(now);
         let Some(state) = self.connections.get_mut(&connection) else { return };
         if state.first_selection_due.take().is_some() {
-            state.answer_due.get_or_insert(due);
+            state.ending = Ending::Due(state.ending.due().unwrap_or(due));
             self.announce(connection, now);
         }
     }
@@ -519,7 +538,7 @@ impl Channel {
         }
         state.announced = true;
         state.replied = false;
-        state.answer_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
+        state.ending = Ending::Due(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         let message = Connected {
             connection,
             session: state.session,
@@ -621,8 +640,8 @@ impl Channel {
         }
         let mut late: Vec<(ConnectionId, String)> = Vec::new();
         for (connection, state) in &mut self.connections {
-            if state.answer_due.is_some_and(|due| due <= now) {
-                state.answer_due = None;
+            if state.ending.due().is_some_and(|due| due <= now) {
+                state.ending = Ending::Answered;
                 let unanswered = if state.replied { "no page for selected" } else { "no reply to connected" };
                 late.push((*connection, format!("connection {connection}: {unanswered}")));
             }
@@ -643,7 +662,7 @@ impl Channel {
     /// stays open.
     fn deny(&mut self, connection: ConnectionId, status: u16) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
-        state.answer_due = None;
+        state.ending = Ending::Denied;
         let place = state.selection.map(Selection::path).unwrap_or_default();
         let record = state.next_record();
         let mut bytes = Vec::new();
@@ -658,7 +677,7 @@ impl Channel {
     pub fn next_wake(&self) -> Option<u64> {
         let grace = self.config.session_grace_ms;
         let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
-        let dues = self.connections.values().flat_map(|state| state.answer_due.into_iter().chain(state.first_selection_due));
+        let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due));
         dues.chain(expiry).chain(self.descriptions.next_due()).min()
     }
 
@@ -781,7 +800,7 @@ impl Channel {
             let Some(before) = state.selection.take() else { return };
             state.parameters = None;
             state.shown = None;
-            state.answer_due = None;
+            state.ending = Ending::Answered;
             if state.announced {
                 self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
             }
@@ -800,14 +819,22 @@ impl Channel {
     /// with none leaves them behind (REQ-1693 item 6). A selection has a
     /// number and a deadline from here, whether or not the program runs. The
     /// first one ends the wait for it, and goes in `connected`.
+    ///
+    /// Repeating a selection that stands is no new selection (`INPUT.md`
+    /// section 15.6), but one DENIED ended has nothing standing to wait on, so
+    /// the repeat is a new one: every selection has an ending (section 5.4).
     fn select(&mut self, connection: ConnectionId, selection: Selection, parameters: Option<String>, now: u64) {
-        if self.connections.get(&connection).is_none_or(|state| state.selection == Some(selection) && state.parameters == parameters) {
+        if self
+            .connections
+            .get(&connection)
+            .is_none_or(|state| state.ending != Ending::Denied && state.selection == Some(selection) && state.parameters == parameters)
+        {
             return;
         }
         self.release_held(connection);
         let due = self.answer_due(now);
         let Some(state) = self.connections.get_mut(&connection) else { return };
-        state.answer_due = Some(due);
+        state.ending = Ending::Due(due);
         let before = state.selection.replace(selection);
         state.parameters.clone_from(&parameters);
         state.shown = None;
@@ -1011,7 +1038,7 @@ impl Channel {
             (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, redirect.query, now),
             (_, _, Some(address)) => {
                 if let Some(state) = self.connections.get_mut(&redirect.connection) {
-                    state.answer_due = None;
+                    state.ending = Ending::Answered;
                 }
                 self.log(Level::Info, "redirect", format!("connection {} sent to {address}", redirect.connection));
             }
@@ -1059,11 +1086,11 @@ impl Channel {
         for &connection in targets {
             let answers = request.is_none_or(|request| self.is_current(connection, request));
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            if !answers || (request.is_none() && state.answer_due.is_some()) || !state.shows(number, sub) {
+            if !answers || (request.is_none() && state.ending.due().is_some()) || !state.shows(number, sub) {
                 continue;
             }
             state.selection = Some(Selection { page: page.page, sub: page.sub });
-            state.answer_due = None;
+            state.ending = Ending::Answered;
             let change = match &state.shown {
                 Some(kept) if kept.page == number && kept.sub == sub => match crate::page::changes(&kept.packets, &encoded) {
                     // Links alone changed: a frame of the header without the
