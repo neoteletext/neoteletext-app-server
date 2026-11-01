@@ -25,6 +25,9 @@ use teletext_runtime::json::{self, Value};
 const WITHIN: Duration = Duration::from_secs(30);
 /// Between tries.
 const RETRY: Duration = Duration::from_millis(50);
+/// Longer than the server's second between recording a channel's figures
+/// (`RECORD_EVERY_S`).
+const FIGURES_RECORDED: Duration = Duration::from_millis(1_300);
 /// The WebSocket key of RFC 6455 section 1.3's example.
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 /// A final binary frame's first byte (RFC 6455 section 5.2).
@@ -733,12 +736,13 @@ fn a_session_continues_with_its_cookie() {
 }
 
 /// The administration listener answers `/healthz`, `/readyz` (200 once
-/// the channel's program runs) and `/metrics`, which is not on the
+/// the channel's program has answered) and `/metrics`, which is not on the
 /// viewers' listener (requirements 8.1 and 8.4).
 #[test]
 fn probes_and_metrics_are_on_the_administration_listener() {
     let folder = scratch("admin");
-    let file = channels(&folder, &publishing("Ready"));
+    let answering = r#"read -r _; read -r _; printf '%s\n' '{"type":"description","page":"100","public":false}'; while read -r _; do :; done"#;
+    let file = channels(&folder, answering);
     let mut server = serve(&["--channels", &file.display().to_string(), "--admin-listen", ANY_LOCAL_PORT], &[], Stdio::piped());
     let mut stderr = BufReader::new(server.child.stderr.take().unwrap());
     let serving = serving_line(&mut stderr);
@@ -750,6 +754,36 @@ fn probes_and_metrics_are_on_the_administration_listener() {
     assert!(metrics.contains("# TYPE teletext_connections gauge\n"), "{metrics}");
     assert!(metrics.contains("teletext_channel_ready{channel=\"ch\"} 1\n"), "{metrics}");
     assert_eq!(get(&server.address, "/metrics").map(|(status, _)| status), Some(404), "not where viewers reach");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// `/readyz` says a channel can answer, not that its program started: a
+/// program still loading reads nothing, as the demo site does for half a
+/// minute, and a viewer in that time is told DENIED 503 (requirement 8.4).
+#[test]
+fn a_program_loading_is_not_ready() {
+    let folder = scratch("loading");
+    let loading = folder.join("loading");
+    let loaded = folder.join("loaded");
+    let script = format!(
+        r#"read -r _; : > {loading:?}; until [ -e {loaded:?} ]; do sleep 0.02; done; read -r _; printf '%s\n' '{{"type":"description","page":"100","public":false}}'; while read -r _; do :; done"#
+    );
+    let file = channels(&folder, &script);
+    let mut server = serve(&["--channels", &file.display().to_string(), "--admin-listen", ANY_LOCAL_PORT], &[], Stdio::piped());
+    let mut stderr = BufReader::new(server.child.stderr.take().unwrap());
+    let serving = serving_line(&mut stderr);
+    let admin = serving.get("fields").and_then(|fields| fields.get("admin")).and_then(Value::text).unwrap();
+    let started = Instant::now();
+    while !loading.exists() {
+        assert!(started.elapsed() < WITHIN, "the program did not start");
+        std::thread::sleep(RETRY);
+    }
+    // The figures /readyz reads are recorded each second.
+    std::thread::sleep(FIGURES_RECORDED);
+    assert_eq!(get(admin, "/readyz"), Some((503, b"no program answering: ch\n".to_vec())));
+    assert!(String::from_utf8(until_status(admin, "/metrics", 200)).unwrap().contains("teletext_channel_ready{channel=\"ch\"} 0\n"));
+    std::fs::write(&loaded, b"").unwrap();
+    assert_eq!(until_status(admin, "/readyz", 200), b"ready\n");
     let _ = std::fs::remove_dir_all(&folder);
 }
 

@@ -258,13 +258,14 @@ impl Task {
                 }
                 self.starts = self.starts.saturating_add(1);
                 channel.program_started(now);
+                channel.ask_whether_ready();
             }
             Event::Application(FromApplication::Line(text)) => channel.from_program(&text, now),
             Event::Application(FromApplication::Ended) => channel.program_ended(),
             Event::Deadline => channel.deadline(now),
             Event::Record => self.record(channel),
             Event::Figures => {
-                if channel.is_ready()
+                if channel.is_running()
                     && let Some(to) = self.to_application.as_ref()
                 {
                     // A figure missed is sent again in ten seconds.

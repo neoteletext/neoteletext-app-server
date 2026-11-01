@@ -94,7 +94,7 @@ pub struct ChannelFigures {
     pub stats: ChannelStats,
     /// Lines for its program dropped because it fell behind.
     pub lines_dropped: u64,
-    /// Whether it has pages to serve (requirement 8.4).
+    /// Whether its program has answered since it started (requirement 8.4).
     pub ready: bool,
     /// Its time over each event.
     pub events: Histogram,
@@ -275,7 +275,7 @@ impl ServerStats {
         self.started.elapsed().as_secs()
     }
 
-    /// The channels that have no pages to serve yet (requirement 8.4).
+    /// The channels whose program cannot answer yet (requirement 8.4).
     #[must_use]
     pub fn not_ready(&self) -> Vec<String> {
         self.channels.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(_, figures)| !figures.ready).map(|(folder, _)| folder.clone()).collect()
@@ -473,7 +473,7 @@ impl ServerStats {
             ("teletext_channel_viewers", "Viewers connected now.", |figures| figures.stats.viewers),
             ("teletext_channel_viewers_peak", "The most viewers connected at once.", |figures| figures.stats.viewers_peak),
             ("teletext_channel_sessions_waiting", "Sessions waiting for their viewer to come back.", |figures| figures.stats.sessions_waiting),
-            ("teletext_channel_ready", "Whether the channel's program is running.", |figures| u64::from(figures.ready)),
+            ("teletext_channel_ready", "Whether the channel's program has answered since it started.", |figures| u64::from(figures.ready)),
         ];
         for (name, help, value) in gauges {
             family(name, "gauge", help, &each(value));

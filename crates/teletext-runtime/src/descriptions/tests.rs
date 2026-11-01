@@ -383,3 +383,62 @@ fn the_picture_is_of_the_page_the_program_gave() {
     assert!(filled.len() <= super::MOST_PICTURE_BYTES);
     assert_eq!(filled[..4].to_vec(), [0x89, b'P', b'N', b'G']);
 }
+
+/// Requirement 8.4: a program is asked once, for no visitor, to learn that it
+/// answers. A channel is ready from its answer, which keeps nothing and is
+/// not refused, and not before.
+#[test]
+fn a_program_is_ready_once_it_answers() {
+    let mut channel = channel();
+    channel.ask_whether_ready();
+    assert_eq!(lines(&channel.take_effects()), [json!({"type": "describe", "page": PAGE_TEXT})]);
+    assert!(!channel.is_ready(), "it started, and has said nothing");
+    channel.from_program(&line(&json!({"type": "log", "level": "info", "event": "loading", "text": "loading"})), 1);
+    assert!(!channel.is_ready(), "a log line answers nothing");
+    channel.from_program(&line(&not_public()), 2);
+    assert!(channel.is_ready());
+    assert_eq!(channel.stats().refused, 0, "it was asked");
+    assert_eq!(lines(&channel.take_effects()), [] as [Value; 0]);
+    channel.from_program(&line(&not_public()), 3);
+    assert_eq!(channel.stats().refused, 1, "it was asked once");
+    channel.program_ended();
+    channel.program_started(4);
+    assert!(!channel.is_ready(), "a program started again has yet to answer");
+}
+
+/// A viewer's answer shows a program answers as well as the question does.
+#[test]
+fn any_answer_makes_a_program_ready() {
+    let mut channel = channel();
+    channel.ask_whether_ready();
+    channel.from_program(&line(&json!({"type": "denied", "connection": 1, "request": 1, "status": 503})), 1);
+    assert_eq!(channel.stats().refused, 0);
+    assert!(channel.is_ready());
+}
+
+/// A visitor at the page already asked about waits for that answer: a second
+/// `describe` would bring a second answer, and that would be refused.
+#[test]
+fn a_visitor_shares_the_question_a_program_is_asked_on_starting() {
+    let mut channel = channel();
+    channel.ask_whether_ready();
+    let _ = channel.take_effects();
+    channel.describe(1, PAGE, 0);
+    assert_eq!(lines(&channel.take_effects()), [] as [Value; 0]);
+    channel.from_program(&line(&not_public()), 1);
+    assert_eq!(answers(&channel.take_effects()), [(1, None)]);
+    assert_eq!(channel.stats().refused, 0);
+}
+
+/// A program that takes longer than a visitor waits is ready all the same.
+#[test]
+fn a_late_answer_makes_a_program_ready() {
+    let mut channel = channel();
+    channel.ask_whether_ready();
+    channel.describe(1, PAGE, 0);
+    channel.deadline(DESCRIPTION_WAIT_MS);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&not_public()), DESCRIPTION_WAIT_MS + DESCRIPTION_CACHE_MS * 2);
+    assert_eq!(channel.stats().refused, 0, "long after the cache's life");
+    assert!(channel.is_ready());
+}

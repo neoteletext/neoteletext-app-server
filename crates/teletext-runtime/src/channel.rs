@@ -313,6 +313,11 @@ pub struct Channel {
     config: ChannelConfig,
     /// Whether the program is running, `start` sent to it.
     program: bool,
+    /// Whether the program running has answered anything yet.
+    answered: bool,
+    /// The page the program was asked about to learn that it answers, until
+    /// it does, which no visitor need be waiting for.
+    readiness_page: Option<u16>,
     connections: BTreeMap<ConnectionId, Connection>,
     sessions: BTreeMap<SessionId, Session>,
     sounds: Sounds,
@@ -334,6 +339,8 @@ impl Channel {
         Self {
             config,
             program: false,
+            answered: false,
+            readiness_page: None,
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
             sounds: Sounds::default(),
@@ -392,11 +399,19 @@ impl Channel {
         &self.config.address
     }
 
-    /// Whether the channel's program is running, so it serves its viewers
-    /// (requirement 8.4).
+    /// Whether the channel's program is running.
+    #[must_use]
+    pub const fn is_running(&self) -> bool {
+        self.program
+    }
+
+    /// Whether the channel's program has answered since it started, so it
+    /// can serve its viewers (requirement 8.4). One still loading has
+    /// started and reads nothing: a viewer then would wait out
+    /// [`PROGRAM_REPLY_LIMIT_MS`] and be denied.
     #[must_use]
     pub const fn is_ready(&self) -> bool {
-        self.program
+        self.program && self.answered
     }
 
     /// What the channel has counted since it started.
@@ -482,6 +497,8 @@ impl Channel {
     /// is told the channel is unavailable (REQ-1481).
     pub fn program_ended(&mut self) {
         self.program = false;
+        self.answered = false;
+        self.readiness_page = None;
         for state in self.connections.values_mut() {
             state.announced = false;
             state.replied = false;
@@ -489,6 +506,17 @@ impl Channel {
         for visitor in self.descriptions.forget() {
             self.effects.push(Effect::Described { visitor, answer: None });
         }
+    }
+
+    /// Asks the program something so that its answer shows it can answer
+    /// ([`Channel::is_ready`]), for a host that reports readiness. With no
+    /// viewer connected nothing else would bring an answer. `describe` is
+    /// a question every program must already answer, and it costs one
+    /// description of the page viewers arrive at.
+    pub fn ask_whether_ready(&mut self) {
+        let page = PageNumber(self.config.initial_page);
+        self.readiness_page = Some(page.0);
+        self.tell(&ServerMessage::Describe(Describe { page }));
     }
 
     /// A web visitor the host numbered `visitor` is at the address of `page`
@@ -504,6 +532,8 @@ impl Channel {
         match self.descriptions.ask(page.0, visitor, now) {
             Asked::Answered(answer) => self.effects.push(Effect::Described { visitor, answer }),
             Asked::Waiting => {}
+            // The program has this `describe` already, and answers it once.
+            Asked::AskProgram if self.readiness_page == Some(page.0) => {}
             Asked::AskProgram => self.tell(&ServerMessage::Describe(Describe { page })),
         }
     }
@@ -513,13 +543,19 @@ impl Channel {
     /// asked for and late fills the entry that stood for it, for those after.
     fn described(&mut self, description: Description, now: u64) -> Result<(), Refusal> {
         let page = description.page.0;
+        let for_readiness = self.readiness_page.take_if(|asked| *asked == page).is_some();
         if !self.descriptions.awaited(page, now) {
-            return Err(Refusal {
-                message: Some(protocol::MessageType::Description),
-                path: String::new(),
-                rule: Rule::NotAwaited,
-                detail: format!("no `describe` of {page:03X} is waiting"),
-            });
+            // Asked for no visitor: there is nothing to keep or give.
+            return if for_readiness {
+                Ok(())
+            } else {
+                Err(Refusal {
+                    message: Some(protocol::MessageType::Description),
+                    path: String::new(),
+                    rule: Rule::NotAwaited,
+                    detail: format!("no `describe` of {page:03X} is waiting"),
+                })
+            };
         }
         let answer = public_page(description).map(Arc::new);
         for visitor in self.descriptions.answered(page, &answer, now) {
@@ -904,7 +940,12 @@ impl Channel {
     /// (REQ-1475).
     pub fn from_program(&mut self, line: &[u8], now: u64) {
         count(&mut self.stats.lines_from_application);
-        let acted = protocol::read(line).and_then(|message| self.act(message, now));
+        let acted = protocol::read(line).and_then(|message| {
+            let answer = message.is_answer();
+            self.act(message, now)?;
+            self.answered |= answer;
+            Ok(())
+        });
         if let Err(refusal) = acted {
             count(&mut self.stats.refused);
             self.log(Level::Warn, "line_refused", format!("refused a line from the program: {refusal}"));

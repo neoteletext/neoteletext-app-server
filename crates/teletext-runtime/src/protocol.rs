@@ -816,6 +816,13 @@ impl ProgramMessage {
             Self::Description(_) => MessageType::Description,
         }
     }
+
+    /// Whether it answers something the server asked, which only a program
+    /// reading its lines can do (requirement 8.4).
+    #[must_use]
+    pub const fn is_answer(&self) -> bool {
+        matches!(self, Self::Reply(_) | Self::Denied(_) | Self::Description(_))
+    }
 }
 
 /// `reply` (REQ-1471).
