@@ -385,8 +385,8 @@ fn the_picture_is_of_the_page_the_program_gave() {
 }
 
 /// Requirement 8.4: a program is asked once, for no visitor, to learn that it
-/// answers. A channel is ready from its answer, which keeps nothing and is
-/// not refused, and not before.
+/// answers. A channel is ready from its answer, which is not refused and is
+/// kept for the first visitor, and not before.
 #[test]
 fn a_program_is_ready_once_it_answers() {
     let mut channel = channel();
@@ -399,10 +399,12 @@ fn a_program_is_ready_once_it_answers() {
     assert!(channel.is_ready());
     assert_eq!(channel.stats().refused, 0, "it was asked");
     assert_eq!(lines(&channel.take_effects()), [] as [Value; 0]);
-    channel.from_program(&line(&not_public()), 3);
+    channel.describe(1, PAGE, 3);
+    assert_eq!(lines(&channel.take_effects()), [] as [Value; 0], "the answer is kept");
+    channel.from_program(&line(&not_public()), 4);
     assert_eq!(channel.stats().refused, 1, "it was asked once");
     channel.program_ended();
-    channel.program_started(4);
+    channel.program_started(5);
     assert!(!channel.is_ready(), "a program started again has yet to answer");
 }
 

@@ -511,8 +511,8 @@ impl Channel {
     /// Asks the program something so that its answer shows it can answer
     /// ([`Channel::is_ready`]), for a host that reports readiness. With no
     /// viewer connected nothing else would bring an answer. `describe` is
-    /// a question every program must already answer, and it costs one
-    /// description of the page viewers arrive at.
+    /// a question every program must already answer, and its answer is kept
+    /// for the first visitor to that page, the one viewers arrive at.
     pub fn ask_whether_ready(&mut self) {
         let page = PageNumber(self.config.initial_page);
         self.readiness_page = Some(page.0);
@@ -544,18 +544,13 @@ impl Channel {
     fn described(&mut self, description: Description, now: u64) -> Result<(), Refusal> {
         let page = description.page.0;
         let for_readiness = self.readiness_page.take_if(|asked| *asked == page).is_some();
-        if !self.descriptions.awaited(page, now) {
-            // Asked for no visitor: there is nothing to keep or give.
-            return if for_readiness {
-                Ok(())
-            } else {
-                Err(Refusal {
-                    message: Some(protocol::MessageType::Description),
-                    path: String::new(),
-                    rule: Rule::NotAwaited,
-                    detail: format!("no `describe` of {page:03X} is waiting"),
-                })
-            };
+        if !for_readiness && !self.descriptions.awaited(page, now) {
+            return Err(Refusal {
+                message: Some(protocol::MessageType::Description),
+                path: String::new(),
+                rule: Rule::NotAwaited,
+                detail: format!("no `describe` of {page:03X} is waiting"),
+            });
         }
         let answer = public_page(description).map(Arc::new);
         for visitor in self.descriptions.answered(page, &answer, now) {
