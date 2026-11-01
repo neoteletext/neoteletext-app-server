@@ -47,7 +47,7 @@ fn the_page_offers_the_channel_and_the_browser_and_goes_nowhere() {
     let page = page("Home", "https://app.neottx.com/home/");
     assert!(page.contains(&format!(r#"<a id="open" href="{LINK_SCHEME}https://app.neottx.com/home/">Open in NeoTeletext</a>"#)));
     assert!(!page.contains("neoteletext://"), "DEC-1726: the old scheme is gone: {page}");
-    assert!(page.contains(r#"<a href="https://www.neoteletext.com/">Get NeoTeletext</a>"#));
+    assert!(page.contains(r#"<a href="https://www.neottx.com/">Get NeoTeletext</a>"#));
     assert!(page.contains("<title>Home</title>") && page.contains("<h1>Home</h1>"));
     // DEC-1669 item 3: no timer, no automatic launch, no redirect.
     for forbidden in ["setTimeout", "setInterval", "http-equiv", "location.href=", "location=", "location.assign", "location.replace", ".click(", "window.open"]
