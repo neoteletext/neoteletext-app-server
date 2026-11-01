@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use neoteletext_web::map::Place;
 use teletext_runtime::json::{self, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
@@ -95,6 +96,11 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
         let folder =
             text("folder").filter(|folder| !folder.is_empty() && folder.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'));
         let folder = folder.ok_or_else(|| format!("{}: a folder is letters, digits, - and _", path.display()))?;
+        // Its address would read as a place in the channel above it, so no
+        // viewer could reach it (DEC-1694 rule 2).
+        if Place::read(&folder).is_some() {
+            return Err(format!("{}: {folder} belongs to the channel above it: a channel cannot be named like a page, contents or wall", path.display()));
+        }
         let command: Vec<String> = item.get("command").and_then(Value::items).unwrap_or(&[]).iter().filter_map(Value::text).map(str::to_owned).collect();
         let program = match (command.is_empty(), text("socket").filter(|socket| !socket.is_empty())) {
             (false, None) => Program::Command { command, directory: base.join(text("directory").unwrap_or_default()) },

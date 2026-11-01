@@ -23,6 +23,25 @@ fn spec(folder: &str, program: Program) -> ChannelSpec {
     ChannelSpec { folder: folder.to_owned(), name: "Test".to_owned(), program }
 }
 
+/// DEC-1694 rule 2: a folder named like a place in a channel belongs to the
+/// channel above it, so it cannot be one. A page number has its first digit
+/// from 1 to 8, in either case, and any other name is a folder.
+#[test]
+fn a_folder_named_like_a_place_is_not_a_channel() {
+    let folder = scratch("reserved");
+    let file = folder.join("channels.json");
+    let read = |name: &str| {
+        std::fs::write(&file, format!(r#"{{"channels":[{{"folder":"{name}","command":["true"]}}]}}"#)).unwrap();
+        read_channels(&file)
+    };
+    for name in ["100", "2fa", "2FA", "8FF", "1BE", "contents", "wall"] {
+        assert!(read(name).is_err_and(|error| error.contains("belongs to the channel above it")), "{name}");
+    }
+    for name in ["000", "900", "1000", "10", "walls", "Wall", "news"] {
+        assert_eq!(read(name).unwrap().len(), 1, "{name}");
+    }
+}
+
 #[test]
 fn the_channels_file_names_each_program() {
     let folder = scratch("file");
