@@ -138,5 +138,6 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `opens`, and `most_opened`: ten page numbers with how often each was opened;
   - `inputs` and `keys`;
   - `pages_sent` (sub-pages sent, each copy counted) and `refused` (lines from the program refused);
+  - `stale_input` (input for a page no longer selected) and `stale_answers` (answers for a selection already replaced), both dropped, and neither a fault of the program's;
   - `redirects`, `sound_records`, `lines_to_application`, `lines_from_application` and `lines_dropped`;
   - `sessions_waiting`, sessions whose viewer may come back, and `sessions_resumed`.

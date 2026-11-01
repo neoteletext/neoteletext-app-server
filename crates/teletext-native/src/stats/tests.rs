@@ -52,6 +52,27 @@ fn a_channels_figures_reach_its_line_and_the_document() {
     assert_eq!(stats.glance().viewers, "hackaday 3 (peak 5)");
 }
 
+/// Answers dropped as stale are shown wherever the channel's other counts
+/// are, and kept across a restart (`SERVER.md` section 7.6).
+#[test]
+fn stale_answers_are_shown_and_kept() {
+    let dropped = ChannelFigures { stats: ChannelStats { stale_answers: 4, ..ChannelStats::default() }, ..figures() };
+    let stats = ServerStats::default();
+    stats.record("hackaday", dropped.clone());
+    let shown = |document: &Value| {
+        document.get("channels").and_then(|channels| channels.get("hackaday")).and_then(|channel| channel.get("stale_answers")).and_then(Value::integer)
+    };
+    assert_eq!(shown(&value(&stats.document())), Some(4));
+    assert_eq!(value(&stats.line("hackaday", &dropped)).get("channel").and_then(|channel| channel.get("stale_answers")).and_then(Value::integer), Some(4));
+    assert!(stats.metrics().contains("teletext_channel_stale_answers_total{channel=\"hackaday\"} 4\n"), "{}", stats.metrics());
+    let kept = value(&stats.all_time_document());
+    assert_eq!(shown(&kept), Some(4));
+    let after = ServerStats::default();
+    after.accumulate(&kept);
+    after.record("hackaday", dropped);
+    assert_eq!(shown(&value(&after.all_time_document())), Some(8));
+}
+
 /// The totals kept from before are added to this run's: counters add up,
 /// peaks keep the greater, each page's opens add up; they reach
 /// `/stats.json` and the `stats` line as `all_time`, and `figures.json`
