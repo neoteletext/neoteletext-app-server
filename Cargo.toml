@@ -63,6 +63,10 @@ hyper-util = { version = "=0.1.21", default-features = false }
 # `env-filter`, which would bring a regular expression engine.
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
+# systemd's socket activation (requirement 5.6), approved by the owner by
+# name on 1 November 2026 (DEC-1767): Apache-2.0. It holds the `unsafe` that
+# taking a socket by its descriptor needs, which this workspace forbids.
+listenfd = { version = "=1.0.2", default-features = false }
 # The Cloudflare host (decision 20), approved by the owner on 28 October
 # 2026: Cloudflare's Rust SDK for Workers and Durable Objects (Apache-2.0),
 # and random bytes from the Web Crypto interface for the session cookie's

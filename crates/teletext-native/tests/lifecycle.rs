@@ -1,11 +1,13 @@
 //! The server binary through its life: its log at start, its probes and
 //! metrics, sessions that continue across connections, a clean stop, and
-//! a restart that serves what it kept (requirements 5.1 to 5.5, 7.1, 7.2,
-//! 8.1 and 8.4). Unix only: the stop is a `SIGTERM`.
+//! a restart that serves what it kept, and systemd's socket activation
+//! (requirements 5.1 to 5.6, 7.1, 7.2, 8.1 and 8.4). Unix only: the stop is
+//! a `SIGTERM`.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -28,6 +30,11 @@ const BINARY_FINAL: u8 = 0x82;
 const MASKED_LONG: u8 = 0xFE;
 /// A Close frame's opcode (RFC 6455 section 5.2).
 const CLOSE: u8 = 0x8;
+/// What stands where systemd does (`sd_listen_fds(3)`): standard input is
+/// the one place safe Rust can put a descriptor in a child, so the shell
+/// moves it to descriptor 3, the first systemd passes, and names itself in
+/// `LISTEN_PID`, the process `exec` then keeps.
+const AS_SYSTEMD: &str = r#"count=$1; shift; exec 3<&0 0</dev/null; export LISTEN_FDS=$count LISTEN_PID=$$; exec "$@""#;
 
 /// The server, killed when the test ends however it ends.
 struct Server {
@@ -47,6 +54,11 @@ impl Server {
     fn terminate(&mut self) -> ExitStatus {
         let sent = Command::new("kill").args(["-TERM", &self.child.id().to_string()]).status().unwrap();
         assert!(sent.success());
+        self.exited()
+    }
+
+    /// Waits for the server to exit.
+    fn exited(&mut self) -> ExitStatus {
         let started = Instant::now();
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
@@ -103,6 +115,36 @@ fn serve(arguments: &[&str], environment: &[(&str, &str)], stderr: Stdio) -> Ser
         command.env(name, value);
     }
     Server { child: command.spawn().unwrap(), address }
+}
+
+/// Starts the server as systemd starts a socket-activated service, on
+/// `socket` with `count` descriptors announced. `--listen` names `unused`,
+/// which a server that takes the socket must leave alone.
+fn activated(socket: &TcpListener, count: usize, unused: &str, arguments: &[&str], stderr: Stdio) -> Server {
+    let address = socket.local_addr().unwrap().to_string();
+    let descriptor = OwnedFd::from(socket.try_clone().unwrap());
+    let mut command = Command::new("sh");
+    command.args(["-c", AS_SYSTEMD, "sh", &count.to_string(), env!("CARGO_BIN_EXE_teletext-server")]);
+    command.args(["--listen", unused, "--origin", &format!("http://{address}")]).args(arguments);
+    command.stdin(Stdio::from(descriptor)).stdout(Stdio::null()).stderr(stderr);
+    command.env_remove("RUST_LOG").env_remove("STATE_DIRECTORY");
+    Server { child: command.spawn().unwrap(), address }
+}
+
+/// Connects and asks for `path`, whether or not anything is accepting: a
+/// listening socket's queue holds the connection until something does.
+fn ask(address: &str, path: &str) -> TcpStream {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(WITHIN)).unwrap();
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").unwrap();
+    stream
+}
+
+/// The whole response to what [`ask`] asked.
+fn response_to(mut stream: TcpStream) -> String {
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("no answer on the socket that was passed");
+    response
 }
 
 /// GET `path`: the status and the body, or `None` while nothing answers.
@@ -214,6 +256,85 @@ fn a_restart_closes_viewers_as_a_restart() {
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), 1012, "service restart");
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-1041: with the listening socket passed as systemd passes it, a
+/// connection made before the server runs, and one made while it restarts,
+/// wait in the socket's queue and are answered; `--listen` is left alone.
+/// The socket held here is the copy systemd keeps across the restart.
+#[test]
+fn connections_made_during_a_restart_wait_on_the_passed_socket() {
+    let folder = scratch("activation");
+    let file = channels(&folder, &publishing("Hello")).display().to_string();
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = socket.local_addr().unwrap().to_string();
+    let unused = format!("127.0.0.1:{}", free_port());
+
+    let before_the_server = ask(&address, &settings("ch"));
+    let mut first = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let response = response_to(before_the_server);
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(TcpStream::connect(&unused).is_err(), "the server listens on --listen as well");
+
+    let (mut viewer, _) = push(&address, None);
+    assert!(first.terminate().success());
+    assert_eq!(close_code(&mut viewer), 1012, "service restart");
+
+    let during_the_restart = ask(&address, &settings("ch"));
+    let _second = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let response = response_to(during_the_restart);
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-1041: a channel's program never holds the passed socket, which would
+/// keep the address open, and unanswered, after the server has gone.
+#[test]
+fn a_program_does_not_inherit_the_passed_socket() {
+    let folder = scratch("inherit");
+    let told = folder.join("descriptor");
+    let script = format!(r"if (: <&3) 2>/dev/null; then echo open; else echo closed; fi > {told:?}; {}", publishing("Hello"));
+    let file = channels(&folder, &script).display().to_string();
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unused = format!("127.0.0.1:{}", free_port());
+    let _server = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
+    let started = Instant::now();
+    let descriptor = loop {
+        let descriptor = std::fs::read_to_string(&told).unwrap_or_default();
+        if descriptor.ends_with('\n') {
+            break descriptor;
+        }
+        assert!(started.elapsed() < WITHIN, "the program did not start");
+        std::thread::sleep(RETRY);
+    };
+    assert_eq!(descriptor, "closed\n");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-1041: the server takes one socket. A second would go unserved, and,
+/// never marked close-on-exec, on into every program it starts.
+#[test]
+fn a_second_passed_socket_is_refused() {
+    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unused = format!("127.0.0.1:{}", free_port());
+    let mut server = activated(&socket, 2, &unused, &[], Stdio::piped());
+    assert!(!server.exited().success());
+    let mut written = String::new();
+    server.child.stderr.take().unwrap().read_to_string(&mut written).unwrap();
+    assert!(written.contains("2 sockets"), "{written}");
+}
+
+/// REQ-1041: the deploy script installs the socket unit and starts it, the
+/// service requires it, and the two name one address.
+#[test]
+fn the_socket_unit_is_installed_and_names_the_services_address() {
+    let unit = include_str!("../../../deploy/ionos/neoteletext.socket");
+    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let address = unit.lines().find_map(|line| line.strip_prefix("ListenStream=")).unwrap();
+    assert!(deploy.contains(&format!("--listen {address} ")), "the service listens on another address than {address}");
+    assert!(deploy.contains(r#"/etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket""#));
+    assert!(deploy.contains("Requires=neoteletext.socket"));
+    assert!(deploy.contains("enable --now neoteletext.socket"));
 }
 
 /// The items as one masked binary WebSocket message (RFC 6455 section 5.2),

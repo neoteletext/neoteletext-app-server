@@ -9,9 +9,10 @@
 #      installed from their vendor/; the old Hackaday channel, Python, with
 #      a pinned uv and the engine's neottx for its QR codes; and the Hackaday
 #      dataset both Hackaday channels read, and nothing else (DEC-1568);
-#   3. the channels file, the service, and the container's Caddy, which
-#      serves the home page on neoteletext.com and www and proxies
-#      app.neoteletext.com to the server;
+#   3. the channels file, the service and its socket (a restart refuses no
+#      connection, REQ-1041), and the container's Caddy, which serves the
+#      home page on neoteletext.com and www and proxies app.neoteletext.com
+#      to the server;
 #   4. caddyrouter's site block for the three names, checked as a candidate
 #      before the live Caddyfile changes.
 # DNS is not touched here: the three names are A records, DNS only, to the
@@ -142,7 +143,7 @@ ssh "$target" 'set -e
     fi
     du -sh ~/hackaday-analysis/analysis.sqlite ~/hackaday-analysis/audio ~/whatsthatsound/data/clips /opt/neoteletext/pictures 2>/dev/null || true'
 
-say "the channels file, the service and the container's Caddy"
+say "the channels file, the service, its socket and the container's Caddy"
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com"},
@@ -152,10 +153,13 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
 ]}
 EOF
+ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.service >/dev/null" <<EOF
 [Unit]
 Description=NeoTeletext app server
-After=network-online.target
+After=network-online.target neoteletext.socket
+# systemd holds the listening socket across a restart (REQ-1041).
+Requires=neoteletext.socket
 
 [Service]
 # ubuntu, whose home holds the Hackaday channel's archive at its default paths.
@@ -173,7 +177,12 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 ssh "$target" "sudo tee /etc/caddy/Caddyfile >/dev/null" < "$here/Caddyfile"
-ssh "$target" "set -e; sudo systemctl daemon-reload; sudo systemctl enable --now neoteletext >/dev/null 2>&1; sudo systemctl restart neoteletext
+ssh "$target" "set -e; sudo systemctl daemon-reload
+    # Once, the first time: a server that bound the address itself must go
+    # before the socket can. After that the socket stays open and only the
+    # service restarts, so no connection is refused.
+    systemctl is-active --quiet neoteletext.socket || sudo systemctl stop neoteletext
+    sudo systemctl enable --now neoteletext.socket neoteletext >/dev/null 2>&1; sudo systemctl restart neoteletext
     # As the caddy user: run as root, validate creates the log file root's, and
     # the service, running as caddy, then cannot open it.
     sudo runuser -u caddy -- caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || { echo 'the container Caddyfile does not validate' >&2; exit 1; }
@@ -203,6 +212,6 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
     sudo systemctl reload caddy && echo "replaced and reloaded"' < "$here/caddyrouter.caddy"
 
 say "inside the container"
-ssh "$target" 'sleep 3; systemctl is-active neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
+ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
     for c in home hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'

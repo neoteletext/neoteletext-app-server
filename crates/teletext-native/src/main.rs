@@ -6,10 +6,11 @@
 //! ```
 //!
 //! `--listen` is where it accepts connections (`0.0.0.0:8090` by
-//! default); `--origin` is the address viewers reach it at, which each
-//! channel's push WebSocket is named on (the engine requires the push
-//! address on the channel's own origin); `--channels` is the file of the
-//! channels it serves, each a program of its own, in any language
+//! default), unless systemd passes it a listening socket, which it then
+//! takes instead (requirement 5.6); `--origin` is the address viewers reach
+//! it at, which each channel's push WebSocket is named on (the engine
+//! requires the push address on the channel's own origin); `--channels` is
+//! the file of the channels it serves, each a program of its own, in any language
 //! (`docs/applications.md`); `--state` is where it keeps the session
 //! cookie's keys and the accumulated figures across a restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
 //! without either); `--admin-listen` is where `/metrics`, `/healthz` and
@@ -42,6 +43,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
+use listenfd::ListenFd;
 use teletext_native::http::{Cookies, Routes, answer};
 use teletext_native::logging::{self, Format};
 use teletext_native::state::{StateDirectory, random_key};
@@ -64,6 +66,8 @@ const STATE_VARIABLE: &str = "STATE_DIRECTORY";
 const STOP_WITHIN: Duration = Duration::from_secs(10);
 /// How long the async runtime's blocking threads have to finish at exit.
 const RUNTIME_STOP_WITHIN: Duration = Duration::from_secs(1);
+/// The sockets systemd may pass: the viewers' listener, and no other.
+const PASSED_SOCKETS: usize = 1;
 
 struct Arguments {
     listen: String,
@@ -98,6 +102,21 @@ fn arguments() -> Result<Arguments, String> {
     Ok(parsed)
 }
 
+/// The listening socket systemd passed, if it did (requirement 5.6), held
+/// by systemd across a restart so that connections wait in its queue
+/// (`sd_listen_fds(3)`). It is made close-on-exec, or every program started
+/// would hold it too.
+///
+/// Called before any thread starts: `ListenFd` removes `LISTEN_PID` and
+/// `LISTEN_FDS`, and changing the environment races with threads reading it.
+fn passed_socket() -> Result<Option<std::net::TcpListener>, String> {
+    let mut passed = ListenFd::from_env();
+    if passed.len() > PASSED_SOCKETS {
+        return Err(format!("systemd passed {} sockets; the server takes {PASSED_SOCKETS}", passed.len()));
+    }
+    passed.take_tcp_listener(0).map_err(|error| format!("cannot take the socket systemd passed: {error}"))
+}
+
 fn main() -> ExitCode {
     let arguments = match arguments() {
         Ok(arguments) => arguments,
@@ -109,11 +128,18 @@ fn main() -> ExitCode {
         }
     };
     logging::start(arguments.log_format);
+    let passed = match passed_socket() {
+        Ok(passed) => passed,
+        Err(error) => {
+            tracing::error!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().enable_all().build() else {
         tracing::error!("cannot start the async runtime");
         return ExitCode::FAILURE;
     };
-    let result = runtime.block_on(serve(arguments));
+    let result = runtime.block_on(serve(arguments, passed));
     runtime.shutdown_timeout(RUNTIME_STOP_WITHIN);
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -124,7 +150,7 @@ fn main() -> ExitCode {
     }
 }
 
-async fn serve(arguments: Arguments) -> Result<(), String> {
+async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> Result<(), String> {
     let start = tokio::time::Instant::now();
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let stats = Arc::new(ServerStats::default());
@@ -154,14 +180,18 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
         let channel = Channel::new(config);
         hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats)));
     }
-    let listener = TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?;
+    let listener = match passed {
+        Some(passed) => adopt(passed).map_err(|error| format!("cannot serve on the socket systemd passed: {error}"))?,
+        None => TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?,
+    };
+    let listening = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
     if let Some(address) = &arguments.admin {
         let admin = TcpListener::bind(address).await.map_err(|error| format!("cannot listen on {address} for administration: {error}"))?;
         tokio::spawn(administer(admin, Arc::clone(&stats)));
     }
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
-        listen = arguments.listen,
+        listen = %listening,
         origin = arguments.origin,
         channels = hubs.keys().cloned().collect::<Vec<_>>().join(", "),
         state = kept.as_ref().map(|kept| kept.root().display().to_string()),
@@ -195,6 +225,13 @@ async fn serve(arguments: Arguments) -> Result<(), String> {
     drop(listener);
     stop(&routes, kept.as_ref()).await;
     Ok(())
+}
+
+/// The passed socket for tokio, which needs it non-blocking; systemd
+/// passes it blocking unless its unit says `NonBlocking=true`.
+fn adopt(passed: std::net::TcpListener) -> std::io::Result<TcpListener> {
+    passed.set_nonblocking(true)?;
+    TcpListener::from_std(passed)
 }
 
 /// The session cookie's keys: kept in the state directory, or made for

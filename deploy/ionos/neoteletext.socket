@@ -1,0 +1,18 @@
+# The server's listening socket, held by systemd so that it outlives the
+# server: a connection made while the server restarts waits in this socket's
+# queue and is answered once the server runs, where a socket of the server's
+# own would refuse it (requirement 5.6, REQ-1041).
+#
+# A connection here starts the service, so stopping the server for good
+# means stopping this unit too. A changed address needs
+# `systemctl restart neoteletext.socket`: restarting the service keeps the
+# socket it has.
+[Unit]
+Description=NeoTeletext app server's listening socket
+
+[Socket]
+# The service's --listen names the same address; tests/lifecycle.rs asserts it.
+ListenStream=127.0.0.1:8090
+
+[Install]
+WantedBy=sockets.target
