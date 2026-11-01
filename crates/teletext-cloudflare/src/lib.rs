@@ -208,6 +208,9 @@ impl Live {
                         let _ = program.send_with_str(text);
                     }
                 }
+                // `describe` is never called here: every page is not public
+                // on this host until it waits for a description (REQ-1728).
+                Effect::Described { .. } => {}
                 Effect::Log { level, event, text } => log(level, &self.folder, event, &text),
             }
         }
@@ -441,6 +444,18 @@ impl ChannelObject {
     /// (DEC-1669), naming what was asked for.
     fn page(&self, tail: &str) -> Result<Response> {
         let body = self.live.borrow().as_ref().map(|live| live.channel.page(tail)).unwrap_or_default();
+        Self::html(body)
+    }
+
+    /// What a page's address shows while this host asks no program for a
+    /// description: the not-public answer (REQ-1728 item 3).
+    fn private_page(&self, tail: &str) -> Result<Response> {
+        let body = self.live.borrow().as_ref().map(|live| live.channel.private_page(tail)).unwrap_or_default();
+        Self::html(body)
+    }
+
+    /// A page of HTML.
+    fn html(body: Vec<u8>) -> Result<Response> {
         let headers = Headers::new();
         headers.set("content-type", "text/html; charset=utf-8")?;
         headers.set("cache-control", "no-cache")?;
@@ -471,6 +486,7 @@ impl worker::DurableObject for ChannelObject {
             Route::Push => self.accept_viewer(&request),
             Route::Descriptor => self.descriptor(),
             Route::Page => self.page(&landing::tail(url.path(), url.query())),
+            Route::Described(_) => self.private_page(&landing::tail(url.path(), url.query())),
             Route::ToFolder | Route::ToPlace | Route::Missing => Response::error("Not Found", 404),
         };
         self.schedule().await?;

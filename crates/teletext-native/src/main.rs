@@ -215,7 +215,10 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
                 let _ = stream.set_nodelay(true);
                 let routes = Arc::clone(&routes);
                 tokio::spawn(async move {
-                    let service = service_fn(move |request| std::future::ready(Ok::<_, Infallible>(answer(&routes, request))));
+                    let service = service_fn(move |request| {
+                        let routes = Arc::clone(&routes);
+                        async move { Ok::<_, Infallible>(answer(&routes, request).await) }
+                    });
                     let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
                 });
             }

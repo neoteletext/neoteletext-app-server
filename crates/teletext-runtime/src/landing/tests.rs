@@ -3,6 +3,7 @@
 
 use alloc::vec::Vec;
 
+use neoteletext_core::consts::LINK_SCHEME;
 use neoteletext_web::map::CONFORMANCE;
 
 use super::*;
@@ -13,7 +14,7 @@ const CHANNEL: &str = "home";
 /// without an upgrade, as the engine's conformance table states them.
 fn status(route: Route) -> &'static str {
     match route {
-        Route::Page | Route::Descriptor => "200",
+        Route::Page | Route::Described(_) | Route::Descriptor => "200",
         Route::ToFolder | Route::ToPlace => "308",
         Route::Push => "426",
         Route::Missing => "404",

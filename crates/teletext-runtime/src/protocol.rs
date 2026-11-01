@@ -36,7 +36,8 @@ pub use read::read;
 /// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
 /// (DEC-1683), and which could name no other channel. Version 6 numbers
 /// each selection (DEC-1759 lesson 13), passes a program its cookies, adds
-/// `denied`, and lets a redirect keep a query.
+/// `denied`, lets a redirect keep a query, and adds `describe` and
+/// `description` (REQ-1728).
 pub const PROTOCOL: u32 = 6;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
@@ -46,6 +47,11 @@ pub const LONGEST_LINE: usize = 16 * 1024 * 1024;
 /// The longest page title, magazine name or section heading: the
 /// engine's contents rule (its REQ-WEB-025, decision E.120).
 pub const TITLE_CHARACTERS: usize = neoteletext_web::contents::MAX_TITLE;
+/// The longest text of a page's description, in characters: a server's own
+/// budget, so that one answer stays small. A sub-page holds 960 characters;
+/// this holds a long article of some 2,500 words, and a program cuts a longer
+/// one. Provisional, not yet measured against search engines.
+pub const DESCRIPTION_TEXT_CHARACTERS: usize = 16_000;
 /// The connections one message may name. Provisional, a budget of the
 /// server's own: more viewers than this are reached with `"all"`.
 pub const MOST_NAMED_CONNECTIONS: usize = 4_096;
@@ -327,6 +333,19 @@ pub enum ServerMessage {
     Stats(Stats),
     /// A message the program sent was refused (REQ-1475).
     Refused(Refused),
+    /// A web visitor or a search engine is at a page's address: answer with
+    /// `description` (REQ-1728).
+    Describe(Describe),
+}
+
+/// `describe`: the page number and nothing else. It carries no connection,
+/// session, cookie or query, so a description cannot hold one viewer's data
+/// (REQ-1728 item 7).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Describe {
+    /// The page.
+    pub page: PageNumber,
 }
 
 /// `start`.
@@ -382,6 +401,10 @@ pub struct Budgets {
     /// How long the server waits for an answer to `connected` or
     /// `selected`, in milliseconds (REQ-1481).
     pub reply_limit_ms: u64,
+    /// The longest text of a `description`, in characters.
+    pub description_text_characters: u64,
+    /// How long the server waits for a `description`, in milliseconds.
+    pub description_limit_ms: u64,
 }
 
 /// `connected` (REQ-1471).
@@ -678,6 +701,7 @@ pub enum MessageType {
     Log,
     Packets,
     Denied,
+    Description,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -734,6 +758,8 @@ pub enum Rule {
     /// A selection's number given with other than one connection: a number
     /// belongs to one connection.
     OneConnection,
+    /// A page other than the one the message is about.
+    WrongPage,
 }
 
 // ------------------------------------------------------- program to server
@@ -767,6 +793,8 @@ pub enum ProgramMessage {
     Packets(Packets),
     /// A selection the program will not answer with a page.
     Denied(Denied),
+    /// The answer to `describe` (REQ-1728).
+    Description(Description),
 }
 
 impl ProgramMessage {
@@ -785,6 +813,7 @@ impl ProgramMessage {
             Self::Log(_) => MessageType::Log,
             Self::Packets(_) => MessageType::Packets,
             Self::Denied(_) => MessageType::Denied,
+            Self::Description(_) => MessageType::Description,
         }
     }
 }
@@ -955,6 +984,30 @@ pub struct Denied {
     /// A real HTTP status number: 403, 404, 429 or 503.
     #[schemars(extend("enum" = DENIED_STATUSES))]
     pub status: u16,
+}
+
+/// `description`: the answer to `describe` (REQ-1728). A page is public only
+/// when this says so, and everything it holds is then readable by anyone. A
+/// page that is not public gives nothing but that, so that nothing of a
+/// private page can be kept or sent.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Description {
+    /// The page `describe` named.
+    pub page: PageNumber,
+    /// Whether the page may be shown to anyone on the web.
+    pub public: bool,
+    /// Its title, plain text, for a public page.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = TITLE_CHARACTERS))]
+    pub title: Option<String>,
+    /// Its text, plain text on one line, for a public page.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = DESCRIPTION_TEXT_CHARACTERS))]
+    pub text: Option<String>,
+    /// The sub-page its picture shows, for a public page.
+    #[serde(default)]
+    pub content: Option<Box<Page>>,
 }
 
 /// What DENIED carries (`INPUT.md` section 7.12).

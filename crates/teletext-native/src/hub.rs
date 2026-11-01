@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use neoteletext_web::consts::CLOSE_RESTARTING;
-use teletext_runtime::protocol::CookiePair;
+use teletext_runtime::descriptions::{Answer, VisitorId};
+use teletext_runtime::protocol::{CookiePair, PageNumber};
 use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -60,6 +61,14 @@ pub enum Command {
         /// The connection.
         connection: ConnectionId,
     },
+    /// A web visitor is at a page's address (REQ-1728): nothing of who asked
+    /// is carried, because nothing in the answer depends on it.
+    Describe {
+        /// The page.
+        page: PageNumber,
+        /// Where its answer goes.
+        answer: oneshot::Sender<Answer>,
+    },
     /// The server stops (requirement 5.1): every connection is closed with
     /// the code that says try again, and `done` is answered.
     Shutdown {
@@ -105,7 +114,18 @@ pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>,
     let (commands, queue) = mpsc::channel::<Command>(COMMANDS);
     let hub = Hub { folder: folder.to_owned(), descriptor, name, address, commands, stats: Arc::clone(&stats) };
     let (to_application, from_application) = link.map_or((None, None), |link| (Some(link.to), Some(link.from)));
-    let task = Task { folder: folder.to_owned(), outboxes: BTreeMap::new(), to_application, starts: 0, dropped: 0, events: Histogram::default(), stats, start };
+    let task = Task {
+        folder: folder.to_owned(),
+        outboxes: BTreeMap::new(),
+        to_application,
+        starts: 0,
+        dropped: 0,
+        events: Histogram::default(),
+        stats,
+        start,
+        visitors: BTreeMap::new(),
+        next_visitor: 0,
+    };
     tokio::spawn(task.run(channel, queue, from_application));
     hub
 }
@@ -148,6 +168,9 @@ struct Task {
     stats: Arc<ServerStats>,
     /// The host's clock's zero.
     start: Instant,
+    /// The web requests waiting for an answer, and the next one's number.
+    visitors: BTreeMap<VisitorId, oneshot::Sender<Answer>>,
+    next_visitor: VisitorId,
 }
 
 impl Task {
@@ -214,6 +237,12 @@ impl Task {
                 self.outboxes.remove(&connection);
                 channel.closed(connection, now);
             }
+            Event::Command(Command::Describe { page, answer }) => {
+                let visitor = self.next_visitor;
+                self.next_visitor = self.next_visitor.wrapping_add(1);
+                self.visitors.insert(visitor, answer);
+                channel.describe(visitor, page, now);
+            }
             Event::Command(Command::Shutdown { done }) => {
                 for outbox in self.outboxes.values() {
                     let _ = outbox.try_send(Outbound::Close(CLOSE_RESTARTING));
@@ -262,6 +291,12 @@ impl Task {
                         if self.dropped.is_power_of_two() {
                             tracing::warn!(target: "program", channel = self.folder, dropped = self.dropped, "the program is behind: lines for it dropped");
                         }
+                    }
+                }
+                Effect::Described { visitor, answer } => {
+                    if let Some(waiting) = self.visitors.remove(&visitor) {
+                        // A visitor gone is told nothing.
+                        let _ = waiting.send(answer);
                     }
                 }
                 Effect::Log { level, event, text } => logging::runtime(&self.folder, level, event, &text),

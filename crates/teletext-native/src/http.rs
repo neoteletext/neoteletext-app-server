@@ -18,15 +18,16 @@ use hyper::header::{
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use teletext_runtime::SessionId;
 use teletext_runtime::landing::{self, PushRefusal, Route, push_upgrade, route};
-use teletext_runtime::protocol::CookiePair;
+use teletext_runtime::protocol::{CookiePair, PageNumber};
 use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
-use crate::hub::Hub;
+use crate::hub::{Command, Hub};
 use crate::stats::{ServerStats, count};
 
 /// A whole response body.
@@ -97,14 +98,14 @@ fn now_s() -> u64 {
 /// Answers one request on the viewers' address (REQ-1693 item 7), and 404
 /// for everything else, `/` included. The server serves no channel's files:
 /// every page comes over the connection.
-#[must_use]
-pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
+pub async fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let (folder, asked) = route(request.uri().path());
     count(&routes.stats.requests);
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
     let reads = matches!(*request.method(), Method::GET | Method::HEAD);
     match asked {
         Route::Page if reads => page(&hub, &landing::tail(request.uri().path(), request.uri().query())),
+        Route::Described(number) if reads => described(&hub, number, &landing::tail(request.uri().path(), request.uri().query())).await,
         Route::ToFolder if reads => to_folder(&hub, request.uri().query()),
         Route::ToPlace if reads => to_place(request.uri().path(), request.uri().query()),
         Route::Descriptor => {
@@ -114,19 +115,37 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
             response
         }
         Route::Push => upgrade(routes, hub, request),
-        Route::Page | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
+        Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
     }
 }
 
 /// The small page a web browser shows at an address of the channel
 /// (DEC-1669), naming what was asked for.
 fn page(hub: &Hub, tail: &str) -> Response<Whole> {
-    let body = landing::page(&hub.name, &format!("{}{tail}", hub.address));
+    html(landing::page(&hub.name, &format!("{}{tail}", hub.address)), landing::CONTENT_SECURITY_POLICY)
+}
+
+/// What a page's address answers (REQ-1728). The channel's task answers at
+/// once or within its bound, and a task that has gone means no answer: the
+/// page is then not public. The answer is the same whoever asks: no request
+/// header reaches here.
+async fn described(hub: &Hub, number: PageNumber, tail: &str) -> Response<Whole> {
+    let (asked, answered) = oneshot::channel();
+    let answer = match hub.commands.try_send(Command::Describe { page: number, answer: asked }) {
+        Ok(()) => answered.await.unwrap_or_default(),
+        Err(_) => None,
+    };
+    let (body, policy) = landing::described(&hub.name, &hub.address, tail, number, &answer);
+    html(body, policy)
+}
+
+/// A page of HTML, under `policy`.
+fn html(body: String, policy: &'static str) -> Response<Whole> {
     let mut response = Response::new(Whole(Some(Bytes::from(body))));
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(landing::CONTENT_SECURITY_POLICY));
+    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(policy));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     response

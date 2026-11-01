@@ -558,6 +558,103 @@ fn a_web_browser_is_offered_the_channel() {
     assert!(!descriptor.contains("address"), "{descriptor}");
 }
 
+/// A program that answers each `describe` by the shell's `case` on the page: 100
+/// public, 200 not public, and anything else never, logging what it hears.
+fn describing(heard: &Path, content: &str) -> String {
+    let public = format!(r#"{{"type":"description","page":"100","public":true,"title":"<b>Title</b>","text":"The </script> words","content":{content}}}"#);
+    let not_public = r#"{"type":"description","page":"200","public":false}"#;
+    format!(
+        r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard}; case "$line" in *'"describe"'*'"100"'*) printf '%s\n' '{public}';; *'"describe"'*'"200"'*) printf '%s\n' '{not_public}';; esac; done"#,
+        heard = heard.display()
+    )
+}
+
+/// One sub-page of page 100, blank but for its row of `A`s.
+fn blank_subpage() -> String {
+    let row = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ==";
+    let rows = format!("[null,\"{row}\",{}null]", "null,".repeat(22));
+    format!(
+        r#"{{"page":"100","sub":"0000","rows":{rows},"links":[null,null,null,null,null,null],"display_row_24":false,"link_extension":{{"keys":[],"numbers":[],"texts":[]}},"control":{{"erase":false,"newsflash":false,"subtitle":false,"suppress_header":false,"update":false,"interrupted_sequence":false,"inhibit_display":false,"magazine_serial":false}},"character_set":{{"region":null,"national_option":0}},"enhancements":[],"packets":[],"cursor":null}}"#
+    )
+}
+
+/// REQ-1728 over HTTP: a server whose program answers, once it has started:
+/// until then a page's address is not public and nothing is kept.
+fn described_server(name: &str) -> (Server, PathBuf) {
+    let folder = scratch(name);
+    let heard = folder.join("heard");
+    let file = channel_in(&folder, "home", &describing(&heard, &blank_subpage()));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("home"), 200);
+    let started = Instant::now();
+    while !fetched(&server.address, "/home/100").1.windows(7).any(|window| window == b"paywall") {
+        assert!(started.elapsed() < WITHIN, "the program did not start");
+        std::thread::sleep(RETRY);
+    }
+    (server, heard)
+}
+
+/// REQ-1728 verification 1, with the answer's own head: not public, a page the
+/// program never answers for, and a page that cannot exist are one answer.
+#[test]
+fn every_page_that_is_not_public_answers_alike() {
+    let (server, _) = described_server("not-public");
+    let (head, not_public) = fetched(&server.address, "/home/200");
+    let page = String::from_utf8(not_public.clone()).unwrap();
+    assert!(page.contains("noindex"), "{page}");
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    assert_eq!(header(&head, "content-security-policy"), Some(teletext_runtime::landing::CONTENT_SECURITY_POLICY));
+    let same = |target: &str, number: &str| {
+        let (other_head, other) = fetched(&server.address, target);
+        let spelled = String::from_utf8(other).unwrap().replace(number, "200");
+        assert_eq!(spelled, page, "{target}");
+        assert_eq!(header(&other_head, "content-security-policy"), header(&head, "content-security-policy"));
+        assert_eq!(header(&other_head, "cache-control"), header(&head, "cache-control"));
+    };
+    same("/home/300", "300");
+    same("/home/1FF", "1FF");
+}
+
+/// REQ-1728 verification 2 and 3 over HTTP, and verification 6: the same bytes
+/// whatever `User-Agent` a request carries.
+#[test]
+fn a_public_page_is_the_same_for_everyone() {
+    let (server, _) = described_server("public");
+    let request = |agent: &str| {
+        let mut stream = TcpStream::connect(&server.address).unwrap();
+        write!(stream, "GET /home/100 HTTP/1.1\r\nHost: {}\r\nUser-Agent: {agent}\r\nConnection: close\r\n\r\n", server.address).unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        response
+    };
+    let person = request("Mozilla/5.0 (Macintosh)");
+    let crawler = request("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
+    let without_date = |response: &[u8]| String::from_utf8_lossy(response).lines().filter(|line| !line.starts_with("date:")).collect::<Vec<_>>().join("\n");
+    assert_eq!(without_date(&person), without_date(&crawler));
+    let page = String::from_utf8_lossy(&person).into_owned();
+    assert!(page.contains("<h1>&lt;b&gt;Title&lt;/b&gt;</h1>"), "{page:.2000}");
+    assert!(page.contains("<img src=\"data:image/png;base64,iVBOR"));
+    assert!(page.contains("<div class=\"paywall\">The &lt;/script&gt; words</div>"));
+    assert!(page.contains(r#""isAccessibleForFree":false"#) && page.contains(r#""cssSelector":".paywall""#));
+    assert!(!page.contains("noindex"));
+    let policy = page.lines().find_map(|line| line.strip_prefix("content-security-policy: ")).unwrap();
+    assert_eq!(policy.trim_end(), teletext_runtime::landing::PUBLIC_CONTENT_SECURITY_POLICY);
+}
+
+/// REQ-1728 verification 5 over HTTP: the program hears one `describe`, and a
+/// query is not sent and does not divide the cache.
+#[test]
+fn repeated_visits_reach_the_program_once() {
+    let (server, heard) = described_server("once");
+    // `described_server` has asked already, so none of these is the first.
+    for target in ["/home/100", "/home/100?article=5", "/home/100/0002", "/home/100?article=6"] {
+        let (_, body) = fetched(&server.address, target);
+        assert!(String::from_utf8_lossy(&body).contains("paywall"), "{target}");
+    }
+    let told = std::fs::read_to_string(&heard).unwrap();
+    assert_eq!(told.lines().filter(|line| line.contains("\"describe\"")).collect::<Vec<_>>(), [r#"{"type":"describe","page":"100"}"#]);
+}
+
 /// A web browser's page is for reading: nothing else reaches it.
 #[test]
 fn only_a_read_reaches_the_page() {

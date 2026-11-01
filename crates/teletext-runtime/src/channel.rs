@@ -29,12 +29,13 @@ use neoteletext_input::held::{Held, Released};
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
 
+use crate::descriptions::{Answer, Asked, DESCRIPTION_WAIT_MS, Descriptions, PublicPage, VisitorId};
 use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
-    self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, CookiePair, InputMessage, Left, OperatorLevel, PageNumber, ProgramMessage,
-    Refusal, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
+    self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, CookiePair, Describe, Description, InputMessage, Left, OperatorLevel, PageNumber,
+    ProgramMessage, Refusal, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
 };
 use crate::records;
 use crate::sound::{Sounds, audience};
@@ -132,6 +133,14 @@ pub enum Effect {
     ToProgram {
         /// The line.
         line: Vec<u8>,
+    },
+    /// What a web visitor [`Channel::describe`] named is at the page's
+    /// address now.
+    Described {
+        /// The visitor.
+        visitor: VisitorId,
+        /// The answer, the same for everyone.
+        answer: Answer,
     },
     /// Something for the server's operator to read (requirement 7.6).
     Log {
@@ -276,6 +285,8 @@ pub struct Channel {
     stale_unreported: u64,
     /// When the operator was last told of stale input.
     stale_reported_at: Option<u64>,
+    /// What the channel's pages show the web, for a short time (REQ-1728).
+    descriptions: Descriptions,
 }
 
 impl Channel {
@@ -293,6 +304,7 @@ impl Channel {
             stats: ChannelStats::default(),
             stale_unreported: 0,
             stale_reported_at: None,
+            descriptions: Descriptions::default(),
         }
     }
 
@@ -322,6 +334,13 @@ impl Channel {
     #[must_use]
     pub fn page(&self, tail: &str) -> Vec<u8> {
         crate::landing::page(&self.config.name, &alloc::format!("{}{tail}", self.config.address)).into_bytes()
+    }
+
+    /// What a page's address answers when the page is not public, which
+    /// names what was asked for and nothing else (REQ-1728 item 3).
+    #[must_use]
+    pub fn private_page(&self, tail: &str) -> Vec<u8> {
+        neoteletext_web::small_page::private_page(&self.config.name, &alloc::format!("{}{tail}", self.config.address)).into_bytes()
     }
 
     /// The channel's name.
@@ -410,6 +429,8 @@ impl Channel {
                 log_characters: wide(protocol::OPERATOR_LOG_CHARACTERS),
                 named_connections: wide(protocol::MOST_NAMED_CONNECTIONS),
                 reply_limit_ms: PROGRAM_REPLY_LIMIT_MS,
+                description_text_characters: wide(protocol::DESCRIPTION_TEXT_CHARACTERS),
+                description_limit_ms: DESCRIPTION_WAIT_MS,
             },
         };
         self.tell(&ServerMessage::Start(start));
@@ -428,6 +449,45 @@ impl Channel {
             state.announced = false;
             state.replied = false;
         }
+        for visitor in self.descriptions.forget() {
+            self.effects.push(Effect::Described { visitor, answer: None });
+        }
+    }
+
+    /// A web visitor the host numbered `visitor` is at the address of `page`
+    /// (REQ-1728). The answer comes as [`Effect::Described`], at once or
+    /// within [`DESCRIPTION_WAIT_MS`], and is the same for anyone who asks.
+    /// The program hears the page number and nothing else (REQ-1728 item 7):
+    /// a reserved page, and a channel with no program, ask it nothing.
+    pub fn describe(&mut self, visitor: VisitorId, page: PageNumber, now: u64) {
+        if page.is_reserved() || !self.program {
+            self.effects.push(Effect::Described { visitor, answer: None });
+            return;
+        }
+        match self.descriptions.ask(page.0, visitor, now) {
+            Asked::Answered(answer) => self.effects.push(Effect::Described { visitor, answer }),
+            Asked::Waiting => {}
+            Asked::AskProgram => self.tell(&ServerMessage::Describe(Describe { page })),
+        }
+    }
+
+    /// The program's `description`, kept and given to those who wait. One
+    /// nobody asked for is refused, so a program cannot fill the cache.
+    fn described(&mut self, description: Description, now: u64) -> Result<(), Refusal> {
+        let page = description.page.0;
+        if !self.descriptions.awaited(page) {
+            return Err(Refusal {
+                message: Some(protocol::MessageType::Description),
+                path: String::new(),
+                rule: Rule::NotAwaited,
+                detail: format!("no `describe` of {page:03X} is waiting"),
+            });
+        }
+        let answer = public_page(description).map(Arc::new);
+        for visitor in self.descriptions.answered(page, &answer, now) {
+            self.effects.push(Effect::Described { visitor, answer: answer.clone() });
+        }
+        Ok(())
     }
 
     /// `connected` is held no longer: the receiver selected, cannot select,
@@ -573,6 +633,9 @@ impl Channel {
             self.log(Level::Warn, "program_late", format!("{text} within {PROGRAM_REPLY_LIMIT_MS} ms"));
             self.deny(connection, STATUS_UNAVAILABLE);
         }
+        for visitor in self.descriptions.late(now) {
+            self.effects.push(Effect::Described { visitor, answer: None });
+        }
     }
 
     /// Tells `connection` its selection ended with `status` (`INPUT.md`
@@ -596,7 +659,7 @@ impl Channel {
         let grace = self.config.session_grace_ms;
         let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
         let dues = self.connections.values().flat_map(|state| state.answer_due.into_iter().chain(state.first_selection_due));
-        dues.chain(expiry).min()
+        dues.chain(expiry).chain(self.descriptions.next_due()).min()
     }
 
     fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
@@ -860,6 +923,7 @@ impl Channel {
                 })?;
             }
             ProgramMessage::Redirect(redirect) => self.redirect(redirect, now)?,
+            ProgramMessage::Description(description) => self.described(description, now)?,
             ProgramMessage::Denied(denied) => {
                 if self.is_current(denied.connection, denied.request) {
                     self.deny(denied.connection, denied.status);
@@ -1053,6 +1117,13 @@ impl Channel {
 }
 
 /// A count as the protocol writes it.
+/// What `description` shows the web: nothing unless it says public, which the
+/// protocol's check has seen gives all three.
+fn public_page(description: Description) -> Option<PublicPage> {
+    let Description { public: true, title: Some(title), text: Some(text), content: Some(content), .. } = description else { return None };
+    Some(PublicPage { title, text, picture: crate::page::picture(&content) })
+}
+
 fn wide(count: usize) -> u64 {
     u64::try_from(count).unwrap_or(u64::MAX)
 }

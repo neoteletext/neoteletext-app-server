@@ -30,6 +30,7 @@
 extern crate alloc;
 
 pub mod channel;
+pub mod descriptions;
 pub mod frame;
 pub mod input;
 pub mod json;

@@ -1,36 +1,40 @@
 //! What a channel's address answers over HTTP, on every host (the channel
 //! URL map's REQ-1693 item 7, DEC-1467 as amended by DEC-1669): the small
-//! page a web browser shows at `<channel>` and at each place in it, the
-//! redirects to one spelling, `channel.ttx`, the WebSocket, and 404 for anything
-//! else. A page is never served: each one comes over the connection.
+//! page a web browser shows at `<channel>` and at each place in it, what a
+//! page's address shows (REQ-1728), the redirects to one spelling,
+//! `channel.ttx`, the WebSocket, and 404 for anything else. A page is never
+//! served for reading: each one comes over the connection. The HTML itself
+//! is the engine's, one builder with a static channel's (REQ-1725).
 
 use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 
-use neoteletext_core::consts::LINK_SCHEME;
+use neoteletext_image::raster::picture_size;
 use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use neoteletext_web::map::Place;
+use neoteletext_web::small_page::{self, PublicPage as Shown};
+pub use neoteletext_web::small_page::{CONTENT_SECURITY_POLICY, PUBLIC_CONTENT_SECURITY_POLICY};
 use neoteletext_web::ws::offers_subprotocol;
+
+use crate::descriptions::Answer;
+use crate::protocol::PageNumber;
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
 /// The channel's one file. The name is the engine's, so that a server and a
 /// reader cannot disagree on it (DEC-1726 item 5).
 pub const DESCRIPTOR: &str = SETTINGS_FILE;
-/// Where someone without the browser gets it.
-const GET_NEOTELETEXT: &str = "https://www.neoteletext.com/";
-
-/// The page's `Content-Security-Policy`: it loads and runs nothing. The server
-/// sees the whole address, so the page's link needs no script (DEC-1694).
-pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// What a request under the viewers' address asks for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Route {
-    /// `<channel>`, or a place of the channel: the small page.
+    /// `<channel>`, `<channel>contents` or `<channel>wall`: the small page.
     Page,
+    /// `<channel>NNN` or `<channel>NNN/SSSS`: what the page shows the web
+    /// (REQ-1728), which is the page's as a whole.
+    Described(PageNumber),
     /// The folder without its final `/`: a redirect to `<channel>`.
     ToFolder,
     /// A place with a final `/`: a redirect to its one spelling.
@@ -62,7 +66,11 @@ pub fn route(path: &str) -> (&str, Route) {
 fn place_route(rest: &str) -> Route {
     match rest.strip_suffix('/') {
         Some(place) if Place::read(place).is_some() => Route::ToPlace,
-        None if Place::read(rest).is_some() => Route::Page,
+        None => match Place::read(rest) {
+            Some(Place::Page { page, .. }) => Route::Described(PageNumber(page.mpp())),
+            Some(_) => Route::Page,
+            None => Route::Missing,
+        },
         _ => Route::Missing,
     }
 }
@@ -117,35 +125,27 @@ pub fn folder_location(folder: &str, query: Option<&str>) -> String {
     query.map_or_else(|| format!("/{folder}/"), |query| format!("/{folder}/?{query}"))
 }
 
-/// `text` safe in HTML, in a tag's text or in an attribute in double quotes.
-fn escaped(text: &str) -> String {
-    let mut written = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '&' => written.push_str("&amp;"),
-            '<' => written.push_str("&lt;"),
-            '>' => written.push_str("&gt;"),
-            '"' => written.push_str("&quot;"),
-            '\'' => written.push_str("&#39;"),
-            other => written.push(other),
-        }
-    }
-    written
-}
-
 /// The small page of DEC-1669: the channel's name, a link that opens it in
 /// the browser, and a link to get the browser. `address` is the address
-/// asked for, a page's or the channel's, which the page repeats escaped.
+/// asked for, which the page repeats escaped.
 #[must_use]
 pub fn page(name: &str, address: &str) -> String {
-    let (name, link) = (escaped(name), escaped(&format!("{LINK_SCHEME}{address}")));
-    format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{name}</title>\n</head>\n\
-         <body>\n<h1>{name}</h1>\n<p>This is a teletext channel, which opens in the NeoTeletext browser.</p>\n\
-         <p><a id=\"open\" href=\"{link}\">Open in NeoTeletext</a></p>\n\
-         <p><a href=\"{GET_NEOTELETEXT}\">Get NeoTeletext</a></p>\n</body>\n</html>\n"
-    )
+    small_page::channel_page(name, address)
+}
+
+/// What the address of `page` answers (REQ-1728), and the
+/// `Content-Security-Policy` that goes with it. `tail` is what follows the
+/// channel's folder in the request, which only the page's link repeats: a
+/// sub-page or a query shows the same page, and the page's own address is what
+/// search engines are told.
+#[must_use]
+pub fn described(name: &str, channel: &str, tail: &str, page: PageNumber, answer: &Answer) -> (String, &'static str) {
+    let address = format!("{channel}{tail}");
+    let Some(public) = answer else { return (small_page::private_page(name, &address), CONTENT_SECURITY_POLICY) };
+    let canonical = format!("{channel}{:03X}", page.0);
+    let (width, height) = picture_size();
+    let shown = Shown { title: &public.title, text: &public.text, canonical: &canonical, picture: public.picture.as_deref().map(|png| (png, width, height)) };
+    (small_page::public_page(name, &address, &shown), PUBLIC_CONTENT_SECURITY_POLICY)
 }
 
 #[cfg(test)]

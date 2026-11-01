@@ -8,11 +8,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-neoteletext-core.workspace = true
+# Its defaults: a public page's picture is drawn at the levels a receiver
+# draws it (REQ-1728 item 4).
+neoteletext-core = { workspace = true, features = ["default"] }
 neoteletext-formats.workspace = true
+neoteletext-image = { workspace = true, features = ["alloc"] }
 neoteletext-input.workspace = true
 neoteletext-audio.workspace = true
-neoteletext-web.workspace = true
+neoteletext-web = { workspace = true, features = ["alloc"] }
 neoteletext-opus.workspace = true
 schemars.workspace = true
 serde.workspace = true

@@ -30,6 +30,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "description_limit_ms": {
+          "description": "How long the server waits for a `description`, in milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "description_text_characters": {
+          "description": "The longest text of a `description`, in characters.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "line_bytes": {
           "description": "The longest line, in bytes.",
           "format": "uint64",
@@ -67,7 +79,9 @@
         "author_log_bytes",
         "log_characters",
         "named_connections",
-        "reply_limit_ms"
+        "reply_limit_ms",
+        "description_text_characters",
+        "description_limit_ms"
       ],
       "type": "object"
     },
@@ -972,7 +986,8 @@
         "author_log",
         "log",
         "packets",
-        "denied"
+        "denied",
+        "description"
       ],
       "type": "string"
     },
@@ -2226,6 +2241,61 @@
             "status"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The answer to `describe` (REQ-1728).",
+          "properties": {
+            "content": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Page"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The sub-page its picture shows, for a public page."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page `describe` named."
+            },
+            "public": {
+              "description": "Whether the page may be shown to anyone on the web.",
+              "type": "boolean"
+            },
+            "text": {
+              "default": null,
+              "description": "Its text, plain text on one line, for a public page.",
+              "maxLength": 16000,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "default": null,
+              "description": "Its title, plain text, for a public page.",
+              "maxLength": 120,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "description",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "page",
+            "public"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2350,6 +2420,11 @@
         {
           "const": "one_connection",
           "description": "A selection's number given with other than one connection: a number\nbelongs to one connection.",
+          "type": "string"
+        },
+        {
+          "const": "wrong_page",
+          "description": "A page other than the one the message is about.",
           "type": "string"
         }
       ]
@@ -2704,6 +2779,25 @@
             "path",
             "rule",
             "detail"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A web visitor or a search engine is at a page's address: answer with\n`description` (REQ-1728).",
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "type": {
+              "const": "describe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "page"
           ],
           "type": "object"
         }

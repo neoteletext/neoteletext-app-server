@@ -19,8 +19,9 @@ use neoteletext_web::records::redirect::{MAX_ADDRESS, RedirectRecord, encode};
 use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
 use super::{
-    AuthorLog, COLUMNS, Connections, Cookie, DENIED_STATUSES, Denied, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page,
-    PageMessage, ProgramMessage, Redirect, Refused, Reply, RequestNumber, Rule, SAFE_INTEGER_LIMIT, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
+    AuthorLog, COLUMNS, Connections, Cookie, DENIED_STATUSES, DESCRIPTION_TEXT_CHARACTERS, Denied, Description, Index, Log, Magazine, MessageType,
+    OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage, Redirect, Refused, Reply, RequestNumber, Rule, SAFE_INTEGER_LIMIT,
+    SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
 use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
@@ -124,6 +125,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         }
         ProgramMessage::Redirect(redirect) => check_redirect(&root, redirect),
         ProgramMessage::Denied(denied) => check_denied(&root, denied),
+        ProgramMessage::Description(description) => check_description(&root, description),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -694,6 +696,34 @@ fn check_denied(root: &Path<'_>, denied: &Denied) -> Checked {
     } else {
         Err(fault(&root.field("status"), Rule::NotListed, format!("{} is not one of {DENIED_STATUSES:?}", denied.status)))
     }
+}
+
+/// A public page gives its title, text and sub-page, the sub-page of the page
+/// named; a page that is not public gives nothing, so that nothing of it can
+/// be kept (REQ-1728 items 3 and 6).
+fn check_description(root: &Path<'_>, description: &Description) -> Checked {
+    let Description { page, public, title, text, content } = description;
+    let present = [("title", title.is_some()), ("text", text.is_some()), ("content", content.is_some())];
+    if !*public {
+        return present
+            .iter()
+            .find(|(_, given)| *given)
+            .map_or(Ok(()), |(name, _)| Err(fault(&root.field(name), Rule::UnknownField, "a page that is not public gives nothing".to_string())));
+    }
+    if let Some((name, _)) = present.iter().find(|(_, given)| !*given) {
+        return Err(fault(&root.field(name), Rule::MissingField, "a public page gives its title, text and content".to_string()));
+    }
+    if let Some(title) = title {
+        check_text(&root.field("title"), title, 1, TITLE_CHARACTERS)?;
+    }
+    if let Some(text) = text {
+        check_text(&root.field("text"), text, 1, DESCRIPTION_TEXT_CHARACTERS)?;
+    }
+    let Some(content) = content else { return Ok(()) };
+    if content.page != *page {
+        return Err(fault(&root.field("content").field("page"), Rule::WrongPage, format!("{:03X}, for the description of {:03X}", content.page.0, page.0)));
+    }
+    check_page(&root.field("content"), content)
 }
 
 fn check_log(root: &Path<'_>, log: &Log) -> Checked {

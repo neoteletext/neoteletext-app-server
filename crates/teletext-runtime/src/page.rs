@@ -4,18 +4,23 @@
 //! a new version of the sub-page it shows (DEC-1499). The sub-page has
 //! been checked whole ([`crate::protocol::check`]) before it gets here.
 
+use alloc::format;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use neoteletext_core::consts::{
     C4_ERASE, C5_NEWSFLASH, C6_SUBTITLE, C7_SUPPRESS_HEADER, C8_UPDATE, C9_INTERRUPTED, C10_INHIBIT_DISPLAY, C11_SERIAL, C12, C13, C14, PACKET_BYTES,
+    STATUS_COLUMNS,
 };
 use neoteletext_core::packet::{Packet, Triplet, decode_address};
 use neoteletext_core::types::{ControlBits, Magazine, PageAddress, PageNumber, SubCode};
 use neoteletext_formats::encode::encode_page;
 use neoteletext_formats::page::{CursorLine, EnhancementPacket, FastextLink, PageFile, RawBody, RawPacket};
+use neoteletext_image::raster::{grid_of_packets, picture as draw};
 use neoteletext_input::cursor::BLOCK;
 use neoteletext_web::base64;
 
+use crate::descriptions::MOST_PICTURE_BYTES;
 use crate::frame::append_page;
 use crate::protocol::{self, M29Line, PackedLine, Page, X27Line, X27NibblesLine, X28Line};
 
@@ -67,6 +72,21 @@ pub(crate) fn encode(page: &Page) -> Encoded {
         }
     });
     Encoded { packets: packets.as_chunks::<PACKET_BYTES>().0.to_vec(), update_header, cursor: model.cursor }
+}
+
+/// The picture of a sub-page, as a PNG (REQ-1728 item 4): the engine's own
+/// drawing of it, through the decoder a receiver uses. None when it cannot be
+/// drawn or is over [`MOST_PICTURE_BYTES`]: a page's answer is whole without
+/// one.
+pub(crate) fn picture(page: &Page) -> Option<Arc<[u8]>> {
+    let number = page.page.0;
+    let mut status = [b' '; STATUS_COLUMNS];
+    let shown = format!("P{number:03X}");
+    for (slot, byte) in status.iter_mut().zip(shown.bytes()) {
+        *slot = byte;
+    }
+    let grid = grid_of_packets(&encode(page).packets, address(number), status)?;
+    draw(&grid).ok().filter(|png| png.len() <= MOST_PICTURE_BYTES).map(Arc::from)
 }
 
 /// The sub-page's header alone, without the erase bit: a frame that
