@@ -14,7 +14,7 @@ fuzz_target!(|data: &[u8]| {
     let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(1, 1, None, 0);
+    channel.opened(1, 1, Vec::new(), 0);
     let _ = channel.take_effects();
     let mut encoded = vec![0_u8; neoteletext_web::base64::encoded_len(packets.len())];
     let Ok(written) = neoteletext_web::base64::encode(packets, &mut encoded) else { return };

@@ -11,7 +11,6 @@
 //! what the program sends goes to the connections it names, as it comes
 //! (REQ-1473), as checked teletext packets (REQ-1480, REQ-1462).
 
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -25,16 +24,17 @@ use neoteletext_formats::page::CursorLine;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
-use neoteletext_input::event::{Action, Event, Item, MAX_STREAM_ITEM, Stamp, StreamDecoder, units};
+use neoteletext_input::event::{Action, Event, Item, Stamp, read_message, units};
 use neoteletext_input::held::{Held, Released};
+use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
 
 use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
-    self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, InputMessage, Left, OperatorLevel, PageNumber, ProgramMessage, Refusal, Rule,
-    Selected, Selection, ServerMessage, SessionId, Standard, Start,
+    self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, CookiePair, InputMessage, Left, OperatorLevel, PageNumber, ProgramMessage,
+    Refusal, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
 };
 use crate::records;
 use crate::sound::{Sounds, audience};
@@ -58,9 +58,17 @@ const STALE_INPUT_REPORT_MS: u64 = STALE_INPUT_REPORT_SECONDS * 1_000;
 
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
-/// (REQ-1481). Provisional, not yet measured: TODO-1521 measures the
+/// (REQ-1481): the deadline every selection ends by (`INPUT.md` section
+/// 5.4). Provisional, not yet measured: TODO-1521 measures the
 /// three channels' programs on the live server and sets it from that.
 pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
+/// How long `connected` is held for a new connection's first SELECT
+/// (TODO-1731, `INPUT.md` section 6.1), so that a shared link goes straight
+/// to its page. A receiver sends SELECT one round trip after the connection
+/// opens, HELLO to WELCOME; this allows for a slow satellite or mobile link
+/// and is short enough not to be noticed on a channel's first page when a
+/// receiver has nothing to select.
+pub const FIRST_SELECTION_WAIT_MS: u64 = 1_500;
 
 /// A channel's description, for `channel.ttx`.
 #[derive(Clone, Debug)]
@@ -113,10 +121,12 @@ pub enum Effect {
         /// The message.
         bytes: Arc<[u8]>,
     },
-    /// Close the connection: its input broke the protocol.
+    /// Close the connection with this close code (`INPUT.md` section 5.1).
     Close {
         /// The connection.
         connection: ConnectionId,
+        /// Why: a code a receiver stops on.
+        code: u16,
     },
     /// A line for the channel's program, with its newline.
     ToProgram {
@@ -133,6 +143,9 @@ pub enum Effect {
         text: String,
     },
 }
+
+/// A connection's first selection's number.
+const FIRST_REQUEST: RequestNumber = 1;
 
 /// The sub-page a connection's selection shows, as it was last sent: the
 /// baseline of its changes (DEC-1499).
@@ -155,10 +168,8 @@ struct Connection {
     /// Its session; a session may have several connections, one a tab
     /// (DEC-1527).
     session: SessionId,
-    /// The input stream's decoder, made at the first input: most viewers
-    /// of a channel never type, and the decoder holds a paste's worth of
-    /// bytes (decision 7 item 4).
-    decoder: Option<Box<StreamDecoder<MAX_STREAM_ITEM>>>,
+    /// The cookies it opened with, for its program (REQ-1471).
+    cookies: Vec<CookiePair>,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
     /// The input count acted on, modulo 65 536 (INPUT.md section 7.1).
@@ -175,16 +186,20 @@ struct Connection {
     selection: Option<Selection>,
     /// The page parameters of its selection (REQ-1693 item 6).
     parameters: Option<String>,
+    /// The number of its selection, rising from 1 (DEC-1759 lesson 13).
+    request: RequestNumber,
+    /// While `connected` is held for its first SELECT, when that ends.
+    first_selection_due: Option<u64>,
     /// The sub-page its selection shows, as last sent.
     shown: Option<Shown>,
     /// The program running now was told of it with `connected`.
     announced: bool,
     /// The program answered that `connected`.
     replied: bool,
-    /// When the program's `reply` is due, while it is awaited.
-    reply_due: Option<u64>,
-    /// When the sub-page its selection asked for is due, while awaited.
-    selection_due: Option<u64>,
+    /// When its selection must have ended, while it has not: a page or
+    /// DENIED clears it, and passing it sends DENIED 503 (`INPUT.md`
+    /// section 5.4, REQ-1481).
+    answer_due: Option<u64>,
     /// The index's sending, numbered for the receiver (`INPUT.md`
     /// section 7.5).
     index_generation: u16,
@@ -193,10 +208,10 @@ struct Connection {
 }
 
 impl Connection {
-    fn new(session: SessionId) -> Self {
+    fn new(session: SessionId, cookies: Vec<CookiePair>, now: u64) -> Self {
         Self {
             session,
-            decoder: None,
+            cookies,
             welcomed: false,
             acked: 0,
             held: Held::new(),
@@ -204,11 +219,12 @@ impl Connection {
             record_id: 0,
             selection: None,
             parameters: None,
+            request: FIRST_REQUEST,
+            first_selection_due: Some(now.saturating_add(FIRST_SELECTION_WAIT_MS)),
             shown: None,
             announced: false,
             replied: false,
-            reply_due: None,
-            selection_due: None,
+            answer_due: None,
             index_generation: 0,
             list_held: None,
         }
@@ -403,32 +419,45 @@ impl Channel {
         }
     }
 
-    /// The program ended or went: nothing is awaited from it, and each
-    /// connection is told to the next as it starts.
+    /// The program ended or went: each connection is told to the next as it
+    /// starts. A selection not yet answered keeps its deadline, so its viewer
+    /// is told the channel is unavailable (REQ-1481).
     pub fn program_ended(&mut self) {
         self.program = false;
         for state in self.connections.values_mut() {
             state.announced = false;
             state.replied = false;
-            state.reply_due = None;
-            state.selection_due = None;
+        }
+    }
+
+    /// `connected` is held no longer: the receiver selected, cannot select,
+    /// or did not in time. The selection, if any, then runs to its deadline.
+    fn end_hold(&mut self, connection: ConnectionId, now: u64) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        if state.first_selection_due.take().is_some() {
+            state.answer_due.get_or_insert(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
+            self.announce(connection, now);
         }
     }
 
     /// Tells the program of `connection` with `connected`, awaiting its
-    /// reply, if it runs (REQ-1471).
+    /// reply, if it runs and `connected` is not held (REQ-1471).
     fn announce(&mut self, connection: ConnectionId, now: u64) {
         if !self.program {
             return;
         }
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        if state.first_selection_due.is_some() {
+            return;
+        }
         state.announced = true;
         state.replied = false;
-        state.reply_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
+        state.answer_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         let message = Connected {
             connection,
             session: state.session,
-            cookies: Vec::new(),
+            request: state.request,
+            cookies: state.cookies.clone(),
             selection: state.selection,
             path: state.selection.map(Selection::path),
             query: state.parameters.clone(),
@@ -437,9 +466,12 @@ impl Channel {
     }
 
     /// A connection the host numbered `connection` opened for `session`,
-    /// which it continues or starts (requirement 5.5). The host never
-    /// reuses a connection's number while the channel runs.
-    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, now: u64) {
+    /// which it continues or starts (requirement 5.5), with the cookies its
+    /// upgrade carried for the program ([`crate::session_cookie::program_cookies`]).
+    /// The host never reuses a connection's number while the channel runs.
+    /// Its program is told when its first selection comes, or
+    /// [`FIRST_SELECTION_WAIT_MS`] passes.
+    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, cookies: Vec<CookiePair>, now: u64) {
         let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
         if state.waiting_since.take().is_some() {
             self.stats.resumed();
@@ -447,8 +479,7 @@ impl Channel {
             self.stats.joined();
         }
         state.open = state.open.saturating_add(1);
-        self.connections.insert(connection, Connection::new(session));
-        self.announce(connection, now);
+        self.connections.insert(connection, Connection::new(session, cookies, now));
     }
 
     /// A connection closed: the program is given the releases of whatever
@@ -483,18 +514,18 @@ impl Channel {
     }
 
     /// A binary message from a connection: its input stream (INPUT.md).
+    /// A message holds whole items (section 5.1), so it is read alone: an
+    /// item cut by its end is a protocol error, and the next message's bytes
+    /// can never be read as the rest of it (DEC-1759 lesson 17).
     pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let Some(state) = self.connections.get(&connection) else { return };
         let acked = state.acked;
-        let mut decoder = state.decoder.take().unwrap_or_else(|| Box::new(StreamDecoder::<MAX_STREAM_ITEM>::default()));
-        let result = decoder.push(bytes, &mut |item| self.item(connection, &item, now));
-        if result.is_err() {
+        if read_message(bytes, &mut |item| self.item(connection, &item, now)).is_err() {
             // A protocol error ends the session (INPUT.md section 8).
-            self.effects.push(Effect::Close { connection });
+            self.effects.push(Effect::Close { connection, code: CLOSE_BROKE_PROTOCOL });
             return;
         }
         let Some(state) = self.connections.get_mut(&connection) else { return };
-        state.decoder = Some(decoder);
         // A message of no input units is never acknowledged (section 7.1).
         if state.acked != acked {
             self.acknowledge(connection);
@@ -516,33 +547,37 @@ impl Channel {
             self.stats.expired();
             self.tell(&ServerMessage::Closed(Closed { session }));
         }
+        let held: Vec<ConnectionId> =
+            self.connections.iter().filter(|(_, state)| state.first_selection_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
+        for connection in held {
+            self.end_hold(connection, now);
+        }
         let mut late: Vec<(ConnectionId, String)> = Vec::new();
         for (connection, state) in &mut self.connections {
-            if state.reply_due.is_some_and(|due| due <= now) {
-                state.reply_due = None;
-                late.push((*connection, format!("connection {connection}: no reply to connected")));
-            }
-            if state.selection_due.is_some_and(|due| due <= now) {
-                state.selection_due = None;
-                late.push((*connection, format!("connection {connection}: no page for selected")));
+            if state.answer_due.is_some_and(|due| due <= now) {
+                state.answer_due = None;
+                let unanswered = if state.replied { "no page for selected" } else { "no reply to connected" };
+                late.push((*connection, format!("connection {connection}: {unanswered}")));
             }
         }
         // The viewer is told the channel is unavailable, and the connection
         // stays open (REQ-1481): DENIED carries status 503 (DEC-1730).
         for (connection, text) in late {
             self.log(Level::Warn, "program_late", format!("{text} within {PROGRAM_REPLY_LIMIT_MS} ms"));
-            self.deny_unavailable(connection);
+            self.deny(connection, STATUS_UNAVAILABLE);
         }
     }
 
-    /// Tells `connection` its program did not answer (REQ-1481): DENIED with
-    /// status 503, naming what is selected, and the connection stays open.
-    fn deny_unavailable(&mut self, connection: ConnectionId) {
+    /// Tells `connection` its selection ended with `status` (`INPUT.md`
+    /// section 7.12): DENIED, naming what is selected, and the connection
+    /// stays open.
+    fn deny(&mut self, connection: ConnectionId, status: u16) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        state.answer_due = None;
         let place = state.selection.map(Selection::path).unwrap_or_default();
         let record = state.next_record();
         let mut bytes = Vec::new();
-        let denied = DeniedRecord { status: STATUS_UNAVAILABLE, place: &place };
+        let denied = DeniedRecord { status, place: &place };
         if encode_denied(denied, SERVICE, record, &mut |packet| bytes.extend_from_slice(&packet.bytes)).is_ok() {
             self.send(connection, Arc::from(bytes));
         }
@@ -553,7 +588,7 @@ impl Channel {
     pub fn next_wake(&self) -> Option<u64> {
         let grace = self.config.session_grace_ms;
         let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
-        let dues = self.connections.values().flat_map(|state| state.reply_due.into_iter().chain(state.selection_due));
+        let dues = self.connections.values().flat_map(|state| state.answer_due.into_iter().chain(state.first_selection_due));
         dues.chain(expiry).min()
     }
 
@@ -561,7 +596,7 @@ impl Channel {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
         match *item {
-            Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps),
+            Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps, now),
             Item::Event(Event::Select(select, parameters)) => self.selected(connection, select.page, select.sub, parameters, now),
             _ => self.input(connection, item, now),
         }
@@ -642,11 +677,19 @@ impl Channel {
         }
     }
 
-    fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
+    /// HELLO: WELCOME, or a close the receiver stops on when it speaks
+    /// another version (`INPUT.md` section 6.1). A receiver that cannot send
+    /// SELECT is not waited for. Its capabilities are the only thing asked of
+    /// it: nothing here reads its agent text (DEC-1759 lesson 19).
+    fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32, now: u64) {
         if version != neoteletext_input::VERSION {
+            self.effects.push(Effect::Close { connection, code: CLOSE_WRONG_VERSION });
             return;
         }
+        if caps & SELECT_CAP == 0 {
+            self.end_hold(connection, now);
+        }
+        let Some(state) = self.connections.get_mut(&connection) else { return };
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
@@ -661,12 +704,14 @@ impl Channel {
     /// checked the parameters.
     fn selected(&mut self, connection: ConnectionId, page: u16, sub: u16, parameters: &str, now: u64) {
         if page == 0 {
+            // Selecting nothing is an answer to the wait for a first selection.
+            self.end_hold(connection, now);
             self.release_held(connection);
             let Some(state) = self.connections.get_mut(&connection) else { return };
             let Some(before) = state.selection.take() else { return };
             state.parameters = None;
             state.shown = None;
-            state.selection_due = None;
+            state.answer_due = None;
             if state.announced {
                 self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
             }
@@ -682,7 +727,9 @@ impl Channel {
     /// kept of the sub-page shown is dropped, so the first sub-page after a
     /// new selection goes whole (DEC-1499). Parameters belong to one
     /// selection, so the same page with others is a new selection, and one
-    /// with none leaves them behind (REQ-1693 item 6).
+    /// with none leaves them behind (REQ-1693 item 6). A selection has a
+    /// number and a deadline from here, whether or not the program runs. The
+    /// first one ends the wait for it, and goes in `connected`.
     fn select(&mut self, connection: ConnectionId, selection: Selection, parameters: Option<String>, now: u64) {
         if self.connections.get(&connection).is_none_or(|state| state.selection == Some(selection) && state.parameters == parameters) {
             return;
@@ -692,13 +739,16 @@ impl Channel {
         let before = state.selection.replace(selection);
         state.parameters.clone_from(&parameters);
         state.shown = None;
+        state.answer_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         let announced = state.announced;
         if announced {
-            state.selection_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
+            state.request = state.request.saturating_add(1);
         }
+        let request = state.request;
         self.stats.opened(selection.page.0);
         if !announced {
-            // The program, when it starts, is told of it in `connected`.
+            // The program, when it is told, is told of it in `connected`.
+            self.end_hold(connection, now);
             return;
         }
         if let Some(before) = before
@@ -707,7 +757,7 @@ impl Channel {
             self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
         }
         let path = selection.path();
-        self.tell(&ServerMessage::Selected(Selected { connection, path, page: selection.page, sub: selection.sub, query: parameters }));
+        self.tell(&ServerMessage::Selected(Selected { connection, request, path, page: selection.page, sub: selection.sub, query: parameters }));
     }
 
     /// After a message's input: the cursor record says what was acted on.
@@ -770,37 +820,16 @@ impl Channel {
         let kind = message.kind();
         let refuse = |path: &str, rule: Rule, detail: String| Refusal { message: Some(kind), path: path.to_string(), rule, detail };
         match message {
-            ProgramMessage::Reply(reply) => {
-                let Some(state) = self.connections.get_mut(&reply.connection) else {
-                    return Err(refuse("connection", Rule::UnknownConnection, format!("{} is not open", reply.connection)));
-                };
-                if !state.announced || state.replied {
-                    return Err(refuse("connection", Rule::NotAwaited, format!("{}'s connected was answered already", reply.connection)));
-                }
-                state.replied = true;
-                state.reply_due = None;
-                // A connection with no selection asked for the initial page:
-                // the sub-page given is its selection's.
-                if let Some(page) = &reply.selected
-                    && state.selection.is_none()
-                {
-                    state.selection = Some(Selection { page: page.page, sub: ANY_SUBPAGE });
-                }
-                let magazines = reply.magazines;
-                self.send_records(&[reply.connection], kind, |state| {
-                    state.index_generation = state.index_generation.wrapping_add(1);
-                    records::index(state.index_generation, &magazines, &mut state.record_id)
-                })?;
-                if let Some(page) = &reply.selected {
-                    self.send_page(&[reply.connection], page);
-                }
-            }
+            ProgramMessage::Reply(reply) => self.reply(reply)?,
             ProgramMessage::Page(message) => {
                 let targets = self.targets(&message.connections);
-                self.send_page(&targets, &message.page);
+                self.send_page(&targets, message.request, &message.page);
             }
             ProgramMessage::Subpages(list) => {
                 let page = list.page.0;
+                if list.request.is_some() && !self.answers_targets(&list.connections, list.request) {
+                    return Ok(());
+                }
                 let targets: Vec<ConnectionId> = self
                     .targets(&list.connections)
                     .into_iter()
@@ -822,20 +851,10 @@ impl Channel {
                     records::index(state.index_generation, &index.magazines, &mut state.record_id)
                 })?;
             }
-            // A page redirect is itself a selection (DEC-1526 item 4): the
-            // receiver goes to the record's page, and the program is asked
-            // for it. A redirect to another channel changes no selection:
-            // the receiver leaves, or stays, by its own rules (REQ-1688).
-            ProgramMessage::Redirect(redirect) => {
-                if !self.connections.contains_key(&redirect.connection) {
-                    return Ok(());
-                }
-                self.send_records(&[redirect.connection], kind, |state| records::redirect(&redirect, &mut state.record_id))?;
-                count(&mut self.stats.redirects);
-                match (redirect.page, redirect.sub, redirect.address) {
-                    (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, None, now),
-                    (_, _, Some(address)) => self.log(Level::Info, "redirect", format!("connection {} sent to {address}", redirect.connection)),
-                    _ => {}
+            ProgramMessage::Redirect(redirect) => self.redirect(redirect, now)?,
+            ProgramMessage::Denied(denied) => {
+                if self.is_current(denied.connection, denied.request) {
+                    self.deny(denied.connection, denied.status);
                 }
             }
             ProgramMessage::Sound(sound) => {
@@ -872,6 +891,82 @@ impl Channel {
         Ok(())
     }
 
+    /// `reply`, the answer to `connected` (REQ-1471).
+    fn reply(&mut self, reply: protocol::Reply) -> Result<(), Refusal> {
+        let kind = protocol::MessageType::Reply;
+        let refuse = |rule: Rule, detail: String| Refusal { message: Some(kind), path: "connection".to_string(), rule, detail };
+        let Some(state) = self.connections.get_mut(&reply.connection) else {
+            return Err(refuse(Rule::UnknownConnection, format!("{} is not open", reply.connection)));
+        };
+        if !state.announced || state.replied {
+            return Err(refuse(Rule::NotAwaited, format!("{}'s connected was answered already", reply.connection)));
+        }
+        state.replied = true;
+        // A reply to a selection replaced still gives the index; its
+        // sub-page answers nothing, and the newer selection stands.
+        let current = reply.request == state.request;
+        // A connection with no selection asked for the initial page: the
+        // sub-page given is its selection's.
+        if let Some(page) = &reply.selected
+            && current
+            && state.selection.is_none()
+        {
+            state.selection = Some(Selection { page: page.page, sub: ANY_SUBPAGE });
+        }
+        let magazines = reply.magazines;
+        self.send_records(&[reply.connection], kind, |state| {
+            state.index_generation = state.index_generation.wrapping_add(1);
+            records::index(state.index_generation, &magazines, &mut state.record_id)
+        })?;
+        if let Some(page) = &reply.selected {
+            self.send_page(&[reply.connection], Some(reply.request), page);
+        }
+        Ok(())
+    }
+
+    /// `redirect`: a page redirect is itself a selection (DEC-1526 item 4):
+    /// the receiver goes to the record's page, and the program is asked for
+    /// it. A redirect to another channel changes no selection: the receiver
+    /// leaves, or stays, by its own rules (REQ-1688), and it is the
+    /// selection's answer.
+    fn redirect(&mut self, redirect: protocol::Redirect, now: u64) -> Result<(), Refusal> {
+        if !self.is_current(redirect.connection, redirect.request) {
+            return Ok(());
+        }
+        self.send_records(&[redirect.connection], protocol::MessageType::Redirect, |state| records::redirect(&redirect, &mut state.record_id))?;
+        count(&mut self.stats.redirects);
+        match (redirect.page, redirect.sub, redirect.address) {
+            (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, redirect.query, now),
+            (_, _, Some(address)) => {
+                if let Some(state) = self.connections.get_mut(&redirect.connection) {
+                    state.answer_due = None;
+                }
+                self.log(Level::Info, "redirect", format!("connection {} sent to {address}", redirect.connection));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Whether `request` is `connection`'s selection now, and the connection
+    /// open. An answer to a selection replaced is dropped and counted: the
+    /// program did nothing wrong, the viewer moved on (DEC-1759 lesson 13).
+    fn is_current(&mut self, connection: ConnectionId, request: RequestNumber) -> bool {
+        let Some(state) = self.connections.get(&connection) else { return false };
+        let current = state.request == request;
+        if !current {
+            count(&mut self.stats.stale_answers);
+        }
+        current
+    }
+
+    /// Whether a message numbered `request` names only connections it is
+    /// current for: `check` has held it to one.
+    fn answers_targets(&mut self, connections: &Connections, request: Option<RequestNumber>) -> bool {
+        let (Connections::Listed(listed), Some(request)) = (connections, request) else { return true };
+        listed.iter().all(|&connection| self.is_current(connection, request))
+    }
+
     /// Sends the sub-page `page` to those of `targets` whose selection
     /// shows it: those that selected it, and those that selected its page
     /// with 3F7F, whose selection it then becomes (DEC-1526 item 3). Each
@@ -880,18 +975,23 @@ impl Channel {
     /// frame of a sub-page with Link Extension links is followed by its
     /// LINKS record (DEC-1517). It is encoded once, whatever the number of
     /// viewers.
-    fn send_page(&mut self, targets: &[ConnectionId], page: &protocol::Page) {
+    ///
+    /// `request` is the selection it answers. An unnumbered sub-page is a
+    /// change, for what connections already show, so one still awaiting its
+    /// answer is not sent it: that answer will be current.
+    fn send_page(&mut self, targets: &[ConnectionId], request: Option<RequestNumber>, page: &protocol::Page) {
         let encoded = crate::page::encode(page);
         let (number, sub) = (page.page.0, page.sub.0);
         let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
         let mut faults: Vec<String> = Vec::new();
         for &connection in targets {
+            let answers = request.is_none_or(|request| self.is_current(connection, request));
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            if !state.shows(number, sub) {
+            if !answers || (request.is_none() && state.answer_due.is_some()) || !state.shows(number, sub) {
                 continue;
             }
             state.selection = Some(Selection { page: page.page, sub: page.sub });
-            state.selection_due = None;
+            state.answer_due = None;
             let change = match &state.shown {
                 Some(kept) if kept.page == number && kept.sub == sub => match crate::page::changes(&kept.packets, &encoded) {
                     // Links alone changed: a frame of the header without the

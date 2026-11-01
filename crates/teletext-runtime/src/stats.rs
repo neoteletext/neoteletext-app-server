@@ -33,6 +33,9 @@ pub struct ChannelStats {
     /// Input dropped because it was stamped with a page other than the
     /// connection's selection (REQ-1557).
     pub stale_input: u64,
+    /// Answers dropped because they named a selection already replaced
+    /// (DEC-1759 lesson 13).
+    pub stale_answers: u64,
     /// Viewers the application redirected, to a page or another channel.
     pub redirects: u64,
     /// Audio records sent: sound objects, their data and commands.

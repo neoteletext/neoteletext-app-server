@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use neoteletext_web::consts::CLOSE_RESTARTING;
+use teletext_runtime::protocol::CookiePair;
 use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -16,7 +18,6 @@ use tokio::time::Instant;
 use crate::apps::{FromApplication, Link};
 use crate::logging;
 use crate::stats::{ChannelFigures, Histogram, ServerStats, count};
-use crate::websocket::{CLOSE_PROTOCOL_ERROR, CLOSE_SERVICE_RESTART};
 
 /// How often a channel's counts are sent to its program, in seconds:
 /// often enough for a live figure on a page, rarely enough to cost nothing.
@@ -42,6 +43,8 @@ pub enum Command {
         /// Its session, which it continues or starts (requirement 5.5);
         /// a session may have several connections, one a tab (DEC-1527).
         session: SessionId,
+        /// The cookies its upgrade carried for the program (REQ-1471).
+        cookies: Vec<CookiePair>,
         /// Its queue.
         outbox: mpsc::Sender<Outbound>,
     },
@@ -57,8 +60,8 @@ pub enum Command {
         /// The connection.
         connection: ConnectionId,
     },
-    /// The server stops (requirement 5.1): every connection is closed as a
-    /// restart, and `done` is answered.
+    /// The server stops (requirement 5.1): every connection is closed with
+    /// the code that says try again, and `done` is answered.
     Shutdown {
         /// Answered when the channel has stopped.
         done: oneshot::Sender<()>,
@@ -202,9 +205,9 @@ impl Task {
     fn handle(&mut self, event: Event, channel: &mut Channel) -> bool {
         let now = self.now();
         match event {
-            Event::Command(Command::Opened { connection, session, outbox }) => {
+            Event::Command(Command::Opened { connection, session, cookies, outbox }) => {
                 self.outboxes.insert(connection, outbox);
-                channel.opened(connection, session, now);
+                channel.opened(connection, session, cookies, now);
             }
             Event::Command(Command::Received { connection, bytes }) => channel.received(connection, &bytes, now),
             Event::Command(Command::Closed { connection }) => {
@@ -213,7 +216,7 @@ impl Task {
             }
             Event::Command(Command::Shutdown { done }) => {
                 for outbox in self.outboxes.values() {
-                    let _ = outbox.try_send(Outbound::Close(CLOSE_SERVICE_RESTART));
+                    let _ = outbox.try_send(Outbound::Close(CLOSE_RESTARTING));
                 }
                 self.apply(channel.take_effects());
                 self.record(channel);
@@ -249,7 +252,7 @@ impl Task {
         for effect in effects {
             match effect {
                 Effect::Send { connection, bytes } => self.send(connection, Outbound::Bytes(bytes)),
-                Effect::Close { connection } => self.send(connection, Outbound::Close(CLOSE_PROTOCOL_ERROR)),
+                Effect::Close { connection, code } => self.send(connection, Outbound::Close(code)),
                 Effect::ToProgram { line } => {
                     let Some(to) = self.to_application.as_ref() else { continue };
                     if to.try_send(line).is_err() {

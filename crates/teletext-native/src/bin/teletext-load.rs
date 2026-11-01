@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use neoteletext_core::ecc::{Status, hamming84_decode};
+use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -135,7 +136,7 @@ async fn connect(arguments: &Arguments, start: Instant, open: &AtomicU64, messag
     let Ok(mut stream) = TcpStream::connect(&arguments.host).await else { return };
     let _ = stream.set_nodelay(true);
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n\r\n",
         arguments.path, arguments.host
     );
     if stream.write_all(request.as_bytes()).await.is_err() {

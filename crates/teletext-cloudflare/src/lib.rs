@@ -64,8 +64,6 @@ const VIEWER_TAG: &str = "viewer";
 const PROGRAM_TAG: &str = "program";
 /// The page a viewer starts on.
 const INITIAL_PAGE: u16 = 0x100;
-/// A Close's status: the other side broke the protocol (RFC 6455 section 7.4.1).
-const CLOSE_PROTOCOL_ERROR: u16 = 1002;
 /// The object's tables, a migration a version (the numbered migrations of
 /// the owner's SQLite rule): the object's own names (its folder, its
 /// session key, the schema's version); migration 2 drops the pages kept
@@ -199,9 +197,9 @@ impl Live {
                         send_binary(socket, &bytes);
                     }
                 }
-                Effect::Close { connection } => {
+                Effect::Close { connection, code } => {
                     if let Some(socket) = self.viewers.get(&connection) {
-                        let _ = socket.close(Some(CLOSE_PROTOCOL_ERROR), Some("protocol error"));
+                        let _ = socket.close(Some(code), Some("protocol error"));
                     }
                 }
                 Effect::ToProgram { line } => {
@@ -359,7 +357,8 @@ impl ChannelObject {
     fn welcome(live: &mut Live, connection: ConnectionId, session: SessionId, socket: WebSocket) {
         live.viewers.insert(connection, socket);
         let now = live.now();
-        live.channel.opened(connection, session, now);
+        // This host does not yet pass a program its cookies (REQ-1471).
+        live.channel.opened(connection, session, Vec::new(), now);
     }
 
     /// Sets the object's alarm to when it is next needed, if that changed.

@@ -12,14 +12,15 @@ use core::fmt;
 use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_core::policy::is_safe_output_char;
+use neoteletext_core::types::SubCode;
 use neoteletext_formats::log::LogRefused;
 use neoteletext_web::base64;
 use neoteletext_web::records::redirect::{MAX_ADDRESS, RedirectRecord, encode};
 use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
 use super::{
-    AuthorLog, COLUMNS, Connections, Cookie, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage,
-    Redirect, Refused, Reply, Rule, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
+    AuthorLog, COLUMNS, Connections, Cookie, DENIED_STATUSES, Denied, Index, Log, Magazine, MessageType, OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page,
+    PageMessage, ProgramMessage, Redirect, Refused, Reply, RequestNumber, Rule, SAFE_INTEGER_LIMIT, SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
 use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
@@ -112,14 +113,17 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
     let checked = match message {
         ProgramMessage::Reply(reply) => check_reply(&root, reply),
         ProgramMessage::Page(message) => {
-            let PageMessage { connections, page } = message.as_ref();
-            check_connections(&root.field("connections"), connections).and_then(|()| check_page(&root.field("page"), page))
+            let PageMessage { connections, request, page } = message.as_ref();
+            check_connections(&root.field("connections"), connections)
+                .and_then(|()| check_answer(&root, connections, *request))
+                .and_then(|()| check_page(&root.field("page"), page))
         }
         ProgramMessage::Subpages(list) => check_subpages(&root, list),
         ProgramMessage::Index(Index { connections, magazines }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_magazines(&root.field("magazines"), magazines))
         }
         ProgramMessage::Redirect(redirect) => check_redirect(&root, redirect),
+        ProgramMessage::Denied(denied) => check_denied(&root, denied),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -185,11 +189,7 @@ fn check_base64(path: &Path<'_>, text: &str, most: usize) -> Result<Vec<u8>, Fau
 /// A connection's number: 1 to 2^53 less one, which every language's
 /// JSON reader holds exactly.
 fn check_connection(path: &Path<'_>, connection: super::ConnectionId) -> Checked {
-    if (1..=super::SAFE_INTEGER_LIMIT).contains(&connection) {
-        Ok(())
-    } else {
-        Err(fault(path, Rule::OutOfRange, format!("{connection}, 1 to {}", super::SAFE_INTEGER_LIMIT)))
-    }
+    if (1..=SAFE_INTEGER_LIMIT).contains(&connection) { Ok(()) } else { Err(fault(path, Rule::OutOfRange, format!("{connection}, 1 to {SAFE_INTEGER_LIMIT}"))) }
 }
 
 fn check_connections(path: &Path<'_>, connections: &Connections) -> Checked {
@@ -275,6 +275,7 @@ fn check_magazines(path: &Path<'_>, magazines: &[Magazine]) -> Checked {
 
 fn check_reply(root: &Path<'_>, reply: &Reply) -> Checked {
     check_connection(&root.field("connection"), reply.connection)?;
+    check_request(&root.field("request"), reply.request)?;
     check_magazines(&root.field("magazines"), &reply.magazines)?;
     let Some(page) = &reply.selected else { return Ok(()) };
     let at = root.field("selected");
@@ -298,6 +299,7 @@ pub(crate) fn check_page(path: &Path<'_>, page: &Page) -> Checked {
 
 fn check_subpages(root: &Path<'_>, list: &SubPages) -> Checked {
     check_connections(&root.field("connections"), &list.connections)?;
+    check_answer(root, &list.connections, list.request)?;
     if list.page.is_reserved() {
         return Err(fault(&root.field("page"), Rule::Reserved, format!("{:03X} is reserved by the standard (EN 300 706 Annex A.10)", list.page.0)));
     }
@@ -642,10 +644,18 @@ fn check_author_log(root: &Path<'_>, log: &AuthorLog) -> Checked {
 /// engine's encoder alone says what an address may be (REQ-1688).
 fn check_redirect(root: &Path<'_>, redirect: &Redirect) -> Checked {
     check_connection(&root.field("connection"), redirect.connection)?;
+    check_request(&root.field("request"), redirect.request)?;
+    if redirect.address.is_some() && redirect.query.is_some() {
+        return Err(fault(&root.field("query"), Rule::UnknownField, "a query goes with a page: an address holds its own".to_string()));
+    }
     let both = |field: &'static str| fault(&root.field(field), Rule::UnknownField, "a redirect names a page or an address, never both".to_string());
     let missing = |field: &'static str| fault(&root.field(field), Rule::MissingField, "a redirect names a page and its sub-code, or an address".to_string());
     match (redirect.page, redirect.sub, redirect.address.as_deref()) {
-        (Some(_), Some(_), None) => Ok(()),
+        (Some(page), Some(sub), None) => {
+            let parameters = redirect.query.as_deref();
+            let record = RedirectRecord::Page { page: crate::page::address(page.0), subcode: SubCode::new(sub.0), parameters };
+            encode(record, 0, 0, &mut |_| {}).map(|_| ()).map_err(|refused| fault(&root.field("query"), Rule::ForbiddenCharacter, format!("{refused:?}")))
+        }
         (None, None, Some(address)) if address.len() > MAX_ADDRESS => {
             Err(fault(&root.field("address"), Rule::TooLong, format!("{} bytes, at most {MAX_ADDRESS}", address.len())))
         }
@@ -656,6 +666,33 @@ fn check_redirect(root: &Path<'_>, redirect: &Redirect) -> Checked {
         (None, Some(_), Some(_)) => Err(both("sub")),
         (Some(_), None, None) => Err(missing("sub")),
         (None, _, None) => Err(missing("page")),
+    }
+}
+
+/// A selection's number, as the server gives them.
+fn check_request(path: &Path<'_>, request: RequestNumber) -> Checked {
+    if (1..=SAFE_INTEGER_LIMIT).contains(&request) { Ok(()) } else { Err(fault(path, Rule::OutOfRange, format!("{request} is not a selection's number"))) }
+}
+
+/// A number belongs to one connection, so a message that carries one names
+/// exactly one (DEC-1759 lesson 13).
+fn check_answer(root: &Path<'_>, connections: &Connections, request: Option<RequestNumber>) -> Checked {
+    let Some(request) = request else { return Ok(()) };
+    check_request(&root.field("request"), request)?;
+    if matches!(connections, Connections::Listed(listed) if listed.len() == 1) {
+        Ok(())
+    } else {
+        Err(fault(&root.field("connections"), Rule::OneConnection, "a selection's number names one connection".to_string()))
+    }
+}
+
+fn check_denied(root: &Path<'_>, denied: &Denied) -> Checked {
+    check_connection(&root.field("connection"), denied.connection)?;
+    check_request(&root.field("request"), denied.request)?;
+    if DENIED_STATUSES.contains(&denied.status) {
+        Ok(())
+    } else {
+        Err(fault(&root.field("status"), Rule::NotListed, format!("{} is not one of {DENIED_STATUSES:?}", denied.status)))
     }
 }
 

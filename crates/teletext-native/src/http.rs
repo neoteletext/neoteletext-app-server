@@ -12,15 +12,17 @@ use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::header::{
-    CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, REFERRER_POLICY, SET_COOKIE, UPGRADE,
-    X_CONTENT_TYPE_OPTIONS,
+    CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY, SEC_WEBSOCKET_PROTOCOL,
+    SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use teletext_runtime::SessionId;
-use teletext_runtime::landing::{self, Route, route};
+use teletext_runtime::landing::{self, PushRefusal, Route, push_upgrade, route};
+use teletext_runtime::protocol::CookiePair;
 use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
@@ -149,21 +151,44 @@ fn to_place(path: &str, query: Option<&str>) -> Response<Whole> {
     response
 }
 
+/// The answer to an upgrade [`push_upgrade`] refused, before anything of
+/// the request is looked at: an upgrade to the wrong thing says what is spoken.
+fn refused_upgrade(refusal: PushRefusal) -> Response<Whole> {
+    match refusal {
+        PushRefusal::Origin => status(StatusCode::FORBIDDEN),
+        PushRefusal::Subprotocol => {
+            let mut response = status(StatusCode::UPGRADE_REQUIRED);
+            let headers = response.headers_mut();
+            headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
+            headers.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
+            response
+        }
+    }
+}
+
 /// The push WebSocket: answers 101 and serves the upgraded socket.
 fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
     let wants = request.headers().get(UPGRADE).is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     let Some(key) = request.headers().get("sec-websocket-key").map(|value| value.as_bytes().to_vec()).filter(|_| wants) else {
         return status(StatusCode::UPGRADE_REQUIRED);
     };
+    let offered = request.headers().get_all(SEC_WEBSOCKET_PROTOCOL).iter().map(HeaderValue::as_bytes);
+    if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
+        return refused_upgrade(refusal);
+    }
     let accept = neoteletext_web::ws::accept_for(&key);
     let (session, set_cookie) = session_for(routes, &hub, &request);
+    let mut cookies: Vec<CookiePair> = Vec::new();
+    for header in request.headers().get_all(COOKIE) {
+        session_cookie::program_cookies(header.as_bytes(), &mut cookies);
+    }
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let pending = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
         let Ok(upgraded) = pending.await else { return };
         // The raw socket: no HTTP buffers stay with the connection.
         let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
-        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session).await;
+        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session, cookies).await;
     });
     let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();
@@ -172,6 +197,7 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
     }
     headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
     headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+    headers.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
     if let Ok(value) = HeaderValue::from_bytes(&accept) {
         headers.insert("sec-websocket-accept", value);
     }

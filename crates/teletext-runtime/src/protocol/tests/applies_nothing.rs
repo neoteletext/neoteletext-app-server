@@ -14,7 +14,7 @@ fn a_refused_line_applies_nothing() {
         ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(1, 1, 0);
+    channel.opened(1, 1, Vec::new(), 0);
     let _ = channel.take_effects();
     let page = json!({"type": "page", "connections": "all", "page": subpage()});
     let bad: Vec<Vec<u8>> = [

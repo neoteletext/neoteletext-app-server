@@ -34,7 +34,7 @@ fn connected() -> DuplexStream {
     let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()));
     let (receiver, server) = tokio::io::duplex(IN_FLIGHT);
     let (reading, writing) = tokio::io::split(server);
-    tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1, 1).await });
+    tokio::spawn(async move { serve_halves(reading, writing, &[], hub, 1, 1, Vec::new()).await });
     receiver
 }
 
@@ -42,11 +42,18 @@ fn connected() -> DuplexStream {
 /// bounds, so a ping or a drop that never comes fails the test.
 const WITHIN: Duration = PING_AFTER.saturating_add(DEAD_AFTER_PING).saturating_mul(2);
 
-/// Two bytes from `receiver`: a control frame of no payload.
+/// The next control frame of no payload from `receiver`, past the DENIED
+/// these channels send at the deadline: they have no program (REQ-1481).
 async fn frame(receiver: &mut DuplexStream) -> [u8; 2] {
-    let mut bytes = [0_u8; 2];
-    tokio::time::timeout(WITHIN, receiver.read_exact(&mut bytes)).await.expect("a frame in time").unwrap();
-    bytes
+    loop {
+        let mut bytes = [0_u8; 2];
+        tokio::time::timeout(WITHIN, receiver.read_exact(&mut bytes)).await.expect("a frame in time").unwrap();
+        if bytes[0] != FIN | Opcode::Binary as u8 {
+            return bytes;
+        }
+        let mut payload = vec![0_u8; usize::from(bytes[1])];
+        receiver.read_exact(&mut payload).await.unwrap();
+    }
 }
 
 /// Requirement 11.3: a connection heard nothing on is pinged after

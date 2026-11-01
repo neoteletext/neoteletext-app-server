@@ -34,8 +34,10 @@ pub use read::read;
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
 /// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
-/// (DEC-1683), and which could name no other channel.
-pub const PROTOCOL: u32 = 5;
+/// (DEC-1683), and which could name no other channel. Version 6 numbers
+/// each selection (DEC-1759 lesson 13), passes a program its cookies, adds
+/// `denied`, and lets a redirect keep a query.
+pub const PROTOCOL: u32 = 6;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -111,6 +113,10 @@ pub const OPUS_MOST_PACKET_BYTES: u16 = 40;
 pub type ConnectionId = u64;
 /// A session, which outlives its connections (requirement 5.5).
 pub type SessionId = u64;
+/// A selection's number on its connection, rising from 1 (DEC-1759 lesson
+/// 13). A program's answer carries it, so an answer that comes after the
+/// viewer moved on cannot replace the page on screen. The kits copy it.
+pub type RequestNumber = u64;
 
 // ---------------------------------------------------------------- scalars
 
@@ -388,7 +394,11 @@ pub struct Connected {
     /// The viewer's session, from its signed cookie (requirement 5.5).
     #[schemars(range(max = SAFE_INTEGER_LIMIT))]
     pub session: SessionId,
-    /// The cookies the program set on earlier connections.
+    /// The number of this selection: `reply` carries it back.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: RequestNumber,
+    /// The cookies the connection opened with, within [`MOST_COOKIES`],
+    /// without the server's own, whose names begin `_`.
     #[schemars(length(max = MOST_COOKIES))]
     pub cookies: Vec<CookiePair>,
     /// What the connection selected at its start, or none: the channel's
@@ -441,6 +451,9 @@ pub struct Selected {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
+    /// The number of this selection: the answer carries it back.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: RequestNumber,
     /// The place selected, as an address names it: `302` or `302/0002`.
     pub path: String,
     /// The page.
@@ -664,6 +677,7 @@ pub enum MessageType {
     AuthorLog,
     Log,
     Packets,
+    Denied,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -717,6 +731,9 @@ pub enum Rule {
     OutsideProfile,
     /// A raw packet the stream may not carry (REQ-1462).
     InvalidPacket,
+    /// A selection's number given with other than one connection: a number
+    /// belongs to one connection.
+    OneConnection,
 }
 
 // ------------------------------------------------------- program to server
@@ -748,6 +765,8 @@ pub enum ProgramMessage {
     Log(Log),
     /// Raw teletext packets (`SERVER.md` section 7.4).
     Packets(Packets),
+    /// A selection the program will not answer with a page.
+    Denied(Denied),
 }
 
 impl ProgramMessage {
@@ -765,6 +784,7 @@ impl ProgramMessage {
             Self::AuthorLog(_) => MessageType::AuthorLog,
             Self::Log(_) => MessageType::Log,
             Self::Packets(_) => MessageType::Packets,
+            Self::Denied(_) => MessageType::Denied,
         }
     }
 }
@@ -776,6 +796,10 @@ pub struct Reply {
     /// The connection whose `connected` this answers.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
+    /// `connected`'s number. A reply to a selection already replaced still
+    /// gives the index, and its sub-page is dropped.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: RequestNumber,
     /// The channel's magazines for this viewer (REQ-1477).
     #[schemars(length(max = limits::MAGAZINES))]
     pub magazines: Vec<Magazine>,
@@ -827,6 +851,10 @@ pub struct IndexEntry {
 pub struct PageMessage {
     /// Who it is for.
     pub connections: Connections,
+    /// The selection this answers, naming one connection; none for a change
+    /// to what connections already show, which waits for no answer.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: Option<RequestNumber>,
     /// The sub-page.
     pub page: Page,
 }
@@ -840,6 +868,10 @@ pub struct PageMessage {
 pub struct SubPages {
     /// Who it is for.
     pub connections: Connections,
+    /// The selection this answers, naming one connection; none for a change
+    /// to the list.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: Option<RequestNumber>,
     /// The page.
     pub page: PageNumber,
     /// The list's version, which the program changes whenever the list
@@ -885,12 +917,22 @@ pub struct Redirect {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
+    /// The selection it moves. A redirect for a selection already replaced
+    /// is dropped: the viewer's own choice overrides it (`INPUT.md` section
+    /// 7.11).
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: RequestNumber,
     /// The page of this channel.
     #[serde(default)]
     pub page: Option<PageNumber>,
     /// The sub-code, or 3F7F for the page.
     #[serde(default)]
     pub sub: Option<SubCode>,
+    /// The query the page keeps, without its `?`, or none: a redirect to a
+    /// page is a new selection, and has only what it is given.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
+    pub query: Option<String>,
     /// Another channel's address, at most the engine's
     /// [`MAX_ADDRESS`](neoteletext_web::records::redirect::MAX_ADDRESS) bytes:
     /// the most a REDIRECT record carries.
@@ -898,6 +940,30 @@ pub struct Redirect {
     #[schemars(length(max = neoteletext_web::records::redirect::MAX_ADDRESS))]
     pub address: Option<String>,
 }
+
+/// `denied`: a selection ends with a status and no page (`INPUT.md` section
+/// 7.12), so the viewer is told at once and not at the deadline.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Denied {
+    /// The connection.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub connection: ConnectionId,
+    /// The selection it ends.
+    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
+    pub request: RequestNumber,
+    /// A real HTTP status number: 403, 404, 429 or 503.
+    #[schemars(extend("enum" = DENIED_STATUSES))]
+    pub status: u16,
+}
+
+/// What DENIED carries (`INPUT.md` section 7.12).
+pub const DENIED_STATUSES: [u16; 4] = [
+    neoteletext_web::records::denied::STATUS_FORBIDDEN,
+    neoteletext_web::records::denied::STATUS_NOT_FOUND,
+    neoteletext_web::records::denied::STATUS_TOO_MANY,
+    neoteletext_web::records::denied::STATUS_UNAVAILABLE,
+];
 
 /// One sub-page of a page, as the engine's page model (`PageFile`), field
 /// by field (REQ-1478). A sub-page travels alone, never with the others of
@@ -1024,7 +1090,8 @@ pub struct TextLink {
 pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_TARGET_BYTES;
 /// The longest page parameters of a selection (`INPUT.md` section 5.4).
 pub const PARAMETERS_BYTES: usize = neoteletext_input::MAX_PAGE_PARAMETERS;
-/// Page parameters are printable ASCII with no `#` (`INPUT.md` section 5.4).
+/// Page parameters are printable ASCII with no `#` (`INPUT.md` section 5.4);
+/// the engine's encoder of a redirect holds them to the map's pairs too.
 const PARAMETERS_PATTERN: &str = "^[!-\"$-~]+$";
 /// The longest label of a key's link to this service (Appendix E.1).
 pub const LINK_LABEL_CHARACTERS: usize = 9;

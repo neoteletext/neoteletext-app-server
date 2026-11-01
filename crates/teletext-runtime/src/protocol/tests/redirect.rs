@@ -9,11 +9,11 @@ use super::{accepted, bounds, refused, with, without};
 use crate::protocol::Rule;
 
 fn page_redirect() -> Value {
-    json!({"type": "redirect", "connection": 4, "page": "1A0", "sub": "3F7F"})
+    json!({"type": "redirect", "connection": 4, "request": 1, "page": "1A0", "sub": "3F7F"})
 }
 
 fn address_redirect() -> Value {
-    json!({"type": "redirect", "connection": 4, "address": "https://news.example/teletext/302"})
+    json!({"type": "redirect", "connection": 4, "request": 1, "address": "https://news.example/teletext/302"})
 }
 
 /// The longest address a REDIRECT record carries, `extra` bytes over.

@@ -10,7 +10,9 @@ use alloc::string::String;
 
 use neoteletext_core::consts::LINK_SCHEME;
 use neoteletext_web::channel::SETTINGS_FILE;
+use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use neoteletext_web::map::Place;
+use neoteletext_web::ws::offers_subprotocol;
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
@@ -72,6 +74,32 @@ pub fn tail(path: &str, query: Option<&str>) -> String {
     let path = path.strip_prefix('/').unwrap_or(path);
     let place = path.split_once('/').map_or("", |(_, rest)| rest);
     query.filter(|query| !query.is_empty()).map_or_else(|| place.to_owned(), |query| format!("{place}?{query}"))
+}
+
+/// Why a push upgrade is refused (`SERVER.md` section 5.1), each a status a
+/// host answers with. A receiver stops on either.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PushRefusal {
+    /// It carries `Origin`: a web page's script always sends one and a
+    /// receiver never does, so this stops a web page reaching a channel with
+    /// a viewer's cookies (cross-site WebSocket hijacking, DEC-1759 lesson
+    /// 18): 403.
+    Origin,
+    /// It does not offer the input protocol's subprotocol: another program
+    /// or another version (DEC-1759 lesson 14): 426, naming the one spoken.
+    Subprotocol,
+}
+
+/// Whether a push upgrade may go ahead, from whether it carried `Origin`
+/// and each `Sec-WebSocket-Protocol` value it carried.
+///
+/// # Errors
+/// The reason it is refused.
+pub fn push_upgrade<'a>(origin: bool, mut offered: impl Iterator<Item = &'a [u8]>) -> Result<(), PushRefusal> {
+    if origin {
+        return Err(PushRefusal::Origin);
+    }
+    if offered.any(|value| offers_subprotocol(value, PUSH_SUBPROTOCOL)) { Ok(()) } else { Err(PushRefusal::Subprotocol) }
 }
 
 /// Where a place with a final `/` redirects to: a path on the same origin,

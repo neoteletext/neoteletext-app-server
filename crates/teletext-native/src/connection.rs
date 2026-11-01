@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use teletext_runtime::frame;
+use teletext_runtime::protocol::CookiePair;
 use teletext_runtime::{ConnectionId, SessionId};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -21,8 +22,8 @@ use tokio::time::Instant;
 
 use crate::hub::{Command, Hub, OUTBOX, Outbound};
 use crate::stats::ServerStats;
-use crate::websocket::{CLOSE_PROTOCOL_ERROR, Message, Opcode, Reader, header};
-use neoteletext_web::consts::{PUSH_PING_AFTER_US, PUSH_PONG_WITHIN_US};
+use crate::websocket::{Message, Opcode, Reader, header};
+use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, PUSH_PING_AFTER_US, PUSH_PONG_WITHIN_US};
 
 /// The bytes read from the socket at a time. Input is a few bytes a key;
 /// a longer message arrives over several reads (decision 7 item 4).
@@ -38,9 +39,9 @@ pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US)
 
 /// Serves one connection until it closes: `stream` is the socket hyper
 /// upgraded, and `early` what hyper had read past the upgrade.
-pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId) {
+pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId, cookies: Vec<CookiePair>) {
     let (reading, writing) = stream.into_split();
-    serve_halves(reading, writing, early, hub, connection, session).await;
+    serve_halves(reading, writing, early, hub, connection, session, cookies).await;
 }
 
 /// `serve` on the connection's two halves. The tests serve an in-memory
@@ -54,9 +55,10 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     hub: Hub,
     connection: ConnectionId,
     session: SessionId,
+    cookies: Vec<CookiePair>,
 ) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
-    if hub.commands.send(Command::Opened { connection, session, outbox }).await.is_err() {
+    if hub.commands.send(Command::Opened { connection, session, cookies, outbox }).await.is_err() {
         return;
     }
     let stats = Arc::clone(&hub.stats);
@@ -135,7 +137,7 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
                 return false;
             }
             Err(_) => {
-                let _ = write(writing, Opcode::Close, &CLOSE_PROTOCOL_ERROR.to_be_bytes(), stats).await;
+                let _ = write(writing, Opcode::Close, &CLOSE_BROKE_PROTOCOL.to_be_bytes(), stats).await;
                 return false;
             }
         }

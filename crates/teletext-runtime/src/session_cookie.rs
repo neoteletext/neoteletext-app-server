@@ -11,11 +11,14 @@ use alloc::vec::Vec;
 use neoteletext_web::consts::{SHA256_BLOCK_BYTES, SHA256_DIGEST_BYTES};
 use neoteletext_web::sha256::{Digest, Sha256, parse_hex, to_hex};
 
-use crate::protocol::SessionId;
+use crate::protocol::{COOKIE_BYTES, CookiePair, MOST_COOKIES, SessionId};
 
 /// The cookie's name: names beginning `_` are the server's
 /// (`SERVER.md` section 8.2).
 pub const NAME: &str = "_session";
+/// What begins the names of cookies that are the server's alone
+/// (`SERVER.md` section 8.2).
+const SERVER_NAMES: char = '_';
 /// A key's length: as long as the digest (RFC 2104 section 3 advises no
 /// shorter).
 pub const KEY_BYTES: usize = SHA256_DIGEST_BYTES;
@@ -83,6 +86,25 @@ pub fn set_cookie(key: &Key, channel: &str, session: SessionId, now_s: u64, secu
     let value = value(key, channel, session, now_s.saturating_add(LIFETIME_S));
     let secure = if secure { "; Secure" } else { "" };
     alloc::format!("{NAME}={value}; Path=/{channel}/; Max-Age={LIFETIME_S}; HttpOnly; SameSite=Strict{secure}")
+}
+
+/// What a `Cookie` header's value holds for a channel's program (REQ-1471),
+/// added to `cookies` up to [`MOST_COOKIES`]: every `name=value` pair within
+/// [`COOKIE_BYTES`] that is text, without the server's own, whose names begin
+/// `_`, of which the session cookie is one (`SERVER.md` section 8.2). What the
+/// viewer's end sends is untrusted: a pair that breaks a bound is left out,
+/// and the rest are still read.
+pub fn program_cookies(header: &[u8], cookies: &mut Vec<CookiePair>) {
+    for pair in header.split(|&byte| byte == b';') {
+        if cookies.len() >= MOST_COOKIES {
+            return;
+        }
+        let Ok(pair) = core::str::from_utf8(pair.trim_ascii()) else { continue };
+        let Some((name, value)) = pair.split_once('=') else { continue };
+        if !name.is_empty() && name.len() <= COOKIE_BYTES && value.len() <= COOKIE_BYTES && !name.starts_with(SERVER_NAMES) {
+            cookies.push(CookiePair { name: name.into(), value: value.into() });
+        }
+    }
 }
 
 /// The session a `Cookie` header's value names for `channel`, if one of

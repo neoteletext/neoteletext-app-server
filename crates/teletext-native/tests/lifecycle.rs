@@ -12,10 +12,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use neoteletext_core::consts::LINK_SCHEME;
+use neoteletext_core::consts::{LINK_SCHEME, PACKET_BYTES};
+use neoteletext_core::packet::Packet;
 use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::event::{Event, Item, Select, write as write_item};
 use neoteletext_web::channel::SETTINGS_FILE;
+use neoteletext_web::consts::{CLOSE_RESTARTING, PUSH_SUBPROTOCOL};
+use neoteletext_web::records::{ChannelRecord, Read as RecordRead, RecordReader};
 use teletext_runtime::json::{self, Value};
 
 /// How long the server and its program have to start, or to stop.
@@ -188,6 +191,31 @@ fn until_status(address: &str, path: &str, status: u16) -> Vec<u8> {
     }
 }
 
+/// An upgrade of `target` with these header lines added, but for its end.
+fn upgrade_request(address: &str, target: &str, headers: &str) -> String {
+    format!(
+        "GET {target} HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Version: 13\r\n{headers}"
+    )
+}
+
+/// A response's head, read a byte at a time so nothing after it is taken.
+fn response_head(stream: &mut TcpStream) -> String {
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut byte = [0_u8; 1];
+        stream.read_exact(&mut byte).unwrap();
+        head.push(byte[0]);
+    }
+    String::from_utf8(head).unwrap()
+}
+
+/// The server's answer to an upgrade with these header lines added.
+fn upgrade_answer(address: &str, headers: &str) -> String {
+    let mut stream = TcpStream::connect(address).unwrap();
+    write!(stream, "{}\r\n", upgrade_request(address, "/ch/push", headers)).unwrap();
+    response_head(&mut stream)
+}
+
 /// A push connection, open, and its response's `Set-Cookie`, if any.
 fn push(address: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
     push_to(address, "/ch/push", cookie)
@@ -197,15 +225,10 @@ fn push(address: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
 fn push_to(address: &str, target: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
     let mut stream = TcpStream::connect(address).unwrap();
     let cookie = cookie.map(|cookie| format!("Cookie: {cookie}\r\n")).unwrap_or_default();
-    write!(stream, "GET {target} HTTP/1.1\r\nHost: {address}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Version: 13\r\n{cookie}\r\n").unwrap();
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        let mut byte = [0_u8; 1];
-        stream.read_exact(&mut byte).unwrap();
-        head.push(byte[0]);
-    }
-    let head = String::from_utf8(head).unwrap();
+    write!(stream, "{}{cookie}\r\n", upgrade_request(address, target, &format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n"))).unwrap();
+    let head = response_head(&mut stream);
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    assert_eq!(header(&head, "sec-websocket-protocol"), Some(PUSH_SUBPROTOCOL), "{head}");
     let set_cookie = head.lines().find_map(|line| line.strip_prefix("set-cookie: ").or_else(|| line.strip_prefix("Set-Cookie: "))).map(str::to_owned);
     (stream, set_cookie)
 }
@@ -242,7 +265,7 @@ fn close_code(stream: &mut TcpStream) -> u16 {
     }
 }
 
-/// A stopped server closes its viewers' connections with 1012 and exits
+/// A stopped server closes its viewers' connections with the code that says try again and exits
 /// with 0 (requirement 5.1).
 #[test]
 fn a_restart_closes_viewers_as_a_restart() {
@@ -254,7 +277,7 @@ fn a_restart_closes_viewers_as_a_restart() {
     until_status(&first.address, &settings("ch"), 200);
     let (mut viewer, _) = push(&first.address, None);
     assert!(first.terminate().success());
-    assert_eq!(close_code(&mut viewer), 1012, "service restart");
+    assert_eq!(close_code(&mut viewer), CLOSE_RESTARTING, "try again");
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -278,7 +301,7 @@ fn connections_made_during_a_restart_wait_on_the_passed_socket() {
 
     let (mut viewer, _) = push(&address, None);
     assert!(first.terminate().success());
-    assert_eq!(close_code(&mut viewer), 1012, "service restart");
+    assert_eq!(close_code(&mut viewer), CLOSE_RESTARTING, "try again");
 
     let during_the_restart = ask(&address, &settings("ch"));
     let _second = activated(&socket, 1, &unused, &["--channels", &file], Stdio::null());
@@ -337,6 +360,104 @@ fn the_socket_unit_is_installed_and_names_the_services_address() {
     assert!(deploy.contains("enable --now neoteletext.socket"));
 }
 
+/// DEC-1759 lesson 18: an upgrade that carries `Origin` is a web page's
+/// script, and is refused, whatever it offers. Lesson 14: an upgrade that does
+/// not offer this version's subprotocol is refused and told what is spoken.
+#[test]
+fn only_a_receiver_of_this_version_is_upgraded() {
+    let folder = scratch("upgrade");
+    let file = channels(&folder, &publishing("Refusing"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    let named = format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n");
+    let origin = format!("{named}Origin: https://elsewhere.example\r\n");
+    assert!(upgrade_answer(&server.address, &origin).starts_with("HTTP/1.1 403"));
+    let null = format!("{named}Origin: null\r\n");
+    assert!(upgrade_answer(&server.address, &null).starts_with("HTTP/1.1 403"), "a sandboxed page's");
+    for offered in ["", "Sec-WebSocket-Protocol: neottx.6\r\n", "Sec-WebSocket-Protocol: chat\r\n"] {
+        let answer = upgrade_answer(&server.address, offered);
+        assert!(answer.starts_with("HTTP/1.1 426"), "{offered:?}: {answer}");
+        assert_eq!(header(&answer, "sec-websocket-protocol"), Some(PUSH_SUBPROTOCOL), "{answer}");
+    }
+    let several = format!("Sec-WebSocket-Protocol: chat, {PUSH_SUBPROTOCOL}\r\n");
+    let answer = upgrade_answer(&server.address, &several);
+    assert!(answer.starts_with("HTTP/1.1 101"), "{answer}");
+    assert_eq!(header(&answer, "sec-websocket-protocol"), Some(PUSH_SUBPROTOCOL), "{answer}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// One server frame's payload, skipping nothing.
+fn server_frame(stream: &mut TcpStream) -> Vec<u8> {
+    stream.set_read_timeout(Some(WITHIN)).unwrap();
+    let mut head = [0_u8; 2];
+    stream.read_exact(&mut head).unwrap();
+    let length = match head[1] & 0x7F {
+        126 => {
+            let mut bytes = [0_u8; 2];
+            stream.read_exact(&mut bytes).unwrap();
+            usize::from(u16::from_be_bytes(bytes))
+        }
+        short => usize::from(short),
+    };
+    let mut payload = vec![0_u8; length];
+    stream.read_exact(&mut payload).unwrap();
+    payload
+}
+
+/// The `Set-Cookie` value of the next `SET_COOKIE` record on `stream`.
+fn set_cookie_record(stream: &mut TcpStream) -> String {
+    let mut reader = RecordReader::new();
+    loop {
+        let message = server_frame(stream);
+        for packet in message.as_chunks::<PACKET_BYTES>().0 {
+            if let RecordRead::Record(ChannelRecord::SetCookie(line)) = reader.push(&Packet { bytes: *packet }) {
+                return String::from_utf8(line.to_vec()).unwrap();
+            }
+        }
+    }
+}
+
+/// REQ-1471 item 9: a program sets a cookie on one connection, and the same
+/// viewer's next connection's `connected` carries it, and not the session
+/// cookie: through a real socket, the cookie read back from the `SET_COOKIE`
+/// record as a receiver's jar would.
+#[test]
+fn a_cookie_a_program_sets_reaches_it_on_the_next_connection() {
+    let folder = scratch("cookies");
+    let heard = folder.join("heard");
+    let cookie =
+        r#"{"type":"cookie","connection":1,"name":"theme","value":"dark","path":null,"max_age":null,"same_site":null,"secure":false,"http_only":false}"#;
+    let script = format!("read -r _; read -r _; printf '%s\\n' '{cookie}'; while read -r line; do printf '%s\\n' \"$line\" >> {heard:?}; done");
+    let file = channels(&folder, &script);
+    let state = folder.join("state").display().to_string();
+    let server = serve(&["--channels", &file.display().to_string(), "--state", &state], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: 0, agent: None });
+    let (mut viewer, session) = push(&server.address, None);
+    send_input(&mut viewer, &[hello]);
+    let set = set_cookie_record(&mut viewer);
+    assert!(set.starts_with("theme=dark"), "{set}");
+    let session = session.unwrap();
+    let session = session.split(';').next().unwrap();
+    let (mut again, _) = push(&server.address, Some(&format!("{session}; theme=dark")));
+    send_input(&mut again, &[hello]);
+    let started = Instant::now();
+    let told = loop {
+        let told = std::fs::read_to_string(&heard).unwrap_or_default();
+        if let Some(line) = told.lines().find(|line| line.contains("\"connected\"")) {
+            break line.to_owned();
+        }
+        assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
+        std::thread::sleep(RETRY);
+    };
+    let line = json::parse(told.as_bytes()).unwrap();
+    let cookies = line.get("cookies").unwrap().items().unwrap();
+    assert_eq!(cookies.len(), 1, "{told}");
+    assert_eq!(cookies[0].get("name").and_then(Value::text), Some("theme"), "{told}");
+    assert_eq!(cookies[0].get("value").and_then(Value::text), Some("dark"), "{told}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// The items as one masked binary WebSocket message (RFC 6455 section 5.2),
 /// with a key of zeros, so that the masked payload is the payload.
 fn send_input(stream: &mut TcpStream, items: &[Item<'_>]) {
@@ -365,7 +486,9 @@ fn page_parameters_reach_the_program_in_selected() {
     let parameters = format!("a={}", "x".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - 2));
     let select = |page, parameters| Item::Event(Event::Select(Select::new(page, 0x3F7F).unwrap(), parameters));
     let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None });
-    send_input(&mut viewer, &[hello, select(0x302, &parameters)]);
+    // The first selection goes in `connected` (TODO-1731 item 1).
+    send_input(&mut viewer, &[hello, select(0x301, "")]);
+    send_input(&mut viewer, &[select(0x302, &parameters)]);
     send_input(&mut viewer, &[select(0x303, "")]);
     let started = Instant::now();
     let told = loop {

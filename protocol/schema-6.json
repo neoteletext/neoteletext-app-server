@@ -971,7 +971,8 @@
         "cookie",
         "author_log",
         "log",
-        "packets"
+        "packets",
+        "denied"
       ],
       "type": "string"
     },
@@ -1288,6 +1289,13 @@
               "maxItems": 8,
               "type": "array"
             },
+            "request": {
+              "description": "`connected`'s number. A reply to a selection already replaced still\ngives the index, and its sub-page is dropped.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
             "selected": {
               "anyOf": [
                 {
@@ -1307,6 +1315,7 @@
           "required": [
             "type",
             "connection",
+            "request",
             "magazines"
           ],
           "type": "object"
@@ -1322,6 +1331,16 @@
             "page": {
               "$ref": "#/$defs/Page",
               "description": "The sub-page."
+            },
+            "request": {
+              "description": "The selection this answers, naming one connection; none for a change\nto what connections already show, which waits for no answer.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "type": {
               "const": "page",
@@ -1346,6 +1365,16 @@
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
+            },
+            "request": {
+              "description": "The selection this answers, naming one connection; none for a change\nto the list.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "subpages": {
               "description": "The sub-pages in the page's order, each sub-code at most once.",
@@ -1437,6 +1466,24 @@
               "default": null,
               "description": "The page of this channel."
             },
+            "query": {
+              "default": null,
+              "description": "The query the page keeps, without its `?`, or none: a redirect to a\npage is a new selection, and has only what it is given.",
+              "maxLength": 8000,
+              "minLength": 1,
+              "pattern": "^[!-\"$-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "request": {
+              "description": "The selection it moves. A redirect for a selection already replaced\nis dropped: the viewer's own choice overrides it (`INPUT.md` section\n7.11).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
             "sub": {
               "anyOf": [
                 {
@@ -1456,7 +1503,8 @@
           },
           "required": [
             "type",
-            "connection"
+            "connection",
+            "request"
           ],
           "type": "object"
         },
@@ -2134,6 +2182,50 @@
             "packets"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A selection the program will not answer with a page.",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "request": {
+              "description": "The selection it ends.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "status": {
+              "description": "A real HTTP status number: 403, 404, 429 or 503.",
+              "enum": [
+                403,
+                404,
+                429,
+                503
+              ],
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "denied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "request",
+            "status"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2254,6 +2346,11 @@
           "const": "invalid_packet",
           "description": "A raw packet the stream may not carry (REQ-1462).",
           "type": "string"
+        },
+        {
+          "const": "one_connection",
+          "description": "A selection's number given with other than one connection: a number\nbelongs to one connection.",
+          "type": "string"
         }
       ]
     },
@@ -2303,7 +2400,7 @@
               "type": "integer"
             },
             "protocol": {
-              "const": 5,
+              "const": 6,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2339,7 +2436,7 @@
               "type": "integer"
             },
             "cookies": {
-              "description": "The cookies the program set on earlier connections.",
+              "description": "The cookies the connection opened with, within [`MOST_COOKIES`],\nwithout the server's own, whose names begin `_`.",
               "items": {
                 "$ref": "#/$defs/CookiePair"
               },
@@ -2362,6 +2459,13 @@
                 "string",
                 "null"
               ]
+            },
+            "request": {
+              "description": "The number of this selection: `reply` carries it back.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
             },
             "selection": {
               "anyOf": [
@@ -2390,6 +2494,7 @@
             "type",
             "connection",
             "session",
+            "request",
             "cookies"
           ],
           "type": "object"
@@ -2423,6 +2528,13 @@
                 "null"
               ]
             },
+            "request": {
+              "description": "The number of this selection: the answer carries it back.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
             "sub": {
               "$ref": "#/$defs/SubCode",
               "description": "The sub-code, or 3F7F for the page and none of its sub-pages."
@@ -2435,6 +2547,7 @@
           "required": [
             "type",
             "connection",
+            "request",
             "path",
             "page",
             "sub"
@@ -2766,5 +2879,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 5"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 6"
 }

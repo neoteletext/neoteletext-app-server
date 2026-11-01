@@ -6,7 +6,7 @@ use super::{accepted, bounds, magazines, refused, subpage, text_field, with, wit
 use crate::protocol::Rule;
 
 fn reply() -> Value {
-    json!({"type": "reply", "connection": 1, "magazines": magazines(), "selected": subpage()})
+    json!({"type": "reply", "connection": 1, "request": 1, "magazines": magazines(), "selected": subpage()})
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn a_magazine_holds_the_standards_pages() {
         let numbers = (0..=0xFF_u16).map(|page| magazine << 8 | page).filter(|&number| !crate::protocol::PageNumber(number).is_reserved());
         Value::Array(numbers.take(count).map(|number| json!({"page": alloc::format!("{number:03X}"), "title": "", "section": null, "subpages": 1})).collect())
     };
-    let one = |magazine: u16, count: usize| json!({"type": "reply", "connection": 1, "magazines": [{"magazine": magazine, "name": "", "pages": pages(magazine, count)}], "selected": null});
+    let one = |magazine: u16, count: usize| json!({"type": "reply", "connection": 1, "request": 1, "magazines": [{"magazine": magazine, "name": "", "pages": pages(magazine, count)}], "selected": null});
     accepted(&one(2, 253));
     accepted(&one(1, 251));
 }

@@ -93,7 +93,9 @@ pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>
 /// 7.11). The protocol's check left one of its two forms.
 pub(crate) fn redirect(redirect: &Redirect, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let record = match (redirect.page, redirect.sub, redirect.address.as_deref()) {
-        (Some(page), Some(sub), None) => RedirectRecord::Page { page: address(page.0), subcode: EngineSubCode::new(sub.0) },
+        (Some(page), Some(sub), None) => {
+            RedirectRecord::Page { page: address(page.0), subcode: EngineSubCode::new(sub.0), parameters: redirect.query.as_deref() }
+        }
         (None, None, Some(address)) => RedirectRecord::Address(address),
         _ => return Err(String::from("a redirect names a page or an address")),
     };
