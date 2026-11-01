@@ -605,17 +605,16 @@ fn a_program_may_end_a_selection_with_a_status() {
 }
 
 /// REQ-1481, DEC-1759 lesson 12: a selection with no program running ends at
-/// the deadline, and one the program went away from keeps its own.
+/// once, and one the program went away from keeps its deadline.
 #[test]
-fn a_selection_ends_at_the_deadline_with_no_program_too() {
+fn a_selection_has_an_ending_with_no_program_too() {
     let config =
         ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut none = Channel::new(config);
     none.opened(CONNECTION, 1, Vec::new(), 0);
     none.received(CONNECTION, &message(&[select(0x302, ANY)]), 10);
-    assert_eq!(sends(&none.take_effects()), 0);
-    assert_eq!(none.next_wake(), Some(10 + PROGRAM_REPLY_LIMIT_MS));
-    none.deadline(10 + PROGRAM_REPLY_LIMIT_MS);
+    assert_eq!(none.next_wake(), Some(10), "at once");
+    none.deadline(10);
     assert_eq!(sends(&none.take_effects()), 1, "DENIED 503");
     let mut gone = selected();
     gone.program_ended();

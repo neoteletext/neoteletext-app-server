@@ -433,11 +433,18 @@ impl Channel {
     /// `connected` is held no longer: the receiver selected, cannot select,
     /// or did not in time. The selection, if any, then runs to its deadline.
     fn end_hold(&mut self, connection: ConnectionId, now: u64) {
+        let due = self.answer_due(now);
         let Some(state) = self.connections.get_mut(&connection) else { return };
         if state.first_selection_due.take().is_some() {
-            state.answer_due.get_or_insert(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
+            state.answer_due.get_or_insert(due);
             self.announce(connection, now);
         }
+    }
+
+    /// When a selection made `now` must have ended: at the limit, or at once
+    /// when no program is running, which nothing could answer (REQ-1481).
+    const fn answer_due(&self, now: u64) -> u64 {
+        if self.program { now.saturating_add(PROGRAM_REPLY_LIMIT_MS) } else { now }
     }
 
     /// Tells the program of `connection` with `connected`, awaiting its
@@ -735,11 +742,12 @@ impl Channel {
             return;
         }
         self.release_held(connection);
+        let due = self.answer_due(now);
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        state.answer_due = Some(due);
         let before = state.selection.replace(selection);
         state.parameters.clone_from(&parameters);
         state.shown = None;
-        state.answer_due = Some(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         let announced = state.announced;
         if announced {
             state.request = state.request.saturating_add(1);
