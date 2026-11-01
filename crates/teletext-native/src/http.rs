@@ -1,5 +1,5 @@
 //! The HTTP side on the viewers' address (DEC-1467, REQ-1693 item 7): each
-//! channel's small page, the redirect to it, its generated `channel.json`
+//! channel's small page, the redirect to it, its generated `channel.ttx`
 //! and its push WebSocket's upgrade (RFC 6455 section 4.2.2), after which
 //! the connection is served on the raw socket.
 

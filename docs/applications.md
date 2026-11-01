@@ -125,7 +125,7 @@ The server counts, and never records who a viewer is: no address, no text typed.
   - `uptime_s`;
   - `connections`, `connections_peak` and `connections_total`;
   - `messages_sent` and `bytes_sent` (WebSocket);
-  - `requests` (HTTP: `channel.json` and the WebSocket upgrade);
+  - `requests` (HTTP: `channel.ttx` and the WebSocket upgrade);
   - `restarts` (of programs);
   - `memory_kb` (resident, where the system says; -1 elsewhere);
   - `channels`, and `viewers` by channel folder.

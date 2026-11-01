@@ -435,7 +435,7 @@ fn a_page_redirect_leaves_parameters_behind() {
     assert_eq!(selections(&channel.take_effects()), [(json!("303"), json!(null))]);
 }
 
-/// REQ-1693 item 2: the push address is fixed, so `channel.json` never names one.
+/// REQ-1693 item 2: the push address is fixed, so `channel.ttx` never names one.
 #[test]
 fn the_descriptor_names_no_push_address() {
     let descriptor: Value = serde_json::from_slice(&channel().descriptor()).unwrap();

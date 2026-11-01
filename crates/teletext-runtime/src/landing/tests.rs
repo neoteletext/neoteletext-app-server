@@ -44,7 +44,8 @@ fn every_route_answers_as_the_conformance_table_says() {
 #[test]
 fn the_page_offers_the_channel_and_the_browser_and_goes_nowhere() {
     let page = page("Home", "https://app.neottx.com/home/");
-    assert!(page.contains(r#"<a id="open" href="neoteletext://https://app.neottx.com/home/">Open in NeoTeletext</a>"#));
+    assert!(page.contains(&format!(r#"<a id="open" href="{LINK_SCHEME}https://app.neottx.com/home/">Open in NeoTeletext</a>"#)));
+    assert!(!page.contains("neoteletext://"), "DEC-1726: the old scheme is gone: {page}");
     assert!(page.contains(r#"<a href="https://www.neoteletext.com/">Get NeoTeletext</a>"#));
     assert!(page.contains("<title>Home</title>") && page.contains("<h1>Home</h1>"));
     // DEC-1669 item 3: no timer, no automatic launch, no redirect.
@@ -58,7 +59,7 @@ fn the_page_offers_the_channel_and_the_browser_and_goes_nowhere() {
 fn a_name_and_an_address_cannot_become_markup() {
     let page = page(r#"<script>"'&"#, r#"https://a.example/"><b>/"#);
     assert!(page.contains("<h1>&lt;script&gt;&quot;&#39;&amp;</h1>"));
-    assert!(page.contains("neoteletext://https://a.example/&quot;&gt;&lt;b&gt;/"));
+    assert!(page.contains(&format!("{LINK_SCHEME}https://a.example/&quot;&gt;&lt;b&gt;/")));
     assert!(!page.contains("<b>"));
 }
 
@@ -67,7 +68,7 @@ fn a_name_and_an_address_cannot_become_markup() {
 #[test]
 fn the_page_runs_nothing_and_its_link_names_the_page_asked_for() {
     let page = page("Home", &format!("https://a.example/home/{}", tail("/home/302/0002", Some("a=1"))));
-    assert!(page.contains(r#"href="neoteletext://https://a.example/home/302/0002?a=1""#), "{page}");
+    assert!(page.contains(&format!(r#"href="{LINK_SCHEME}https://a.example/home/302/0002?a=1""#)), "{page}");
     assert!(!page.contains("<script"), "{page}");
     assert!(!CONTENT_SECURITY_POLICY.contains("script-src"));
 }

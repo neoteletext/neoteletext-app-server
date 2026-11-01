@@ -79,7 +79,7 @@ pub enum Outbound {
 pub struct Hub {
     /// The channel's folder.
     pub folder: String,
-    /// Its `channel.json`, which does not change.
+    /// Its `channel.ttx`, which does not change.
     pub descriptor: Arc<[u8]>,
     /// The channel's name and address, for the small page a web browser
     /// shows at each address.

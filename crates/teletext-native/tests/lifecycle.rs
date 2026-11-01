@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use neoteletext_core::consts::LINK_SCHEME;
 use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::event::{Event, Item, Select, write as write_item};
+use neoteletext_web::channel::SETTINGS_FILE;
 use teletext_runtime::json::{self, Value};
 
 /// How long the server and its program have to start, or to stop.
@@ -54,6 +56,11 @@ impl Server {
             std::thread::sleep(RETRY);
         }
     }
+}
+
+/// The path of the entry file of the channel in `folder`.
+fn settings(folder: &str) -> String {
+    format!("/{folder}/{SETTINGS_FILE}")
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -202,7 +209,7 @@ fn a_restart_closes_viewers_as_a_restart() {
     let state_argument = state.display().to_string();
     let first_channels = channels(&folder, &publishing("Closed as a restart"));
     let mut first = serve(&["--channels", &first_channels.display().to_string(), "--state", &state_argument], &[], Stdio::null());
-    until_status(&first.address, "/ch/channel.json", 200);
+    until_status(&first.address, &settings("ch"), 200);
     let (mut viewer, _) = push(&first.address, None);
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), 1012, "service restart");
@@ -232,7 +239,7 @@ fn page_parameters_reach_the_program_in_selected() {
     let script = format!(r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard:?}; done"#);
     let file = channels(&folder, &script);
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/ch/channel.json", 200);
+    until_status(&server.address, &settings("ch"), 200);
     let (mut viewer, _) = push(&server.address, None);
     let parameters = format!("a={}", "x".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - 2));
     let select = |page, parameters| Item::Event(Event::Select(Select::new(page, 0x3F7F).unwrap(), parameters));
@@ -260,7 +267,7 @@ fn a_channels_address_answers_as_the_conformance_table_says() {
     let folder = scratch("map");
     let file = channel_in(&folder, "home", &publishing("Hello"));
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/home/channel.json", 200);
+    until_status(&server.address, &settings("home"), 200);
     let mut rows = 0;
     for line in neoteletext_web::map::CONFORMANCE.lines().filter(|line| line.starts_with("answer\t")) {
         let columns: Vec<&str> = line.split('\t').collect();
@@ -273,21 +280,36 @@ fn a_channels_address_answers_as_the_conformance_table_says() {
     assert!(rows >= 18, "{rows} rows");
 }
 
+/// DEC-1726: the entry file is JSON whatever its extension says, so the server
+/// says so, and a receiver reads it the same under any type. The deploy
+/// script names the file literally, so it must agree with the constant.
+#[test]
+fn the_entry_file_is_served_as_json_and_the_old_name_is_not_found() {
+    let folder = scratch("entry");
+    let file = channel_in(&folder, "home", &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("home"), 200);
+    let (head, _) = fetched(&server.address, &settings("home"));
+    assert_eq!(header(&head, "content-type"), Some("application/json"), "{head}");
+    assert_eq!(get(&server.address, "/home/channel.json").map(|(status, _)| status), Some(404));
+    assert!(include_str!("../../../deploy/ionos/deploy.sh").contains(&format!("/$c/{SETTINGS_FILE}")));
+}
+
 /// DEC-1669: the small page names the channel, offers the browser, and may
-/// run only its own script; REQ-1693 item 2: `channel.json` names no address.
+/// run only its own script; REQ-1693 item 2: `channel.ttx` names no address.
 #[test]
 fn a_web_browser_is_offered_the_channel() {
     let folder = scratch("page");
     let file = channel_in(&folder, "home", &publishing("Hello"));
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/home/channel.json", 200);
+    until_status(&server.address, &settings("home"), 200);
     let (head, body) = fetched(&server.address, "/home/");
     let page = String::from_utf8(body).unwrap();
-    assert!(page.contains(&format!(r#"href="neoteletext://http://{}/home/""#, server.address)), "{page}");
+    assert!(page.contains(&format!(r#"href="{LINK_SCHEME}http://{}/home/""#, server.address)), "{page}");
     assert!(header(&head, "content-type").is_some_and(|kind| kind.starts_with("text/html")), "{head}");
     assert!(header(&head, "content-security-policy").is_some_and(|policy| policy.starts_with("default-src 'none'")), "{head}");
     assert_eq!(header(&head, "strict-transport-security"), None);
-    let (_, descriptor) = fetched(&server.address, "/home/channel.json");
+    let (_, descriptor) = fetched(&server.address, &settings("home"));
     let descriptor = String::from_utf8(descriptor).unwrap();
     assert!(!descriptor.contains("address"), "{descriptor}");
 }
@@ -298,7 +320,7 @@ fn only_a_read_reaches_the_page() {
     let folder = scratch("post");
     let file = channel_in(&folder, "home", &publishing("Hello"));
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/home/channel.json", 200);
+    until_status(&server.address, &settings("home"), 200);
     let mut stream = TcpStream::connect(&server.address).unwrap();
     write!(stream, "POST /home/ HTTP/1.1\r\nHost: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", server.address).unwrap();
     let mut response = String::new();
@@ -313,7 +335,7 @@ fn a_long_request_target_is_answered() {
     let folder = scratch("target");
     let file = channels(&folder, &publishing("Hello"));
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/ch/channel.json", 200);
+    until_status(&server.address, &settings("ch"), 200);
     let path = |length: usize| format!("/ch/{}", "a".repeat(length - "/ch/".len()));
     assert_eq!(get(&server.address, &path(8_000)).map(|(status, _)| status), Some(404), "no such file, but answered");
     assert_eq!(get(&server.address, &path(65_000)).map(|(status, _)| status), Some(404));
@@ -328,7 +350,7 @@ fn a_session_continues_with_its_cookie() {
     let folder = scratch("cookie");
     let file = channels(&folder, &publishing("Hello"));
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, "/ch/channel.json", 200);
+    until_status(&server.address, &settings("ch"), 200);
     let (first, set_cookie) = push(&server.address, None);
     let set_cookie = set_cookie.expect("a new session is given a cookie");
     assert!(set_cookie.contains("; Path=/ch/; Max-Age=2592000; HttpOnly; SameSite=Strict"), "{set_cookie}");
@@ -361,7 +383,7 @@ fn probes_and_metrics_are_on_the_administration_listener() {
     let admin = format!("127.0.0.1:{}", free_port());
     let server = serve(&["--channels", &file.display().to_string(), "--admin-listen", &admin], &[], Stdio::null());
     assert_eq!(until_status(&admin, "/healthz", 200), b"ok\n");
-    assert_eq!(get(&server.address, "/ch/channel.json").map(|(status, _)| status), Some(200));
+    assert_eq!(get(&server.address, &settings("ch")).map(|(status, _)| status), Some(200));
     assert_eq!(until_status(&admin, "/readyz", 200), b"ready\n");
     let metrics = String::from_utf8(until_status(&admin, "/metrics", 200)).unwrap();
     assert!(metrics.contains("# TYPE teletext_connections gauge\n"), "{metrics}");

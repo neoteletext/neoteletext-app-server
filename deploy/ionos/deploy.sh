@@ -205,4 +205,4 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
 say "inside the container"
 ssh "$target" 'sleep 3; systemctl is-active neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in home hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.json %{http_code}\n" http://127.0.0.1:8090/$c/channel.json; done'
+    for c in home hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'

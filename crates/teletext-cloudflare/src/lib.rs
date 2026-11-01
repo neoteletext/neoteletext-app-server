@@ -429,7 +429,7 @@ impl ChannelObject {
         Response::from_websocket(pair.client)
     }
 
-    /// The channel's `channel.json`, generated (DEC-1467 item 1).
+    /// The channel's `channel.ttx`, generated (DEC-1467 item 1).
     fn descriptor(&self) -> Result<Response> {
         let body = self.live.borrow().as_ref().map(|live| live.channel.descriptor()).unwrap_or_default();
         let headers = Headers::new();

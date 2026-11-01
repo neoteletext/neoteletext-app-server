@@ -1,23 +1,24 @@
 //! What a channel's address answers over HTTP, on every host (the channel
 //! URL map's REQ-1693 item 7, DEC-1467 as amended by DEC-1669): the small
 //! page a web browser shows at `<channel>` and at each place in it, the
-//! redirects to one spelling, `channel.json`, the WebSocket, and 404 for anything
+//! redirects to one spelling, `channel.ttx`, the WebSocket, and 404 for anything
 //! else. A page is never served: each one comes over the connection.
 
 use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 
+use neoteletext_core::consts::LINK_SCHEME;
+use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::map::Place;
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
-/// The channel's one file.
-pub const DESCRIPTOR: &str = "channel.json";
+/// The channel's one file. The name is the engine's, so that a server and a
+/// reader cannot disagree on it (DEC-1726 item 5).
+pub const DESCRIPTOR: &str = SETTINGS_FILE;
 /// Where someone without the browser gets it.
 const GET_NEOTELETEXT: &str = "https://www.neoteletext.com/";
-/// What makes a channel's address a link that opens the browser (DEC-1666).
-const LINK_SCHEME: &str = "neoteletext://";
 
 /// The page's `Content-Security-Policy`: it loads and runs nothing. The server
 /// sees the whole address, so the page's link needs no script (DEC-1694).
@@ -32,7 +33,7 @@ pub enum Route {
     ToFolder,
     /// A place with a final `/`: a redirect to its one spelling.
     ToPlace,
-    /// `<channel>channel.json`.
+    /// `<channel>channel.ttx`.
     Descriptor,
     /// `<channel>push`.
     Push,

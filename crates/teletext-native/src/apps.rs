@@ -71,7 +71,7 @@ pub enum Program {
 pub struct ChannelSpec {
     /// Its folder in the server's address space.
     pub folder: String,
-    /// Its name, in `channel.json`.
+    /// Its name, in `channel.ttx`.
     pub name: String,
     /// Its program.
     pub program: Program,

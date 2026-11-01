@@ -62,7 +62,7 @@ const STALE_INPUT_REPORT_MS: u64 = STALE_INPUT_REPORT_SECONDS * 1_000;
 /// three channels' programs on the live server and sets it from that.
 pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
 
-/// A channel's description, for `channel.json`.
+/// A channel's description, for `channel.ttx`.
 #[derive(Clone, Debug)]
 pub struct ChannelConfig {
     /// Its name.
@@ -286,7 +286,7 @@ impl Channel {
         &self.config
     }
 
-    /// The channel's `channel.json`, generated (DEC-1467 item 1): its name,
+    /// The channel's `channel.ttx`, generated (DEC-1467 item 1): its name,
     /// its initial page and its push WebSocket, which takes input, always
     /// at `<channel>push` (REQ-1693 item 2). A receiver reads it first to
     /// know the channel is live (the engine's REQ-WEB-018), and then asks
