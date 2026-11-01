@@ -74,8 +74,19 @@ check_engine_pin() {
     fi
 }
 
+# DEC-1759 lesson 19: a receiver is known by the capabilities in HELLO alone.
+# Its `User-Agent` and HELLO's agent text are never read, so nothing can
+# branch on a product's name.
+check_no_agent_text() {
+    step "no server code reads a receiver's agent text"
+    if git grep -nEi 'user[-_]agent|hello \{[^}]*agent' -- 'crates/*.rs' ':!crates/*/tests/*' ':!crates/*/tests.rs' ':!crates/*/bin/*'; then
+        fail "server code reads a receiver's agent text (DEC-1759 lesson 19)"
+    fi
+}
+
 check_workspace() {
     check_engine_pin
+    check_no_agent_text
     step "lockfiles up to date"
     cargo metadata --quiet --locked --format-version 1 >/dev/null
     if [[ -f fuzz/Cargo.toml ]]; then
