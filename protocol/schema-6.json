@@ -244,10 +244,10 @@
           "type": "integer"
         },
         "row": {
-          "description": "Its row, 0 to 24.",
+          "description": "Its row, 1 to 23: row 0 is the header, and row 24 the Fastext row.",
           "format": "uint8",
-          "maximum": 24,
-          "minimum": 0,
+          "maximum": 23,
+          "minimum": 1,
           "type": "integer"
         }
       },

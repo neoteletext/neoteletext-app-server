@@ -380,8 +380,9 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
         return Err(fault(&path.field("character_set").field("national_option"), Rule::OutOfRange, "0 to 7".to_string()));
     }
     if let Some(cursor) = subpage.cursor {
-        if usize::from(cursor.row) >= super::ROWS {
-            return Err(fault(&path.field("cursor").field("row"), Rule::OutOfRange, format!("{}: rows 0 to 24", cursor.row)));
+        if !(super::FIRST_CURSOR_ROW..=super::LAST_CURSOR_ROW).contains(&cursor.row) {
+            let rows = format!("{}: rows {} to {}", cursor.row, super::FIRST_CURSOR_ROW, super::LAST_CURSOR_ROW);
+            return Err(fault(&path.field("cursor").field("row"), Rule::OutOfRange, rows));
         }
         if usize::from(cursor.column) >= COLUMNS {
             return Err(fault(&path.field("cursor").field("column"), Rule::OutOfRange, format!("{}: columns 0 to 39", cursor.column)));

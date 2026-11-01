@@ -49,7 +49,8 @@ fn a_pages_numbers_keep_their_bounds() {
     bounds(&page, "/page/packets/1/nibbles/38", "page.packets[1].nibbles[38]", 15, Rule::OutOfRange);
     bounds(&page, "/page/character_set/national_option", "page.character_set.national_option", 7, Rule::OutOfRange);
     bounds(&page, "/page/character_set/region", "page.character_set.region", 15, Rule::OutOfRange);
-    bounds(&page, "/page/cursor/row", "page.cursor.row", 24, Rule::OutOfRange);
+    bounds(&page, "/page/cursor/row", "page.cursor.row", 23, Rule::OutOfRange);
+    refused(&with(&page, "/page/cursor/row", json!(0)), "page.cursor.row", Rule::OutOfRange);
     bounds(&page, "/page/cursor/column", "page.cursor.column", 39, Rule::OutOfRange);
     bounds(&page, "/page/link_extension/texts/0/row", "page.link_extension.texts[0].row", 23, Rule::OutOfRange);
     refused(&with(&page, "/page/link_extension/texts/0/row", json!(0)), "page.link_extension.texts[0].row", Rule::OutOfRange);

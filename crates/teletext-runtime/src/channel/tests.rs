@@ -383,6 +383,38 @@ fn an_acknowledgement_goes_alone_when_nothing_is_published() {
     assert_eq!(channel.next_wake(), None);
 }
 
+/// REQ-1346: a cursor `INPUT.md` section 7.1 forbids is refused when the
+/// program sends it, and input is still acknowledged.
+#[test]
+fn a_cursor_off_its_rows_is_refused_and_input_is_still_acknowledged() {
+    for row in [0, 24] {
+        let mut channel = selected();
+        let page = json!({"type": "page", "connections": [CONNECTION], "request": 2, "page": subpage()});
+        channel.from_program(&line(&with(&page, "/page/cursor/row", json!(row))), 1);
+        let effects = channel.take_effects();
+        assert_eq!(sends(&effects), 0, "row {row}");
+        assert_eq!((&told(&effects)[0]["type"], &told(&effects)[0]["rule"]), (&json!("refused"), &json!("out_of_range")), "row {row}");
+        channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 2);
+        let _ = channel.take_effects();
+        channel.deadline(2 + ACKNOWLEDGEMENT_WAIT_MS);
+        assert_eq!(record_types(&sent_to(&channel.take_effects(), CONNECTION)), [TYPE_CURSOR], "row {row}");
+    }
+}
+
+/// REQ-1346: whatever a cursor line says, the acknowledgement has its record:
+/// a place the engine would not encode is no cursor, and carries no flags.
+#[test]
+fn an_acknowledgement_never_depends_on_the_cursor_it_goes_with() {
+    use neoteletext_formats::page::CursorLine;
+    use neoteletext_input::cursor::{BLOCK, NO_CURSOR};
+    for row in [0, 24, NO_CURSOR] {
+        let line = CursorLine { row, column: 3, flags: BLOCK, acked: 0, line: 0 };
+        let cursor = super::cursor_of(0x100, 7, Some(&line));
+        assert_eq!((cursor.place, cursor.flags, cursor.acked), (None, 0, 7), "row {row}");
+        assert!(cursor.packet(super::SERVICE, 0).is_some(), "row {row}");
+    }
+}
+
 /// REQ-1471: a receiver with no SELECT is shown the program's answer to
 /// `connected`, and raw text is for that page.
 #[test]

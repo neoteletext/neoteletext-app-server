@@ -24,7 +24,7 @@ use neoteletext_formats::page::CursorLine;
 use neoteletext_input::MAX_PER_SECOND;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
-use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
+use neoteletext_input::cursor::{BLOCK, Cursor, Place};
 use neoteletext_input::event::{Action, Event, Item, Stamp, read_message, units};
 use neoteletext_input::held::{Held, Released};
 use neoteletext_input::session::REMEMBERED;
@@ -1202,12 +1202,15 @@ fn standard() -> Standard {
 }
 
 /// The cursor record for `page`: the page's cursor if it has one, else
-/// none, with the input count.
+/// none, with the input count. A place the record cannot hold is no cursor,
+/// so that the count always has its record (REQ-1346).
 fn cursor_of(page: u16, acked: u16, line: Option<&CursorLine>) -> Cursor {
-    let place = line.filter(|line| line.row != NO_CURSOR).map(|line| Place { row: line.row, column: line.column });
+    let on_rows = |line: &&CursorLine| (protocol::FIRST_CURSOR_ROW..=protocol::LAST_CURSOR_ROW).contains(&line.row);
+    let shown = line.filter(on_rows);
+    let place = shown.map(|line| Place { row: line.row, column: line.column });
     // Only BLOCK is a flag now: echo and masked echo are withdrawn (the
-    // engine's E.134).
-    Cursor { page, acked, place, flags: line.map_or(0, |line| line.flags & BLOCK) }
+    // engine's E.134). No cursor takes no flags (INPUT.md section 7.1).
+    Cursor { page, acked, place, flags: shown.map_or(0, |line| line.flags & BLOCK) }
 }
 
 #[cfg(test)]

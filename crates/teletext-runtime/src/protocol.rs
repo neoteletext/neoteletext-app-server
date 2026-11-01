@@ -1280,12 +1280,18 @@ pub struct M29Line {
     pub triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
 }
 
+/// The first row a cursor may be on (INPUT.md section 7.1): the first after
+/// the header.
+pub(crate) const FIRST_CURSOR_ROW: u8 = neoteletext_core::consts::PACKET_FIRST_ROW;
+/// The last row a cursor may be on.
+pub(crate) const LAST_CURSOR_ROW: u8 = neoteletext_input::cursor::LAST_ROW;
+
 /// The input cursor (INPUT.md section 7.1).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Cursor {
-    /// Its row, 0 to 24.
-    #[schemars(range(max = LAST_ROW))]
+    /// Its row, 1 to 23: row 0 is the header, and row 24 the Fastext row.
+    #[schemars(range(min = FIRST_CURSOR_ROW, max = LAST_CURSOR_ROW))]
     pub row: u8,
     /// Its column, 0 to 39.
     #[schemars(range(max = LAST_COLUMN))]
