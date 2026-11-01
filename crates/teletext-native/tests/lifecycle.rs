@@ -451,15 +451,7 @@ fn a_cookie_a_program_sets_reaches_it_on_the_next_connection() {
     let session = session.split(';').next().unwrap();
     let (mut again, _) = push(&server.address, Some(&format!("{session}; theme=dark")));
     send_input(&mut again, &[hello]);
-    let started = Instant::now();
-    let told = loop {
-        let told = std::fs::read_to_string(&heard).unwrap_or_default();
-        if let Some(line) = told.lines().find(|line| line.contains("\"connected\"")) {
-            break line.to_owned();
-        }
-        assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
-        std::thread::sleep(RETRY);
-    };
+    let told = connected_line(&heard);
     let line = json::parse(told.as_bytes()).unwrap();
     let cookies = line.get("cookies").unwrap().items().unwrap();
     assert_eq!(cookies.len(), 1, "{told}");
@@ -482,6 +474,25 @@ fn send_input(stream: &mut TcpStream, items: &[Item<'_>]) {
     stream.write_all(&payload).unwrap();
 }
 
+/// What the program has written to `heard`, once `wanted` holds of it.
+fn until_heard(heard: &Path, wanted: impl Fn(&str) -> bool) -> String {
+    let started = Instant::now();
+    loop {
+        let told = std::fs::read_to_string(heard).unwrap_or_default();
+        if wanted(&told) {
+            return told;
+        }
+        assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
+        std::thread::sleep(RETRY);
+    }
+}
+
+/// The first `connected` line the program has written to `heard`.
+fn connected_line(heard: &Path) -> String {
+    let told = until_heard(heard, |told| told.contains("\"connected\""));
+    told.lines().find(|line| line.contains("\"connected\"")).unwrap().to_owned()
+}
+
 /// REQ-1693 item 6: page parameters of the longest length reach the program
 /// through a real socket, and the next selection leaves them behind.
 #[test]
@@ -496,19 +507,16 @@ fn page_parameters_reach_the_program_in_selected() {
     let parameters = format!("a={}", "x".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - 2));
     let select = |page, parameters| Item::Event(Event::Select(Select::new(page, 0x3F7F).unwrap(), parameters));
     let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None });
-    // The first selection goes in `connected` (TODO-1731 item 1).
+    // The first selection goes in `connected` (TODO-1731 item 1). The program
+    // may not have started yet, and selections made before it hears of the
+    // connection are told as one `connected` with the latest (REQ-1471), so
+    // the next ones wait for it.
     send_input(&mut viewer, &[hello, select(0x301, "")]);
+    let connected = json::parse(connected_line(&heard).as_bytes()).unwrap();
+    assert_eq!(connected.get("selection").and_then(|selection| selection.get("page")).and_then(Value::text), Some("301"));
     send_input(&mut viewer, &[select(0x302, &parameters)]);
     send_input(&mut viewer, &[select(0x303, "")]);
-    let started = Instant::now();
-    let told = loop {
-        let told = std::fs::read_to_string(&heard).unwrap_or_default();
-        if told.matches("\"selected\"").count() == 2 {
-            break told;
-        }
-        assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
-        std::thread::sleep(RETRY);
-    };
+    let told = until_heard(&heard, |told| told.matches("\"selected\"").count() == 2);
     let selected: Vec<Value> =
         told.lines().map(|line| json::parse(line.as_bytes()).unwrap()).filter(|line| line.get("type").and_then(Value::text) == Some("selected")).collect();
     assert_eq!(selected[0].get("query").and_then(Value::text), Some(parameters.as_str()));
