@@ -491,10 +491,11 @@ impl Channel {
     }
 
     /// The program's `description`, kept and given to those who wait. One
-    /// nobody asked for is refused, so a program cannot fill the cache.
+    /// nobody asked for is refused, so a program cannot fill the cache; one
+    /// asked for and late fills the entry that stood for it, for those after.
     fn described(&mut self, description: Description, now: u64) -> Result<(), Refusal> {
         let page = description.page.0;
-        if !self.descriptions.awaited(page) {
+        if !self.descriptions.awaited(page, now) {
             return Err(Refusal {
                 message: Some(protocol::MessageType::Description),
                 path: String::new(),

@@ -274,7 +274,7 @@ fn the_cache_and_the_waiters_are_bounded() {
 
     let mut cache = super::Descriptions::default();
     for page in 0..=u16::try_from(MOST_CACHED_DESCRIPTIONS).unwrap() {
-        cache.keep(page, None, u64::from(page));
+        cache.keep(page, None, false, u64::from(page));
     }
     assert_eq!(cache.cached.len(), MOST_CACHED_DESCRIPTIONS);
     assert!(!cache.cached.contains_key(&0), "the oldest went");
@@ -333,6 +333,41 @@ fn a_description_nobody_asked_for_is_refused() {
     assert_eq!((&told[0]["type"], &told[0]["rule"]), (&json!("refused"), &json!("not_awaited")), "{told:?}");
     channel.describe(1, PAGE, 2);
     assert_eq!(lines(&channel.take_effects()).len(), 1, "nothing was kept");
+}
+
+/// A slow program's answer arrives after the visitor's wait: it fills the
+/// cache, so a public page is not shown as not public for the rest of the
+/// minute, and being one answer to one request it comes once.
+#[test]
+fn a_late_description_fills_the_cache_once() {
+    let mut channel = channel();
+    channel.describe(1, PAGE, 0);
+    channel.deadline(DESCRIPTION_WAIT_MS);
+    assert_eq!(answers(&channel.take_effects()), [(1, None)], "the visitor has waited long enough");
+    channel.from_program(&line(&public_description("t", "x")), DESCRIPTION_WAIT_MS + 1);
+    let effects = channel.take_effects();
+    assert_eq!(lines(&effects), Vec::<Value>::new(), "it is not refused");
+    assert_eq!(answers(&effects), [], "nobody waits for it now");
+    channel.describe(2, PAGE, DESCRIPTION_WAIT_MS + 2);
+    let effects = channel.take_effects();
+    assert_eq!(lines(&effects), Vec::<Value>::new(), "the program is not asked again");
+    assert_eq!(answers(&effects)[0].1.as_ref().map(|page| page.title.as_str()), Some("t"));
+    channel.from_program(&line(&not_public()), DESCRIPTION_WAIT_MS + 3);
+    assert_eq!(lines(&channel.take_effects())[0]["rule"], json!("not_awaited"), "a second answer is one nobody asked for");
+    channel.describe(3, PAGE, DESCRIPTION_WAIT_MS + 4);
+    assert!(answers(&channel.take_effects())[0].1.is_some(), "and changes nothing");
+}
+
+/// A late answer has as long as the entry that stands for it: once that has
+/// gone nothing is owed, and it is refused as any other.
+#[test]
+fn a_description_later_than_the_caches_life_is_refused() {
+    let mut channel = channel();
+    channel.describe(1, PAGE, 0);
+    channel.deadline(DESCRIPTION_WAIT_MS);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&public_description("t", "x")), DESCRIPTION_WAIT_MS + DESCRIPTION_CACHE_MS);
+    assert_eq!(lines(&channel.take_effects())[0]["rule"], json!("not_awaited"));
 }
 
 /// A picture is the page: two pages draw differently.

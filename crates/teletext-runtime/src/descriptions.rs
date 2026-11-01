@@ -72,6 +72,9 @@ struct Cached {
     answer: Answer,
     /// When it goes.
     until: u64,
+    /// It stands for a request the program did not answer in time: the
+    /// program may still answer, once.
+    owed: bool,
 }
 
 /// Those waiting for one page's description.
@@ -146,33 +149,43 @@ impl Descriptions {
         Asked::AskProgram
     }
 
-    /// Whether a description of `page` is awaited.
-    pub(crate) fn awaited(&self, page: u16) -> bool {
-        self.waiting.contains_key(&page)
+    /// Whether a description of `page` is awaited at `now`: by those waiting,
+    /// or, after they gave up, by the cache, so that a slow program's answer
+    /// is not lost and a public page does not stay not public for the entry's
+    /// life. It takes a request to be owed one answer, so this does not let a
+    /// program fill the cache.
+    pub(crate) fn awaited(&self, page: u16, now: u64) -> bool {
+        self.waiting.contains_key(&page) || self.cached.get(&page).is_some_and(|kept| kept.owed && kept.until > now)
     }
 
     /// Keeps `answer` for `page`, and gives those who waited for it.
     pub(crate) fn answered(&mut self, page: u16, answer: &Answer, now: u64) -> Vec<VisitorId> {
         let visitors = self.waiting.remove(&page).map(|waiting| waiting.visitors).unwrap_or_default();
-        self.keep(page, answer.clone(), now);
+        self.keep(page, answer.clone(), false, now);
         visitors
     }
 
-    fn keep(&mut self, page: u16, answer: Answer, now: u64) {
+    fn keep(&mut self, page: u16, answer: Answer, owed: bool, now: u64) {
         self.cached.retain(|_, kept| kept.until > now);
         if self.cached.len() >= MOST_CACHED_DESCRIPTIONS
             && let Some(oldest) = self.cached.iter().min_by_key(|(_, kept)| kept.until).map(|(&page, _)| page)
         {
             self.cached.remove(&oldest);
         }
-        self.cached.insert(page, Cached { answer, until: now.saturating_add(DESCRIPTION_CACHE_MS) });
+        self.cached.insert(page, Cached { answer, until: now.saturating_add(DESCRIPTION_CACHE_MS), owed });
     }
 
     /// The visitors whose page's program did not answer by `now`: its page
-    /// counts as not public, for them and for those after them (REQ-1728 item 2).
+    /// counts as not public, for them and for those after them (REQ-1728 item
+    /// 2), until the program's late answer replaces that ([`Self::awaited`]).
     pub(crate) fn late(&mut self, now: u64) -> Vec<VisitorId> {
         let due: Vec<u16> = self.waiting.iter().filter(|(_, waiting)| waiting.due <= now).map(|(&page, _)| page).collect();
-        due.into_iter().flat_map(|page| self.answered(page, &None, now)).collect()
+        let mut visitors = Vec::new();
+        for page in due {
+            visitors.extend(self.waiting.remove(&page).into_iter().flat_map(|waiting| waiting.visitors));
+            self.keep(page, None, true, now);
+        }
+        visitors
     }
 
     /// The program went: nothing will answer, and what it said goes with it.
