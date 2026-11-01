@@ -294,7 +294,7 @@ impl Channel {
     #[must_use]
     pub fn descriptor(&self) -> Vec<u8> {
         let mut push = Writer::nested();
-        push.text("method", "websocket").boolean("input", true);
+        push.boolean("input", true);
         let mut descriptor = Writer::nested();
         descriptor.text("name", &self.config.name).text("initial_page", &format!("{:03X}", self.config.initial_page)).object("push", push);
         let mut bytes = descriptor.line();

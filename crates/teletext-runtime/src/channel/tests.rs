@@ -439,5 +439,5 @@ fn a_page_redirect_leaves_parameters_behind() {
 #[test]
 fn the_descriptor_names_no_push_address() {
     let descriptor: Value = serde_json::from_slice(&channel().descriptor()).unwrap();
-    assert_eq!(descriptor["push"], json!({"method": "websocket", "input": true}));
+    assert_eq!(descriptor["push"], json!({"input": true}));
 }
