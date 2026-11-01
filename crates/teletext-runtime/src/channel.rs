@@ -21,11 +21,13 @@ use neoteletext_audio::encode::packets;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
+use neoteletext_input::MAX_PER_SECOND;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Action, Event, Item, Stamp, read_message, units};
 use neoteletext_input::held::{Held, Released};
+use neoteletext_input::session::REMEMBERED;
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
 
@@ -56,6 +58,18 @@ const USED: u32 = CURSOR_CAP | SELECT_CAP;
 pub const STALE_INPUT_REPORT_SECONDS: u64 = neoteletext_web::consts::INVALID_PACKET_REPORT_SECONDS;
 /// [`STALE_INPUT_REPORT_SECONDS`] on the host's clock.
 const STALE_INPUT_REPORT_MS: u64 = STALE_INPUT_REPORT_SECONDS * 1_000;
+
+/// How long an input count waits for a page frame to carry it before its
+/// cursor record goes alone (REQ-1334). A record carried saves a packet a key;
+/// one late costs a viewer nothing, since no receiver waits for an
+/// acknowledgement to show anything, and only keeps its input to resume with a
+/// little longer. Provisional, not measured: a page answering a key is sent
+/// well within it, on the programs seen so far.
+pub const ACKNOWLEDGEMENT_WAIT_MS: u64 = 250;
+// A receiver keeps what is not yet acknowledged, and must not run out of room
+// in the wait, at the input rate.
+const _: () =
+    assert!(ACKNOWLEDGEMENT_WAIT_MS * MAX_PER_SECOND as u64 / 1_000 < REMEMBERED as u64, "the wait is longer than a receiver can keep input at the input rate");
 
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
@@ -228,6 +242,9 @@ struct Connection {
     /// How its selection has ended, or when it must (`INPUT.md` section
     /// 5.4, REQ-1481).
     ending: Ending,
+    /// When its input count must go alone, while no frame has carried it
+    /// (REQ-1334).
+    acknowledgement_due: Option<u64>,
     /// The index's sending, numbered for the receiver (`INPUT.md`
     /// section 7.5).
     index_generation: u16,
@@ -253,6 +270,7 @@ impl Connection {
             announced: false,
             replied: false,
             ending: Ending::Answered,
+            acknowledgement_due: None,
             index_generation: 0,
             list_held: None,
         }
@@ -603,7 +621,10 @@ impl Channel {
     /// A binary message from a connection: its input stream (INPUT.md).
     /// A message holds whole items (section 5.1), so it is read alone: an
     /// item cut by its end is a protocol error, and the next message's bytes
-    /// can never be read as the rest of it (DEC-1759 lesson 17).
+    /// can never be read as the rest of it (DEC-1759 lesson 17). Input is
+    /// acknowledged in its answer's frame, and alone only if nothing is
+    /// published in [`ACKNOWLEDGEMENT_WAIT_MS`] from the first input that
+    /// frame would have covered (REQ-1334).
     pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
         let Some(state) = self.connections.get(&connection) else { return };
         let acked = state.acked;
@@ -615,7 +636,7 @@ impl Channel {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         // A message of no input units is never acknowledged (section 7.1).
         if state.acked != acked {
-            self.acknowledge(connection);
+            state.acknowledgement_due.get_or_insert(now.saturating_add(ACKNOWLEDGEMENT_WAIT_MS));
         }
     }
 
@@ -656,6 +677,11 @@ impl Channel {
         for visitor in self.descriptions.late(now) {
             self.effects.push(Effect::Described { visitor, answer: None });
         }
+        let unacknowledged: Vec<ConnectionId> =
+            self.connections.iter().filter(|(_, state)| state.acknowledgement_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
+        for connection in unacknowledged {
+            self.acknowledge(connection);
+        }
     }
 
     /// Tells `connection` its selection ended with `status` (`INPUT.md`
@@ -678,7 +704,7 @@ impl Channel {
     pub fn next_wake(&self) -> Option<u64> {
         let grace = self.config.session_grace_ms;
         let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
-        let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due));
+        let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due));
         dues.chain(expiry).chain(self.descriptions.next_due()).min()
     }
 
@@ -859,9 +885,11 @@ impl Channel {
         self.tell(&ServerMessage::Selected(Selected { connection, request, path, page: selection.page, sub: selection.sub, query: parameters }));
     }
 
-    /// After a message's input: the cursor record says what was acted on.
+    /// The cursor record says what was acted on, alone: nothing was published
+    /// to carry it.
     fn acknowledge(&mut self, connection: ConnectionId) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        state.acknowledgement_due = None;
         if !state.welcomed {
             return;
         }
@@ -1117,6 +1145,7 @@ impl Channel {
                 && let Some(cursor) = state.cursor_packet(number)
             {
                 bytes.extend_from_slice(&cursor);
+                state.acknowledgement_due = None;
             }
             sends.push((connection, bytes));
         }

@@ -13,12 +13,13 @@ use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
 use neoteletext_input::VERSION;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
+use neoteletext_input::cursor::TYPE_CURSOR;
 use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, Select, Stamp, write};
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
-use neoteletext_web::records::TYPE_REDIRECT;
+use neoteletext_web::records::{TYPE_LINKS, TYPE_REDIRECT};
 use serde_json::{Value, json};
 
-use super::{Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS};
+use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS};
 use crate::protocol::tests::{line, subpage, with};
 
 /// The connection and session of a test.
@@ -89,10 +90,12 @@ fn mouse(on: Stamp, action: MouseAction, button: u8) -> Item<'static> {
     Item::Event(Event::Mouse(Mouse { on, action, button, at, device: Device::Mouse }))
 }
 
-/// A channel with the connection welcomed and on page 100, sub-code 0000.
+/// A channel with the connection welcomed and on page 100, sub-code 0000,
+/// its HELLO acknowledged.
 fn selected() -> Channel {
     let mut channel = channel();
     channel.received(CONNECTION, &message(&[hello(), select(0x100, 0)]), 0);
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
     let _ = channel.take_effects();
     channel
 }
@@ -336,7 +339,48 @@ fn a_selection_is_not_acknowledged() {
     channel.received(CONNECTION, &message(&[select(0x200, 0)]), 1);
     assert_eq!(sends(&channel.take_effects()), 0);
     channel.received(CONNECTION, &message(&[key(OTHER, Action::Press, false)]), 2);
-    assert_eq!(sends(&channel.take_effects()), 1, "a key is");
+    let _ = channel.take_effects();
+    channel.deadline(2 + ACKNOWLEDGEMENT_WAIT_MS);
+    assert_eq!(record_types(&sent_to(&channel.take_effects(), CONNECTION)), [TYPE_CURSOR], "a key is");
+}
+
+/// A sub-page that answers `selected()`'s selection and shows a change later.
+fn answered() -> Channel {
+    let mut channel = selected();
+    channel.from_program(&line(&json!({"type": "page", "connections": [CONNECTION], "request": 2, "page": subpage()})), 0);
+    let _ = channel.take_effects();
+    channel
+}
+
+/// REQ-1334: a key the page answers costs one cursor record, in the answer's
+/// frame, and none alone.
+#[test]
+fn an_answer_carries_the_acknowledgement() {
+    let mut channel = answered();
+    channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 1);
+    assert_eq!(sends(&channel.take_effects()), 0, "nothing goes before the answer");
+    assert_eq!(channel.next_wake(), Some(1 + ACKNOWLEDGEMENT_WAIT_MS));
+    let spaces = subpage()["rows"][0].clone();
+    channel.from_program(&line(&with(&json!({"type": "page", "connections": "all", "page": subpage()}), "/page/rows/5", spaces)), 2);
+    let frame = sent_to(&channel.take_effects(), CONNECTION);
+    assert_eq!(record_types(&frame), [TYPE_LINKS, TYPE_CURSOR], "the frame carries it, after its links");
+    assert_eq!(channel.next_wake(), None, "and nothing is left to send alone");
+}
+
+/// REQ-1334: with nothing published the record goes alone, once however many
+/// keys it covers, within the wait of the first of them.
+#[test]
+fn an_acknowledgement_goes_alone_when_nothing_is_published() {
+    let mut channel = answered();
+    channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 1);
+    channel.received(CONNECTION, &message(&[key(ON, Action::Release, false)]), 2);
+    assert_eq!(channel.next_wake(), Some(1 + ACKNOWLEDGEMENT_WAIT_MS), "the first key sets the time");
+    let _ = channel.take_effects();
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
+    assert_eq!(sends(&channel.take_effects()), 0, "not yet");
+    channel.deadline(1 + ACKNOWLEDGEMENT_WAIT_MS);
+    assert_eq!(record_types(&sent_to(&channel.take_effects(), CONNECTION)), [TYPE_CURSOR]);
+    assert_eq!(channel.next_wake(), None);
 }
 
 /// REQ-1471: a receiver with no SELECT is shown the program's answer to
