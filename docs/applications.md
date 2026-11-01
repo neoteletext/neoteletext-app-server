@@ -17,7 +17,7 @@ How a channel's application, a program in any language, talks to the server. It 
 
 ## 2. Server to program
 
-Protocol version 4 (DEC-1482, DEC-1683, DEC-1715). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-4.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
+Protocol version 5 (DEC-1482, DEC-1683, DEC-1715, DEC-1730). Every message in both directions is defined once by the server's Rust types (`crates/teletext-runtime/src/protocol.rs`) and published as a JSON Schema, draft 2020-12, generated from them: `protocol/schema-5.json`, whose `$defs/ServerMessage` is what the server sends and `$defs/ProgramMessage` what a program sends. The schema is the exact contract, with every bound; this section and the next say what each message is for. Every message is an object tagged by `type`; an unknown `type` or field is refused, never skipped.
 
 Common shapes:
 - `connection`: a whole number from 1, naming one open connection: one browser tab, with one selection (DEC-1527); `session`: a whole number, the viewer's session, which outlives connections and is shared by a viewer's tabs (requirement 5.5). Both below 2^53.
