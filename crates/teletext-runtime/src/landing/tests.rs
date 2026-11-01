@@ -3,9 +3,7 @@
 
 use alloc::vec::Vec;
 
-use neoteletext_web::base64;
 use neoteletext_web::map::CONFORMANCE;
-use neoteletext_web::sha256;
 
 use super::*;
 
@@ -16,7 +14,7 @@ const CHANNEL: &str = "home";
 fn status(route: Route) -> &'static str {
     match route {
         Route::Page | Route::Descriptor => "200",
-        Route::ToFolder => "308",
+        Route::ToFolder | Route::ToPlace => "308",
         Route::Push => "426",
         Route::Missing => "404",
     }
@@ -33,7 +31,10 @@ fn every_route_answers_as_the_conformance_table_says() {
         let (folder, route) = route(path);
         let answered = if folder == CHANNEL { status(route) } else { "404" };
         assert_eq!(answered, expected, "{line}");
-        let redirected = (answered == "308").then(|| folder_location(folder, query));
+        let redirected = (answered == "308").then(|| match route {
+            Route::ToPlace => place_location(path, query),
+            _ => folder_location(folder, query),
+        });
         assert_eq!(redirected.as_deref(), Some(location).filter(|location| *location != "-"), "{line}");
         rows += 1;
     }
@@ -61,11 +62,12 @@ fn a_name_and_an_address_cannot_become_markup() {
     assert!(!page.contains("<b>"));
 }
 
+/// DEC-1694: the page runs no script, and its link is built on the server
+/// from the address asked for.
 #[test]
-fn the_policy_names_the_scripts_own_hash() {
-    let digest = sha256::digest(CARRY_FRAGMENT.as_bytes());
-    let mut text = [0_u8; 44];
-    let written = base64::encode(&digest, &mut text).unwrap();
-    let hash = core::str::from_utf8(&text[..written]).unwrap();
-    assert!(CONTENT_SECURITY_POLICY.contains(&format!("'sha256-{hash}'")), "{hash}");
+fn the_page_runs_nothing_and_its_link_names_the_page_asked_for() {
+    let page = page("Home", &format!("https://a.example/home/{}", tail("/home/302/0002", Some("a=1"))));
+    assert!(page.contains(r#"href="neoteletext://https://a.example/home/302/0002?a=1""#), "{page}");
+    assert!(!page.contains("<script"), "{page}");
+    assert!(!CONTENT_SECURITY_POLICY.contains("script-src"));
 }

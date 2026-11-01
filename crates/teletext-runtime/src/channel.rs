@@ -27,6 +27,7 @@ use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, NO_CURSOR, Place};
 use neoteletext_input::event::{Action, Event, Item, MAX_STREAM_ITEM, Stamp, StreamDecoder, units};
 use neoteletext_input::held::{Held, Released};
+use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
 
 use crate::input::{self, Input};
 use crate::json::Writer;
@@ -172,8 +173,6 @@ struct Connection {
     /// What it selected: a page and a sub-code, the sub-code 3F7F until
     /// the program answers with the page's first sub-page (DEC-1526).
     selection: Option<Selection>,
-    /// The query of the address it opened, for its program (REQ-1674).
-    query: Option<String>,
     /// The page parameters of its selection (REQ-1693 item 6).
     parameters: Option<String>,
     /// The sub-page its selection shows, as last sent.
@@ -194,7 +193,7 @@ struct Connection {
 }
 
 impl Connection {
-    fn new(session: SessionId, query: Option<String>) -> Self {
+    fn new(session: SessionId) -> Self {
         Self {
             session,
             decoder: None,
@@ -204,7 +203,6 @@ impl Connection {
             pointer: (0, 0),
             record_id: 0,
             selection: None,
-            query,
             parameters: None,
             shown: None,
             announced: false,
@@ -306,8 +304,20 @@ impl Channel {
 
     /// What a web browser shows at the channel's address (DEC-1669).
     #[must_use]
-    pub fn page(&self) -> Vec<u8> {
-        crate::landing::page(&self.config.name, &self.config.address).into_bytes()
+    pub fn page(&self, tail: &str) -> Vec<u8> {
+        crate::landing::page(&self.config.name, &alloc::format!("{}{tail}", self.config.address)).into_bytes()
+    }
+
+    /// The channel's name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.config.name
+    }
+
+    /// The channel's address, `<channel>`.
+    #[must_use]
+    pub fn address(&self) -> &str {
+        &self.config.address
     }
 
     /// Whether the channel's program is running, so it serves its viewers
@@ -420,8 +430,8 @@ impl Channel {
             session: state.session,
             cookies: Vec::new(),
             selection: state.selection,
-            query: state.query.clone(),
-            parameters: state.parameters.clone(),
+            path: state.selection.map(Selection::path),
+            query: state.parameters.clone(),
         };
         self.tell(&ServerMessage::Connected(message));
     }
@@ -429,7 +439,7 @@ impl Channel {
     /// A connection the host numbered `connection` opened for `session`,
     /// which it continues or starts (requirement 5.5). The host never
     /// reuses a connection's number while the channel runs.
-    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, query: Option<String>, now: u64) {
+    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, now: u64) {
         let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
         if state.waiting_since.take().is_some() {
             self.stats.resumed();
@@ -437,7 +447,7 @@ impl Channel {
             self.stats.joined();
         }
         state.open = state.open.saturating_add(1);
-        self.connections.insert(connection, Connection::new(session, query));
+        self.connections.insert(connection, Connection::new(session));
         self.announce(connection, now);
     }
 
@@ -506,22 +516,35 @@ impl Channel {
             self.stats.expired();
             self.tell(&ServerMessage::Closed(Closed { session }));
         }
-        let mut late: Vec<String> = Vec::new();
+        let mut late: Vec<(ConnectionId, String)> = Vec::new();
         for (connection, state) in &mut self.connections {
             if state.reply_due.is_some_and(|due| due <= now) {
                 state.reply_due = None;
-                late.push(format!("connection {connection}: no reply to connected"));
+                late.push((*connection, format!("connection {connection}: no reply to connected")));
             }
             if state.selection_due.is_some_and(|due| due <= now) {
                 state.selection_due = None;
-                late.push(format!("connection {connection}: no page for selected"));
+                late.push((*connection, format!("connection {connection}: no page for selected")));
             }
         }
-        // DENIED "unavailable" (`SERVER.md` section 5.5) goes to the viewer
-        // here once its record exists (TODO-1522); until then the operator
-        // is told.
-        for text in late {
+        // The viewer is told the channel is unavailable, and the connection
+        // stays open (REQ-1481): DENIED carries status 503 (DEC-1730).
+        for (connection, text) in late {
             self.log(Level::Warn, "program_late", format!("{text} within {PROGRAM_REPLY_LIMIT_MS} ms"));
+            self.deny_unavailable(connection);
+        }
+    }
+
+    /// Tells `connection` its program did not answer (REQ-1481): DENIED with
+    /// status 503, naming what is selected, and the connection stays open.
+    fn deny_unavailable(&mut self, connection: ConnectionId) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let place = state.selection.map(Selection::path).unwrap_or_default();
+        let record = state.next_record();
+        let mut bytes = Vec::new();
+        let denied = DeniedRecord { status: STATUS_UNAVAILABLE, place: &place };
+        if encode_denied(denied, SERVICE, record, &mut |packet| bytes.extend_from_slice(&packet.bytes)).is_ok() {
+            self.send(connection, Arc::from(bytes));
         }
     }
 
@@ -683,7 +706,8 @@ impl Channel {
         {
             self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
         }
-        self.tell(&ServerMessage::Selected(Selected { connection, page: selection.page, sub: selection.sub, parameters }));
+        let path = selection.path();
+        self.tell(&ServerMessage::Selected(Selected { connection, path, page: selection.page, sub: selection.sub, query: parameters }));
     }
 
     /// After a message's input: the cursor record says what was acted on.

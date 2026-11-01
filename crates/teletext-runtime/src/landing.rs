@@ -1,11 +1,14 @@
 //! What a channel's address answers over HTTP, on every host (the channel
 //! URL map's REQ-1693 item 7, DEC-1467 as amended by DEC-1669): the small
-//! page a web browser shows at `<channel>`, the redirect from the folder
-//! with no final slash, `channel.json`, the WebSocket, and 404 for anything
+//! page a web browser shows at `<channel>` and at each place in it, the
+//! redirects to one spelling, `channel.json`, the WebSocket, and 404 for anything
 //! else. A page is never served: each one comes over the connection.
 
+use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
+
+use neoteletext_web::map::Place;
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
@@ -16,26 +19,19 @@ const GET_NEOTELETEXT: &str = "https://www.neoteletext.com/";
 /// What makes a channel's address a link that opens the browser (DEC-1666).
 const LINK_SCHEME: &str = "neoteletext://";
 
-/// The one line of script (REQ-1693 item 7). The server never sees a
-/// fragment, so the page carries it, and the query, into its link here. A
-/// fragment the map does not list is left out, so the page never offers a
-/// link the browser would refuse. It only changes that link's `href`: it
-/// navigates nowhere and starts no timer, so the page cannot be used as a
-/// redirector (DEC-1669 item 3).
-const CARRY_FRAGMENT: &str = r##"var f=location.hash.slice(1);document.getElementById("open").href="neoteletext://"+location.href.split("#")[0]+(/^([1-8][0-9A-Fa-f]{2}(\/[0-9A-Fa-f]{4})?(\?[!-~]*)?|contents|wall)$/.test(f)?"#"+f:"");"##;
-
-/// The page's `Content-Security-Policy`: it runs [`CARRY_FRAGMENT`], which
-/// the hash names, and loads nothing. A test keeps the hash true.
-pub const CONTENT_SECURITY_POLICY: &str =
-    "default-src 'none'; script-src 'sha256-lq5g4WjtHVTsX5bHsky9SoqgMzKqF7a0DKk9e5zDQok='; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/// The page's `Content-Security-Policy`: it loads and runs nothing. The server
+/// sees the whole address, so the page's link needs no script (DEC-1694).
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// What a request under the viewers' address asks for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Route {
-    /// `<channel>`: the small page.
+    /// `<channel>`, or a place of the channel: the small page.
     Page,
     /// The folder without its final `/`: a redirect to `<channel>`.
     ToFolder,
+    /// A place with a final `/`: a redirect to its one spelling.
+    ToPlace,
     /// `<channel>channel.json`.
     Descriptor,
     /// `<channel>push`.
@@ -54,8 +50,35 @@ pub fn route(path: &str) -> (&str, Route) {
         Some((folder, "")) => (folder, Route::Page),
         Some((folder, DESCRIPTOR)) => (folder, Route::Descriptor),
         Some((folder, PUSH)) => (folder, Route::Push),
-        Some((folder, _)) => (folder, Route::Missing),
+        Some((folder, rest)) => (folder, place_route(rest)),
     }
+}
+
+/// What the end of a path asks for: a place of the URL map, read by the
+/// engine's one reader (REQ-1693 item 1), or nothing.
+fn place_route(rest: &str) -> Route {
+    match rest.strip_suffix('/') {
+        Some(place) if Place::read(place).is_some() => Route::ToPlace,
+        None if Place::read(rest).is_some() => Route::Page,
+        _ => Route::Missing,
+    }
+}
+
+/// What follows the channel's folder in a request's path, and its query:
+/// the part of the address the small page's link repeats.
+#[must_use]
+pub fn tail(path: &str, query: Option<&str>) -> String {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let place = path.split_once('/').map_or("", |(_, rest)| rest);
+    query.filter(|query| !query.is_empty()).map_or_else(|| place.to_owned(), |query| format!("{place}?{query}"))
+}
+
+/// Where a place with a final `/` redirects to: a path on the same origin,
+/// so that it cannot lead away.
+#[must_use]
+pub fn place_location(path: &str, query: Option<&str>) -> String {
+    let path = path.strip_suffix('/').unwrap_or(path);
+    query.map_or_else(|| path.to_owned(), |query| format!("{path}?{query}"))
 }
 
 /// Where the folder without its final `/` redirects to: a path on the same
@@ -82,7 +105,8 @@ fn escaped(text: &str) -> String {
 }
 
 /// The small page of DEC-1669: the channel's name, a link that opens it in
-/// the browser, and a link to get the browser. `address` is `<channel>`.
+/// the browser, and a link to get the browser. `address` is the address
+/// asked for, a page's or the channel's, which the page repeats escaped.
 #[must_use]
 pub fn page(name: &str, address: &str) -> String {
     let (name, link) = (escaped(name), escaped(&format!("{LINK_SCHEME}{address}")));
@@ -91,8 +115,7 @@ pub fn page(name: &str, address: &str) -> String {
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{name}</title>\n</head>\n\
          <body>\n<h1>{name}</h1>\n<p>This is a teletext channel, which opens in the NeoTeletext browser.</p>\n\
          <p><a id=\"open\" href=\"{link}\">Open in NeoTeletext</a></p>\n\
-         <p><a href=\"{GET_NEOTELETEXT}\">Get NeoTeletext</a></p>\n\
-         <script>{CARRY_FRAGMENT}</script>\n</body>\n</html>\n"
+         <p><a href=\"{GET_NEOTELETEXT}\">Get NeoTeletext</a></p>\n</body>\n</html>\n"
     )
 }
 

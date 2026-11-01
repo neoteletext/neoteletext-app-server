@@ -2303,7 +2303,7 @@
               "type": "integer"
             },
             "protocol": {
-              "const": 4,
+              "const": 5,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2346,21 +2346,18 @@
               "maxItems": 50,
               "type": "array"
             },
-            "parameters": {
-              "description": "The page parameters of `selection`, or none (see [`Selected`]).",
-              "maxLength": 8000,
-              "minLength": 1,
-              "pattern": "^[!-\"$-~]+$",
+            "path": {
+              "description": "`selection`'s place, as an address names it: `302` or `302/0002`.",
               "type": [
                 "string",
                 "null"
               ]
             },
             "query": {
-              "description": "The query of the address the viewer opened, without its `?`, exactly\nas received, or none (REQ-1674). The server does not interpret it:\nit is untrusted text from the viewer.",
+              "description": "The query of the address, without its `?`, or none (DEC-1730). It goes\nwith the selection (see [`Selected`]).",
               "maxLength": 8000,
               "minLength": 1,
-              "pattern": "^[!-~]+$",
+              "pattern": "^[!-\"$-~]+$",
               "type": [
                 "string",
                 "null"
@@ -2412,8 +2409,12 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
             },
-            "parameters": {
-              "description": "The page parameters of the address selected, without their `?`,\nexactly as written, or none (the channel URL map's REQ-1693 item 6).\nThey belong to this one selection: the next one that has none says\nso here. The server does not interpret them: they are untrusted text\nfrom the viewer.",
+            "path": {
+              "description": "The place selected, as an address names it: `302` or `302/0002`.",
+              "type": "string"
+            },
+            "query": {
+              "description": "The query of the address selected, without its `?`, exactly as\nwritten, or none (DEC-1730). It belongs to this one selection: the\nnext one that has none says so here. The server does not interpret\nit: it is untrusted text from the viewer.",
               "maxLength": 8000,
               "minLength": 1,
               "pattern": "^[!-\"$-~]+$",
@@ -2434,6 +2435,7 @@
           "required": [
             "type",
             "connection",
+            "path",
             "page",
             "sub"
           ],
@@ -2764,5 +2766,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 4"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 5"
 }

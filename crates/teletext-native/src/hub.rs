@@ -42,8 +42,6 @@ pub enum Command {
         /// Its session, which it continues or starts (requirement 5.5);
         /// a session may have several connections, one a tab (DEC-1527).
         session: SessionId,
-        /// The query of the address it opened (REQ-1674).
-        query: Option<String>,
         /// Its queue.
         outbox: mpsc::Sender<Outbound>,
     },
@@ -83,8 +81,11 @@ pub struct Hub {
     pub folder: String,
     /// Its `channel.json`, which does not change.
     pub descriptor: Arc<[u8]>,
-    /// What a web browser shows at the channel's address, made once.
-    pub page: Arc<[u8]>,
+    /// The channel's name and address, for the small page a web browser
+    /// shows at each address.
+    pub name: Arc<str>,
+    /// The channel's address, `<channel>`.
+    pub address: Arc<str>,
     /// Its task's commands.
     pub commands: mpsc::Sender<Command>,
     /// The server's figures, which every connection adds to.
@@ -97,9 +98,9 @@ pub struct Hub {
 #[must_use]
 pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>) -> Hub {
     let descriptor: Arc<[u8]> = channel.descriptor().into();
-    let page: Arc<[u8]> = channel.page().into();
+    let (name, address) = (channel.name().into(), channel.address().into());
     let (commands, queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, page, commands, stats: Arc::clone(&stats) };
+    let hub = Hub { folder: folder.to_owned(), descriptor, name, address, commands, stats: Arc::clone(&stats) };
     let (to_application, from_application) = link.map_or((None, None), |link| (Some(link.to), Some(link.from)));
     let task = Task { folder: folder.to_owned(), outboxes: BTreeMap::new(), to_application, starts: 0, dropped: 0, events: Histogram::default(), stats, start };
     tokio::spawn(task.run(channel, queue, from_application));
@@ -201,9 +202,9 @@ impl Task {
     fn handle(&mut self, event: Event, channel: &mut Channel) -> bool {
         let now = self.now();
         match event {
-            Event::Command(Command::Opened { connection, session, query, outbox }) => {
+            Event::Command(Command::Opened { connection, session, outbox }) => {
                 self.outboxes.insert(connection, outbox);
-                channel.opened(connection, session, query, now);
+                channel.opened(connection, session, now);
             }
             Event::Command(Command::Received { connection, bytes }) => channel.received(connection, &bytes, now),
             Event::Command(Command::Closed { connection }) => {

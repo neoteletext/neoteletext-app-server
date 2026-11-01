@@ -35,7 +35,7 @@ pub use read::read;
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
 /// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
 /// (DEC-1683), and which could name no other channel.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -395,21 +395,12 @@ pub struct Connected {
     /// initial page. A connection is one browser tab with one selection
     /// (DEC-1527).
     pub selection: Option<Selection>,
-    /// The query of the address the viewer opened, without its `?`, exactly
-    /// as received, or none (REQ-1674). The server does not interpret it:
-    /// it is untrusted text from the viewer.
-    #[schemars(length(min = 1, max = QUERY_BYTES), regex(pattern = "^[!-~]+$"))]
-    pub query: Option<String>,
-    /// The page parameters of `selection`, or none (see [`Selected`]).
+    /// `selection`'s place, as an address names it: `302` or `302/0002`.
+    pub path: Option<String>,
+    /// The query of the address, without its `?`, or none (DEC-1730). It goes
+    /// with the selection (see [`Selected`]).
     #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
-    pub parameters: Option<String>,
-}
-
-/// Whether `query` is one a connection may carry (REQ-1674 item 3,
-/// REQ-1475): within the address's bound, and printable ASCII.
-#[must_use]
-pub fn valid_query(query: &str) -> bool {
-    !query.is_empty() && query.len() <= QUERY_BYTES && query.bytes().all(|byte| byte.is_ascii_graphic())
+    pub query: Option<String>,
 }
 
 /// A cookie as a request carries it.
@@ -434,6 +425,15 @@ pub struct Selection {
     pub sub: SubCode,
 }
 
+impl Selection {
+    /// The place an address names, the text SELECT carries: `302`, or
+    /// `302/0002` for one sub-page.
+    #[must_use]
+    pub fn path(self) -> String {
+        if self.sub.0 == limits::SUBCODE_ANY { format!("{:03X}", self.page.0) } else { format!("{:03X}/{:04X}", self.page.0, self.sub.0) }
+    }
+}
+
 /// `selected` (REQ-1472).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -441,17 +441,18 @@ pub struct Selected {
     /// The connection.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
+    /// The place selected, as an address names it: `302` or `302/0002`.
+    pub path: String,
     /// The page.
     pub page: PageNumber,
     /// The sub-code, or 3F7F for the page and none of its sub-pages.
     pub sub: SubCode,
-    /// The page parameters of the address selected, without their `?`,
-    /// exactly as written, or none (the channel URL map's REQ-1693 item 6).
-    /// They belong to this one selection: the next one that has none says
-    /// so here. The server does not interpret them: they are untrusted text
-    /// from the viewer.
+    /// The query of the address selected, without its `?`, exactly as
+    /// written, or none (DEC-1730). It belongs to this one selection: the
+    /// next one that has none says so here. The server does not interpret
+    /// it: it is untrusted text from the viewer.
     #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
-    pub parameters: Option<String>,
+    pub query: Option<String>,
 }
 
 /// `input`.
@@ -1021,9 +1022,6 @@ pub struct TextLink {
 /// The longest link target: the engine's, the longest address of REQ-1661
 /// and a `web:` mark.
 pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_TARGET_BYTES;
-/// The longest query a connection carries: the whole address's bound
-/// (REQ-1674 item 3).
-pub const QUERY_BYTES: usize = limits::MAX_URL_LENGTH;
 /// The longest page parameters of a selection (`INPUT.md` section 5.4).
 pub const PARAMETERS_BYTES: usize = neoteletext_input::MAX_PAGE_PARAMETERS;
 /// Page parameters are printable ASCII with no `#` (`INPUT.md` section 5.4).

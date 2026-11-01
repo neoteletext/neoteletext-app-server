@@ -39,7 +39,7 @@ fn channel() -> Channel {
         ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
-    channel.opened(CONNECTION, 1, None, 0);
+    channel.opened(CONNECTION, 1, 0);
     let _ = channel.take_effects();
     channel
 }
@@ -294,7 +294,7 @@ fn a_lost_connection_releases_what_is_held() {
     let lines = told(&channel.take_effects());
     assert_eq!((&lines[0]["type"], &lines[0]["lost"], &lines[1]["type"], &lines[1]["lost"]), (&json!("input"), &json!(true), &json!("input"), &json!(true)));
     assert_eq!(lines[2]["type"], json!("left"));
-    channel.opened(2, 1, None, 3);
+    channel.opened(2, 1, 3);
     let _ = channel.take_effects();
     channel.closed(2, 4);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "the new connection held nothing");
@@ -341,21 +341,46 @@ fn a_receiver_without_select_is_shown_the_initial_page() {
     assert_eq!((&lines[0]["page"], &lines[0]["sub"]), (&json!("100"), &json!("0000")), "{lines:?}");
 }
 
-/// REQ-1674 item 2: `connected` carries the query as it came, and none for a
-/// connection with none.
+/// REQ-1481, DEC-1730: a program that does not answer a selection in time
+/// leaves the viewer told so, with status 503 and the place, and the
+/// connection stays open.
 #[test]
-fn connected_carries_the_address_s_query() {
+fn a_program_that_does_not_answer_gets_the_viewer_a_503() {
+    use alloc::string::ToString;
+
+    use neoteletext_web::records::denied::STATUS_UNAVAILABLE;
+    use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
+
+    use super::PROGRAM_REPLY_LIMIT_MS;
     let mut channel = channel();
-    channel.opened(2, 1, Some("id=7&b=%20x".into()), 1);
-    channel.opened(3, 1, None, 2);
-    let messages = told(&channel.take_effects());
-    let queries: Vec<_> = messages.iter().filter(|message| message["type"] == "connected").map(|message| message["query"].clone()).collect();
-    assert_eq!(queries, [Value::from("id=7&b=%20x"), Value::Null]);
+    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, 2, "")]), 1);
+    channel.take_effects();
+    channel.deadline(1 + PROGRAM_REPLY_LIMIT_MS);
+    let bytes = sent_to(&channel.take_effects(), CONNECTION);
+    let mut reader = RecordReader::new();
+    let mut denied = None;
+    for packet in bytes.as_chunks::<PACKET_BYTES>().0 {
+        let packet = Packet { bytes: *packet };
+        if let Read::Record(ChannelRecord::Denied(record)) = reader.push(&packet) {
+            denied = Some((record.status, record.place.to_string()));
+        }
+    }
+    assert_eq!(denied, Some((STATUS_UNAVAILABLE, "302/0002".to_string())));
+}
+
+/// DEC-1730: `selected` carries the place as an address names it.
+#[test]
+fn selected_names_the_place() {
+    let mut channel = channel();
+    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, 2, "a=1")]), 1);
+    let lines = told(&channel.take_effects());
+    let selected = lines.iter().find(|line| line["type"] == "selected").unwrap();
+    assert_eq!((&selected["path"], &selected["query"]), (&json!("302/0002"), &json!("a=1")));
 }
 
 /// The `selected` lines the program was told, as page and parameters.
 fn selections(effects: &[Effect]) -> Vec<(Value, Value)> {
-    told(effects).iter().filter(|line| line["type"] == "selected").map(|line| (line["page"].clone(), line["parameters"].clone())).collect()
+    told(effects).iter().filter(|line| line["type"] == "selected").map(|line| (line["page"].clone(), line["query"].clone())).collect()
 }
 
 /// REQ-1693 item 6: a page's parameters reach the program with their
@@ -397,7 +422,7 @@ fn connected_carries_the_selections_parameters() {
     channel.program_started(1);
     let lines = told(&channel.take_effects());
     let connected = lines.iter().find(|line| line["type"] == "connected").unwrap();
-    assert_eq!((&connected["selection"]["page"], &connected["parameters"]), (&json!("302"), &json!("a=1")));
+    assert_eq!((&connected["selection"]["page"], &connected["query"]), (&json!("302"), &json!("a=1")));
 }
 
 /// A redirect is a selection of its own, which leaves parameters behind.

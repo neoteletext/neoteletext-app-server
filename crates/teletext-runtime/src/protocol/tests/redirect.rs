@@ -13,7 +13,7 @@ fn page_redirect() -> Value {
 }
 
 fn address_redirect() -> Value {
-    json!({"type": "redirect", "connection": 4, "address": "https://news.example/teletext/#302"})
+    json!({"type": "redirect", "connection": 4, "address": "https://news.example/teletext/302"})
 }
 
 /// The longest address a REDIRECT record carries, `extra` bytes over.

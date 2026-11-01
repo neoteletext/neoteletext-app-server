@@ -21,7 +21,6 @@ use tokio::net::TcpStream;
 
 use teletext_runtime::SessionId;
 use teletext_runtime::landing::{self, Route, route};
-use teletext_runtime::protocol::valid_query;
 use teletext_runtime::session_cookie::{self, Key};
 
 use crate::connection;
@@ -103,8 +102,9 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
     let reads = matches!(*request.method(), Method::GET | Method::HEAD);
     match asked {
-        Route::Page if reads => page(&hub),
+        Route::Page if reads => page(&hub, &landing::tail(request.uri().path(), request.uri().query())),
         Route::ToFolder if reads => to_folder(&hub, request.uri().query()),
+        Route::ToPlace if reads => to_place(request.uri().path(), request.uri().query()),
         Route::Descriptor => {
             let mut response = Response::new(Whole(Some(Bytes::copy_from_slice(&hub.descriptor))));
             response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -112,13 +112,15 @@ pub fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
             response
         }
         Route::Push => upgrade(routes, hub, request),
-        Route::Page | Route::ToFolder | Route::Missing => status(StatusCode::NOT_FOUND),
+        Route::Page | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
     }
 }
 
-/// The small page a web browser shows at the channel's address (DEC-1669).
-fn page(hub: &Hub) -> Response<Whole> {
-    let mut response = Response::new(Whole(Some(Bytes::copy_from_slice(&hub.page))));
+/// The small page a web browser shows at an address of the channel
+/// (DEC-1669), naming what was asked for.
+fn page(hub: &Hub, tail: &str) -> Response<Whole> {
+    let body = landing::page(&hub.name, &format!("{}{tail}", hub.address));
+    let mut response = Response::new(Whole(Some(Bytes::from(body))));
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -137,18 +139,22 @@ fn to_folder(hub: &Hub, query: Option<&str>) -> Response<Whole> {
     response
 }
 
+/// A place with a final `/`, sent to its one spelling.
+fn to_place(path: &str, query: Option<&str>) -> Response<Whole> {
+    let Ok(location) = HeaderValue::from_str(&landing::place_location(path, query)) else {
+        return status(StatusCode::BAD_REQUEST);
+    };
+    let mut response = status(StatusCode::PERMANENT_REDIRECT);
+    response.headers_mut().insert(LOCATION, location);
+    response
+}
+
 /// The push WebSocket: answers 101 and serves the upgraded socket.
 fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
     let wants = request.headers().get(UPGRADE).is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     let Some(key) = request.headers().get("sec-websocket-key").map(|value| value.as_bytes().to_vec()).filter(|_| wants) else {
         return status(StatusCode::UPGRADE_REQUIRED);
     };
-    // REQ-1674: the query is the program's, and it is not read here beyond
-    // its rules, or logged.
-    let query = request.uri().query().map(str::to_owned);
-    if query.as_deref().is_some_and(|query| !valid_query(query)) {
-        return status(StatusCode::BAD_REQUEST);
-    }
     let accept = neoteletext_web::ws::accept_for(&key);
     let (session, set_cookie) = session_for(routes, &hub, &request);
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
@@ -157,7 +163,7 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
         let Ok(upgraded) = pending.await else { return };
         // The raw socket: no HTTP buffers stay with the connection.
         let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
-        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session, query).await;
+        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session).await;
     });
     let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();
