@@ -284,6 +284,7 @@ fn close_code(stream: &mut TcpStream) -> u16 {
 
 /// A stopped server closes its viewers' connections with the code that says try again and exits
 /// with 0 (requirement 5.1).
+/// REQ-1036: the close code that says try again, and status 0.
 #[test]
 fn a_restart_closes_viewers_as_a_restart() {
     let folder = scratch("restart");
@@ -399,6 +400,21 @@ fn only_a_receiver_of_this_version_is_upgraded() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// REQ-1339: an upgrade offering permessage-deflate is answered with no
+/// extension: frames go uncompressed whatever a receiver offers.
+#[test]
+fn permessage_deflate_is_never_agreed() {
+    let folder = scratch("deflate");
+    let file = channels(&folder, &publishing("Plain"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    let offered = format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n");
+    let answer = upgrade_answer(&server.address, &offered);
+    assert!(answer.starts_with("HTTP/1.1 101"), "{answer}");
+    assert_eq!(header(&answer, "sec-websocket-extensions"), None, "{answer}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// One server frame's payload, skipping nothing.
 fn server_frame(stream: &mut TcpStream) -> Vec<u8> {
     stream.set_read_timeout(Some(WITHIN)).unwrap();
@@ -498,6 +514,7 @@ fn connected_line(heard: &Path) -> String {
 
 /// REQ-1693 item 6: page parameters of the longest length reach the program
 /// through a real socket, and the next selection leaves them behind.
+/// REQ-1674: the query reaches the program, at the longest length.
 #[test]
 fn page_parameters_reach_the_program_in_selected() {
     let folder = scratch("parameters");
@@ -707,6 +724,7 @@ fn a_long_request_target_is_answered() {
 /// A connection presenting its session's cookie continues that session,
 /// a second connection, another tab, while the first is open included
 /// (DEC-1527); a forged cookie is ignored (requirement 5.5).
+/// REQ-1040: the cookie, its attributes, and a forged one ignored.
 #[test]
 fn a_session_continues_with_its_cookie() {
     let folder = scratch("cookie");

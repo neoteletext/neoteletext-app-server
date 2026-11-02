@@ -14,6 +14,7 @@ fn header_for(set_cookie: &str) -> Vec<u8> {
 /// A cookie the server set names its session to that channel while it
 /// lasts, under the current key or the previous one, and to nobody after,
 /// elsewhere or under another key.
+/// REQ-1040.
 #[test]
 fn a_cookie_names_its_session_while_it_lasts() {
     let header = header_for(&set_cookie(&KEY, "hackaday", SESSION, NOW_S, false));
@@ -25,6 +26,7 @@ fn a_cookie_names_its_session_while_it_lasts() {
 }
 
 /// A cookie altered anywhere, or not of the server's form, names nothing.
+/// REQ-1040.
 #[test]
 fn an_altered_cookie_names_nothing() {
     let value = value(&KEY, "hackaday", SESSION, NOW_S + LIFETIME_S);
@@ -50,6 +52,7 @@ fn an_altered_cookie_names_nothing() {
 
 /// The cookie's attributes: its channel's folder alone, never to scripts,
 /// never from another site, 30 days, and `Secure` over `https`.
+/// REQ-1040.
 #[test]
 fn the_cookie_is_scoped_to_its_channel() {
     let plain = set_cookie(&KEY, "hackaday", SESSION, NOW_S, false);
@@ -60,6 +63,7 @@ fn the_cookie_is_scoped_to_its_channel() {
 
 /// Session numbers start from the start time times 1,024, below 2^53, so a
 /// restarted server never gives a number given before (requirement 5.4).
+/// REQ-1039.
 #[test]
 fn session_numbers_start_from_the_start_time() {
     let started_ms = 1_761_600_000_000;

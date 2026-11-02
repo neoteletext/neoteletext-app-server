@@ -112,8 +112,8 @@ fn totals_accumulate_across_restarts() {
     );
 }
 
-/// `/metrics` names every figure of requirement 8.2 with its type, in the
-/// Prometheus text format, and the histogram's buckets are cumulative.
+/// REQ-1053: `/metrics` names every figure of requirement 8.2 with its type,
+/// in the Prometheus text format, and the histogram's buckets are cumulative.
 #[test]
 fn metrics_are_in_the_prometheus_text_format() {
     let stats = ServerStats::default();
@@ -126,17 +126,26 @@ fn metrics_are_in_the_prometheus_text_format() {
     for (name, kind) in [
         ("process_start_time_seconds", "gauge"),
         ("teletext_connections", "gauge"),
+        ("teletext_connections_peak", "gauge"),
         ("teletext_connections_total", "counter"),
         ("teletext_messages_sent_total", "counter"),
         ("teletext_sent_bytes_total", "counter"),
         ("teletext_http_requests_total", "counter"),
         ("teletext_program_restarts_total", "counter"),
         ("teletext_channel_viewers", "gauge"),
+        ("teletext_channel_viewers_peak", "gauge"),
+        ("teletext_channel_viewers_total", "counter"),
         ("teletext_channel_sessions_waiting", "gauge"),
         ("teletext_channel_ready", "gauge"),
         ("teletext_channel_sessions_resumed_total", "counter"),
         ("teletext_channel_page_opens_total", "counter"),
+        ("teletext_channel_inputs_total", "counter"),
         ("teletext_channel_keys_total", "counter"),
+        ("teletext_channel_pages_sent_total", "counter"),
+        ("teletext_channel_redirects_total", "counter"),
+        ("teletext_channel_sound_records_total", "counter"),
+        ("teletext_channel_program_lines_sent_total", "counter"),
+        ("teletext_channel_program_lines_received_total", "counter"),
         ("teletext_channel_program_lines_dropped_total", "counter"),
         ("teletext_channel_event_duration_seconds", "histogram"),
     ] {

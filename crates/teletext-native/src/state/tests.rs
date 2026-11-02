@@ -9,6 +9,7 @@ fn scratch(name: &str) -> PathBuf {
 /// The session key is made once, kept for its owner alone, and the same
 /// at the next start; a previous key is read when there is one
 /// (requirement 5.5).
+/// REQ-1040.
 #[test]
 fn the_session_key_is_made_once_and_kept() {
     let root = scratch("keys");

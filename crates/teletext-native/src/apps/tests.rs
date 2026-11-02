@@ -90,6 +90,7 @@ async fn next(link: &mut Link) -> FromApplication {
 /// The program's start reaches the channel; it hears what the channel
 /// sends and is heard; its standard error is logged with its channel; when
 /// it ends the channel is told, and it is started again (requirement 7.5).
+/// REQ-1042 and REQ-1034.
 #[tokio::test]
 async fn a_program_is_started_heard_and_started_again() {
     let captured = Captured::default();
@@ -146,6 +147,7 @@ async fn lines_for_an_ended_program_are_dropped() {
 /// A program that ran steadily was ended on purpose, as when its author
 /// saves a change: it starts again at once. One that ends soon after
 /// starting keeps the back-off, so a failing program cannot spin.
+/// REQ-1034: a steady program at once, a failing one after its pause.
 #[test]
 fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
     assert_eq!(pause_after(STEADY, FIRST_PAUSE), Duration::ZERO);
@@ -157,6 +159,7 @@ fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
 /// socket, which only its owner may reach; is told to the channel; hears
 /// `start`; is heard; and, when it goes and comes back, is told again. A second
 /// program while one is connected is closed (requirement 6.2).
+/// REQ-1043.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_program_connects_to_its_socket() {
