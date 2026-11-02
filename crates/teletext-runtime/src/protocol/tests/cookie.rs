@@ -1,4 +1,4 @@
-//! `cookie` (`SERVER.md` section 8.2).
+//! `cookie` (DOC-1924).
 
 use serde_json::{Value, json};
 

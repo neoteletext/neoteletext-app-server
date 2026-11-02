@@ -1,17 +1,17 @@
 # teletext-server: applications in any language
 
-How a channel's application, a program in any language, talks to the server. It is `SERVER.md` section 7 as built, protocol version 6 (DEC-1482, DEC-1683, DEC-1715, DEC-1730, DEC-1759). The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
+How a channel's application, a program in any language, talks to the server. It is DOC-1787 as built, protocol version 6 (DEC-1482, DEC-1683, DEC-1715, DEC-1730, DEC-1759). The server is Rust; a channel's application is not (the owner, 25 October 2026: "the neoteletext server itself must be RUST. showcase channel must be typescript, calling the rust server. the hackaday channel must be python calling the rust server").
 
 ## 1. Process
 
 - **Two transports carry the same lines** (requirements 6.1, 6.2 and 6.4):
   - **standard input and output:** the server starts each channel's program named by a `command` in the channels file (section 6), in its own folder, with `NEOTELETEXT_CHANNEL` set to the channel's folder;
   - **a Unix domain socket:** a channel named with a `socket` is served to the program that connects to it, which runs as a service of its own and so outlives a restart of the server. The socket and its folder are their owner's alone. One program at a time; when it goes, or the server restarts, it connects again and is sent `start` again.
-- **One program serves every viewer** of its channel, multiplexed by session (`SERVER.md` section 7.1).
+- **One program serves every viewer** of its channel, multiplexed by session (DOC-1965).
 - **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB. A program's standard error becomes the server's log, a line an event with its channel, cut at 64 KiB (requirement 7.5).
 - **When the program starts** (or connects to its socket) the server sends it `start`, then `connected` for every connection open. While no program runs, the channel has nothing to show (DEC-1482).
 - **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more was ended, not failing, and is started again at once.
-- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (`SERVER.md` section 7.5). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
+- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (DOC-1965). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
 - **Every line the program sends is checked whole** and refused whole when it is not valid: the program is sent `refused`, and the reason goes to the server's log. Nothing of a refused line is acted on.
 - **Timers are the program's own:** it has a clock, so the protocol has no `tick`.
 
@@ -32,7 +32,7 @@ Common shapes:
 | `start` | `protocol` (6), `epoch_ms`, `standard`, `budgets` | The program started (or connected); `connected` follows for each connection open |
 | `connected` | `connection`, `session`, `request`, `cookies` (`name`, `value` pairs, at most 50: those the connection opened with, without the server's own, whose names begin `_`), `selection` (`page` and `sub`, or `null` for the channel's initial page), `path` (that selection as an address names it, such as `302/0002`, or none), `query` (the query of the address selected, as written, or none) | A viewer's connection opened and its first selection came, or 1.5 seconds passed with none, so that a shared link goes straight to its page. Answer with `reply` (REQ-1471) |
 | `selected` | `connection`, `request`, `path` (`302` or `302/0002`), `page`, `sub`, `query` (what follows `?` in the address selected, as written, or none) | The connection selected a page (`sub` 3F7F: send its first sub-page and its `subpages` list) or one sub-page (send that sub-page) (REQ-1472, DEC-1526) |
-| `input` | `connection`, `page`, `sub`, `lost`, `event` | Input on the page on screen (INPUT.md). `page` and `sub` are the page and sub-code the viewer was looking at, the connection's selection: input stamped with anything else is dropped before it reaches you (REQ-1557), except a release, which names the page that held it. `lost` is `true` on a release the page lost, the key or button not having come up: the viewer moved away, the keys left the page, or the connection went (REQ-207). A game can tell "the player let go" from "the player left". A lost mouse release is no click |
+| `input` | `connection`, `page`, `sub`, `lost`, `event` | Input on the page on screen (DOC-1969). `page` and `sub` are the page and sub-code the viewer was looking at, the connection's selection: input stamped with anything else is dropped before it reaches you (REQ-1557), except a release, which names the page that held it. `lost` is `true` on a release the page lost, the key or button not having come up: the viewer moved away, the keys left the page, or the connection went (REQ-207). A game can tell "the player let go" from "the player left". A lost mouse release is no click |
 | `left` | `connection`, `page` | The connection's selection left a page, or the connection closed |
 | `closed` | `session` | The session ended: 5 minutes after its connection closed with no new connection to continue it. Forget it |
 | `stats` | `server`, `channel` | Every 10 seconds: the figures of section 7 |
@@ -41,7 +41,7 @@ Common shapes:
 
 `standard` is the standard's maxima, from the engine's `neoteletext_core::limits` (decision 10; requirement 3.3), so a program holds none of its own: `magazines` 8, `pages` 2,022, `pages_per_magazine` 253, `pages_in_magazine_1` 251, `keyable_pages` 800, `subpages` 8,190, `decimal_subpages` 3,199. `budgets` is the server's own: `line_bytes` (16 MiB), `title_characters` (120), `author_log_bytes` (200), `log_characters` (1,000), `named_connections` (4,096), `reply_limit_ms` (how long the server waits for an answer to `connected` or `selected`), `description_text_characters` (16,000), `description_limit_ms` (how long the server waits for a `description`).
 
-`event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `redirect` (INPUT.md section 9.4).
+`event.kind` is one of `key` (`action` `press`, `repeat` or `release`; `key`, a W3C `KeyboardEvent.key` name from the engine's table or one character; `text` and `base`, or `null`), `mouse` (`action` `press`, `release` or `move`; `button` 0 left, 1 middle, 2 right, `null` on a move; `buttons` `{left, middle, right}` on a move, else `null`; `column` 0 to 39, `row` 0 to 24), `wheel` (`dx`, `dy` in 1/120ths of a line, down positive; `column`, `row`), `hover` (`action` `enter` or `leave`; the control's first `column` and `row`), `text` and `paste` (`text`), `focus` and `blur`. Every key, click, move and hover goes; a program ignores what it does not use, and selects pages for the viewer with `redirect` (DOC-1974).
 
 ## 3. Program to server
 
@@ -53,12 +53,12 @@ Common shapes:
 | `description` | `page`, the page `describe` named, and `public`. With `public` true, also `title` (1 to 120 characters), `text` (1 to 16,000 characters, one line) and `content`, one sub-page of that page; with `public` false, nothing else | The answer to `describe`, and the only way a page becomes public on the web. Everything a page marked public gives is readable by anyone, and the picture drawn from `content` shows all of it. Not answering, within `description_limit_ms`, is the same as `public` false for those who waited, and so is a page that does not exist. An answer after that is taken once, for those who come after, while the entry the wait left stands, which is 60 seconds. One nobody asked for, or a second answer to one request, is refused (`not_awaited`) |
 | `subpages` | `connections`, `request` (as `page`'s), `page`, `version` (0 to 65,535), `subpages` (`sub`, `title` of at most 40 characters or `null`), each sub-code once, in ascending order | A page's sub-page list, with the answer to a page selection and whenever it changes; sent to the connections named whose selection shows the page and that do not hold that version |
 | `index` | `connections`, `magazines` | The index changed: a page added, removed, retitled, its section or sub-page count changed |
-| `redirect` | `connection`, `request` (the connection's selection when it was sent: a redirect for one already replaced is dropped), and `page` and `sub`, with a `query` it keeps or none, or `address` (at most 8,000 bytes, an `http` or `https` address, `MAX_ADDRESS` of `INPUT.md` section 7.11) | Sends the viewer elsewhere, with no action from them (DEC-1683). With a page, a page redirect: a selection, so the program is then sent `selected` for it. With an address, to another channel, after the receiver's one-second notice (REQ-1686): no selection changes, and the program is sent `left` when the viewer goes. Naming both or neither is refused. It is neither an HTTP redirect (REQ-701) nor anything a viewer can refuse, but a viewer's own choice overrides it |
+| `redirect` | `connection`, `request` (the connection's selection when it was sent: a redirect for one already replaced is dropped), and `page` and `sub`, with a `query` it keeps or none, or `address` (at most 8,000 bytes, an `http` or `https` address, `MAX_ADDRESS` of DOC-1960) | Sends the viewer elsewhere, with no action from them (DEC-1683). With a page, a page redirect: a selection, so the program is then sent `selected` for it. With an address, to another channel, after the receiver's one-second notice (REQ-1686): no selection changes, and the program is sent `left` when the viewer goes. Naming both or neither is refused. It is neither an HTTP redirect (REQ-701) nor anything a viewer can refuse, but a viewer's own choice overrides it |
 | `sound` | `kind`, `connections`, and the kind's fields (below) | A sound, its data, or a command |
 | `cookie` | `connection`, `name`, `value`, `path`, `max_age` (seconds, 0 removing it, `null` for the browser's session), `same_site` (`Strict`, `Lax`, `None`), `secure`, `http_only` | Sets one of the program's cookies; names starting `_` are the server's |
 | `author_log` | `connections`, `level` (`E`, `W` or `I`), `text` (1 to 200 bytes), `page` or `null` | A line for the developer console of the viewer's browser |
 | `log` | `level` (`error`, `warn`, `info`, `debug`), `event` (lower case, digits and `_`), `text` | A line for the server's log |
-| `packets` | `connections`, `packets`: base64 of whole 42-byte packets | Raw packets (`SERVER.md` section 7.4) |
+| `packets` | `connections`, `packets`: base64 of whole 42-byte packets | Raw packets (DOC-1970) |
 
 **`magazines`** (REQ-1477): at most 8, in ascending `magazine` (1 to 8), each with a `name` (at most 120 characters) and `pages`: 1 to 253 (251 in magazine 1), ascending, each `page` in that magazine and never reserved (mFD, mFE, mFF, 1BE, 1F0), with a `title` and a `section` (at most 120 characters, `section` `null` for none) and `subpages`, its count, 1 to 8,190. The index is page-level: sub-pages are never listed in it.
 
@@ -71,11 +71,11 @@ Common shapes:
 - `character_set`: `region` 0 to 15, carried in X/28/0, or `null`; `national_option` 0 to 7, C12 to C14;
 - `enhancements`: at most 16 packets X/26, each `designation` 0 to 15 once, and 13 `triplets` of `address` (6 bits), `mode` (5 bits) and `data` (7 bits);
 - `packets`: at most 16 other packed lines by `packet`: `x27_nibbles` (designation 1 to 3, 39 values of 4 bits), `x27` (designation 4 to 15), `x28` and `m29` (designation 0 to 15), each of 13 triplets;
-- `cursor`: `{row, column, block}` or `null` (INPUT.md section 7.1). `row` is 1 to 23: row 0 is the header and row 24 the Fastext row, and a page with a cursor on either is refused whole.
+- `cursor`: `{row, column, block}` or `null` (DOC-1954). `row` is 1 to 23: row 0 is the header and row 24 the Fastext row, and a page with a cursor on either is refused whole.
 
 The server encodes the sub-page with the engine's encoder and sends it alone (REQ-1501). A connection is sent it whole, with the erase bit, the first time after its selection changes or when it is another sub-page than the one last sent; after that, the same sub-code goes as only its header, the rows that changed and the enhancement group when any of it changed, and nothing when nothing changed (DEC-1499). Every frame of a sub-page with Link Extension links is followed by its LINKS record (DEC-1517).
 
-**`sound`** (`SERVER.md` section 9; the engine's audio profile), by `kind`, each with `connections`:
+**`sound`** (DOC-1785; the engine's audio profile), by `kind`, each with `connections`:
 
 | `kind` | Fields |
 |---|---|
@@ -95,11 +95,11 @@ The server encodes the sub-page with the engine's encoder and sends it alone (RE
 
 - The server keeps no page (REQ-1474): only what each open connection is, and the last version of the sub-page its selection shows, to send its changes (DEC-1499). A program sends a sub-page again to the connections that should see it whenever it changes; a connection that opens later is sent nothing of it until the program answers its `connected`.
 - A channel can differ for every viewer: the program answers each connection and selection as it chooses.
-- A program keeps each session's state itself and forgets it on `closed` (`SERVER.md` section 8.4).
+- A program keeps each session's state itself and forgets it on `closed` (DOC-1924).
 
 ## 5. Kits
 
-The protocol is the interface; a kit is a convenience (`SERVER.md` section 3.4). The channels file, the old Hackaday channel in Python and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13); and each TypeScript channel is a repository of its own beside it: `neoteletext-server-channel-hackaday` (decision 14), `-demosite` and `-uicomponentsdemo` (decision 16).
+The protocol is the interface; a kit is a convenience (DOC-1974). The channels file, the old Hackaday channel in Python and the Python kit are in their own repository, `~/devel/neoteletext-server-channels` (decision 12); the TypeScript kits are libraries in repositories of their own, released as built packages (decision 13); and each TypeScript channel is a repository of its own beside it: `neoteletext-server-channel-hackaday` (decision 14), `-demosite` and `-uicomponentsdemo` (decision 16).
 
 - **TypeScript** (`neottx-server-ts-protocol`, in `~/devel/neottx-server-ts-protocol`), the reference kit: a 25 by 40 screen buffer per page, drawing helpers (text, colours, mosaics, double height), sounds, and the line loop; it is being rewritten to protocol version 2 (TODO-1484). The component library over it, `neottx-server-ts-ui-components`, is in `~/devel/neottx-server-ts-ui-components`.
 - **Python** (`kits/python`): the same, thinner.

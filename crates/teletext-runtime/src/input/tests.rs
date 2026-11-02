@@ -41,7 +41,7 @@ fn a_hover_is_input() {
 }
 
 /// Typing comes from a key's press or repeat with its text, and from raw
-/// text (INPUT.md section 6.3); a release, a key that produced no text and
+/// text (DOC-1935); a release, a key that produced no text and
 /// a control character type nothing. Before, a character key's press
 /// without text typed its key, so Control and a letter typed the letter.
 #[test]

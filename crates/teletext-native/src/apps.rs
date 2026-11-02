@@ -1,4 +1,4 @@
-//! Applications in other processes (`SERVER.md` section 7.1;
+//! Applications in other processes (DOC-1965;
 //! `docs/applications.md`): each channel named in the channels file has
 //! one program, in any language, spoken to one JSON object a line. Two
 //! transports carry the same lines through the same relay (requirement
@@ -33,7 +33,7 @@ pub use teletext_runtime::protocol::LONGEST_LINE;
 pub const LONGEST_ERROR_LINE: usize = 64 * 1024;
 /// Lines that may wait for the program: beyond this the server drops the
 /// newest and says so, since the network loop never waits for an
-/// application (section 7.5).
+/// application (DOC-1965).
 pub const WAITING_LINES: usize = 4_096;
 /// Lines from the program that may wait for the channel.
 const ARRIVING_LINES: usize = 1_024;

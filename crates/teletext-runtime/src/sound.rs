@@ -1,4 +1,4 @@
-//! A program's `sound` (the engine's audio profile, `SERVER.md` section 9)
+//! A program's `sound` (the engine's audio profile, DOC-1785)
 //! as the profile's records: Opus carried unchanged once each packet is
 //! held to the profile by the engine's own decoder (decision 21), 16-bit
 //! samples encoded here as IMA ADPCM, and commands numbered per channel so

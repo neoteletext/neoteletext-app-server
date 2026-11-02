@@ -44,13 +44,13 @@ use crate::sound::{Sounds, audience};
 use crate::stats::{ChannelStats, count};
 
 /// The service number audio and input records are sent on (the
-/// reference channel's, INPUT.md section 7).
+/// reference channel's, DOC-1951).
 const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
-/// (INPUT.md section 6.2): the cursor record, and SELECT, the tab's
+/// (DOC-1922): the cursor record, and SELECT, the tab's
 /// selection (REQ-INT-140). There are no modes to agree: every event is
-/// sent and the channel ignores what it does not use (section 6.3).
+/// sent and the channel ignores what it does not use (DOC-1922).
 const USED: u32 = CURSOR_CAP | SELECT_CAP;
 
 /// How often the operator is told of input dropped for its stamp, at most
@@ -73,12 +73,12 @@ const _: () =
 
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
-/// (REQ-1481): the deadline every selection ends by (`INPUT.md` section
-/// 5.4). Provisional, not yet measured: TODO-1521 measures the
+/// (REQ-1481): the deadline every selection ends by (DOC-1921).
+/// Provisional, not yet measured: TODO-1521 measures the
 /// three channels' programs on the live server and sets it from that.
 pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
 /// How long `connected` is held for a new connection's first SELECT
-/// (TODO-1731, `INPUT.md` section 6.1), so that a shared link goes straight
+/// (TODO-1731, DOC-1921), so that a shared link goes straight
 /// to its page. A receiver sends SELECT one round trip after the connection
 /// opens, HELLO to WELCOME; this allows for a slow satellite or mobile link
 /// and is short enough not to be noticed on a channel's first page when a
@@ -107,7 +107,7 @@ pub struct ChannelConfig {
 
 /// How long a session waits for its viewer to come back: 5 minutes, long
 /// enough for a phone that closed a background socket or a server that
-/// restarted (`SERVER.md` section 8.1: "a grace period of minutes").
+/// restarted (DOC-1924: "a grace period of minutes").
 pub const SESSION_GRACE_MS: u64 = 5 * 60 * 1_000;
 
 /// How much a report matters to the server's operator, as a log ranks it
@@ -136,7 +136,7 @@ pub enum Effect {
         /// The message.
         bytes: Arc<[u8]>,
     },
-    /// Close the connection with this close code (`INPUT.md` section 5.1).
+    /// Close the connection with this close code (DOC-1919).
     Close {
         /// The connection.
         connection: ConnectionId,
@@ -186,7 +186,7 @@ struct Shown {
     links: protocol::LinkExtension,
 }
 
-/// How a connection's selection stands (`INPUT.md` section 5.4, REQ-1481).
+/// How a connection's selection stands (DOC-1921, REQ-1481).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ending {
     /// A page answered it, or there is nothing to answer.
@@ -215,7 +215,7 @@ struct Connection {
     cookies: Vec<CookiePair>,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
-    /// The input count acted on, modulo 65 536 (INPUT.md section 7.1).
+    /// The input count acted on, modulo 65 536 (DOC-1943).
     acked: u16,
     /// What it holds: keys and buttons down, whose releases the program is
     /// owed if the page loses the input (REQ-207).
@@ -239,14 +239,13 @@ struct Connection {
     announced: bool,
     /// The program answered that `connected`.
     replied: bool,
-    /// How its selection has ended, or when it must (`INPUT.md` section
-    /// 5.4, REQ-1481).
+    /// How its selection has ended, or when it must (DOC-1921,
+    /// REQ-1481).
     ending: Ending,
     /// When its input count must go alone, while no frame has carried it
     /// (REQ-1334).
     acknowledgement_due: Option<u64>,
-    /// The index's sending, numbered for the receiver (`INPUT.md`
-    /// section 7.5).
+    /// The index's sending, numbered for the receiver (DOC-1955).
     index_generation: u16,
     /// The sub-page list it holds of its selected page, and its version.
     list_held: Option<(u16, u16)>,
@@ -649,8 +648,8 @@ impl Channel {
         self.stats.waiting();
     }
 
-    /// A binary message from a connection: its input stream (INPUT.md).
-    /// A message holds whole items (section 5.1), so it is read alone: an
+    /// A binary message from a connection: its input stream (DOC-1929).
+    /// A message holds whole items (DOC-1929), so it is read alone: an
     /// item cut by its end is a protocol error, and the next message's bytes
     /// can never be read as the rest of it (DEC-1759 lesson 17). Input is
     /// acknowledged in its answer's frame, and alone only if nothing is
@@ -660,12 +659,12 @@ impl Channel {
         let Some(state) = self.connections.get(&connection) else { return };
         let acked = state.acked;
         if read_message(bytes, &mut |item| self.item(connection, &item, now)).is_err() {
-            // A protocol error ends the session (INPUT.md section 8).
+            // A protocol error ends the session (DOC-1919).
             self.effects.push(Effect::Close { connection, code: CLOSE_BROKE_PROTOCOL });
             return;
         }
         let Some(state) = self.connections.get_mut(&connection) else { return };
-        // A message of no input units is never acknowledged (section 7.1).
+        // A message of no input units is never acknowledged (DOC-1943).
         if state.acked != acked {
             state.acknowledgement_due.get_or_insert(now.saturating_add(ACKNOWLEDGEMENT_WAIT_MS));
         }
@@ -715,8 +714,8 @@ impl Channel {
         }
     }
 
-    /// Tells `connection` its selection ended with `status` (`INPUT.md`
-    /// section 7.12): DENIED, naming what is selected, and the connection
+    /// Tells `connection` its selection ended with `status` (DOC-1961):
+    /// DENIED, naming what is selected, and the connection
     /// stays open.
     fn deny(&mut self, connection: ConnectionId, status: u16) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
@@ -825,7 +824,7 @@ impl Channel {
     }
 
     /// HELLO: WELCOME, or a close the receiver stops on when it speaks
-    /// another version (`INPUT.md` section 6.1). A receiver that cannot send
+    /// another version (DOC-1921). A receiver that cannot send
     /// SELECT is not waited for. Its capabilities are the only thing asked of
     /// it: nothing here reads its agent text (DEC-1759 lesson 19).
     fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32, now: u64) {
@@ -844,7 +843,7 @@ impl Channel {
         }
     }
 
-    /// SELECT (`INPUT.md` section 5.4, REQ-INT-140): the tab selected a page
+    /// SELECT (DOC-1753, REQ-INT-140): the tab selected a page
     /// with 3F7F, which asks again for its first sub-page even when the tab
     /// shows another of the page (DEC-1526 item 3), or one sub-page, or,
     /// with page 0, no page of the channel. The engine's decoder has
@@ -878,9 +877,9 @@ impl Channel {
     /// number and a deadline from here, whether or not the program runs. The
     /// first one ends the wait for it, and goes in `connected`.
     ///
-    /// Repeating a selection that stands is no new selection (`INPUT.md`
-    /// section 15.6), but one DENIED ended has nothing standing to wait on, so
-    /// the repeat is a new one: every selection has an ending (section 5.4).
+    /// Repeating a selection that stands is no new selection (DOC-1753),
+    /// but one DENIED ended has nothing standing to wait on, so
+    /// the repeat is a new one: every selection has an ending (DOC-1921).
     fn select(&mut self, connection: ConnectionId, selection: Selection, parameters: Option<String>, now: u64) {
         if self
             .connections
@@ -1245,7 +1244,7 @@ fn cursor_of(page: u16, acked: u16, line: Option<&CursorLine>) -> Cursor {
     let shown = line.filter(on_rows);
     let place = shown.map(|line| Place { row: line.row, column: line.column });
     // Only BLOCK is a flag now: echo and masked echo are withdrawn (the
-    // engine's E.134). No cursor takes no flags (INPUT.md section 7.1).
+    // engine's E.134). No cursor takes no flags (DOC-1954).
     Cursor { page, acked, place, flags: shown.map_or(0, |line| line.flags & BLOCK) }
 }
 

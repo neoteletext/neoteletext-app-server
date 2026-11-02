@@ -12,8 +12,8 @@ const SENDERS: u8 = 3;
 /// The sender byte that is the program's.
 const PROGRAM: u8 = 2;
 /// Each connection's first message: HELLO with version 7 and the CURSOR and
-/// SELECT capabilities, then SELECT of page 100, sub-code 0000 (INPUT.md
-/// sections 5.4 and 6.1). Stamped input can then match the selection, so
+/// SELECT capabilities, then SELECT of page 100, sub-code 0000 (DOC-1753 and DOC-1921).
+/// Stamped input can then match the selection, so
 /// the fuzzer reaches the stamp check, what is held and its releases, and
 /// not only the drop of input with nothing selected.
 const OPENING: [u8; 18] = *b"\xFF\x09\x07\x80\x80\x88\x02\xFF\x40\x08100/0000";

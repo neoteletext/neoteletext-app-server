@@ -7,7 +7,7 @@
 //! WebAssembly, and its tests run with no network and a clock they set.
 //!
 //! Downstream to a receiver is a T42 stream and nothing else (DEC-1459);
-//! upstream is INPUT.md's events. The channel's program speaks the typed
+//! upstream is DOC-1931's events. The channel's program speaks the typed
 //! JSON protocol of [`protocol`] (DEC-1482), and the server keeps none of
 //! a channel's content: the program owns every page.
 

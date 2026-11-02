@@ -1,6 +1,6 @@
 //! A program's typed sub-page (REQ-1478) as the engine's page model,
 //! `PageFile`, encoded by the engine's encoder into one page frame of one
-//! sub-page (`SERVER.md` section 5.2, REQ-1501), and what a view is sent of
+//! sub-page (DOC-1949, REQ-1501), and what a view is sent of
 //! a new version of the sub-page it shows (DEC-1499). The sub-page has
 //! been checked whole ([`crate::protocol::check`]) before it gets here.
 

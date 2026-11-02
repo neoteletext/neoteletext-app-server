@@ -53,7 +53,7 @@ fn a_channels_figures_reach_its_line_and_the_document() {
 }
 
 /// Answers dropped as stale are shown wherever the channel's other counts
-/// are, and kept across a restart (`SERVER.md` section 7.6).
+/// are, and kept across a restart (DOC-1967).
 #[test]
 fn stale_answers_are_shown_and_kept() {
     let dropped = ChannelFigures { stats: ChannelStats { stale_answers: 4, ..ChannelStats::default() }, ..figures() };

@@ -159,7 +159,7 @@
     },
     "Control": {
       "additionalProperties": false,
-      "description": "The control bits C4 to C11 of a page header (EN 300 706 clause\n9.3.1.3). The server sets C4 and C11 itself on every page it sends, so\nthat each replaces the last and stands alone (`SERVER.md` section 5.2).",
+      "description": "The control bits C4 to C11 of a page header (EN 300 706 clause\n9.3.1.3). The server sets C4 and C11 itself on every page it sends, so\nthat each replaces the last and stands alone (DOC-1949).",
       "properties": {
         "erase": {
           "description": "C4, erase page.",
@@ -230,7 +230,7 @@
     },
     "Cursor": {
       "additionalProperties": false,
-      "description": "The input cursor (INPUT.md section 7.1).",
+      "description": "The input cursor (DOC-1954).",
       "properties": {
         "block": {
           "description": "A block cursor rather than an underline.",
@@ -347,7 +347,7 @@
       "type": "object"
     },
     "InputEvent": {
-      "description": "An input event (INPUT.md), by `kind`.",
+      "description": "An input event (DOC-1969), by `kind`.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -872,7 +872,7 @@
           "type": "string"
         }
       ],
-      "description": "A W3C KeyboardEvent.key name, from the engine's table (INPUT.md section 5.6), or the one character of a character key."
+      "description": "A W3C KeyboardEvent.key name, from the engine's table (DOC-1936), or the one character of a character key."
     },
     "Link": {
       "additionalProperties": false,
@@ -1200,7 +1200,7 @@
               "type": "null"
             }
           ],
-          "description": "The input cursor (INPUT.md section 7.1), or none."
+          "description": "The input cursor (DOC-1954), or none."
         },
         "display_row_24": {
           "description": "Packet X/27/0's link control: row 24 is displayed.",
@@ -1493,7 +1493,7 @@
               ]
             },
             "request": {
-              "description": "The selection it moves. A redirect for a selection already replaced\nis dropped: the viewer's own choice overrides it (`INPUT.md` section\n7.11).",
+              "description": "The selection it moves. A redirect for a selection already replaced\nis dropped: the viewer's own choice overrides it (DOC-1960).",
               "format": "uint64",
               "maximum": 9007199254740991,
               "minimum": 1,
@@ -2176,7 +2176,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Raw teletext packets (`SERVER.md` section 7.4).",
+          "description": "Raw teletext packets (DOC-1970).",
           "properties": {
             "connections": {
               "$ref": "#/$defs/Connections",
@@ -2631,7 +2631,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Input on a page (INPUT.md).",
+          "description": "Input on a page (DOC-1969).",
           "properties": {
             "connection": {
               "description": "The connection.",

@@ -125,7 +125,7 @@ async fn messages<W: AsyncWrite + Unpin>(reader: &mut Reader, writing: &mut W, h
                     return false;
                 }
             }
-            // Upstream is binary input alone (INPUT.md).
+            // Upstream is binary input alone (DOC-1918).
             Ok(Some(Message::Text(_) | Message::Pong)) => {}
             Ok(Some(Message::Ping(payload))) => {
                 if !write(writing, Opcode::Pong, &payload, stats).await {

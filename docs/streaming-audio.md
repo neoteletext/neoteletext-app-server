@@ -175,7 +175,7 @@ Its block-numbering and join logic moves into the runtime, where every stream sh
   - symphonia has no MPEG-TS reader. A small one (program table, then the audio stream's PES payloads) feeds its ADTS reader, and decoded 17 s cleanly.
   - Segments in fragmented MP4 (`#EXT-X-MAP`) go to symphonia's MP4 reader. These were not met or tested.
 - **Reconnecting:** a dropped stream is retried with backoff. Listeners hear silence while it buffers, and the application is told `Buffering`. After a set time it is told `Failed`.
-- **Fetched only while someone listens** (`SERVER.md`'s rule that nothing is made for nobody). The last listener leaving closes the connection after a short grace, so a tab switch does not restart it.
+- **Fetched only while someone listens** (the server's rule that nothing is made for nobody). The last listener leaving closes the connection after a short grace, so a tab switch does not restart it.
 
 ## 5. On-demand sources: podcasts by byte ranges
 
@@ -308,7 +308,7 @@ The URLs come from a public directory anyone can add to, and from podcast feeds.
   - the bitrate taken in, which refuses FLAC at 1.5 Mbit/s where a station's share would exceed it;
   - the time without data before a stream counts as failed;
   - streams open at once, per application and per server.
-- **Metadata is untrusted text.** A title is cut to the page's width and mapped to the page's character set by the application, like anything typed (INPUT.md section 9.5). It is never markup.
+- **Metadata is untrusted text.** A title is cut to the page's width and mapped to the page's character set by the application, like anything typed (DOC-1937). It is never markup.
 - **The decoder runs confined** (section 8), with fuzz targets for:
   - the ICY unwrapper;
   - the TS reader;

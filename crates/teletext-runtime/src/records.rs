@@ -1,5 +1,5 @@
 //! What a program sends that is not page content, as the engine's records
-//! on data channel 12 (REQ-1480; `INPUT.md` section 7): the index, a
+//! on data channel 12 (REQ-1480; DOC-1951): the index, a
 //! page's SUBPAGES list, the author's LOG lines, typed `SET_COOKIE`, a
 //! sub-page's LINKS and a REDIRECT. Each is written by the engine's encoder, which checks
 //! what it writes with its reader, never by hand here; this module only
@@ -29,7 +29,7 @@ use crate::page::address;
 use crate::protocol::{AuthorLevel, AuthorLog, Cookie, LinkKey, Magazine, Page, Redirect, SameSite, SubPages};
 
 /// The audio and input service the records go on (the reference channel's,
-/// INPUT.md section 7).
+/// DOC-1951).
 const SERVICE: u8 = 0;
 
 /// Why the engine's encoder refused what the protocol's checks passed.
@@ -43,7 +43,7 @@ fn collect(write: impl FnOnce(&mut dyn FnMut(Packet))) -> Vec<u8> {
 }
 
 /// The channel's index for one connection, as one sending of
-/// `generation` (`INPUT.md` section 7.5).
+/// `generation` (DOC-1955).
 pub(crate) fn index(generation: u16, magazines: &[Magazine], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let pages: Vec<Vec<IndexPage<'_>>> = magazines
         .iter()
@@ -64,7 +64,7 @@ pub(crate) fn index(generation: u16, magazines: &[Magazine], record_id: &mut u8)
     Ok(bytes)
 }
 
-/// A page's list of sub-pages (`INPUT.md` section 7.9).
+/// A page's list of sub-pages (DOC-1959).
 pub(crate) fn subpage_list(list: &SubPages, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let entries: Vec<SubPageEntry<'_>> =
         list.subpages.iter().map(|entry| SubPageEntry { subcode: EngineSubCode::new(entry.sub.0), title: entry.title.as_deref().unwrap_or("") }).collect();
@@ -75,7 +75,7 @@ pub(crate) fn subpage_list(list: &SubPages, record_id: &mut u8) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// A line for the channel's author (`INPUT.md` section 7.6).
+/// A line for the channel's author (DOC-1956).
 pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let level = match line.level {
         AuthorLevel::E => LogLevel::Error,
@@ -89,8 +89,8 @@ pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>
     Ok(bytes)
 }
 
-/// A redirect, in its form, as its REDIRECT record (`INPUT.md` section
-/// 7.11). The protocol's check left one of its two forms.
+/// A redirect, in its form, as its REDIRECT record (DOC-1960).
+/// The protocol's check left one of its two forms.
 pub(crate) fn redirect(redirect: &Redirect, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let record = match (redirect.page, redirect.sub, redirect.address.as_deref()) {
         (Some(page), Some(sub), None) => {
@@ -106,7 +106,7 @@ pub(crate) fn redirect(redirect: &Redirect, record_id: &mut u8) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// A cookie, typed, as its `SET_COOKIE` record (`INPUT.md` section 7.7).
+/// A cookie, typed, as its `SET_COOKIE` record (DOC-1957).
 pub(crate) fn cookie(cookie: &Cookie, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let same_site = match cookie.same_site {
         Some(SameSite::Strict) => EngineSameSite::Strict,
@@ -137,7 +137,7 @@ pub(crate) fn has_links(page: &Page) -> bool {
     !(links.keys.is_empty() && links.numbers.is_empty() && links.texts.is_empty())
 }
 
-/// A sub-page's LINKS record (`INPUT.md` section 7.8), empty for a
+/// A sub-page's LINKS record (DOC-1958), empty for a
 /// sub-page with no Link Extension links. The targets are read by the
 /// engine's own parser of TTI's targets; the protocol's checks passed
 /// each already.

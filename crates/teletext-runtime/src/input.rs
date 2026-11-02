@@ -1,4 +1,4 @@
-//! Input as a program sees it: the engine's INPUT.md events
+//! Input as a program sees it: the engine's DOC-1931 events
 //! (`neoteletext_input::event`), with each functional key named, and as
 //! the protocol's `input` event.
 
@@ -32,7 +32,7 @@ pub enum Named {
     PageDown,
     /// A character key: the layout's character without Shift.
     Character(char),
-    /// Any other functional key, by its INPUT.md code.
+    /// Any other functional key, by its DOC-1936 code.
     Other(u32),
 }
 
@@ -65,8 +65,7 @@ impl Named {
 pub enum Input<'a> {
     /// Text typed: whole characters, no control characters.
     Text(&'a str),
-    /// A key pressed, repeating or released: every one is sent (INPUT.md
-    /// section 6.3).
+    /// A key pressed, repeating or released: every one is sent (DOC-1935).
     Key {
         /// Press, repeat or release.
         action: Action,
@@ -90,7 +89,7 @@ pub enum Input<'a> {
         row: u32,
     },
     /// The pointer moved over the page: every move that changes the dot
-    /// under it, a button held or not (INPUT.md section 6.3).
+    /// under it, a button held or not (DOC-1945).
     Moved {
         /// The buttons held, a bit each: 1 left, 2 middle, 4 right.
         buttons: u8,
@@ -99,7 +98,7 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
-    /// The wheel turned over a cell (INPUT.md section 5.4): in 1/120ths of
+    /// The wheel turned over a cell (DOC-1938): in 1/120ths of
     /// a line, positive right and down.
     Wheel {
         /// Across.
@@ -111,8 +110,7 @@ pub enum Input<'a> {
         /// The cell's row.
         row: u32,
     },
-    /// The pointer came onto a control of the page or went off it (INPUT.md
-    /// section 5.4, HOVER), while keys go to the channel.
+    /// The pointer came onto a control of the page or went off it (DOC-1940), while keys go to the channel.
     Hover {
         /// It came onto the control, rather than went off it.
         entered: bool,
@@ -137,7 +135,7 @@ impl<'a> Input<'a> {
         match *item {
             Item::Text(text) => Some(Self::Text(text)),
             Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), text: key.text, base: key.base }),
-            // Gone is not a release (INPUT.md, MOUSE action 3): the protocol
+            // Gone is not a release (DOC-1938, MOUSE action 3): the protocol
             // for programs has no event for it, so they are not told.
             Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Gone => None,
             Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move => {
@@ -168,7 +166,7 @@ impl<'a> Input<'a> {
     }
 
     /// The character this input typed, if it typed one character: raw
-    /// text, or the text of a key's press or repeat (INPUT.md section 6.3).
+    /// text, or the text of a key's press or repeat (DOC-1935).
     /// A key that produced no text (Control and a letter) or a control
     /// character (Enter) types nothing.
     #[must_use]
@@ -238,7 +236,7 @@ pub(crate) fn pointer_cell(item: &Item<'_>) -> Option<(u8, u8)> {
 }
 
 /// A key's name as the protocol writes it: a W3C `KeyboardEvent.key`
-/// name (INPUT.md section 5.6), or the character of a character key.
+/// name (DOC-1936), or the character of a character key.
 fn key_name(key: Named) -> String {
     let name = match key {
         Named::Up => "ArrowUp",
@@ -268,13 +266,12 @@ fn cell(column: u32, row: u32) -> Option<(u8, u8)> {
     Some((column, row))
 }
 
-/// The buttons held, a bit each: 1 left, 2 middle, 4 right (INPUT.md
-/// section 5.2).
+/// The buttons held, a bit each: 1 left, 2 middle, 4 right (DOC-1929).
 const LEFT: u8 = 1;
 const MIDDLE: u8 = 2;
 const RIGHT: u8 = 4;
-/// The last button a press or release names: 2, the right (INPUT.md
-/// section 5.2: 0 left, 1 middle, 2 right).
+/// The last button a press or release names: 2, the right (DOC-1929:
+/// 0 left, 1 middle, 2 right).
 const LAST_BUTTON: u8 = 2;
 
 impl Input<'_> {

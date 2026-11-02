@@ -252,7 +252,7 @@ impl JsonSchema for SubCode {
 }
 
 /// A key's name: a W3C `KeyboardEvent.key` name from the engine's table
-/// (`neoteletext_input::keys`, INPUT.md section 5.6), or the one
+/// (`neoteletext_input::keys`, DOC-1936), or the one
 /// character of a character key.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 #[serde(transparent)]
@@ -277,7 +277,7 @@ impl JsonSchema for KeyName {
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
-            "description": "A W3C KeyboardEvent.key name, from the engine's table (INPUT.md section 5.6), or the one character of a character key.",
+            "description": "A W3C KeyboardEvent.key name, from the engine's table (DOC-1936), or the one character of a character key.",
             "anyOf": [
                 { "type": "string", "enum": key_names() },
                 { "type": "string", "minLength": 1, "maxLength": 1 }
@@ -323,7 +323,7 @@ pub enum ServerMessage {
     /// A connection selected a page or a sub-page (REQ-1472); answer with
     /// `page`.
     Selected(Selected),
-    /// Input on a page (INPUT.md).
+    /// Input on a page (DOC-1969).
     Input(InputMessage),
     /// A connection's selection left a page, or the connection closed.
     Left(Left),
@@ -513,7 +513,7 @@ pub struct InputMessage {
     pub event: InputEvent,
 }
 
-/// An input event (INPUT.md), by `kind`.
+/// An input event (DOC-1969), by `kind`.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InputEvent {
@@ -789,7 +789,7 @@ pub enum ProgramMessage {
     AuthorLog(AuthorLog),
     /// A line for the server operator's log.
     Log(Log),
-    /// Raw teletext packets (`SERVER.md` section 7.4).
+    /// Raw teletext packets (DOC-1970).
     Packets(Packets),
     /// A selection the program will not answer with a page.
     Denied(Denied),
@@ -954,8 +954,7 @@ pub struct Redirect {
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
     /// The selection it moves. A redirect for a selection already replaced
-    /// is dropped: the viewer's own choice overrides it (`INPUT.md` section
-    /// 7.11).
+    /// is dropped: the viewer's own choice overrides it (DOC-1960).
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub request: RequestNumber,
     /// The page of this channel.
@@ -977,8 +976,8 @@ pub struct Redirect {
     pub address: Option<String>,
 }
 
-/// `denied`: a selection ends with a status and no page (`INPUT.md` section
-/// 7.12), so the viewer is told at once and not at the deadline.
+/// `denied`: a selection ends with a status and no page (DOC-1961),
+/// so the viewer is told at once and not at the deadline.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Denied {
@@ -1017,7 +1016,7 @@ pub struct Description {
     pub content: Option<Box<Page>>,
 }
 
-/// What DENIED carries (`INPUT.md` section 7.12).
+/// What DENIED carries (DOC-1961).
 pub const DENIED_STATUSES: [u16; 4] = [
     neoteletext_web::records::denied::STATUS_FORBIDDEN,
     neoteletext_web::records::denied::STATUS_NOT_FOUND,
@@ -1058,7 +1057,7 @@ pub struct Page {
     /// Packets X/27 of designation codes 1 to 15, X/28 and M/29.
     #[schemars(length(max = neoteletext_formats::page::RAW_PACKETS))]
     pub packets: Vec<PackedLine>,
-    /// The input cursor (INPUT.md section 7.1), or none.
+    /// The input cursor (DOC-1954), or none.
     pub cursor: Option<Cursor>,
 }
 
@@ -1148,9 +1147,9 @@ pub struct TextLink {
 /// The longest link target: the engine's, the longest address of REQ-1661
 /// and a `web:` mark.
 pub const LINK_TARGET_BYTES: usize = neoteletext_formats::page::LINK_TARGET_BYTES;
-/// The longest page parameters of a selection (`INPUT.md` section 5.4).
+/// The longest page parameters of a selection (DOC-1753).
 pub const PARAMETERS_BYTES: usize = neoteletext_input::MAX_PAGE_PARAMETERS;
-/// Page parameters are printable ASCII with no `#` (`INPUT.md` section 5.4);
+/// Page parameters are printable ASCII with no `#` (DOC-1753);
 /// the engine's encoder of a redirect holds them to the map's pairs too.
 const PARAMETERS_PATTERN: &str = "^[!-\"$-~]+$";
 /// The longest label of a key's link to this service (Appendix E.1).
@@ -1164,7 +1163,7 @@ const LAST_TEXT_LINK_ROW: u8 = 23;
 
 /// The control bits C4 to C11 of a page header (EN 300 706 clause
 /// 9.3.1.3). The server sets C4 and C11 itself on every page it sends, so
-/// that each replaces the last and stands alone (`SERVER.md` section 5.2).
+/// that each replaces the last and stands alone (DOC-1949).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools, reason = "the standard's eight control bits, each a named flag (REQ-1478)")]
@@ -1287,13 +1286,13 @@ pub struct M29Line {
     pub triplets: [Triplet; neoteletext_core::consts::TRIPLETS_PER_PACKET],
 }
 
-/// The first row a cursor may be on (INPUT.md section 7.1): the first after
+/// The first row a cursor may be on (DOC-1954): the first after
 /// the header.
 pub(crate) const FIRST_CURSOR_ROW: u8 = neoteletext_core::consts::PACKET_FIRST_ROW;
 /// The last row a cursor may be on.
 pub(crate) const LAST_CURSOR_ROW: u8 = neoteletext_input::cursor::LAST_ROW;
 
-/// The input cursor (INPUT.md section 7.1).
+/// The input cursor (DOC-1954).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Cursor {
@@ -1307,7 +1306,7 @@ pub struct Cursor {
     pub block: bool,
 }
 
-/// `sound`, by `kind` (the engine's audio profile, `SERVER.md` section 9).
+/// `sound`, by `kind` (the engine's audio profile, DOC-1785).
 // Read by the reader, which follows `kind` to the sound's own type
 // (`read.rs`).
 #[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
@@ -1500,7 +1499,7 @@ pub struct GainSound {
 }
 
 /// `cookie`: sets or clears one of the program's cookies for a connection
-/// (`SERVER.md` section 8.2), every attribute a field of its own; a raw
+/// (DOC-1924), every attribute a field of its own; a raw
 /// `Set-Cookie` line is never taken.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

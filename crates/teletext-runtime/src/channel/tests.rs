@@ -343,7 +343,7 @@ fn a_selected_page_stays_active_without_the_focus() {
     assert_eq!(sends(&channel.take_effects()), 1, "the change is sent with the focus gone");
 }
 
-/// INPUT.md section 7.1: a message of no input units is never acknowledged.
+/// DOC-1943: a message of no input units is never acknowledged.
 #[test]
 fn a_selection_is_not_acknowledged() {
     let mut channel = selected();
@@ -394,7 +394,7 @@ fn an_acknowledgement_goes_alone_when_nothing_is_published() {
     assert_eq!(channel.next_wake(), None);
 }
 
-/// REQ-1346: a cursor `INPUT.md` section 7.1 forbids is refused when the
+/// REQ-1346: a cursor DOC-1954 forbids is refused when the
 /// program sends it, and input is still acknowledged.
 #[test]
 fn a_cursor_off_its_rows_is_refused_and_input_is_still_acknowledged() {
@@ -706,7 +706,7 @@ fn denied_in(bytes: &[u8]) -> Option<(u16, String)> {
     })
 }
 
-/// `INPUT.md` section 5.4: every selection has an ending, so a SELECT that
+/// DOC-1921: every selection has an ending, so a SELECT that
 /// repeats one DENIED ended is asked of the program again and has its own,
 /// as `neottx probe <channel>8FC` needs (REQ-1882). It leaves no page.
 #[test]
@@ -725,7 +725,7 @@ fn a_selection_repeated_after_denied_has_its_own_ending() {
     assert_eq!(denied_in(&sent_to(&channel.take_effects(), CONNECTION)), Some((404, String::from("8FC"))));
 }
 
-/// `INPUT.md` section 5.4: the deadline's DENIED 503 is an ending too, and
+/// DOC-1921: the deadline's DENIED 503 is an ending too, and
 /// with no program running the repeat ends at the deadline it is given.
 #[test]
 fn a_selection_repeated_after_the_deadline_has_its_own_ending() {
@@ -739,7 +739,7 @@ fn a_selection_repeated_after_the_deadline_has_its_own_ending() {
     assert_eq!(denied_in(&sent_to(&channel.take_effects(), CONNECTION)), Some((503, String::from("8FC"))));
 }
 
-/// `INPUT.md` section 15.6: while a selection stands, a SELECT that repeats
+/// DOC-1753: while a selection stands, a SELECT that repeats
 /// it is no new selection: not while it is awaited, and not once it is
 /// shown, nor when DENIED was followed by a page, which ended it again.
 #[test]
@@ -809,7 +809,7 @@ fn a_page_redirect_keeps_the_query_it_is_given() {
     assert!(carried, "the receiver's SELECT keeps it");
 }
 
-/// INPUT.md section 6.1: another version is told to stop.
+/// DOC-1921: another version is told to stop.
 /// REQ-1036: another version closes with its own stop code.
 #[test]
 fn another_version_is_closed_with_a_stop_code() {
@@ -852,7 +852,7 @@ fn an_item_cut_by_a_message_is_refused() {
     assert!(channel.take_effects().contains(&Effect::Close { connection: CONNECTION, code: CLOSE_BROKE_PROTOCOL }));
 }
 
-/// INPUT.md section 6.2: a capability nobody defined yet is ignored: WELCOME
+/// DOC-1922: a capability nobody defined yet is ignored: WELCOME
 /// says only what the channel uses.
 #[test]
 fn an_unknown_capability_is_not_agreed() {

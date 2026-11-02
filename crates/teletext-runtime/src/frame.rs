@@ -1,4 +1,4 @@
-//! Page frames (`SERVER.md` section 5.2): one sub-page as the engine
+//! Page frames (DOC-1949): one sub-page as the engine
 //! encodes it (REQ-1501), with the erase bit set so it replaces what the
 //! receiver held, and in serial magazine mode, so the frame stands alone;
 //! and the cutting of a long run of records into WebSocket messages a
@@ -27,7 +27,7 @@ pub const MOST_MESSAGE_BYTES: usize = neoteletext_web::consts::DEFAULT_PUSH_LIMI
 
 /// `bytes` as the WebSocket messages that carry it, each at most `limit`
 /// bytes of whole packets, cut only before a sub-page's header where it
-/// can be, so that each message stands alone (`SERVER.md` section 5.2):
+/// can be, so that each message stands alone (DOC-1949):
 /// a page of many sub-pages, larger than the limit, becomes several.
 /// Bytes that are not whole packets, or fit, are one message.
 #[must_use]

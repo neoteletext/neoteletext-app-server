@@ -1,4 +1,4 @@
-//! The session cookie (`SERVER.md` section 8.2, requirement 5.5): a
+//! The session cookie (DOC-1924, requirement 5.5): a
 //! session's number and expiry, signed with HMAC-SHA-256 (RFC 2104 over
 //! FIPS 180-4, the engine's SHA-256, as decision 5 planned) under the
 //! channel's name, so that a viewer coming back continues their session
@@ -14,10 +14,10 @@ use neoteletext_web::sha256::{Digest, Sha256, parse_hex, to_hex};
 use crate::protocol::{COOKIE_BYTES, CookiePair, MOST_COOKIES, SessionId};
 
 /// The cookie's name: names beginning `_` are the server's
-/// (`SERVER.md` section 8.2).
+/// (DOC-1924).
 pub const NAME: &str = "_session";
 /// What begins the names of cookies that are the server's alone
-/// (`SERVER.md` section 8.2).
+/// (DOC-1924).
 const SERVER_NAMES: char = '_';
 /// A key's length: as long as the digest (RFC 2104 section 3 advises no
 /// shorter).
@@ -91,7 +91,7 @@ pub fn set_cookie(key: &Key, channel: &str, session: SessionId, now_s: u64, secu
 /// What a `Cookie` header's value holds for a channel's program (REQ-1471),
 /// added to `cookies` up to [`MOST_COOKIES`]: every `name=value` pair within
 /// [`COOKIE_BYTES`] that is text, without the server's own, whose names begin
-/// `_`, of which the session cookie is one (`SERVER.md` section 8.2). What the
+/// `_`, of which the session cookie is one (DOC-1924). What the
 /// viewer's end sends is untrusted: a pair that breaks a bound is left out,
 /// and the rest are still read.
 pub fn program_cookies(header: &[u8], cookies: &mut Vec<CookiePair>) {

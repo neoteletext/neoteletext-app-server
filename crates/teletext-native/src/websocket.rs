@@ -2,10 +2,9 @@
 //! input or output: a reader of the client's masked frames and the
 //! header of the server's unmasked ones. The engine has the client's half
 //! and the handshake (`neoteletext_web::ws`); this is the half a server
-//! needs (`SERVER.md` section 3.2 item 4).
+//! needs.
 
-/// The largest message a client may send: INPUT.md's 4,096-byte message
-/// with room for a close's reason.
+/// The largest message a client may send (DOC-1918).
 pub const MAX_MESSAGE: usize = 8 * 1024;
 /// The largest control frame's payload (RFC 6455 section 5.5).
 const MAX_CONTROL: usize = 125;

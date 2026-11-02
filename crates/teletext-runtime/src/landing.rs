@@ -84,7 +84,7 @@ pub fn tail(path: &str, query: Option<&str>) -> String {
     query.filter(|query| !query.is_empty()).map_or_else(|| place.to_owned(), |query| format!("{place}?{query}"))
 }
 
-/// Why a push upgrade is refused (`SERVER.md` section 5.1), each a status a
+/// Why a push upgrade is refused (DOC-1917), each a status a
 /// host answers with. A receiver stops on either.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PushRefusal {
