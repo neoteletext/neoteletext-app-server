@@ -64,14 +64,9 @@ check_no_panic_lists() {
 # The engine is imported at one commit, never copied (CLAUDE.md).
 check_engine_pin() {
     step "the engine is pinned at one commit"
-    local manifests=(Cargo.toml crates/*/Cargo.toml) revs
-    [[ -f fuzz/Cargo.toml ]] && manifests+=(fuzz/Cargo.toml)
+    local manifests=(Cargo.toml crates/*/Cargo.toml fuzz/Cargo.toml) revs
     revs="$(sed -n 's/^neoteletext-[a-z0-9-]* = { git = "[^"]*", rev = "\([0-9a-f]*\)".*/\1/p' "${manifests[@]}" | sort -u)"
-    if grep -q '^neoteletext-[a-z0-9-]* = ' "${manifests[@]}"; then
-        [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "every engine crate must name one commit, found: ${revs:-none}"
-    else
-        printf 'no engine crate imported yet\n'
-    fi
+    [[ -n "$revs" && "$revs" != *$'\n'* ]] || fail "every engine crate must name one commit, found: ${revs:-none}"
 }
 
 # DEC-1759 lesson 19: a receiver is known by the capabilities in HELLO alone.
@@ -89,9 +84,7 @@ check_workspace() {
     check_no_agent_text
     step "lockfiles up to date"
     cargo metadata --quiet --locked --format-version 1 >/dev/null
-    if [[ -f fuzz/Cargo.toml ]]; then
-        (cd fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
-    fi
+    (cd fuzz && cargo metadata --quiet --locked --format-version 1 >/dev/null)
     step "formatting"
     cargo fmt --check
     check_no_panic_lists
@@ -108,17 +101,13 @@ check_shapes_and_tests() {
     for crate in "${WASM_CRATES[@]}"; do packages+=(-p "$crate"); done
     cargo clippy --quiet "${packages[@]}" --target "$WASM_TARGET" -- -D warnings
     step "tests"
-    cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail --no-tests=warn
+    cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail
 }
 
 commit_steps() { check_workspace; }
 push_steps() { check_shapes_and_tests; }
 
 check_fuzz() {
-    [[ -f fuzz/Cargo.toml ]] || {
-        step "fuzzing: no fuzz workspace yet"
-        return 0
-    }
     step "fuzz: Clippy, then $fuzz_seconds seconds a target after its regressions"
     (
         cd fuzz
@@ -141,9 +130,9 @@ full_steps() {
     step "documentation builds, warnings as errors"
     RUSTDOCFLAGS="-D warnings" cargo doc --quiet --workspace --no-deps
     step "release tests"
-    cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail --no-tests=warn
+    cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail
     step "tests with every optional feature compiled out"
-    cargo nextest run --workspace --no-default-features --hide-progress-bar --status-level fail --final-status-level fail --no-tests=warn
+    cargo nextest run --workspace --no-default-features --hide-progress-bar --status-level fail --final-status-level fail
     step "licences, advisories and sources"
     cargo deny check
     step "no unused dependencies"
@@ -153,7 +142,7 @@ full_steps() {
 
 linux_steps() {
     step "Linux on $linux_host: Clippy and tests"
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$linux_host" true || fail "$linux_host is unreachable; the full gate needs it"
+    need_host
     # By content, with the host's own times (gates.md).
     rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"

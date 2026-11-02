@@ -65,7 +65,9 @@ sha256_of() {
 install_tool() {
     local crate="$1" version="$2" sha256="$3" work found
     mkdir -p "$tools_root"
-    work="$(mktemp -d "$tools_root/download.XXXXXX")" || return 1
+    # Outside the repository: a crate unpacked under the workspace's root is
+    # refused as a package that is not one of its members.
+    work="$(mktemp -d)" || return 1
     if ! curl --proto '=https' --tlsv1.2 --silent --show-error --fail --location \
         --output "$work/$crate.crate" "$CRATE_DOWNLOADS/$crate/$crate-$version.crate"; then
         rm -rf "$work"
