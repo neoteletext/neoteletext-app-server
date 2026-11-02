@@ -38,7 +38,7 @@ pub const LONGEST_ERROR_LINE: usize = 64 * 1024;
 /// Lines that may wait for the program: beyond this the server drops the
 /// newest and says so, since the network loop never waits for an
 /// application (DOC-1965). A pointer's moves are not among them
-/// ([`waiting`]).
+/// (the module `waiting` holds them apart).
 pub const WAITING_LINES: usize = 4_096;
 /// Lines from the program that may wait for the channel.
 const ARRIVING_LINES: usize = 1_024;

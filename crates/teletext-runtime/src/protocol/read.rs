@@ -141,7 +141,7 @@ fn packed_line(mut object: Map<String, Value>) -> Result<PackedLine, Fault> {
 
 /// A packed line inside a page: read by following `packet`, as the message
 /// is, and a fault inside it carries its path out within serde's error
-/// text, marked, which [`fault_of`] joins to the path outside.
+/// text, marked, which `fault_of` joins to the path outside.
 impl<'de> Deserialize<'de> for PackedLine {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Value::Object(object) = Value::deserialize(deserializer)? else {
