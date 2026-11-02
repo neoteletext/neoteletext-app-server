@@ -8,8 +8,9 @@ use super::*;
 
 /// The modifiers a test holds: more than one, so that no bit is lost.
 const HELD: u8 = CONTROL | SHIFT;
-/// A dot of the page image, past what eight bits hold.
-const DOT: (u32, u32) = (480, 250);
+/// A dot of the page image inside the cell the tests point at, column 7
+/// and row 9: 12 dots to a cell across and 20 down (DOC-1946).
+const DOT: (u32, u32) = (91, 187);
 
 fn event_of(channel: &mut Channel, item: Item<'_>, now: u64) -> Value {
     channel.received(CONNECTION, &message(&[item]), now);
