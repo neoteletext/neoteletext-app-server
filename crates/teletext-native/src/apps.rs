@@ -291,16 +291,20 @@ async fn read_line_cut<R: AsyncBufRead + Unpin>(reader: &mut R, most: usize) -> 
 }
 
 /// Carries lines both ways until the program ends; answers why it did.
-/// The same for every transport (requirement 6.4).
+/// The same for every transport (requirement 6.4). Each direction runs to
+/// the end of the relay, so a line partly read is never dropped when a line
+/// for the program comes first (REQ-1345), and neither direction waits for
+/// the other: a program stuck writing a long line while the server writes
+/// to it would stop them both.
 async fn relay<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
     mut reader: R,
     mut writer: W,
     arrived: &mpsc::Sender<FromApplication>,
     outgoing: &mut mpsc::Receiver<Vec<u8>>,
 ) -> String {
-    loop {
-        tokio::select! {
-            line = read_line(&mut reader) => match line {
+    let hearing = async {
+        loop {
+            match read_line(&mut reader).await {
                 Ok(Some(line)) if line.is_empty() => {}
                 Ok(Some(line)) => {
                     if arrived.send(FromApplication::Line(line)).await.is_err() {
@@ -309,16 +313,20 @@ async fn relay<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
                 }
                 Ok(None) => return "its output closed".to_owned(),
                 Err(error) => return error,
-            },
-            line = outgoing.recv() => match line {
-                Some(line) => {
-                    if let Err(error) = writer.write_all(&line).await {
-                        return format!("writing to it: {error}");
-                    }
-                }
-                None => return "the channel stopped".to_owned(),
-            },
+            }
         }
+    };
+    let telling = async {
+        while let Some(line) = outgoing.recv().await {
+            if let Err(error) = writer.write_all(&line).await {
+                return format!("writing to it: {error}");
+            }
+        }
+        "the channel stopped".to_owned()
+    };
+    tokio::select! {
+        reason = hearing => reason,
+        reason = telling => reason,
     }
 }
 

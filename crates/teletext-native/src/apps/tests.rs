@@ -155,6 +155,125 @@ fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
     assert_eq!(pause_after(Duration::ZERO, LONGEST_PAUSE), LONGEST_PAUSE);
 }
 
+/// A program's end of a relay, and the channel's: what the relay reads and
+/// writes goes through a pipe of `PIPE_BYTES`, so that a long line takes
+/// many reads, as it does over a real one.
+struct Relayed {
+    program: tokio::io::DuplexStream,
+    to: mpsc::Sender<Vec<u8>>,
+    from: mpsc::Receiver<FromApplication>,
+    ended: tokio::task::JoinHandle<String>,
+}
+
+const PIPE_BYTES: usize = 64;
+/// A real pipe's, for a line too long to take bytes at a time.
+const WIDE_PIPE_BYTES: usize = 64 * 1024;
+
+fn relayed() -> Relayed {
+    relayed_through(PIPE_BYTES)
+}
+
+fn relayed_through(pipe_bytes: usize) -> Relayed {
+    let (program, server) = tokio::io::duplex(pipe_bytes);
+    let (reading, writing) = tokio::io::split(server);
+    let (to, mut outgoing) = mpsc::channel(WAITING_LINES);
+    let (arrived, from) = mpsc::channel(ARRIVING_LINES);
+    let ended = tokio::spawn(async move { relay(BufReader::new(reading), writing, &arrived, &mut outgoing).await });
+    Relayed { program, to, from, ended }
+}
+
+async fn line_from(from: &mut mpsc::Receiver<FromApplication>) -> Vec<u8> {
+    let arrived = tokio::time::timeout(Duration::from_secs(10), from.recv()).await.unwrap().unwrap();
+    let FromApplication::Line(line) = arrived else { panic!("a line, not {arrived:?}") };
+    line
+}
+
+/// REQ-1345: a line for the program that comes while one from the program
+/// is half read costs that line nothing, whether it is short or a page or a
+/// sound long, however often it happens.
+#[tokio::test]
+async fn input_for_a_program_costs_no_line_it_is_writing() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let Relayed { mut program, to, mut from, .. } = relayed();
+    for (round, length) in [10, PIPE_BYTES / 2, PIPE_BYTES * 3, 4 * 1024, 256 * 1024].into_iter().enumerate() {
+        let filler = b'a'.saturating_add(u8::try_from(round).unwrap());
+        let mut line = vec![filler; length];
+        let (first, second) = line.split_at(length / 2);
+        program.write_all(first).await.unwrap();
+        // Everything written so far has been taken into the relay's line
+        // before the input comes: the pipe is not full of it.
+        program.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let input = format!("{{\"type\":\"input\",\"round\":{round}}}\n").into_bytes();
+        to.send(input.clone()).await.unwrap();
+        let mut heard = vec![0; input.len()];
+        tokio::time::timeout(Duration::from_secs(10), program.read_exact(&mut heard)).await.unwrap().unwrap();
+        assert_eq!(heard, input);
+        program.write_all(second).await.unwrap();
+        program.write_all(b"\n").await.unwrap();
+        line.truncate(length);
+        assert!(line_from(&mut from).await == line, "the line of {length} bytes in round {round} arrived whole");
+    }
+}
+
+/// A program that writes a whole long line before it reads, while the server
+/// is writing it a long line, stops neither: each direction goes on alone.
+#[tokio::test]
+async fn neither_direction_waits_for_the_other() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    const LENGTH: usize = 256 * 1024;
+    let Relayed { mut program, to, mut from, .. } = relayed();
+    to.send(vec![b'i'; LENGTH]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let mut line = vec![b'o'; LENGTH];
+    line.push(b'\n');
+    let mut heard = vec![0; LENGTH];
+    tokio::time::timeout(Duration::from_secs(10), async {
+        program.write_all(&line).await.unwrap();
+        program.read_exact(&mut heard).await.unwrap();
+    })
+    .await
+    .unwrap();
+    assert_eq!(line_from(&mut from).await.len(), LENGTH);
+}
+
+/// REQ-1345 keeps the bound: a line of [`LONGEST_LINE`] bytes arrives, with
+/// input coming while it does, and one byte more ends the program.
+#[tokio::test]
+async fn the_longest_line_is_the_bound_across_input() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let Relayed { program, to, mut from, ended } = relayed_through(WIDE_PIPE_BYTES);
+    let (mut reading, mut writing) = tokio::io::split(program);
+    let writes = tokio::spawn(async move {
+        let _ = writing.write_all(&vec![b'x'; LONGEST_LINE]).await;
+        let _ = writing.write_all(b"\n").await;
+        let _ = writing.write_all(&vec![b'y'; LONGEST_LINE + 1]).await;
+        writing
+    });
+    to.send(b"{\"type\":\"input\"}\n".to_vec()).await.unwrap();
+    let mut heard = [0; 16];
+    tokio::time::timeout(Duration::from_secs(30), reading.read_exact(&mut heard)).await.unwrap().unwrap();
+    assert_eq!(line_from(&mut from).await.len(), LONGEST_LINE);
+    let reason = tokio::time::timeout(Duration::from_secs(30), ended).await.unwrap().unwrap();
+    assert!(reason.contains("a line over"), "{reason}");
+    drop(writes);
+}
+
+/// A program that ends in the middle of a line has that line heard, as
+/// any line is, and then the end of its output.
+#[tokio::test]
+async fn a_line_cut_by_the_end_of_the_output_is_heard() {
+    use tokio::io::AsyncWriteExt as _;
+    let Relayed { mut program, to, mut from, ended } = relayed();
+    program.write_all(b"cut sho").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    to.send(b"input\n".to_vec()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    drop(program);
+    assert_eq!(line_from(&mut from).await, b"cut sho");
+    assert_eq!(tokio::time::timeout(Duration::from_secs(10), ended).await.unwrap().unwrap(), "its output closed");
+}
+
 /// A program that runs as a service of its own connects to its channel's
 /// socket, which only its owner may reach; is told to the channel; hears
 /// `start`; is heard; and, when it goes and comes back, is told again. A second
