@@ -9,6 +9,7 @@ fn reply() -> Value {
     json!({"type": "reply", "connection": 1, "request": 1, "magazines": magazines(), "selected": subpage()})
 }
 
+/// REQ-1476: `reply`.
 #[test]
 fn a_reply_is_read_whole() {
     accepted(&reply());

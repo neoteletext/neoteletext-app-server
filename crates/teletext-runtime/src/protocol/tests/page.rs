@@ -9,6 +9,7 @@ fn page() -> Value {
     json!({"type": "page", "connections": "all", "page": subpage()})
 }
 
+/// REQ-1476: `page`.
 #[test]
 fn a_page_is_read_whole() {
     accepted(&page());
@@ -38,6 +39,7 @@ fn a_page_names_the_field_at_fault() {
 }
 
 /// REQ-1478: every number at its bound and one past it.
+/// REQ-1346: a cursor on rows 1 to 23 alone.
 #[test]
 fn a_pages_numbers_keep_their_bounds() {
     let page = page();

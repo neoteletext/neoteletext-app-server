@@ -9,6 +9,7 @@ fn line() -> Value {
     json!({"type": "author_log", "connections": "all", "level": "W", "text": "the feed is slow", "page": "100"})
 }
 
+/// REQ-1476: `author_log`.
 #[test]
 fn an_authors_log_line_is_read_whole() {
     accepted(&line());

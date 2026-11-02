@@ -11,6 +11,7 @@ fn index() -> Value {
     json!({"type": "index", "connections": "all", "magazines": magazines()})
 }
 
+/// REQ-1476: `index`.
 #[test]
 fn an_index_is_read_whole() {
     accepted(&index());

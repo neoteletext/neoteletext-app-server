@@ -76,6 +76,7 @@ fn structured(page: &str) -> Value {
 }
 
 /// REQ-1728 item 7: the request is the page number and nothing else.
+/// REQ-1476: `describe`.
 #[test]
 fn the_request_is_a_page_number_and_nothing_else() {
     let mut channel = channel();
@@ -298,6 +299,7 @@ fn a_program_that_goes_leaves_nobody_waiting() {
 
 /// What the program sends is checked whole: each of these is refused, and
 /// none reaches the cache.
+/// REQ-1476: `description`.
 #[test]
 fn a_description_is_checked_whole() {
     let public = public_description("t", "x");
@@ -325,6 +327,7 @@ fn a_description_is_checked_whole() {
 
 /// A description nobody asked for is refused, so a program cannot fill the
 /// server's memory with pictures.
+/// REQ-1476: `description`.
 #[test]
 fn a_description_nobody_asked_for_is_refused() {
     let mut channel = channel();

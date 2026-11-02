@@ -11,6 +11,7 @@ const BLESS: &str = "TELETEXT_BLESS_SCHEMA";
 
 /// REQ-1479: the published schema is exactly what the types generate.
 /// `TELETEXT_BLESS_SCHEMA=1 cargo test -p teletext-runtime schema` writes it.
+/// REQ-1476: the messages and their schema, from one set of types.
 #[test]
 fn the_published_schema_is_the_one_the_types_generate() {
     assert!(PUBLISHED.ends_with(&format!("schema-{PROTOCOL}.json")), "the file is named for the protocol's version");

@@ -309,15 +309,23 @@ fn check_subpages(root: &Path<'_>, list: &SubPages) -> Checked {
     if list.subpages.is_empty() || list.subpages.len() > limits::MAX_SUBPAGES {
         return Err(fault(&entries, Rule::OutOfRange, format!("{} sub-pages, 1 to {}", list.subpages.len(), limits::MAX_SUBPAGES)));
     }
-    let mut seen = alloc::collections::BTreeSet::new();
+    let mut before = None;
     for (index, entry) in list.subpages.iter().enumerate() {
         let at = entries.item(index);
         if entry.sub.0 > limits::LAST_SUBPAGE_CODE {
             return Err(fault(&at.field("sub"), Rule::OutOfRange, format!("{:04X}: 3F7F means any sub-page, never one", entry.sub.0)));
         }
-        if !seen.insert(entry.sub.0) {
-            return Err(fault(&at.field("sub"), Rule::Duplicate, format!("{:04X} twice", entry.sub.0)));
+        if let Some(before) = before
+            && entry.sub.0 <= before
+        {
+            let (rule, detail) = if entry.sub.0 == before {
+                (Rule::Duplicate, format!("{:04X} twice", entry.sub.0))
+            } else {
+                (Rule::NotAscending, format!("{:04X} after {before:04X}", entry.sub.0))
+            };
+            return Err(fault(&at.field("sub"), rule, detail));
         }
+        before = Some(entry.sub.0);
         if let Some(title) = &entry.title {
             check_text(&at.field("title"), title, 0, super::SUBPAGE_TITLE_CHARACTERS)?;
         }

@@ -18,12 +18,14 @@ fn packets() -> Value {
     json!({"type": "packets", "connections": "all", "packets": base64(&row())})
 }
 
+/// REQ-1476: `packets`.
 #[test]
 fn raw_packets_are_read_whole() {
     accepted(&packets());
     accepted(&with(&packets(), "/packets", json!(base64(&[row(), row()].concat()))));
 }
 
+/// REQ-1462 item 2: a program's packet that fails is refused when it is sent.
 #[test]
 fn raw_packets_name_the_fault() {
     refused(&with(&packets(), "/extra", json!(1)), "extra", Rule::UnknownField);

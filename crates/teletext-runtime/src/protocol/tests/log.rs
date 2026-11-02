@@ -9,6 +9,7 @@ fn line() -> Value {
     json!({"type": "log", "level": "info", "event": "fetched_posts", "text": "7 posts"})
 }
 
+/// REQ-1476: `log`.
 #[test]
 fn an_operators_log_line_is_read_whole() {
     accepted(&line());

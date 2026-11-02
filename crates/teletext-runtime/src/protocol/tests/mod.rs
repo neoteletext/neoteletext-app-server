@@ -15,6 +15,7 @@ use super::{ProgramMessage, Refusal, Rule, read};
 
 mod applies_nothing;
 mod author_log;
+mod closed_set;
 mod cookie;
 mod index;
 mod log;
@@ -82,7 +83,7 @@ fn bounds(value: &Value, pointer: &str, path: &str, last: u64, rule: Rule) {
 }
 
 /// Exact base64 of `bytes` (RFC 4648 section 4).
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     let mut out = alloc::vec![0_u8; neoteletext_web::base64::encoded_len(bytes.len())];
     let written = neoteletext_web::base64::encode(bytes, &mut out).unwrap();
     out.truncate(written);

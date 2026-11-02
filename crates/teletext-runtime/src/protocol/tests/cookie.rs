@@ -10,6 +10,7 @@ fn cookie() -> Value {
            "same_site": "Lax", "secure": true, "http_only": false})
 }
 
+/// REQ-1476: `cookie`.
 #[test]
 fn a_cookie_is_read_whole() {
     accepted(&cookie());

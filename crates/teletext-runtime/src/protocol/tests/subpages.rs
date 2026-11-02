@@ -12,6 +12,7 @@ fn list() -> Value {
            "subpages": [{"sub": "0000", "title": "Front"}, {"sub": "0001", "title": null}, {"sub": "0002", "title": "Third"}]})
 }
 
+/// REQ-1476 and REQ-1503: 1 and 8,190 sub-pages, 0000 beside the rest.
 #[test]
 fn a_sub_page_list_is_read_whole() {
     accepted(&list());
@@ -23,6 +24,7 @@ fn a_sub_page_list_is_read_whole() {
     accepted(&with(&list(), "/subpages", Value::Array(most)));
 }
 
+/// REQ-1476: a repeated sub-code, 3F7F and an over-long title.
 #[test]
 fn a_sub_page_list_names_the_field_at_fault() {
     refused(&with(&list(), "/extra", json!(1)), "extra", Rule::UnknownField);

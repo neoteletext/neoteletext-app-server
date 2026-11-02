@@ -23,6 +23,7 @@ fn long_address(extra: usize) -> Value {
     json!(address)
 }
 
+/// REQ-1476: `redirect` to a page.
 #[test]
 fn a_page_redirect_is_read_whole() {
     accepted(&page_redirect());
@@ -40,6 +41,7 @@ fn a_page_redirect_names_the_field_at_fault() {
 }
 
 /// REQ-1688 item 1: another channel's address, up to what the record holds.
+/// REQ-1476: `redirect` to an address.
 #[test]
 fn an_address_redirect_is_read_whole() {
     accepted(&address_redirect());
@@ -47,6 +49,7 @@ fn an_address_redirect_is_read_whole() {
 }
 
 /// REQ-1688 item 1: exactly one form.
+/// REQ-1476 and REQ-1688 item 1.
 #[test]
 fn a_redirect_names_a_page_or_an_address_never_both_or_neither() {
     refused(&with(&address_redirect(), "/page", json!("1A0")), "page", Rule::UnknownField);

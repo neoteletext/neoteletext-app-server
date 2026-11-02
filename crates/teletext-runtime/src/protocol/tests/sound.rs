@@ -40,6 +40,7 @@ fn every() -> [Value; 9] {
     ]
 }
 
+/// REQ-1476: every kind of `sound`.
 #[test]
 fn every_kind_of_sound_is_read_whole() {
     for sound in every() {
