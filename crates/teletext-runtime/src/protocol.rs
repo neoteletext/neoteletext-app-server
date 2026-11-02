@@ -37,8 +37,10 @@ pub use read::read;
 /// (DEC-1683), and which could name no other channel. Version 6 numbers
 /// each selection (DEC-1759 lesson 13), passes a program its cookies, adds
 /// `denied`, lets a redirect keep a query, and adds `describe` and
-/// `description` (REQ-1728).
-pub const PROTOCOL: u32 = 6;
+/// `description` (REQ-1728). Version 7 gives input every field a receiver
+/// sends: `mods` on a key, the mouse and the wheel, the dot `px` and `py` on
+/// the mouse and the wheel, and `compose` (REQ-1347).
+pub const PROTOCOL: u32 = 7;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -537,6 +539,8 @@ pub enum InputEvent {
         action: KeyAction,
         /// Which key.
         key: KeyName,
+        /// The modifier keys held, a bit each as DOC-1935 numbers them.
+        mods: u8,
         /// The text the key produced, if any.
         #[schemars(length(min = 1, max = neoteletext_input::MAX_KEY_TEXT))]
         text: Option<String>,
@@ -556,12 +560,18 @@ pub enum InputEvent {
         button: Option<u8>,
         /// The buttons held during a move; none for a press or release.
         buttons: Option<Buttons>,
+        /// The modifier keys held, a bit each.
+        mods: u8,
         /// The cell's column, 0 to 39.
         #[schemars(range(max = LAST_COLUMN))]
         column: u8,
         /// The cell's row, 0 to 24.
         #[schemars(range(max = LAST_ROW))]
         row: u8,
+        /// The dot of the page image across, when the receiver knows it.
+        px: Option<u32>,
+        /// The dot down.
+        py: Option<u32>,
     },
     /// The wheel turned over a cell, in 1/120ths of a line, positive right
     /// and down.
@@ -570,12 +580,18 @@ pub enum InputEvent {
         dx: i16,
         /// Down.
         dy: i16,
+        /// The modifier keys held, a bit each.
+        mods: u8,
         /// The cell's column.
         #[schemars(range(max = LAST_COLUMN))]
         column: u8,
         /// The cell's row.
         #[schemars(range(max = LAST_ROW))]
         row: u8,
+        /// The dot of the page image across, when the receiver knows it.
+        px: Option<u32>,
+        /// The dot down.
+        py: Option<u32>,
     },
     /// The pointer came onto one of the page's controls, or went off it.
     Hover {
@@ -592,6 +608,16 @@ pub enum InputEvent {
     Text {
         /// Whole characters.
         #[schemars(length(min = 1, max = neoteletext_input::MAX_COMPOSE))]
+        text: String,
+    },
+    /// An input method's text as it stands while it is being composed: what
+    /// it commits comes as `text`.
+    Compose {
+        /// Where the caret is, in code points from the text's start.
+        #[schemars(range(max = neoteletext_input::MAX_COMPOSE))]
+        cursor: u32,
+        /// The text; empty when composing ended.
+        #[schemars(length(max = neoteletext_input::MAX_COMPOSE))]
         text: String,
     },
     /// A paste: data, never keystrokes.

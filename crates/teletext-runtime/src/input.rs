@@ -4,7 +4,7 @@
 
 use alloc::string::{String, ToString};
 
-use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction, Stamp};
+use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction, Point, Stamp};
 use neoteletext_input::held::Released;
 use neoteletext_input::keys;
 
@@ -71,6 +71,8 @@ pub enum Input<'a> {
         action: Action,
         /// Which key.
         key: Named,
+        /// The modifier keys held, a bit each.
+        mods: u8,
         /// The text the press produced, if any.
         text: Option<&'a str>,
         /// The United States layout's character of the same key, when it
@@ -83,20 +85,16 @@ pub enum Input<'a> {
         pressed: bool,
         /// The button: 0 left, 1 middle, 2 right.
         button: u8,
-        /// The cell's column.
-        column: u32,
-        /// The cell's row.
-        row: u32,
+        /// Where, and the modifier keys held.
+        at: Point,
     },
     /// The pointer moved over the page: every move that changes the dot
     /// under it, a button held or not (DOC-1945).
     Moved {
         /// The buttons held, a bit each: 1 left, 2 middle, 4 right.
         buttons: u8,
-        /// The cell's column.
-        column: u32,
-        /// The cell's row.
-        row: u32,
+        /// Where, and the modifier keys held.
+        at: Point,
     },
     /// The wheel turned over a cell (DOC-1938): in 1/120ths of
     /// a line, positive right and down.
@@ -105,10 +103,8 @@ pub enum Input<'a> {
         dx: i32,
         /// Down.
         dy: i32,
-        /// The cell's column.
-        column: u32,
-        /// The cell's row.
-        row: u32,
+        /// Where, and the modifier keys held.
+        at: Point,
     },
     /// The pointer came onto a control of the page or went off it (DOC-1940), while keys go to the channel.
     Hover {
@@ -118,6 +114,13 @@ pub enum Input<'a> {
         column: u32,
         /// The control's top row.
         row: u32,
+    },
+    /// An input method's text as it stands: empty when composing ended.
+    Compose {
+        /// Where the caret is, in code points from the text's start.
+        cursor: u32,
+        /// The text.
+        text: &'a str,
     },
     /// A paste: data, never keystrokes.
     Paste(&'a str),
@@ -134,19 +137,16 @@ impl<'a> Input<'a> {
     pub fn of(item: &Item<'a>) -> Option<Self> {
         match *item {
             Item::Text(text) => Some(Self::Text(text)),
-            Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), text: key.text, base: key.base }),
+            Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), mods: key.mods, text: key.text, base: key.base }),
             // Gone is not a release (DOC-1938, MOUSE action 3): the protocol
             // for programs has no event for it, so they are not told.
             Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Gone => None,
-            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move => {
-                Some(Self::Moved { buttons: mouse.button, column: mouse.at.column, row: mouse.at.row })
-            }
-            Item::Event(Event::Mouse(mouse)) => {
-                Some(Self::Mouse { pressed: mouse.action == EventMouseAction::Press, button: mouse.button, column: mouse.at.column, row: mouse.at.row })
-            }
-            Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, column: wheel.at.column, row: wheel.at.row }),
+            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move => Some(Self::Moved { buttons: mouse.button, at: mouse.at }),
+            Item::Event(Event::Mouse(mouse)) => Some(Self::Mouse { pressed: mouse.action == EventMouseAction::Press, button: mouse.button, at: mouse.at }),
+            Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, at: wheel.at }),
             Item::Event(Event::Hover { leave, column, row, .. }) => Some(Self::Hover { entered: !leave, column, row }),
             Item::Event(Event::Paste { text, .. }) => Some(Self::Paste(text)),
+            Item::Event(Event::Compose { cursor, text, .. }) => Some(Self::Compose { cursor, text }),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
             Item::Event(_) => None,
@@ -224,10 +224,21 @@ pub(crate) const fn marked_lost(item: &Item<'_>) -> bool {
 #[must_use]
 pub(crate) fn lost_release(released: Released, at: (u8, u8)) -> Option<InputEvent> {
     match released {
-        Released::Key(key) => Some(InputEvent::Key { action: KeyAction::Release, key: KeyName(key_name(Named::of(key))), text: None, base: None }),
+        Released::Key(key) => {
+            Some(InputEvent::Key { action: KeyAction::Release, key: KeyName(key_name(Named::of(key))), mods: NO_MODIFIERS, text: None, base: None })
+        }
         Released::Button(button) => {
             let button = (button <= LAST_BUTTON).then_some(button)?;
-            Some(InputEvent::Mouse { action: MouseAction::Release, button: Some(button), buttons: None, column: at.0, row: at.1 })
+            Some(InputEvent::Mouse {
+                action: MouseAction::Release,
+                button: Some(button),
+                buttons: None,
+                mods: NO_MODIFIERS,
+                column: at.0,
+                row: at.1,
+                px: None,
+                py: None,
+            })
         }
         Released::Contact(_) => None,
     }
@@ -265,6 +276,12 @@ fn key_name(key: Named) -> String {
     name.to_string()
 }
 
+/// The dot of the page image under the pointer, across and down, when the
+/// receiver knows it.
+fn dot(at: Point) -> (Option<u32>, Option<u32>) {
+    at.pixels.map_or((None, None), |(across, down)| (Some(across), Some(down)))
+}
+
 /// A cell's column and row within the page's 40 by 25, or none: the
 /// protocol's bounds (REQ-1476).
 fn cell(column: u32, row: u32) -> Option<(u8, u8)> {
@@ -272,6 +289,9 @@ fn cell(column: u32, row: u32) -> Option<(u8, u8)> {
     let row = u8::try_from(row).ok().filter(|&row| usize::from(row) < protocol::ROWS)?;
     Some((column, row))
 }
+
+/// What a lost release says of the modifiers: nothing was pressed to make it.
+const NO_MODIFIERS: u8 = 0;
 
 /// The buttons held, a bit each: 1 left, 2 middle, 4 right (DOC-1929).
 const LEFT: u8 = 1;
@@ -289,30 +309,36 @@ impl Input<'_> {
         Some(match *self {
             Self::Text(text) => InputEvent::Text { text: text.to_string() },
             Self::Paste(text) => InputEvent::Paste { text: text.to_string() },
-            Self::Key { action, key, text, base } => InputEvent::Key {
+            Self::Compose { cursor, text } => InputEvent::Compose { cursor, text: text.to_string() },
+            Self::Key { action, key, mods, text, base } => InputEvent::Key {
                 action: match action {
                     Action::Press => KeyAction::Press,
                     Action::Repeat => KeyAction::Repeat,
                     Action::Release => KeyAction::Release,
                 },
                 key: KeyName(key_name(key)),
+                mods,
                 text: text.map(ToString::to_string),
                 base: base.map(|base| base.to_string()),
             },
-            Self::Mouse { pressed, button, column, row } => {
-                let (column, row) = cell(column, row)?;
+            Self::Mouse { pressed, button, at } => {
+                let (column, row) = cell(at.column, at.row)?;
                 let button = (button <= LAST_BUTTON).then_some(button)?;
-                InputEvent::Mouse { action: if pressed { MouseAction::Press } else { MouseAction::Release }, button: Some(button), buttons: None, column, row }
+                let (px, py) = dot(at);
+                let action = if pressed { MouseAction::Press } else { MouseAction::Release };
+                InputEvent::Mouse { action, button: Some(button), buttons: None, mods: at.mods, column, row, px, py }
             }
-            Self::Moved { buttons, column, row } => {
-                let (column, row) = cell(column, row)?;
+            Self::Moved { buttons, at } => {
+                let (column, row) = cell(at.column, at.row)?;
                 let held = Buttons { left: buttons & LEFT != 0, middle: buttons & MIDDLE != 0, right: buttons & RIGHT != 0 };
-                InputEvent::Mouse { action: MouseAction::Move, button: None, buttons: Some(held), column, row }
+                let (px, py) = dot(at);
+                InputEvent::Mouse { action: MouseAction::Move, button: None, buttons: Some(held), mods: at.mods, column, row, px, py }
             }
-            Self::Wheel { dx, dy, column, row } => {
-                let (column, row) = cell(column, row)?;
+            Self::Wheel { dx, dy, at } => {
+                let (column, row) = cell(at.column, at.row)?;
                 let bounded = |delta: i32| i16::try_from(delta).unwrap_or(if delta < 0 { i16::MIN } else { i16::MAX });
-                InputEvent::Wheel { dx: bounded(dx), dy: bounded(dy), column, row }
+                let (px, py) = dot(at);
+                InputEvent::Wheel { dx: bounded(dx), dy: bounded(dy), mods: at.mods, column, row, px, py }
             }
             Self::Hover { entered, column, row } => {
                 let (column, row) = cell(column, row)?;

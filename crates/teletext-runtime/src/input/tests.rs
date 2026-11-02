@@ -9,7 +9,7 @@ const ON: Stamp = Stamp { page: 0x100, sub: 0 };
 #[test]
 fn the_wheel_is_input() {
     let wheel = Wheel { on: ON, dx: 0, dy: -240, at: Point { column: 10, row: 5, pixels: None, mods: 0 } };
-    assert_eq!(Input::of(&Item::Event(Event::Wheel(wheel))), Some(Input::Wheel { dx: 0, dy: -240, column: 10, row: 5 }));
+    assert_eq!(Input::of(&Item::Event(Event::Wheel(wheel))), Some(Input::Wheel { dx: 0, dy: -240, at: wheel.at }));
 }
 
 /// A drag reaches an application as moves with the buttons held, which it
@@ -18,9 +18,9 @@ fn the_wheel_is_input() {
 fn a_drag_is_input() {
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
     let moved = Mouse { on: ON, action: MouseAction::Move, button: 1, at, device: Device::Mouse };
-    assert_eq!(Input::of(&Item::Event(Event::Mouse(moved))), Some(Input::Moved { buttons: 1, column: 39, row: 12 }));
+    assert_eq!(Input::of(&Item::Event(Event::Mouse(moved))), Some(Input::Moved { buttons: 1, at }));
     let pressed = Mouse { on: ON, action: MouseAction::Press, button: 0, at, device: Device::Mouse };
-    assert_eq!(Input::of(&Item::Event(Event::Mouse(pressed))), Some(Input::Mouse { pressed: true, button: 0, column: 39, row: 12 }));
+    assert_eq!(Input::of(&Item::Event(Event::Mouse(pressed))), Some(Input::Mouse { pressed: true, button: 0, at }));
 }
 
 /// A pointer gone is not a release, which would click what it was over:
@@ -46,7 +46,7 @@ fn a_hover_is_input() {
 /// without text typed its key, so Control and a letter typed the letter.
 #[test]
 fn typing_is_a_keys_text_or_raw_text() {
-    let key = |action, text| Input::Key { action, key: Named::Character('a'), text, base: None };
+    let key = |action, text| Input::Key { action, key: Named::Character('a'), mods: 0, text, base: None };
     assert_eq!(key(Action::Press, Some("a")).character(), Some('a'));
     assert_eq!(key(Action::Repeat, Some("a")).character(), Some('a'));
     assert_eq!(key(Action::Release, Some("a")).character(), None);

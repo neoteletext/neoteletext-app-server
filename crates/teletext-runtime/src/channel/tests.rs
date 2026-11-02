@@ -24,6 +24,7 @@ use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELEC
 use crate::protocol::tests::{line, subpage, with};
 
 mod delivery;
+mod fields;
 mod moves;
 mod sound;
 

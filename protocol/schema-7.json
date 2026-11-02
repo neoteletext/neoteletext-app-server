@@ -374,6 +374,13 @@
               "const": "key",
               "type": "string"
             },
+            "mods": {
+              "description": "The modifier keys held, a bit each as DOC-1935 numbers them.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
             "text": {
               "description": "The text the key produced, if any.",
               "maxLength": 32,
@@ -387,7 +394,8 @@
           "required": [
             "kind",
             "action",
-            "key"
+            "key",
+            "mods"
           ],
           "type": "object"
         },
@@ -431,6 +439,31 @@
               "const": "mouse",
               "type": "string"
             },
+            "mods": {
+              "description": "The modifier keys held, a bit each.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "px": {
+              "description": "The dot of the page image across, when the receiver knows it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "py": {
+              "description": "The dot down.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "row": {
               "description": "The cell's row, 0 to 24.",
               "format": "uint8",
@@ -442,6 +475,7 @@
           "required": [
             "kind",
             "action",
+            "mods",
             "column",
             "row"
           ],
@@ -476,6 +510,31 @@
               "const": "wheel",
               "type": "string"
             },
+            "mods": {
+              "description": "The modifier keys held, a bit each.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "px": {
+              "description": "The dot of the page image across, when the receiver knows it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "py": {
+              "description": "The dot down.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "row": {
               "description": "The cell's row.",
               "format": "uint8",
@@ -488,6 +547,7 @@
             "kind",
             "dx",
             "dy",
+            "mods",
             "column",
             "row"
           ],
@@ -545,6 +605,34 @@
           },
           "required": [
             "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An input method's text as it stands while it is being composed: what\nit commits comes as `text`.",
+          "properties": {
+            "cursor": {
+              "description": "Where the caret is, in code points from the text's start.",
+              "format": "uint32",
+              "maximum": 256,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "compose",
+              "type": "string"
+            },
+            "text": {
+              "description": "The text; empty when composing ended.",
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor",
             "text"
           ],
           "type": "object"
@@ -2475,7 +2563,7 @@
               "type": "integer"
             },
             "protocol": {
-              "const": 6,
+              "const": 7,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2973,5 +3061,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 6"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 7"
 }

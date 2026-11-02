@@ -5,7 +5,7 @@ use alloc::format;
 use super::super::{PROTOCOL, schema};
 
 /// Where the published schema is, from this crate.
-const PUBLISHED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../protocol/schema-6.json");
+const PUBLISHED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../protocol/schema-7.json");
 /// Set to write the schema afresh rather than compare it.
 const BLESS: &str = "TELETEXT_BLESS_SCHEMA";
 
