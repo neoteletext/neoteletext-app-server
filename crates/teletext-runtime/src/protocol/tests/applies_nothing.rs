@@ -6,12 +6,17 @@ use alloc::vec::Vec;
 use serde_json::json;
 
 use super::{line, spaces, subpage, with};
-use crate::{Channel, ChannelConfig, Effect};
+use crate::{Channel, ChannelConfig, Effect, InitialPage};
 
 #[test]
 fn a_refused_line_applies_nothing() {
-    let config =
-        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".into(),
+        address: "http://127.0.0.1/test/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(1, 1, Vec::new(), 0);

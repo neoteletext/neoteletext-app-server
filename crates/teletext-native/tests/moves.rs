@@ -15,7 +15,7 @@ use teletext_native::apps::{self, ChannelSpec, Program};
 use teletext_native::hub::{self, Command, Hub};
 use teletext_native::stats::ServerStats;
 use teletext_runtime::json::{self, Value};
-use teletext_runtime::{Channel, ChannelConfig, ConnectionId};
+use teletext_runtime::{Channel, ChannelConfig, ConnectionId, InitialPage};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -72,8 +72,13 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
     let _ = std::fs::remove_dir_all(&folder);
     let path = folder.join("channel.sock");
     let link = apps::start(ChannelSpec { folder: name.to_owned(), name: "Moves".to_owned(), program: Program::Socket(path.clone()) }).unwrap();
-    let config =
-        ChannelConfig { name: "Moves".into(), address: "http://127.0.0.1/moves/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: "Moves".into(),
+        address: "http://127.0.0.1/moves/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let hub = hub::spawn(name, Channel::new(config), Instant::now(), Some(link), Arc::new(ServerStats::default()));
     let mut program = BufReader::new(UnixStream::connect(&path).await.unwrap());
     // Lines for a program not yet started are dropped.

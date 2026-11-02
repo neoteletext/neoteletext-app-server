@@ -50,7 +50,7 @@ use teletext_native::state::{StateDirectory, random_key};
 use teletext_native::stats::ServerStats;
 use teletext_native::{admin, apps, hub};
 use teletext_runtime::session_cookie::first_session;
-use teletext_runtime::{Channel, ChannelConfig, SESSION_GRACE_MS};
+use teletext_runtime::{Channel, ChannelConfig, InitialPage, SESSION_GRACE_MS};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -60,6 +60,10 @@ const LISTEN: &str = "0.0.0.0:8090";
 const FIGURES_EVERY_S: u64 = 60;
 /// The origin viewers reach it at unless told otherwise.
 const ORIGIN: &str = "http://127.0.0.1:8090";
+/// The page every channel's viewer starts on: the service's home page (EN
+/// 300 706 Annex E.15), refused at start if it were not three decimal
+/// digits (DOC-1865).
+const INITIAL_PAGE: u16 = neoteletext_core::limits::PAGE_HOME;
 /// The variable systemd sets to the unit's `StateDirectory=`.
 const STATE_VARIABLE: &str = "STATE_DIRECTORY";
 /// How long a stop may take before the server exits anyway (requirement 5.1).
@@ -172,7 +176,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         let config = ChannelConfig {
             name: spec.name.clone(),
             address: format!("{}/{folder}/", arguments.origin),
-            initial_page: 0x100,
+            initial_page: InitialPage::new(INITIAL_PAGE).map_err(|fault| format!("{folder}: {fault}"))?,
             epoch_at_start_ms,
             session_grace_ms: SESSION_GRACE_MS,
         };

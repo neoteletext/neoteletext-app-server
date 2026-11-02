@@ -4,14 +4,14 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use teletext_runtime::{Channel, ChannelConfig, Effect};
+use teletext_runtime::{Channel, ChannelConfig, Effect, InitialPage};
 
 /// The longest packet the protocol takes, and one more, so the refusal is reached.
 const LENGTHS: u8 = 42;
 
 fuzz_target!(|data: &[u8]| {
     let Some((&length, packets)) = data.split_first() else { return };
-    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(1, 1, Vec::new(), 0);

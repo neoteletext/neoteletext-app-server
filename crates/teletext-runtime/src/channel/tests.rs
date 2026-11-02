@@ -20,7 +20,9 @@ use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::{TYPE_LINKS, TYPE_REDIRECT};
 use serde_json::{Value, json};
 
-use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS, USED};
+use super::{
+    ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, InitialPage, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS, USED,
+};
 use crate::protocol::tests::{line, subpage, with};
 
 mod delivery;
@@ -46,8 +48,13 @@ const A: KeyCode = KeyCode::Character('a');
 /// A channel with the connection just open: `connected` is held for its
 /// first selection.
 fn held() -> Channel {
-    let config =
-        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".into(),
+        address: "http://127.0.0.1/test/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(CONNECTION, 1, Vec::new(), 0);
@@ -651,8 +658,13 @@ fn a_receiver_that_cannot_select_is_not_waited_for() {
 /// often it is told.
 #[test]
 fn connected_carries_the_cookies_the_connection_opened_with() {
-    let config =
-        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".into(),
+        address: "http://127.0.0.1/test/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     let mut cookies = Vec::new();
@@ -817,8 +829,13 @@ fn a_selection_that_stands_is_not_asked_again() {
 /// once, and one the program went away from keeps its deadline.
 #[test]
 fn a_selection_has_an_ending_with_no_program_too() {
-    let config =
-        ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: "Test".into(),
+        address: "http://127.0.0.1/test/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+    };
     let mut none = Channel::new(config);
     none.opened(CONNECTION, 1, Vec::new(), 0);
     none.received(CONNECTION, &message(&[select(0x302, ANY)]), 10);
@@ -1011,5 +1028,28 @@ fn every_row_of_the_wire_vectors_holds() {
         message["request"] = json!(1);
         channel.from_program(&line(&message), FIRST_SELECTION_WAIT_MS);
         assert_eq!(sent_to(&channel.take_effects(), CONNECTION), vector_bytes(row(name).value), "{name}");
+    }
+}
+
+/// DOC-1865, REQ-513, REQ-1894: `channel.ttx`'s `initial_page` is three
+/// decimal digits, 100 to 899, and a receiver refuses the file for any
+/// other, so the channel is refused one while it is configured. It was
+/// written `{:03X}` from any page, so page 1A0 gave `"1A0"`.
+#[test]
+fn a_channels_initial_page_is_three_decimal_digits() {
+    let written = |page: u16| {
+        let config = ChannelConfig {
+            name: "Test".into(),
+            address: "http://127.0.0.1/test/".into(),
+            initial_page: InitialPage::new(page).unwrap(),
+            epoch_at_start_ms: 0,
+            session_grace_ms: 0,
+        };
+        let descriptor: Value = serde_json::from_slice(&Channel::new(config).descriptor()).unwrap();
+        descriptor["initial_page"].clone()
+    };
+    assert_eq!((written(0x100), written(0x305), written(0x899)), (json!("100"), json!("305"), json!("899")));
+    for page in [0x1A0, 0x10A, 0x1FF, 0x8FF, 0x099, 0x000, 0x900, 0x999, 0x1000] {
+        assert!(InitialPage::new(page).is_err(), "{page:03X}");
     }
 }

@@ -21,7 +21,7 @@ use super::{
     ACKNOWLEDGEMENT_WAIT_MS, ANY, Channel, ChannelConfig, Effect, String, Vec, answered, channel, connecteds, hello, inputs, line, message, record_types,
     select, selected, sends, sent_to, subpage, told, with,
 };
-use crate::channel::SESSION_GRACE_MS;
+use crate::channel::{InitialPage, SESSION_GRACE_MS};
 use crate::protocol::tests::base64;
 
 /// The most sub-pages a page has (the engine's `MAX_SUBPAGES`).
@@ -38,7 +38,13 @@ const SESSION: u64 = 9;
 type ReadIndex = (u8, String, Vec<(u16, u16, String, String)>);
 
 fn config(session_grace_ms: u64) -> ChannelConfig {
-    ChannelConfig { name: "Test".into(), address: "http://127.0.0.1/test/".into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms }
+    ChannelConfig {
+        name: "Test".into(),
+        address: "http://127.0.0.1/test/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms,
+    }
 }
 
 /// A channel with one connection for each `(connection, page, sub)`, each

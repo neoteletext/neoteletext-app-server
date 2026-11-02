@@ -12,7 +12,7 @@ use super::{Answer, DESCRIPTION_CACHE_MS, DESCRIPTION_WAIT_MS, DESCRIPTIONS_BURS
 use crate::landing::{CONTENT_SECURITY_POLICY, PUBLIC_CONTENT_SECURITY_POLICY, described};
 use crate::protocol::tests::{line, subpage, with};
 use crate::protocol::{DESCRIPTION_TEXT_CHARACTERS, PageNumber, TITLE_CHARACTERS};
-use crate::{Channel, ChannelConfig, Effect};
+use crate::{Channel, ChannelConfig, Effect, InitialPage};
 
 const NAME: &str = "Test";
 const ADDRESS: &str = "http://127.0.0.1/test/";
@@ -24,7 +24,8 @@ const RESERVED: PageNumber = PageNumber(0x1FF);
 
 /// A channel whose program runs, and has been told nothing that matters.
 fn channel() -> Channel {
-    let config = ChannelConfig { name: NAME.into(), address: ADDRESS.into(), initial_page: 0x100, epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config =
+        ChannelConfig { name: NAME.into(), address: ADDRESS.into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, session_grace_ms: 0 };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     let _ = channel.take_effects();

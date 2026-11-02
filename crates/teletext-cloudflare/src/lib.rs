@@ -42,7 +42,7 @@ use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
 use teletext_runtime::landing::{self, Route, route};
 use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
-use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, Level, SESSION_GRACE_MS, SessionId};
+use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, InitialPage, Level, SESSION_GRACE_MS, SessionId};
 use worker::{
     Date, Env, Error, Headers, Method, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
     durable_object, event,
@@ -323,7 +323,7 @@ impl ChannelObject {
         let config = ChannelConfig {
             name,
             address: format!("{origin}/{folder}/"),
-            initial_page: INITIAL_PAGE,
+            initial_page: InitialPage::new(INITIAL_PAGE).map_err(failure)?,
             epoch_at_start_ms: started_ms,
             session_grace_ms: SESSION_GRACE_MS,
         };

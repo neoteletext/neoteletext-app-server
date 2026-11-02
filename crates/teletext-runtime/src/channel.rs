@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 
 use neoteletext_audio::encode::packets;
 use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
 use neoteletext_input::MAX_PER_SECOND;
@@ -95,6 +96,49 @@ const fn microseconds(now_ms: u64) -> u64 {
     now_ms.saturating_mul(MICROSECONDS_PER_MILLISECOND)
 }
 
+/// The page a channel's viewer starts on, as `channel.ttx`'s `initial_page`
+/// names it: three decimal digits, the magazine 1 to 8 first, so 100 to
+/// 899 (DOC-1865, REQ-513). A page with a hexadecimal digit is one no
+/// viewer can key (REQ-313), and a receiver refuses a `channel.ttx` that
+/// names one (REQ-1894), so a host refuses it while it configures the
+/// channel, before any viewer comes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InitialPage(PageNumber);
+
+impl InitialPage {
+    /// `page`, in the form `0xMPP` with the magazine as 1 to 8, or why it
+    /// cannot be a channel's initial page.
+    ///
+    /// # Errors
+    ///
+    /// When `page` is outside 100 to 899 or has a hexadecimal digit.
+    pub fn new(page: u16) -> Result<Self, String> {
+        let [_, number] = page.to_be_bytes();
+        // Within 100 to 899 the magazine digit is 1 to 8, so only the
+        // page number's two digits are left to be decimal.
+        if (limits::FIRST_KEYABLE_PAGE..=limits::LAST_KEYABLE_PAGE).contains(&page) && limits::is_decimal_page(number) {
+            Ok(Self(PageNumber(page)))
+        } else {
+            Err(format!("{page:03X} cannot be a channel's initial page: that is three decimal digits, 100 to 899 (DOC-1865)"))
+        }
+    }
+
+    /// The page.
+    #[must_use]
+    pub const fn page(self) -> PageNumber {
+        self.0
+    }
+}
+
+impl core::fmt::Display for InitialPage {
+    /// Its three digits, each written in decimal: [`InitialPage::new`] took
+    /// none above 9.
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let [magazine, number] = self.0.0.to_be_bytes();
+        write!(formatter, "{magazine}{}{}", number >> limits::PAGE_TENS_SHIFT, number & limits::PAGE_DIGIT_MAX)
+    }
+}
+
 /// A channel's description, for `channel.ttx`.
 #[derive(Clone, Debug)]
 pub struct ChannelConfig {
@@ -104,7 +148,7 @@ pub struct ChannelConfig {
     /// its small page names.
     pub address: String,
     /// The page a viewer starts on.
-    pub initial_page: u16,
+    pub initial_page: InitialPage,
     /// The time the host's clock started, in milliseconds since the Unix
     /// epoch, so programs can show the real time (the host's clock itself
     /// starts at 0).
@@ -412,7 +456,7 @@ impl Channel {
         let mut push = Writer::nested();
         push.boolean("input", true);
         let mut descriptor = Writer::nested();
-        descriptor.text("name", &self.config.name).text("initial_page", &format!("{:03X}", self.config.initial_page)).object("push", push);
+        descriptor.text("name", &self.config.name).text("initial_page", &self.config.initial_page.to_string()).object("push", push);
         let mut bytes = descriptor.line();
         bytes.pop();
         bytes
@@ -582,7 +626,7 @@ impl Channel {
     /// a question every program must already answer, and its answer is kept
     /// for the first visitor to that page, the one viewers arrive at.
     pub fn ask_whether_ready(&mut self) {
-        let page = PageNumber(self.config.initial_page);
+        let page = self.config.initial_page.page();
         self.readiness_page = Some(page.0);
         self.tell(&ServerMessage::Describe(Describe { page }));
     }
@@ -1328,7 +1372,6 @@ fn wide(count: usize) -> u64 {
 /// The standard's maxima, from the engine's `limits`, the one place they
 /// are written (requirement 3.3; `STANDARD-LIMITS.md` section 3 item 3).
 fn standard() -> Standard {
-    use neoteletext_core::limits;
     let per_magazine = limits::PAGE_NUMBERS_PER_MAGAZINE.saturating_sub(limits::RESERVED_IN_EVERY_MAGAZINE.len());
     Standard {
         magazines: wide(limits::MAGAZINES),

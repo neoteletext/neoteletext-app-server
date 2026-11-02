@@ -1,7 +1,7 @@
 use super::*;
 use crate::hub::spawn;
 use crate::websocket::{FIN, MASKED};
-use teletext_runtime::{Channel, ChannelConfig};
+use teletext_runtime::{Channel, ChannelConfig, InitialPage};
 use tokio::io::DuplexStream;
 
 /// The server's Ping, which has no payload: two bytes.
@@ -26,7 +26,7 @@ fn connected() -> DuplexStream {
     let config = ChannelConfig {
         name: "test".to_owned(),
         address: "http://127.0.0.1:1/test/".to_owned(),
-        initial_page: 0x100,
+        initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
     };

@@ -42,7 +42,7 @@ pub mod session_cookie;
 mod sound;
 pub mod stats;
 
-pub use channel::{Channel, ChannelConfig, Effect, Level, PROGRAM_REPLY_LIMIT_MS, SESSION_GRACE_MS};
+pub use channel::{Channel, ChannelConfig, Effect, InitialPage, Level, PROGRAM_REPLY_LIMIT_MS, SESSION_GRACE_MS};
 pub use input::{Input, Named};
 pub use protocol::{ConnectionId, SessionId};
 pub use stats::ChannelStats;
