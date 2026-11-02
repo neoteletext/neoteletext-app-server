@@ -1,6 +1,7 @@
 //! A pointer's moves, at their pace and the latest kept (REQ-1360, DOC-1945,
 //! DOC-1926).
 
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
 use neoteletext_input::MOVES_PER_SECOND;
 
 use super::*;
@@ -10,13 +11,25 @@ const SECOND_MS: u64 = 1_000;
 /// Moves a client sends in that second: far more than the pace.
 const FLOOD_MS_APART: u64 = 1;
 
+/// How many moves of [`moved_to`] come before a cell comes again: 40 and 25's
+/// least common multiple.
+const CELLS_REPEAT: u32 = 200;
+
 /// When [`selected`]'s channel next wakes with no move waiting: its selection's
 /// deadline, since the tests' program answers nothing.
 const NOTHING_MOVING: Option<u64> = Some(PROGRAM_REPLY_LIMIT_MS);
 
-/// A move to a dot of its own: its column and row show which it was.
+/// A move to a dot of its own, inside its cell, as a receiver sends it
+/// (DOC-1946): its column and row show which it was. The cells repeat every
+/// [`CELLS_REPEAT`] moves, so the dot across within the cell tells those
+/// apart, and the pacer, which gives nothing for a move to where the last
+/// was, takes each.
 fn moved_to(position: u32) -> Item<'static> {
-    let at = Point { column: position % 40, row: position % 25, pixels: Some((position, 0)), mods: 0 };
+    let across = u32::try_from(CELL_WIDTH).unwrap();
+    let down = u32::try_from(CELL_HEIGHT).unwrap();
+    let (column, row) = (position % 40, position % 25);
+    let dot = (column.saturating_mul(across).saturating_add((position / CELLS_REPEAT).checked_rem(across).unwrap()), row.saturating_mul(down));
+    let at = Point { column, row, pixels: Some(dot), mods: 0 };
     Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Move, button: 0, at, device: Device::Mouse }))
 }
 

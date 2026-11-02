@@ -2,6 +2,7 @@
 //! the modifiers of a key, the mouse and the wheel, the mouse's and the
 //! wheel's dot, and an input method's composition.
 
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
 use neoteletext_input::event::{ALT, CONTROL, SHIFT, SUPER, Wheel};
 
 use super::*;
@@ -11,6 +12,8 @@ const HELD: u8 = CONTROL | SHIFT;
 /// A dot of the page image inside the cell the tests point at, column 7
 /// and row 9: 12 dots to a cell across and 20 down (DOC-1946).
 const DOT: (u32, u32) = (91, 187);
+/// The cell the tests point at: column and row.
+const CELL: (u32, u32) = (7, 9);
 
 fn event_of(channel: &mut Channel, item: Item<'_>, now: u64) -> Value {
     channel.received(CONNECTION, &message(&[item]), now);
@@ -38,7 +41,7 @@ fn a_key_with_no_modifier_says_so() {
 }
 
 fn pointer(action: MouseAction, button: u8, pixels: Option<(u32, u32)>, mods: u8) -> Item<'static> {
-    let at = Point { column: 7, row: 9, pixels, mods };
+    let at = Point { column: CELL.0, row: CELL.1, pixels, mods };
     Item::Event(Event::Mouse(Mouse { on: ON, action, button, at, device: Device::Mouse }))
 }
 
@@ -68,6 +71,37 @@ fn a_move_has_its_dot_and_modifiers() {
 fn a_dot_not_known_is_null() {
     let event = event_of(&mut selected(), pointer(MouseAction::Press, 0, None, 0), 1);
     assert_eq!((&event["px"], &event["py"], &event["mods"]), (&Value::Null, &Value::Null, &json!(0)));
+}
+
+/// A dot is untrusted: one outside the cell it comes with is dropped with
+/// its event, a press, a move or the wheel's, as a cell beyond the page is
+/// (DOC-1946). The cell's first and last dots go.
+#[test]
+fn a_dot_outside_its_cell_is_dropped() {
+    let across = u32::try_from(CELL_WIDTH).expect("a cell's width is a few dots");
+    let down = u32::try_from(CELL_HEIGHT).expect("a cell's height is a few dots");
+    let first = (CELL.0 * across, CELL.1 * down);
+    let last = (first.0 + across - 1, first.1 + down - 1);
+    assert!(first.0 <= DOT.0 && DOT.0 <= last.0 && first.1 <= DOT.1 && DOT.1 <= last.1, "the tests' dot is in their cell");
+    let outside = [(first.0 - 1, DOT.1), (last.0 + 1, DOT.1), (DOT.0, first.1 - 1), (DOT.0, last.1 + 1), (u32::MAX, u32::MAX)];
+    for dot in outside {
+        for item in [pointer(MouseAction::Press, 0, Some(dot), 0), pointer(MouseAction::Move, 0, Some(dot), 0), wheel(dot)] {
+            let mut channel = selected();
+            channel.received(CONNECTION, &message(&[item]), 1);
+            assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "{dot:?} {item:?}");
+        }
+    }
+    for dot in [first, last] {
+        for item in [pointer(MouseAction::Press, 0, Some(dot), 0), pointer(MouseAction::Move, 0, Some(dot), 0), wheel(dot)] {
+            let event = event_of(&mut selected(), item, 1);
+            assert_eq!((&event["px"], &event["py"]), (&json!(dot.0), &json!(dot.1)), "{item:?}");
+        }
+    }
+}
+
+fn wheel(dot: (u32, u32)) -> Item<'static> {
+    let at = Point { column: CELL.0, row: CELL.1, pixels: Some(dot), mods: 0 };
+    Item::Event(Event::Wheel(Wheel { on: ON, dx: 0, dy: 120, at }))
 }
 
 /// The wheel has what the pointer has.

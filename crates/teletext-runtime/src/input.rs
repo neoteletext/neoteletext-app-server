@@ -4,6 +4,8 @@
 
 use alloc::string::{String, ToString};
 
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
+
 use neoteletext_input::event::{Action, Event, Item, KeyCode, MouseAction as EventMouseAction, Point, Stamp};
 use neoteletext_input::held::Released;
 use neoteletext_input::keys;
@@ -277,9 +279,14 @@ fn key_name(key: Named) -> String {
 }
 
 /// The dot of the page image under the pointer, across and down, when the
-/// receiver knows it.
-fn dot(at: Point) -> (Option<u32>, Option<u32>) {
-    at.pixels.map_or((None, None), |(across, down)| (Some(across), Some(down)))
+/// receiver knows it, or none when the dot lies outside the pointer's cell
+/// (DOC-1946: the dot divided by the cell's size in dots is the cell). A
+/// receiver never sends such a dot, so the event is dropped, as one whose
+/// cell is beyond the page is.
+fn dot(at: Point) -> Option<(Option<u32>, Option<u32>)> {
+    let Some((across, down)) = at.pixels else { return Some((None, None)) };
+    let within = |dot: u32, cell: u32, dots_per_cell: usize| matches!((usize::try_from(dot), usize::try_from(cell)), (Ok(dot), Ok(cell)) if dot.checked_div(dots_per_cell) == Some(cell));
+    (within(across, at.column, CELL_WIDTH) && within(down, at.row, CELL_HEIGHT)).then_some((Some(across), Some(down)))
 }
 
 /// A cell's column and row within the page's 40 by 25, or none: the
@@ -303,7 +310,8 @@ const LAST_BUTTON: u8 = 2;
 
 impl Input<'_> {
     /// The event as the protocol sends it (REQ-1476), or none for one
-    /// outside its bounds: a cell beyond the page's 40 by 25.
+    /// outside its bounds: a cell beyond the page's 40 by 25, a button
+    /// above the right, or a dot outside its cell.
     #[must_use]
     pub fn event(&self) -> Option<InputEvent> {
         Some(match *self {
@@ -324,20 +332,20 @@ impl Input<'_> {
             Self::Mouse { pressed, button, at } => {
                 let (column, row) = cell(at.column, at.row)?;
                 let button = (button <= LAST_BUTTON).then_some(button)?;
-                let (px, py) = dot(at);
+                let (px, py) = dot(at)?;
                 let action = if pressed { MouseAction::Press } else { MouseAction::Release };
                 InputEvent::Mouse { action, button: Some(button), buttons: None, mods: at.mods, column, row, px, py }
             }
             Self::Moved { buttons, at } => {
                 let (column, row) = cell(at.column, at.row)?;
                 let held = Buttons { left: buttons & LEFT != 0, middle: buttons & MIDDLE != 0, right: buttons & RIGHT != 0 };
-                let (px, py) = dot(at);
+                let (px, py) = dot(at)?;
                 InputEvent::Mouse { action: MouseAction::Move, button: None, buttons: Some(held), mods: at.mods, column, row, px, py }
             }
             Self::Wheel { dx, dy, at } => {
                 let (column, row) = cell(at.column, at.row)?;
                 let bounded = |delta: i32| i16::try_from(delta).unwrap_or(if delta < 0 { i16::MIN } else { i16::MAX });
-                let (px, py) = dot(at);
+                let (px, py) = dot(at)?;
                 InputEvent::Wheel { dx: bounded(dx), dy: bounded(dy), mods: at.mods, column, row, px, py }
             }
             Self::Hover { entered, column, row } => {
