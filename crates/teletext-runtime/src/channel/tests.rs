@@ -12,14 +12,15 @@ use alloc::vec::Vec;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
 use neoteletext_input::VERSION;
-use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
+use neoteletext_input::caps::{AGENT, ALL_CAPS, CURSOR_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::cursor::TYPE_CURSOR;
 use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, Select, Stamp, write};
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::{TYPE_LINKS, TYPE_REDIRECT};
 use serde_json::{Value, json};
 
-use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS};
+use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS, USED};
 use crate::protocol::tests::{line, subpage, with};
 
 mod delivery;
@@ -245,6 +246,60 @@ fn gone_releases_a_held_button_marked_lost() {
     let lines = inputs(&channel.take_effects());
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!((&lines[0]["event"]["action"], &lines[0]["event"]["column"], &lines[0]["lost"]), (&json!("release"), &json!(7), &json!(true)));
+}
+
+/// The capabilities a WELCOME among `effects` agrees.
+fn welcomed_caps(effects: &[Effect]) -> u32 {
+    let bytes = sent_to(effects, CONNECTION);
+    let packet = Packet { bytes: bytes[..PACKET_BYTES].try_into().unwrap() };
+    let mut buffer = [0; FRAGMENT_DATA];
+    let Some(Ok(Control::Welcome { caps, .. })) = from_packet(&packet, &mut buffer) else { panic!("WELCOME first: {bytes:?}") };
+    caps
+}
+
+/// DOC-1921, DOC-1922, TODO-2105: a connection whose HELLO offers no
+/// capability, as `neottx keyboard`'s does, sends no SELECT and is not held
+/// for one, is told in WELCOME that no capability was agreed, is shown the
+/// program's answer for the initial page, and a key stamped with that page
+/// reaches the program. Guards behaviour the code of 2 November 2026 had.
+#[test]
+fn a_connection_with_no_capability_is_shown_the_initial_page_and_heard() {
+    let mut channel = held();
+    channel.received(CONNECTION, &message(&[Item::Event(Event::Hello { version: VERSION, caps: 0, agent: None })]), 0);
+    let effects = channel.take_effects();
+    assert_eq!(welcomed_caps(&effects), 0, "nothing was offered, so nothing is agreed");
+    let lines = told(&effects);
+    assert_eq!(lines.len(), 1, "connected goes at once, not held for a SELECT: {lines:?}");
+    assert_eq!((&lines[0]["type"], &lines[0]["selection"]), (&json!("connected"), &Value::Null), "for the channel's initial page");
+    let magazines = json!([{"magazine": 1, "name": "News", "pages": [{"page": "100", "title": "Front", "section": null, "subpages": 1}]}]);
+    channel.from_program(&line(&json!({"type": "reply", "connection": CONNECTION, "request": 1, "magazines": magazines, "selected": subpage()})), 1);
+    assert_eq!(sends(&channel.take_effects()), 2, "the index, and the page");
+    assert_eq!(channel.stats().pages_sent, 1);
+    channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 2);
+    let heard = inputs(&channel.take_effects());
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert_eq!((&heard[0]["page"], &heard[0]["sub"], &heard[0]["event"]["kind"]), (&json!("100"), &json!("0000"), &json!("key")));
+    assert_eq!(channel.stats().stale_input, 0);
+}
+
+/// DOC-1922, REQ-207: a connection that agreed neither TOUCH nor RESUME,
+/// whatever it offered, has the release of a press reach the program marked
+/// lost when the pointer goes: a pointer's gone needs no capability. Guards
+/// behaviour the code of 2 November 2026 had.
+#[test]
+fn gone_needs_no_capability_beyond_those_the_server_uses() {
+    let mut channel = held();
+    let everything = Item::Event(Event::Hello { version: VERSION, caps: ALL_CAPS & !AGENT, agent: None });
+    channel.received(CONNECTION, &message(&[everything, select(0x100, 0)]), 0);
+    let agreed = welcomed_caps(&channel.take_effects());
+    assert_eq!(agreed, USED, "as the server uses");
+    assert_eq!(agreed & (TOUCH_CAP | RESUME_CAP), 0, "neither TOUCH nor RESUME");
+    channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Press, 0)]), 1);
+    assert_eq!(inputs(&channel.take_effects()).len(), 1);
+    channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Gone, 1)]), 2);
+    let lines = inputs(&channel.take_effects());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!((&lines[0]["event"]["action"], &lines[0]["event"]["button"], &lines[0]["lost"]), (&json!("release"), &json!(0), &json!(true)));
 }
 
 /// REQ-207: a program's page redirect is a selection, and lets go too.
@@ -857,7 +912,6 @@ fn an_item_cut_by_a_message_is_refused() {
 /// says only what the channel uses.
 #[test]
 fn an_unknown_capability_is_not_agreed() {
-    use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
     const UNDEFINED_CAPABILITY: u32 = 1 << 30;
     let mut channel = held();
     let hello = Item::Event(Event::Hello { version: VERSION, caps: SELECT_CAP | UNDEFINED_CAPABILITY, agent: None });
@@ -874,7 +928,7 @@ fn an_unknown_capability_is_not_agreed() {
 fn a_receivers_agent_text_changes_nothing() {
     let run = |agent: Option<&'static str>| {
         let mut channel = held();
-        let caps = CURSOR_CAP | SELECT_CAP | if agent.is_some() { neoteletext_input::caps::AGENT } else { 0 };
+        let caps = CURSOR_CAP | SELECT_CAP | if agent.is_some() { AGENT } else { 0 };
         channel.received(CONNECTION, &message(&[Item::Event(Event::Hello { version: VERSION, caps, agent }), select(0x302, ANY)]), 0);
         channel.take_effects()
     };
