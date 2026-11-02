@@ -22,6 +22,9 @@ use serde_json::{Value, json};
 use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELECTION_WAIT_MS, PROGRAM_REPLY_LIMIT_MS, STALE_INPUT_REPORT_SECONDS};
 use crate::protocol::tests::{line, subpage, with};
 
+mod delivery;
+mod sound;
+
 /// The connection and session of a test.
 const CONNECTION: u64 = 1;
 /// More than a message of the tests.
@@ -121,6 +124,7 @@ fn sends(effects: &[Effect]) -> usize {
 }
 
 /// PAGE is withdrawn: its type is a protocol error (REQ-1556).
+/// REQ-1472 verification 8, its first half.
 #[test]
 fn page_closes_the_session() {
     let mut channel = selected();
@@ -130,6 +134,7 @@ fn page_closes_the_session() {
 
 /// REQ-1557 item 2: a press stamped with the selection reaches the program
 /// with the stamp's page and sub-code.
+/// REQ-1555 item 3.
 #[test]
 fn a_matching_stamp_reaches_the_program_with_page_and_sub() {
     let mut channel = selected();
@@ -142,6 +147,7 @@ fn a_matching_stamp_reaches_the_program_with_page_and_sub() {
 
 /// REQ-1557 item 3: another page, another sub-page of the same page, or no
 /// selection at all reach no program, and each counts once.
+/// REQ-1555 item 3.
 #[test]
 fn a_stale_stamp_reaches_nothing_and_counts() {
     let mut channel = selected();
@@ -157,6 +163,7 @@ fn a_stale_stamp_reaches_nothing_and_counts() {
 }
 
 /// REQ-1557 item 3: the operator is told at most once an interval.
+/// REQ-1555 item 3.
 #[test]
 fn stale_input_logs_once_an_interval() {
     let mut channel = selected();
@@ -213,6 +220,7 @@ fn a_receivers_lost_release_is_marked() {
 
 /// REQ-207: `FOCUS_OUT` gives the program what is still held, marked lost,
 /// then `blur`.
+/// REQ-1555 item 2: a focus event is always acted on.
 #[test]
 fn focus_out_releases_what_is_held() {
     let mut channel = selected();
@@ -274,6 +282,7 @@ fn sent_to(effects: &[Effect], connection: u64) -> Vec<u8> {
 
 /// DEC-1689, REQ-1688 item 2: a page redirect reaches the receiver as a
 /// REDIRECT record and selects the page, and no cursor record names it.
+/// REQ-1472 verification 5, REQ-1473 verification 8, REQ-1502 verification 5, REQ-1032 verification 8.
 #[test]
 fn a_page_redirect_sends_a_redirect_record_and_selects_the_page() {
     let mut channel = selected();
@@ -287,6 +296,7 @@ fn a_page_redirect_sends_a_redirect_record_and_selects_the_page() {
 
 /// REQ-1688 item 2: a redirect to another channel sends the record, tells
 /// the operator, and changes no selection.
+/// REQ-1473 verification 8 and REQ-1032 verification 8.
 #[test]
 fn a_redirect_to_another_channel_changes_no_selection() {
     let mut channel = selected();
@@ -318,6 +328,7 @@ fn a_lost_connection_releases_what_is_held() {
 
 /// REQ-1553: losing the focus changes neither the selection nor what is
 /// sent: the selected page's next version still arrives.
+/// REQ-1472 verification 9.
 #[test]
 fn a_selected_page_stays_active_without_the_focus() {
     let mut channel = selected();
@@ -455,6 +466,7 @@ fn a_program_that_does_not_answer_gets_the_viewer_a_503() {
 }
 
 /// DEC-1730: `selected` carries the place as an address names it.
+/// REQ-1674 item 2: `selected` carries the query, with `path`.
 #[test]
 fn selected_names_the_place() {
     let mut channel = channel();
@@ -471,6 +483,7 @@ fn selections(effects: &[Effect]) -> Vec<(Value, Value)> {
 
 /// REQ-1693 item 6: a page's parameters reach the program with their
 /// selection, and choosing anything else leaves them behind.
+/// REQ-1674: the query belongs to its selection alone.
 #[test]
 fn page_parameters_go_with_their_selection_alone() {
     let mut channel = channel();
@@ -487,6 +500,7 @@ fn page_parameters_go_with_their_selection_alone() {
 
 /// REQ-1693 item 6: parameters are part of the selection, so the same page
 /// with others is told, and the same again is not.
+/// REQ-1090: a selection is its page and its query.
 #[test]
 fn the_same_page_with_other_parameters_is_a_selection() {
     let mut channel = channel();
@@ -499,6 +513,7 @@ fn the_same_page_with_other_parameters_is_a_selection() {
 }
 
 /// A program that starts again is told the selection with its parameters.
+/// REQ-1674 item 2 and REQ-1034: `connected` tells a program that starts again.
 #[test]
 fn connected_carries_the_selections_parameters() {
     let mut channel = channel();
@@ -536,6 +551,7 @@ fn connecteds(effects: &[Effect]) -> Vec<Value> {
 /// TODO-1731 item 1: `connected` waits for the first SELECT, and carries it,
 /// so a shared link goes straight to its page, with no page before it and
 /// no `selected` after.
+/// REQ-1090: the first SELECT.
 #[test]
 fn connected_waits_for_the_first_selection() {
     let mut channel = held();
@@ -551,6 +567,7 @@ fn connected_waits_for_the_first_selection() {
 
 /// TODO-1731 item 1: the wait has a bound, the channel's wake says when, and
 /// a connection that selected nothing by then is told with no selection.
+/// REQ-1090: the first SELECT's bound.
 #[test]
 fn the_wait_for_a_first_selection_is_bounded() {
     let mut channel = held();
@@ -564,6 +581,7 @@ fn the_wait_for_a_first_selection_is_bounded() {
 }
 
 /// TODO-1731 item 1: a receiver that cannot send SELECT is not waited for.
+/// REQ-1090: a receiver without the capability.
 #[test]
 fn a_receiver_that_cannot_select_is_not_waited_for() {
     let mut channel = held();
@@ -594,6 +612,7 @@ fn connected_carries_the_cookies_the_connection_opened_with() {
 /// DEC-1759 lesson 13: each selection has the next number, and only the
 /// connection's newest may answer: a late page does not replace what the
 /// viewer moved to, and a page for the newest does.
+/// REQ-1476: a selection's number.
 #[test]
 fn a_late_answer_cannot_replace_the_page_on_screen() {
     let mut channel = channel();
@@ -612,6 +631,7 @@ fn a_late_answer_cannot_replace_the_page_on_screen() {
 
 /// DEC-1759 lesson 13: a late redirect does not move a viewer who chose
 /// something else, and a late `subpages` and `denied` change nothing.
+/// REQ-1476 and REQ-1688: a late redirect is dropped.
 #[test]
 fn a_late_redirect_or_refusal_changes_nothing() {
     let mut channel = channel();
@@ -633,6 +653,7 @@ fn a_late_redirect_or_refusal_changes_nothing() {
 
 /// DEC-1759 lesson 13: a reply to a selection already replaced still gives
 /// the index, and its sub-page answers nothing.
+/// REQ-1476: a reply numbered for a replaced selection.
 #[test]
 fn a_late_reply_gives_the_index_and_no_page() {
     let mut channel = held();
@@ -649,6 +670,7 @@ fn a_late_reply_gives_the_index_and_no_page() {
 
 /// DEC-1759 lesson 13: a change is for what is shown: it does not answer a
 /// selection, so a connection still awaiting one is sent only its answer.
+/// REQ-1476: a change does not answer a selection.
 #[test]
 fn an_unnumbered_change_does_not_answer_a_selection() {
     let mut channel = selected();
@@ -663,6 +685,7 @@ fn an_unnumbered_change_does_not_answer_a_selection() {
 
 /// DEC-1759 lesson 12: a selection ends with a page, with DENIED from the
 /// program at once, or at the deadline: here with DENIED.
+/// REQ-1476: `denied`.
 #[test]
 fn a_program_may_end_a_selection_with_a_status() {
     let mut channel = channel();
@@ -753,6 +776,7 @@ fn a_selection_has_an_ending_with_no_program_too() {
 }
 
 /// A redirect to another channel is a selection's answer: no 503 follows it.
+/// REQ-1688 item 2: no DENIED follows.
 #[test]
 fn a_redirect_elsewhere_ends_the_selection() {
     let mut channel = selected();
@@ -762,6 +786,7 @@ fn a_redirect_elsewhere_ends_the_selection() {
 
 /// TODO-1731 item 5: a page redirect keeps the query it is given: the record
 /// names it, and the selection it makes has it.
+/// REQ-1688: a page redirect keeps its query.
 #[test]
 fn a_page_redirect_keeps_the_query_it_is_given() {
     let mut channel = channel();
@@ -785,6 +810,7 @@ fn a_page_redirect_keeps_the_query_it_is_given() {
 }
 
 /// INPUT.md section 6.1: another version is told to stop.
+/// REQ-1036: another version closes with its own stop code.
 #[test]
 fn another_version_is_closed_with_a_stop_code() {
     let mut channel = held();
@@ -796,6 +822,7 @@ fn another_version_is_closed_with_a_stop_code() {
 /// DEC-1759 lesson 16: an unknown extension is skipped, so the connection
 /// stays and what follows it is read; an unknown core event, a reserved type
 /// and a message cut short are protocol errors, closed with the stop code.
+/// REQ-1036: a protocol error closes with the stop code.
 #[test]
 fn unknown_events_are_skipped_or_refused_as_the_protocol_says() {
     const UNKNOWN_EXTENSION: [u8; 4] = [0xFF, 0x7F, 1, 0];
@@ -815,6 +842,7 @@ fn unknown_events_are_skipped_or_refused_as_the_protocol_says() {
 
 /// DEC-1759 lesson 17: a message holds whole items, so the next message's
 /// bytes can never finish one: a key cut in two is refused at the cut.
+/// REQ-1036: a protocol error closes with the stop code.
 #[test]
 fn an_item_cut_by_a_message_is_refused() {
     let whole = message(&[key(ON, Action::Press, false)]);
@@ -863,6 +891,7 @@ fn vector_bytes(value: &str) -> Vec<u8> {
 /// DEC-1759 lesson 3: every row of the shared table, against the channel as
 /// a whole: what a receiver sends does as the table says, and what the
 /// channel sends is byte for byte the table's.
+/// REQ-1090: the table's `select_*` rows, accepted and refused.
 #[test]
 fn every_row_of_the_wire_vectors_holds() {
     use neoteletext_web::consts::{CLOSE_RESTARTING, PUSH_SUBPROTOCOL, close_says_stop};
