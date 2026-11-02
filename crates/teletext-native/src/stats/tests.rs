@@ -73,7 +73,7 @@ fn stale_answers_are_shown_and_kept() {
     assert_eq!(shown(&value(&after.all_time_document())), Some(8));
 }
 
-/// The totals kept from before are added to this run's: counters add up,
+/// REQ-1054: the totals kept from before are added to this run's: counters add up,
 /// peaks keep the greater, each page's opens add up; they reach
 /// `/stats.json` and the `stats` line as `all_time`, and `figures.json`
 /// reads back as it was written (requirement 8.3).
@@ -112,7 +112,7 @@ fn totals_accumulate_across_restarts() {
     );
 }
 
-/// REQ-1053: `/metrics` names every figure of requirement 8.2 with its type,
+/// REQ-1052, REQ-1053: `/metrics` names every figure of requirement 8.2 with its type,
 /// in the Prometheus text format, and the histogram's buckets are cumulative.
 #[test]
 fn metrics_are_in_the_prometheus_text_format() {

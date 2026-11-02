@@ -753,9 +753,10 @@ fn a_session_continues_with_its_cookie() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// The administration listener answers `/healthz`, `/readyz` (200 once
-/// the channel's program has answered) and `/metrics`, which is not on the
-/// viewers' listener (requirements 8.1 and 8.4).
+/// REQ-1052, REQ-1054: the administration listener answers `/healthz`,
+/// `/readyz` (200 once the channel's program has answered), `/metrics` and
+/// `/stats.json`, and the last two are not on the viewers' listener
+/// (requirements 8.1 and 8.4).
 #[test]
 fn probes_and_metrics_are_on_the_administration_listener() {
     let folder = scratch("admin");
@@ -772,6 +773,9 @@ fn probes_and_metrics_are_on_the_administration_listener() {
     assert!(metrics.contains("# TYPE teletext_connections gauge\n"), "{metrics}");
     assert!(metrics.contains("teletext_channel_ready{channel=\"ch\"} 1\n"), "{metrics}");
     assert_eq!(get(&server.address, "/metrics").map(|(status, _)| status), Some(404), "not where viewers reach");
+    let statistics = String::from_utf8(until_status(admin, "/stats.json", 200)).unwrap();
+    assert!(statistics.contains("\"all_time\""), "{statistics}");
+    assert_eq!(get(&server.address, "/stats.json").map(|(status, _)| status), Some(404), "not where viewers reach");
     let _ = std::fs::remove_dir_all(&folder);
 }
 

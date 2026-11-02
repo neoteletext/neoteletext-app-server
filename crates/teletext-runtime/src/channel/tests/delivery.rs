@@ -261,10 +261,11 @@ fn stepping_is_one_selection_and_one_sub_page() {
     assert_eq!(headers(&sent_to(&channel.take_effects(), 1)), [(1, true)]);
 }
 
-/// REQ-1472 verification 6, REQ-1501 verification 3, REQ-1032 verification 1
-/// to 3, REQ-1480 verification 4, REQ-1503 verification 1 and 3: the smallest
-/// page and the largest cost one sub-page and a list the engine reads back
-/// as given, in as many records as it needs, and selected again, no list.
+/// REQ-1031, REQ-1472 verification 6, REQ-1501 verification 3, REQ-1032
+/// verification 1 to 3, REQ-1480 verification 4, REQ-1503 verification 1 and 3:
+/// the smallest page and the largest cost one sub-page and a list the engine
+/// reads back as given, in as many records as it needs, and selected again, no
+/// list.
 #[test]
 fn a_page_of_the_most_sub_pages_costs_one_sub_page_and_its_list() {
     let subs = || (0..=0x3F7E_u16).filter(|sub| sub & UNUSED_SUB_CODE_BIT == 0);

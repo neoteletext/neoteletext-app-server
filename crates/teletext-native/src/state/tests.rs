@@ -29,8 +29,8 @@ fn the_session_key_is_made_once_and_kept() {
     assert!(state.session_keys().is_err(), "a key of the wrong length is refused");
 }
 
-/// Figures are kept and read back; a file that does not read is kept
-/// aside and the figures start again (requirement 8.3).
+/// REQ-1054: figures are kept and read back; a file that does not read is
+/// kept aside and the figures start again (requirement 8.3).
 #[test]
 fn figures_are_kept_and_an_unreadable_file_is_kept_aside() {
     let root = scratch("figures");
