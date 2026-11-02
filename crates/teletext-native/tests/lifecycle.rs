@@ -467,7 +467,12 @@ fn a_cookie_a_program_sets_reaches_it_on_the_next_connection() {
     let heard = folder.join("heard");
     let cookie =
         r#"{"type":"cookie","connection":1,"name":"theme","value":"dark","path":null,"max_age":null,"same_site":null,"secure":false,"http_only":false}"#;
-    let script = format!("read -r _; read -r _; printf '%s\\n' '{cookie}'; while read -r line; do printf '%s\\n' \"$line\" >> {heard:?}; done");
+    // The cookie goes out once the first connection is told of, whatever
+    // else the server sent first (its `describe`, DEC-2007, comes in no
+    // fixed place before it).
+    let script = format!(
+        "read -r _; set=; while read -r line; do printf '%s\\n' \"$line\" >> {heard:?}; case \"$line\" in *'\"connected\"'*) [ -n \"$set\" ] || {{ printf '%s\\n' '{cookie}'; set=1; }};; esac; done"
+    );
     let file = channels(&folder, &script);
     let state = folder.join("state").display().to_string();
     let server = serve(&["--channels", &file.display().to_string(), "--state", &state], &[], Stdio::null());
@@ -481,7 +486,7 @@ fn a_cookie_a_program_sets_reaches_it_on_the_next_connection() {
     let session = session.split(';').next().unwrap();
     let (mut again, _) = push(&server.address, Some(&format!("{session}; theme=dark")));
     send_input(&mut again, &[hello]);
-    let told = connected_line(&heard);
+    let told = second_connected_line(&heard);
     let line = json::parse(told.as_bytes()).unwrap();
     let cookies = line.get("cookies").unwrap().items().unwrap();
     assert_eq!(cookies.len(), 1, "{told}");
@@ -515,6 +520,12 @@ fn until_heard(heard: &Path, wanted: impl Fn(&str) -> bool) -> String {
         assert!(started.elapsed() < WITHIN, "the program heard: {told:.300}");
         std::thread::sleep(RETRY);
     }
+}
+
+/// The `connected` line of the second connection the program heard of.
+fn second_connected_line(heard: &Path) -> String {
+    let told = until_heard(heard, |told| told.matches("\"connected\"").count() >= 2);
+    told.lines().filter(|line| line.contains("\"connected\"")).nth(1).unwrap().to_owned()
 }
 
 /// The first `connected` line the program has written to `heard`.
