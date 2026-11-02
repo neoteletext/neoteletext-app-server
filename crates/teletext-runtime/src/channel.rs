@@ -11,7 +11,7 @@
 //! what the program sends goes to the connections it names, as it comes
 //! (REQ-1473), as checked teletext packets (REQ-1480, REQ-1462).
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -119,6 +119,18 @@ pub struct ChannelConfig {
 /// enough for a phone that closed a background socket or a server that
 /// restarted (DOC-1924: "a grace period of minutes").
 pub const SESSION_GRACE_MS: u64 = 5 * 60 * 1_000;
+
+/// The sessions a channel keeps waiting for their viewer at once (REQ-1040,
+/// TODO-1301): 65,536, the open files the native host's unit allows it
+/// (`LimitNOFILE` in `deploy/ionos/deploy.sh`), so that every viewer the
+/// host can hold connected can lose their socket together, as a restart
+/// makes them, and still find their session. A waiting session holds no
+/// socket, so nothing else bounds them: without this, connections opened
+/// and closed at a high rate would grow the channel's memory, and its
+/// program's, by the rate times [`SESSION_GRACE_MS`]. At the bound the
+/// session waiting longest ends as though its grace had passed, the
+/// pattern of the descriptions' cache (DEC-2145).
+pub const MOST_WAITING_SESSIONS: usize = 65_536;
 
 /// How much a report matters to the server's operator, as a log ranks it
 /// (requirement 7.6).
@@ -347,6 +359,10 @@ pub struct Channel {
     readiness_page: Option<u16>,
     connections: BTreeMap<ConnectionId, Connection>,
     sessions: BTreeMap<SessionId, Session>,
+    /// The sessions waiting for their viewer, by when each began to wait:
+    /// the first is the next to end, by its grace or by
+    /// [`MOST_WAITING_SESSIONS`]. Each is a session with `waiting_since`.
+    waiting: BTreeSet<(u64, SessionId)>,
     sounds: Sounds,
     effects: Vec<Effect>,
     stats: ChannelStats,
@@ -370,6 +386,7 @@ impl Channel {
             readiness_page: None,
             connections: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            waiting: BTreeSet::new(),
             sounds: Sounds::default(),
             effects: Vec::new(),
             stats: ChannelStats::default(),
@@ -660,7 +677,8 @@ impl Channel {
     /// [`FIRST_SELECTION_WAIT_MS`] passes.
     pub fn opened(&mut self, connection: ConnectionId, session: SessionId, cookies: Vec<CookiePair>, now: u64) {
         let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
-        if state.waiting_since.take().is_some() {
+        if let Some(since) = state.waiting_since.take() {
+            self.waiting.remove(&(since, session));
             self.stats.resumed();
         } else if state.open == 0 {
             self.stats.joined();
@@ -699,6 +717,20 @@ impl Channel {
         }
         open.waiting_since = Some(now);
         self.stats.waiting();
+        if self.waiting.len() >= MOST_WAITING_SESSIONS
+            && let Some((_, oldest)) = self.waiting.pop_first()
+        {
+            self.end_waiting(oldest);
+        }
+        self.waiting.insert((now, session));
+    }
+
+    /// A waiting session ends, its viewer not back: its program is told
+    /// `closed` (requirement 5.5).
+    fn end_waiting(&mut self, session: SessionId) {
+        self.sessions.remove(&session);
+        self.stats.expired();
+        self.tell(&ServerMessage::Closed(Closed { session }));
     }
 
     /// A binary message from a connection: its input stream (DOC-1929).
@@ -727,16 +759,11 @@ impl Channel {
     /// answers the program did not give in time are given up (REQ-1481).
     pub fn deadline(&mut self, now: u64) {
         let grace = self.config.session_grace_ms;
-        let expired: Vec<SessionId> = self
-            .sessions
-            .iter()
-            .filter(|(_, state)| state.waiting_since.is_some_and(|since| since.saturating_add(grace) <= now))
-            .map(|(&session, _)| session)
-            .collect();
-        for session in expired {
-            self.sessions.remove(&session);
-            self.stats.expired();
-            self.tell(&ServerMessage::Closed(Closed { session }));
+        while let Some(&(since, session)) = self.waiting.first()
+            && since.saturating_add(grace) <= now
+        {
+            self.waiting.pop_first();
+            self.end_waiting(session);
         }
         let held: Vec<ConnectionId> =
             self.connections.iter().filter(|(_, state)| state.first_selection_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
@@ -793,7 +820,7 @@ impl Channel {
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
         let grace = self.config.session_grace_ms;
-        let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
+        let expiry = self.waiting.first().map(|&(since, _)| since.saturating_add(grace));
         let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due));
         // A move's time is in microseconds: this is the first millisecond at
         // or after it.

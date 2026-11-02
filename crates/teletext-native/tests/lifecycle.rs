@@ -374,6 +374,17 @@ fn the_socket_unit_is_installed_and_names_the_services_address() {
     assert!(deploy.contains("enable --now neoteletext.socket"));
 }
 
+/// REQ-1040, TODO-1301: a channel keeps as many sessions waiting for their
+/// viewer as the service may hold open files, so that every viewer it can
+/// hold connected can come back after a restart; the bound is derived from
+/// the unit's limit, and the two must agree.
+#[test]
+fn the_waiting_sessions_bound_is_the_units_open_files() {
+    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let limit = deploy.lines().find_map(|line| line.strip_prefix("LimitNOFILE=")).unwrap();
+    assert_eq!(limit.parse::<usize>().unwrap(), teletext_runtime::channel::MOST_WAITING_SESSIONS);
+}
+
 /// DEC-1759 lesson 18: an upgrade that carries `Origin` is a web page's
 /// script, and is refused, whatever it offers. Lesson 14: an upgrade that does
 /// not offer this version's subprotocol is refused and told what is spoken.

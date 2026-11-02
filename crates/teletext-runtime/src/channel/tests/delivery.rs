@@ -651,6 +651,41 @@ fn a_closed_session_waits_for_its_viewer() {
     assert_eq!(channel.sessions(), 0);
 }
 
+/// REQ-1040, TODO-1301: the sessions waiting for their viewer are bounded.
+/// A connection that opens and closes leaves a session waiting for the
+/// grace, so anyone connecting and leaving at a high rate would make the
+/// channel hold sessions without limit. At the bound the session waiting
+/// longest ends, its program told `closed` as when its grace passes, and
+/// a session that is connected again stops counting.
+#[test]
+fn the_sessions_waiting_for_their_viewer_are_bounded() {
+    let bound = u64::try_from(crate::channel::MOST_WAITING_SESSIONS).unwrap();
+    let mut channel = Channel::new(config(SESSION_GRACE_MS));
+    channel.program_started(0);
+    for session in 1..=bound {
+        channel.opened(session, session, Vec::new(), session);
+        channel.closed(session, session);
+    }
+    assert!(told(&channel.take_effects()).iter().all(|line| line["type"] != "closed"), "none ends before the bound");
+    assert_eq!(channel.sessions(), crate::channel::MOST_WAITING_SESSIONS);
+    // The first comes back, and is connected, not waiting, which leaves
+    // room for one more; the one after it ends the session waiting longest.
+    channel.opened(bound + 1, 1, Vec::new(), bound + 1);
+    for newest in [bound + 2, bound + 3] {
+        channel.opened(newest, newest, Vec::new(), newest);
+        channel.closed(newest, newest);
+    }
+    let closed: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "closed").collect();
+    assert_eq!(closed, [json!({"type": "closed", "session": 2})], "the session waiting longest, not the one connected again");
+    assert_eq!(channel.stats().sessions_waiting, bound);
+    assert_eq!(channel.sessions(), crate::channel::MOST_WAITING_SESSIONS + 1, "the bound and the connected one");
+    // The rest wait their grace from when each began.
+    channel.deadline(3 + SESSION_GRACE_MS);
+    let closed: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "closed").collect();
+    assert_eq!(closed, [json!({"type": "closed", "session": 3})]);
+    assert_eq!(channel.next_wake(), Some(4 + SESSION_GRACE_MS));
+}
+
 /// REQ-1040: a viewer who comes back within the grace continues their
 /// session, under its own number, and the session does not end.
 #[test]
