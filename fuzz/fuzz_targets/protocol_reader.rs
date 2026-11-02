@@ -21,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = channel.take_effects();
     channel.from_program(data, 0);
     let effects = channel.take_effects();
-    let refused = effects.iter().any(|effect| matches!(effect, Effect::ToProgram { line } if line.starts_with(br#"{"type":"refused""#)));
+    let refused = effects.iter().any(|effect| matches!(effect, Effect::ToProgram { line, .. } if line.starts_with(br#"{"type":"refused""#)));
     if read.is_err() {
         assert!(refused, "the reader refused it, and the channel did not: {effects:?}");
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Send { .. })), "refused, and still sent: {effects:?}");
