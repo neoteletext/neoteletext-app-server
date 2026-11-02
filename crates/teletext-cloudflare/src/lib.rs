@@ -202,7 +202,7 @@ impl Live {
                         let _ = socket.close(Some(code), Some("protocol error"));
                     }
                 }
-                Effect::ToProgram { line } => {
+                Effect::ToProgram { line, .. } | Effect::MoveToProgram { line, .. } => {
                     if let Some(program) = &self.program {
                         let text = String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(&line)).into_owned();
                         let _ = program.send_with_str(text);

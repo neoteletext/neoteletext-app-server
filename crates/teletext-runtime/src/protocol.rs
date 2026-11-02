@@ -338,6 +338,20 @@ pub enum ServerMessage {
     Describe(Describe),
 }
 
+impl ServerMessage {
+    /// The connection the message is about, if it is about one.
+    #[must_use]
+    pub const fn connection(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Connected(Connected { connection, .. })
+            | Self::Selected(Selected { connection, .. })
+            | Self::Input(InputMessage { connection, .. })
+            | Self::Left(Left { connection, .. }) => Some(*connection),
+            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) => None,
+        }
+    }
+}
+
 /// `describe`: the page number and nothing else. It carries no connection,
 /// session, cookie or query, so a description cannot hold one viewer's data
 /// (REQ-1728 item 7).

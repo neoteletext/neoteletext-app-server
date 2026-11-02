@@ -33,7 +33,7 @@ fn channel() -> Channel {
 
 /// The lines for the program among `effects`.
 fn lines(effects: &[Effect]) -> Vec<Value> {
-    effects.iter().filter_map(|effect| if let Effect::ToProgram { line } = effect { Some(serde_json::from_slice(line).unwrap()) } else { None }).collect()
+    effects.iter().filter_map(|effect| if let Effect::ToProgram { line, .. } = effect { Some(serde_json::from_slice(line).unwrap()) } else { None }).collect()
 }
 
 /// The answers among `effects`, with their visitors.

@@ -32,7 +32,7 @@ fn a_refused_line_applies_nothing() {
         channel.from_program(&line, 0);
         let effects = channel.take_effects();
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Send { .. })), "{}: {effects:?}", alloc::string::String::from_utf8_lossy(&line));
-        let told = effects.iter().filter(|effect| matches!(effect, Effect::ToProgram { line } if line.starts_with(br#"{"type":"refused""#))).count();
+        let told = effects.iter().filter(|effect| matches!(effect, Effect::ToProgram { line, .. } if line.starts_with(br#"{"type":"refused""#))).count();
         assert_eq!(told, 1, "{effects:?}");
     }
 }

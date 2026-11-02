@@ -193,6 +193,13 @@ pub(crate) const fn stamp(item: &Item<'_>) -> Option<Stamp> {
     }
 }
 
+/// Whether an item is a pointer's move, which goes through its connection's
+/// pace (REQ-1360): a contact's would too, had a program any (TODO-1525).
+#[must_use]
+pub(crate) fn is_move(item: &Item<'_>) -> bool {
+    matches!(item, Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move)
+}
+
 /// Whether an item lets go of something: never dropped for its stamp, so
 /// nothing stays held (REQ-1555 item 4).
 #[must_use]

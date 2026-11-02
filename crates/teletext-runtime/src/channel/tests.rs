@@ -23,6 +23,7 @@ use super::{ACKNOWLEDGEMENT_WAIT_MS, Channel, ChannelConfig, Effect, FIRST_SELEC
 use crate::protocol::tests::{line, subpage, with};
 
 mod delivery;
+mod moves;
 mod sound;
 
 /// The connection and session of a test.
@@ -108,7 +109,7 @@ fn told(effects: &[Effect]) -> Vec<Value> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::ToProgram { line } => Some(serde_json::from_slice(line).unwrap()),
+            Effect::ToProgram { line, .. } | Effect::MoveToProgram { line, .. } => Some(serde_json::from_slice(line).unwrap()),
             _ => None,
         })
         .collect()

@@ -16,7 +16,7 @@ use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
-use crate::apps::{FromApplication, Link};
+use crate::apps::{FromApplication, Link, ToProgram};
 use crate::logging;
 use crate::stats::{ChannelFigures, Histogram, ServerStats, count};
 
@@ -159,7 +159,7 @@ async fn sleep_until(at: Option<Instant>) {
 struct Task {
     folder: String,
     outboxes: BTreeMap<ConnectionId, mpsc::Sender<Outbound>>,
-    to_application: Option<mpsc::Sender<Vec<u8>>>,
+    to_application: Option<ToProgram>,
     /// How many times the program has started.
     starts: u64,
     /// Lines for the program dropped because it fell behind.
@@ -269,7 +269,7 @@ impl Task {
                     && let Some(to) = self.to_application.as_ref()
                 {
                     // A figure missed is sent again in ten seconds.
-                    let _ = to.try_send(self.stats.line(&self.folder, &self.figures(channel)));
+                    let _ = to.line(None, self.stats.line(&self.folder, &self.figures(channel)));
                 }
             }
         }
@@ -283,9 +283,14 @@ impl Task {
             match effect {
                 Effect::Send { connection, bytes } => self.send(connection, Outbound::Bytes(bytes)),
                 Effect::Close { connection, code } => self.send(connection, Outbound::Close(code)),
-                Effect::ToProgram { line } => {
+                Effect::MoveToProgram { connection, line } => {
+                    if let Some(to) = self.to_application.as_ref() {
+                        to.latest_move(connection, line);
+                    }
+                }
+                Effect::ToProgram { line, about } => {
                     let Some(to) = self.to_application.as_ref() else { continue };
-                    if to.try_send(line).is_err() {
+                    if !to.line(about, line) {
                         self.dropped = self.dropped.saturating_add(1);
                         // At the first and then at each power of two, so a
                         // stuck program cannot flood the log.

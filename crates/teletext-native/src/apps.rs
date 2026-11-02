@@ -24,6 +24,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWr
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 
+mod waiting;
+
+pub use waiting::{Outgoing, ToProgram};
+
 /// The longest line either side may send, which `start` tells a program:
 /// a page of TTI is under 4 KB, a two-minute sound's samples in base64
 /// about 15 MB.
@@ -33,7 +37,8 @@ pub use teletext_runtime::protocol::LONGEST_LINE;
 pub const LONGEST_ERROR_LINE: usize = 64 * 1024;
 /// Lines that may wait for the program: beyond this the server drops the
 /// newest and says so, since the network loop never waits for an
-/// application (DOC-1965).
+/// application (DOC-1965). A pointer's moves are not among them
+/// ([`waiting`]).
 pub const WAITING_LINES: usize = 4_096;
 /// Lines from the program that may wait for the channel.
 const ARRIVING_LINES: usize = 1_024;
@@ -135,7 +140,7 @@ pub struct Link {
     /// What the program sends.
     pub from: mpsc::Receiver<FromApplication>,
     /// What is sent to the program.
-    pub to: mpsc::Sender<Vec<u8>>,
+    pub to: ToProgram,
 }
 
 /// Starts serving `spec`'s program, which is kept running or awaited, and
@@ -145,7 +150,7 @@ pub struct Link {
 /// # Errors
 /// A socket that cannot be made, or a socket on a system without them.
 pub fn start(spec: ChannelSpec) -> Result<Link, String> {
-    let (to, outgoing) = mpsc::channel::<Vec<u8>>(WAITING_LINES);
+    let (to, outgoing) = waiting::waiting();
     let (arrived, from) = mpsc::channel::<FromApplication>(ARRIVING_LINES);
     match spec.program {
         Program::Command { command, directory } => {
@@ -170,7 +175,7 @@ pub fn start(spec: ChannelSpec) -> Result<Link, String> {
 
 /// Keeps a program of the server's own running: starts it, relays its
 /// lines, and starts it again when it ends.
-async fn supervise(folder: String, command: Vec<String>, directory: PathBuf, arrived: mpsc::Sender<FromApplication>, mut outgoing: mpsc::Receiver<Vec<u8>>) {
+async fn supervise(folder: String, command: Vec<String>, directory: PathBuf, arrived: mpsc::Sender<FromApplication>, mut outgoing: Outgoing) {
     let mut pause = FIRST_PAUSE;
     loop {
         let (ended, ran) = match launch(&folder, &command, &directory) {
@@ -208,8 +213,8 @@ async fn supervise(folder: String, command: Vec<String>, directory: PathBuf, arr
 /// The program started: lines left from before it are dropped, since it
 /// is told of every viewer afresh, and its channel is told. False when the
 /// channel has stopped.
-async fn started(arrived: &mpsc::Sender<FromApplication>, outgoing: &mut mpsc::Receiver<Vec<u8>>) -> bool {
-    while outgoing.try_recv().is_ok() {}
+async fn started(arrived: &mpsc::Sender<FromApplication>, outgoing: &mut Outgoing) -> bool {
+    outgoing.clear();
     arrived.send(FromApplication::Started).await.is_ok()
 }
 
@@ -300,7 +305,7 @@ async fn relay<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
     mut reader: R,
     mut writer: W,
     arrived: &mpsc::Sender<FromApplication>,
-    outgoing: &mut mpsc::Receiver<Vec<u8>>,
+    outgoing: &mut Outgoing,
 ) -> String {
     let hearing = async {
         loop {
@@ -317,7 +322,7 @@ async fn relay<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
         }
     };
     let telling = async {
-        while let Some(line) = outgoing.recv().await {
+        while let Some(line) = outgoing.next().await {
             if let Err(error) = writer.write_all(&line).await {
                 return format!("writing to it: {error}");
             }
@@ -352,7 +357,7 @@ fn bind(path: &Path) -> Result<tokio::net::UnixListener, String> {
 /// Serves the program that connects to the socket, one at a time: a second
 /// while one is connected is closed.
 #[cfg(unix)]
-async fn await_connections(folder: String, listener: tokio::net::UnixListener, arrived: mpsc::Sender<FromApplication>, mut outgoing: mpsc::Receiver<Vec<u8>>) {
+async fn await_connections(folder: String, listener: tokio::net::UnixListener, arrived: mpsc::Sender<FromApplication>, mut outgoing: Outgoing) {
     loop {
         let stream = match listener.accept().await {
             Ok((stream, _)) => stream,

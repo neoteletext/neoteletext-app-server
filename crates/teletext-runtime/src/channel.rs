@@ -25,8 +25,9 @@ use neoteletext_input::MAX_PER_SECOND;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, Place};
-use neoteletext_input::event::{Action, Event, Item, Stamp, read_message, units};
+use neoteletext_input::event::{Action, Event, Item, MouseAction, Stamp, read_message, units};
 use neoteletext_input::held::{Held, Released};
+use neoteletext_input::pace::{Offer, Pacer};
 use neoteletext_input::session::REMEMBERED;
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
@@ -84,6 +85,15 @@ pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
 /// and is short enough not to be noticed on a channel's first page when a
 /// receiver has nothing to select.
 pub const FIRST_SELECTION_WAIT_MS: u64 = 1_500;
+
+/// The engine's pace of moves counts in microseconds, the host's clock in
+/// milliseconds.
+const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
+
+/// The host's time as the pace counts it.
+const fn microseconds(now_ms: u64) -> u64 {
+    now_ms.saturating_mul(MICROSECONDS_PER_MILLISECOND)
+}
 
 /// A channel's description, for `channel.ttx`.
 #[derive(Clone, Debug)]
@@ -145,6 +155,19 @@ pub enum Effect {
     },
     /// A line for the channel's program, with its newline.
     ToProgram {
+        /// The line.
+        line: Vec<u8>,
+        /// The connection it is about, if it is about one: that connection's
+        /// move before it goes before it, and no later move replaces that.
+        about: Option<ConnectionId>,
+    },
+    /// A connection's pointer move for its program, with its newline: at
+    /// most 60 a second, and the latest, so it takes the place of any of that
+    /// connection's not yet given to the program, and costs no other line
+    /// its room (REQ-1360).
+    MoveToProgram {
+        /// The connection.
+        connection: ConnectionId,
         /// The line.
         line: Vec<u8>,
     },
@@ -222,6 +245,10 @@ struct Connection {
     held: Held,
     /// Where the pointer last was, column and row: a lost button's place.
     pointer: (u8, u8),
+    /// Its moves, each paced and the latest kept (REQ-1360). A slot a
+    /// connection and not a session: a session has a connection for each tab
+    /// (DEC-1527), each with a pointer of its own.
+    moves: Pacer,
     /// The next record number on the audio and input service.
     record_id: u8,
     /// What it selected: a page and a sub-code, the sub-code 3F7F until
@@ -260,6 +287,7 @@ impl Connection {
             acked: 0,
             held: Held::new(),
             pointer: (0, 0),
+            moves: Pacer::new(),
             record_id: 0,
             selection: None,
             parameters: None,
@@ -460,7 +488,30 @@ impl Channel {
     fn tell(&mut self, message: &ServerMessage) {
         if self.program {
             count(&mut self.stats.lines_to_application);
-            self.effects.push(Effect::ToProgram { line: protocol::line(message) });
+            self.effects.push(Effect::ToProgram { line: protocol::line(message), about: message.connection() });
+        }
+    }
+
+    /// A pointer's move for the program, as it left its pace.
+    fn tell_move(&mut self, connection: ConnectionId, event: Event<'static>) {
+        let item = Item::Event(event);
+        let (Some(on), Some(moved)) = (input::stamp(&item), Input::of(&item).and_then(|input| input.event())) else { return };
+        if self.program {
+            count(&mut self.stats.lines_to_application);
+            let message = InputMessage { connection, page: PageNumber(on.page), sub: protocol::SubCode(on.sub), lost: false, event: moved };
+            self.effects.push(Effect::MoveToProgram { connection, line: protocol::line(&ServerMessage::Input(message)) });
+        }
+    }
+
+    /// Any other event of `connection` is coming: the move waiting goes
+    /// first, so that a release never comes before the move that ended the
+    /// drag (DOC-1945).
+    fn flush_moves(&mut self, connection: ConnectionId, now: u64) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let mut waiting = Vec::new();
+        state.moves.flush(microseconds(now), &mut |event| waiting.push(event));
+        for event in waiting {
+            self.tell_move(connection, event);
         }
     }
 
@@ -501,6 +552,7 @@ impl Channel {
         for state in self.connections.values_mut() {
             state.announced = false;
             state.replied = false;
+            state.moves.clear();
         }
         for visitor in self.descriptions.forget() {
             self.effects.push(Effect::Described { visitor, answer: None });
@@ -625,6 +677,7 @@ impl Channel {
     /// 5.5); the program is told it ended with `closed` only when the grace
     /// passes.
     pub fn closed(&mut self, connection: ConnectionId, now: u64) {
+        self.flush_moves(connection, now);
         self.release_held(connection);
         let Some(state) = self.connections.remove(&connection) else { return };
         if state.announced
@@ -712,6 +765,13 @@ impl Channel {
         for connection in unacknowledged {
             self.acknowledge(connection);
         }
+        let mut paced: Vec<(ConnectionId, Event<'static>)> = Vec::new();
+        for (&connection, state) in &mut self.connections {
+            state.moves.take_due(microseconds(now), &mut |event| paced.push((connection, event)));
+        }
+        for (connection, event) in paced {
+            self.tell_move(connection, event);
+        }
     }
 
     /// Tells `connection` its selection ended with `status` (DOC-1961):
@@ -735,12 +795,18 @@ impl Channel {
         let grace = self.config.session_grace_ms;
         let expiry = self.sessions.values().filter_map(|state| state.waiting_since).min().map(|since| since.saturating_add(grace));
         let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due));
-        dues.chain(expiry).chain(self.descriptions.next_due()).min()
+        // A move's time is in microseconds: this is the first millisecond at
+        // or after it.
+        let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
+        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).min()
     }
 
     fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
+        if !input::is_move(item) {
+            self.flush_moves(connection, now);
+        }
         match *item {
             Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps, now),
             Item::Event(Event::Select(select, parameters)) => self.selected(connection, select.page, select.sub, parameters, now),
@@ -770,6 +836,18 @@ impl Channel {
         }
         if let Some(cell) = input::pointer_cell(item) {
             state.pointer = cell;
+        }
+        if let Item::Event(Event::Mouse(mouse)) = *item {
+            if mouse.action == MouseAction::Gone {
+                state.moves.forget(0);
+            } else if mouse.action == MouseAction::Move {
+                let offered = state.moves.offer(Event::Mouse(mouse), microseconds(now));
+                count(&mut self.stats.inputs);
+                if let Offer::Now(event) = offered {
+                    self.tell_move(connection, event);
+                }
+                return;
+            }
         }
         let before = state.held;
         let mut owed = Vec::new();

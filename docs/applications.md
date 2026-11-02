@@ -11,7 +11,7 @@ How a channel's application, a program in any language, talks to the server. It 
 - **Lines:** one JSON object a line (RFC 8259), UTF-8, ending in `\n`, at most 16 MiB. A program's standard error becomes the server's log, a line an event with its channel, cut at 64 KiB (requirement 7.5).
 - **When the program starts** (or connects to its socket) the server sends it `start`, then `connected` for every connection open. While no program runs, the channel has nothing to show (DEC-1482).
 - **A program that ends** is started again after 1 s, then 2, 4 … up to 30 s; one that ran 5 s or more was ended, not failing, and is started again at once.
-- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (DOC-1965). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
+- **The network loop never waits for a program.** At most 4,096 lines wait for it; beyond that the newest are dropped and the server says so in its log (DOC-1965). A pointer's moves are not among them: each connection's reach the program at most 60 a second, and one not yet taken is replaced by the next, so a program that reads slowly is given the latest position and never a backlog, and a flood of moves costs it no key (REQ-1360). Lines for a program that is not running are dropped, not kept for the next: it is told of every viewer when it starts.
 - **Every line the program sends is checked whole** and refused whole when it is not valid: the program is sent `refused`, and the reason goes to the server's log. Nothing of a refused line is acted on.
 - **Timers are the program's own:** it has a clock, so the protocol has no `tick`.
 

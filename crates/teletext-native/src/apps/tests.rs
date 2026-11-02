@@ -97,7 +97,7 @@ async fn a_program_is_started_heard_and_started_again() {
     let _log = captured.install();
     let mut link = start(spec("test", Program::Command { command: program("exit 0"), directory: scratch("run") })).unwrap();
     assert!(matches!(next(&mut link).await, FromApplication::Started));
-    link.to.send(b"{\"type\":\"start\"}\n".to_vec()).await.unwrap();
+    assert!(link.to.line(None, b"{\"type\":\"start\"}\n".to_vec()));
     let FromApplication::Line(echo) = next(&mut link).await else { panic!("a line first") };
     assert_eq!(String::from_utf8(echo).unwrap(), r#"{"type":"log","text":"got type:start"}"#);
     assert!(matches!(next(&mut link).await, FromApplication::Ended));
@@ -136,12 +136,14 @@ async fn a_long_line_of_standard_error_is_cut() {
 /// starts, so none reaches it before `start`.
 #[tokio::test]
 async fn lines_for_an_ended_program_are_dropped() {
-    let (to, mut outgoing) = mpsc::channel(WAITING_LINES);
+    let (to, mut outgoing) = waiting::waiting();
     let (arrived, mut from) = mpsc::channel(ARRIVING_LINES);
-    to.send(b"{\"type\":\"join\",\"session\":1}\n".to_vec()).await.unwrap();
+    assert!(to.line(None, b"{\"type\":\"join\",\"session\":1}\n".to_vec()));
+    to.latest_move(1, b"{\"type\":\"input\"}\n".to_vec());
     assert!(started(&arrived, &mut outgoing).await);
     assert!(matches!(from.recv().await, Some(FromApplication::Started)));
-    assert!(outgoing.try_recv().is_err(), "nothing left for the new program");
+    drop(to);
+    assert_eq!(outgoing.next().await, None, "nothing left for the new program");
 }
 
 /// A program that ran steadily was ended on purpose, as when its author
@@ -160,7 +162,7 @@ fn a_steady_program_starts_again_at_once_and_a_failing_one_waits() {
 /// many reads, as it does over a real one.
 struct Relayed {
     program: tokio::io::DuplexStream,
-    to: mpsc::Sender<Vec<u8>>,
+    to: ToProgram,
     from: mpsc::Receiver<FromApplication>,
     ended: tokio::task::JoinHandle<String>,
 }
@@ -176,7 +178,7 @@ fn relayed() -> Relayed {
 fn relayed_through(pipe_bytes: usize) -> Relayed {
     let (program, server) = tokio::io::duplex(pipe_bytes);
     let (reading, writing) = tokio::io::split(server);
-    let (to, mut outgoing) = mpsc::channel(WAITING_LINES);
+    let (to, mut outgoing) = waiting::waiting();
     let (arrived, from) = mpsc::channel(ARRIVING_LINES);
     let ended = tokio::spawn(async move { relay(BufReader::new(reading), writing, &arrived, &mut outgoing).await });
     Relayed { program, to, from, ended }
@@ -205,7 +207,7 @@ async fn input_for_a_program_costs_no_line_it_is_writing() {
         program.flush().await.unwrap();
         tokio::time::sleep(Duration::from_millis(5)).await;
         let input = format!("{{\"type\":\"input\",\"round\":{round}}}\n").into_bytes();
-        to.send(input.clone()).await.unwrap();
+        assert!(to.line(None, input.clone()));
         let mut heard = vec![0; input.len()];
         tokio::time::timeout(Duration::from_secs(10), program.read_exact(&mut heard)).await.unwrap().unwrap();
         assert_eq!(heard, input);
@@ -223,7 +225,7 @@ async fn neither_direction_waits_for_the_other() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     const LENGTH: usize = 256 * 1024;
     let Relayed { mut program, to, mut from, .. } = relayed();
-    to.send(vec![b'i'; LENGTH]).await.unwrap();
+    assert!(to.line(None, vec![b'i'; LENGTH]));
     tokio::time::sleep(Duration::from_millis(5)).await;
     let mut line = vec![b'o'; LENGTH];
     line.push(b'\n');
@@ -250,7 +252,7 @@ async fn the_longest_line_is_the_bound_across_input() {
         let _ = writing.write_all(&vec![b'y'; LONGEST_LINE + 1]).await;
         writing
     });
-    to.send(b"{\"type\":\"input\"}\n".to_vec()).await.unwrap();
+    assert!(to.line(None, b"{\"type\":\"input\"}\n".to_vec()));
     let mut heard = [0; 16];
     tokio::time::timeout(Duration::from_secs(30), reading.read_exact(&mut heard)).await.unwrap().unwrap();
     assert_eq!(line_from(&mut from).await.len(), LONGEST_LINE);
@@ -267,11 +269,39 @@ async fn a_line_cut_by_the_end_of_the_output_is_heard() {
     let Relayed { mut program, to, mut from, ended } = relayed();
     program.write_all(b"cut sho").await.unwrap();
     tokio::time::sleep(Duration::from_millis(5)).await;
-    to.send(b"input\n".to_vec()).await.unwrap();
+    assert!(to.line(None, b"input\n".to_vec()));
     tokio::time::sleep(Duration::from_millis(5)).await;
     drop(program);
     assert_eq!(line_from(&mut from).await, b"cut sho");
     assert_eq!(tokio::time::timeout(Duration::from_secs(10), ended).await.unwrap().unwrap(), "its output closed");
+}
+
+/// REQ-1360: a program that reads nothing while a viewer floods it with
+/// moves is given, when it reads, what was being written, the latest move
+/// before the key, the key, and the latest move: no backlog, and no key lost.
+#[tokio::test]
+async fn a_program_that_reads_slowly_is_given_the_latest_move() {
+    use tokio::io::AsyncReadExt as _;
+    const CONNECTION: teletext_runtime::ConnectionId = 1;
+    const MOVES: usize = 10_000;
+    let Relayed { mut program, to, .. } = relayed();
+    let mut stuck = vec![b's'; PIPE_BYTES * 4];
+    stuck.push(b'\n');
+    assert!(to.line(None, stuck.clone()));
+    for position in 0..MOVES {
+        to.latest_move(CONNECTION, format!("move {position}\n").into_bytes());
+        // The relay has its turn, and is stuck in the first line.
+        tokio::task::yield_now().await;
+    }
+    assert!(to.line(Some(CONNECTION), b"key\n".to_vec()));
+    for position in MOVES..2 * MOVES {
+        to.latest_move(CONNECTION, format!("move {position}\n").into_bytes());
+    }
+    let mut expected = stuck;
+    expected.extend_from_slice(format!("move {}\nkey\nmove {}\n", MOVES - 1, 2 * MOVES - 1).as_bytes());
+    let mut heard = vec![0; expected.len()];
+    tokio::time::timeout(Duration::from_secs(10), program.read_exact(&mut heard)).await.unwrap().unwrap();
+    assert_eq!(String::from_utf8_lossy(&heard), String::from_utf8_lossy(&expected));
 }
 
 /// A program that runs as a service of its own connects to its channel's
@@ -299,7 +329,7 @@ async fn a_program_connects_to_its_socket() {
         let (reading, mut writing) = stream.into_split();
         let mut reading = BufReader::new(reading);
         assert!(matches!(next(&mut link).await, FromApplication::Started), "round {round}");
-        link.to.send(b"{\"type\":\"start\"}\n".to_vec()).await.unwrap();
+        assert!(link.to.line(None, b"{\"type\":\"start\"}\n".to_vec()));
         let mut heard = String::new();
         reading.read_line(&mut heard).await.unwrap();
         assert_eq!(heard, "{\"type\":\"start\"}\n");
