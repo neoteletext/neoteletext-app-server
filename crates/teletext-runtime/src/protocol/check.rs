@@ -710,6 +710,12 @@ fn check_redirect(root: &Path<'_>, redirect: &Redirect) -> Checked {
     let both = |field: &'static str| fault(&root.field(field), Rule::UnknownField, "a redirect names a page or an address, never both".to_string());
     let missing = |field: &'static str| fault(&root.field(field), Rule::MissingField, "a redirect names a page and its sub-code, or an address".to_string());
     match (redirect.page, redirect.sub, redirect.address.as_deref()) {
+        // A reserved page is the program's fault in `page`, not the
+        // encoder's in the query, which would name the wrong field (TODO-2135
+        // item 8).
+        (Some(page), Some(_), None) if page.is_reserved() => {
+            Err(fault(&root.field("page"), Rule::Reserved, format!("{:03X} is reserved by the standard (EN 300 706 Annex A.10)", page.0)))
+        }
         (Some(page), Some(sub), None) => {
             let parameters = redirect.query.as_deref();
             let record = RedirectRecord::Page { page: crate::page::address(page.0), subcode: SubCode::new(sub.0), parameters };

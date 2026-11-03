@@ -40,6 +40,15 @@ fn a_page_redirect_names_the_field_at_fault() {
     bounds(&page_redirect(), "/connection", "connection", crate::protocol::SAFE_INTEGER_LIMIT, Rule::OutOfRange);
 }
 
+/// TODO-2135 item 8: a redirect to a page the standard reserves (EN 300 706
+/// Annex A.10) is refused `reserved` at `page`, not as a fault of a query the
+/// line does not have.
+#[test]
+fn a_redirect_to_a_reserved_page_is_refused_at_its_page() {
+    refused(&with(&page_redirect(), "/page", json!("1FF")), "page", Rule::Reserved);
+    refused(&with(&page_redirect(), "/page", json!("1BE")), "page", Rule::Reserved);
+}
+
 /// REQ-1688 item 1: another channel's address, up to what the record holds.
 /// REQ-1476: `redirect` to an address.
 #[test]
