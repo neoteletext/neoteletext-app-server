@@ -50,7 +50,7 @@ impl Refusal {
     /// The `refused` message that carries it.
     #[must_use]
     pub fn refused(self) -> Refused {
-        Refused { message: self.message, path: self.path, rule: self.rule, detail: self.detail }
+        Refused { message: self.message, path: self.path, rule: self.rule, detail: self.detail, request: None }
     }
 }
 
@@ -126,6 +126,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Redirect(redirect) => check_redirect(&root, redirect),
         ProgramMessage::Denied(denied) => check_denied(&root, denied),
         ProgramMessage::Description(description) => check_description(&root, description),
+        ProgramMessage::Measure(measure) => check_page(&root.field("page"), &measure.page),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
         ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
@@ -138,6 +139,48 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
 }
 
 // ----------------------------------------------------------- the pieces
+
+/// A language of the server's closed list (REQ-2215).
+fn check_language(path: &Path<'_>, tag: &super::LanguageTag) -> Checked {
+    if super::language_tags().contains(&tag.0) { Ok(()) } else { Err(fault(path, Rule::UnknownLanguage, format!("{:?} is not one of start.languages", tag.0))) }
+}
+
+/// A page's language and text runs (REQ-2214 items 2 and 4): the language
+/// instead of a character set, at most 64 runs, each on rows 1 to 24 and
+/// columns 0 to 39, of 1 to 40 characters of text a page may hold, in a
+/// language of the list. Where the runs fall and what they cost is the
+/// encoder's to say ([`crate::text`]).
+fn check_text_runs(path: &Path<'_>, page: &Page) -> Checked {
+    if let Some(language) = &page.language {
+        if page.character_set.is_some() {
+            return Err(fault(
+                &path.field("character_set"),
+                Rule::LanguageAndCharacterSet,
+                "a page names its language or its character set, never both".to_string(),
+            ));
+        }
+        check_language(&path.field("language"), language)?;
+    }
+    let Some(runs) = &page.text else { return Ok(()) };
+    let at = path.field("text");
+    if runs.len() > super::MOST_TEXT_RUNS {
+        return Err(fault(&at, Rule::TooLong, format!("{} runs, at most {}", runs.len(), super::MOST_TEXT_RUNS)));
+    }
+    for (index, run) in runs.iter().enumerate() {
+        let item = at.item(index);
+        if !(super::FIRST_TEXT_ROW..=LAST_TEXT_ROW).contains(&run.row) {
+            return Err(fault(&item.field("row"), Rule::OutOfRange, format!("{}: rows {} to {LAST_TEXT_ROW}", run.row, super::FIRST_TEXT_ROW)));
+        }
+        if usize::from(run.column) >= COLUMNS {
+            return Err(fault(&item.field("column"), Rule::OutOfRange, format!("{}: columns 0 to {}", run.column, COLUMNS - 1)));
+        }
+        check_text(&item.field("text"), &run.text, 1, super::TEXT_RUN_CHARACTERS)?;
+        if let Some(language) = &run.language {
+            check_language(&item.field("language"), language)?;
+        }
+    }
+    Ok(())
+}
 
 /// Text of at most `most` characters, none a control or a bidirectional
 /// formatting character (REQ-1475 item 6).
@@ -379,14 +422,17 @@ fn check_subpage(path: &Path<'_>, subpage: &Page) -> Checked {
             }
         }
     }
-    if let Some(region) = subpage.character_set.region
-        && region > FOUR_BITS
-    {
-        return Err(fault(&path.field("character_set").field("region"), Rule::OutOfRange, format!("{region}, 0 to 15")));
+    if let Some(character_set) = subpage.character_set {
+        if let Some(region) = character_set.region
+            && region > FOUR_BITS
+        {
+            return Err(fault(&path.field("character_set").field("region"), Rule::OutOfRange, format!("{region}, 0 to 15")));
+        }
+        if character_set.national_option > THREE_BITS {
+            return Err(fault(&path.field("character_set").field("national_option"), Rule::OutOfRange, "0 to 7".to_string()));
+        }
     }
-    if subpage.character_set.national_option > THREE_BITS {
-        return Err(fault(&path.field("character_set").field("national_option"), Rule::OutOfRange, "0 to 7".to_string()));
-    }
+    check_text_runs(path, subpage)?;
     if let Some(cursor) = subpage.cursor {
         if !(super::FIRST_CURSOR_ROW..=super::LAST_CURSOR_ROW).contains(&cursor.row) {
             let rows = format!("{}: rows {} to {}", cursor.row, super::FIRST_CURSOR_ROW, super::LAST_CURSOR_ROW);
@@ -505,6 +551,8 @@ const LAST_TEXT_LINK_ROW: u8 = 23;
 
 /// Seven bits: a character code (EN 300 706 clause 8.2).
 const SEVEN_BITS: u8 = 0x7F;
+/// The last row a text run may be on, 24 (REQ-2214 item 4).
+const LAST_TEXT_ROW: u8 = neoteletext_formats::write_text::LAST_TEXT_ROW;
 /// Four bits: a designation code, a region, a nibble.
 const FOUR_BITS: u8 = 0x0F;
 /// Three bits: the national option.

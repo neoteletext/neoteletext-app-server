@@ -179,14 +179,14 @@ fn fill(model: &mut PageFile, subpage: &Page) {
     }
     // C12 to C14: the national option index 4×C12 + 2×C13 + C14 (clause
     // 9.3.1.3).
-    let national = subpage.character_set.national_option;
+    let national = subpage.character_set.map_or(0, |set| set.national_option);
     for (bit, weight) in [(C12, 0b100), (C13, 0b010), (C14, 0b001)] {
         if national & weight != 0 {
             bits |= bit;
         }
     }
     model.set_control(ControlBits(bits));
-    model.region = subpage.character_set.region;
+    model.region = subpage.character_set.and_then(|set| set.region);
     for packet in &subpage.enhancements {
         let _ = model.enhancements.push(EnhancementPacket { designation: packet.designation, triplets: triplets(&packet.triplets) });
     }

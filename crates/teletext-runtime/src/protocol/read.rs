@@ -66,9 +66,19 @@ pub fn read(line: &[u8]) -> Result<ProgramMessage, Refusal> {
     let value: Value = serde_json::from_slice(line).map_err(|error| syntax(&error))?;
     let Value::Object(mut object) = value else { return Err(Refusal::whole(None, Rule::WrongType, "a message is a JSON object".to_string())) };
     let kind: MessageType = tag(&mut object, "type", "").map_err(|fault| fault.refusal(None))?;
-    let message = body(kind, object).map_err(|fault| fault.refusal(Some(kind)))?;
+    let mut message = body(kind, object).map_err(|fault| fault.refusal(Some(kind)))?;
     check::message(&message)?;
+    crate::text::encode_message(&mut message)?;
     Ok(message)
+}
+
+/// The request number a line names at its top level, if it names one that
+/// is a number: what `refused` carries back (REQ-2216 item 3), read again
+/// only when a line is refused.
+#[must_use]
+pub fn request_of(line: &[u8]) -> Option<u64> {
+    let value: Value = serde_json::from_slice(line).ok()?;
+    value.get("request")?.as_u64().filter(|&request| request <= super::SAFE_INTEGER_LIMIT)
 }
 
 /// The message of type `kind` from the rest of its object.
@@ -81,6 +91,7 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::Redirect => ProgramMessage::Redirect(typed(object, "")?),
         MessageType::Denied => ProgramMessage::Denied(typed(object, "")?),
         MessageType::Description => ProgramMessage::Description(typed(object, "")?),
+        MessageType::Measure => ProgramMessage::Measure(Box::new(typed(object, "")?)),
         MessageType::Sound => ProgramMessage::Sound(sound(object)?),
         MessageType::Cookie => ProgramMessage::Cookie(typed(object, "")?),
         MessageType::AuthorLog => ProgramMessage::AuthorLog(typed(object, "")?),

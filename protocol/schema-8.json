@@ -258,6 +258,21 @@
       ],
       "type": "object"
     },
+    "Direction": {
+      "description": "Which way a language is written.",
+      "oneOf": [
+        {
+          "const": "ltr",
+          "description": "Left to right.",
+          "type": "string"
+        },
+        {
+          "const": "rtl",
+          "description": "Right to left: the server puts its text in visual order.",
+          "type": "string"
+        }
+      ]
+    },
     "Enhancement": {
       "additionalProperties": false,
       "description": "A packet X/26 (EN 300 706 clause 12.3).",
@@ -962,6 +977,120 @@
       ],
       "description": "A W3C KeyboardEvent.key name, from the engine's table (DOC-1936), or the one character of a character key."
     },
+    "LanguageEntry": {
+      "additionalProperties": false,
+      "description": "One language a page or text run may name (REQ-2215).",
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/Direction",
+          "description": "Which way it is written."
+        },
+        "mark_rows": {
+          "description": "1 when its marks take the row above and the row below its letters\n(Thai and Lao, the engine's DEC-604), else 0.",
+          "format": "uint8",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its English name.",
+          "type": "string"
+        },
+        "tag": {
+          "$ref": "#/$defs/LanguageTag",
+          "description": "The BCP 47 tag a page or run names it by."
+        }
+      },
+      "required": [
+        "tag",
+        "name",
+        "direction",
+        "mark_rows"
+      ],
+      "type": "object"
+    },
+    "LanguageTag": {
+      "description": "A language's BCP 47 tag, one of start.languages: the engine's table of languages (REQ-2215).",
+      "enum": [
+        "en",
+        "id",
+        "sw",
+        "de",
+        "sv",
+        "fi",
+        "hu",
+        "it",
+        "fr",
+        "pt",
+        "es",
+        "cs",
+        "sk",
+        "pl",
+        "tr",
+        "kk",
+        "hr",
+        "sl",
+        "sr-Latn",
+        "ro",
+        "et",
+        "lv",
+        "lt",
+        "ru",
+        "bg",
+        "el",
+        "he",
+        "uk",
+        "sr",
+        "ar",
+        "ha",
+        "ff",
+        "ak",
+        "bm",
+        "dyu",
+        "din",
+        "fon",
+        "kri",
+        "ln",
+        "mnk",
+        "men",
+        "nus",
+        "ee",
+        "kab",
+        "tzm",
+        "az",
+        "kr",
+        "mos",
+        "yo",
+        "ig",
+        "vi",
+        "be",
+        "mk",
+        "ky",
+        "mn",
+        "tt",
+        "tg",
+        "fa",
+        "prs",
+        "ur",
+        "ps",
+        "sd",
+        "ckb",
+        "ug",
+        "bal",
+        "ka",
+        "hy",
+        "zgh",
+        "tzm-Tfng",
+        "th",
+        "lo",
+        "ja",
+        "ja-Hira",
+        "ja-Hrkt",
+        "ja-Kana",
+        "ja-Latn"
+      ],
+      "type": "string"
+    },
     "Link": {
       "additionalProperties": false,
       "description": "A link: a page and a sub-code.",
@@ -1075,7 +1204,8 @@
         "log",
         "packets",
         "denied",
-        "description"
+        "description",
+        "measure"
       ],
       "type": "string"
     },
@@ -1272,8 +1402,15 @@
       "description": "One sub-page of a page, as the engine's page model (`PageFile`), field\nby field (REQ-1478). A sub-page travels alone, never with the others of\nits page (DEC-1500, REQ-1501): a page of one sub-page is a page whose\nlist has one entry.",
       "properties": {
         "character_set": {
-          "$ref": "#/$defs/CharacterSet",
-          "description": "The default character set."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharacterSet"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The default character set by its region and national option; none\nwith `language`, which sets it, or for the defaults (region none,\nnational option 0)."
         },
         "control": {
           "$ref": "#/$defs/Control",
@@ -1301,6 +1438,28 @@
           },
           "maxItems": 16,
           "type": "array"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageTag"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The page's default language, a tag of `start.languages`: it sets the\ndefault G0 and G2 designation and is the language of each text run\nthat names none (REQ-2214 item 2). Never with `character_set`."
+        },
+        "level": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The presentation level the page is written for; none for\n`neoteletext` (REQ-2214 item 3, REQ-2151)."
         },
         "link_extension": {
           "$ref": "#/$defs/LinkExtension",
@@ -1349,6 +1508,17 @@
         "sub": {
           "$ref": "#/$defs/SubCode",
           "description": "The sub-page's sub-code, 0000 to 3F7E."
+        },
+        "text": {
+          "description": "Unicode text the server writes over `rows` with the engine's encoder\n(REQ-2214 item 4), at most 64 runs; none for no text.",
+          "items": {
+            "$ref": "#/$defs/TextRun"
+          },
+          "maxItems": 64,
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1359,9 +1529,35 @@
         "display_row_24",
         "link_extension",
         "control",
-        "character_set",
         "enhancements",
         "packets"
+      ],
+      "type": "object"
+    },
+    "PageDesignation": {
+      "additionalProperties": false,
+      "description": "A page's default G0 and G2 designation and its second G0 designation\n(EN 300 706 Tables 32 and 33), as the header's C12 to C14 and X/28/0\nFormat 1 carry them.",
+      "properties": {
+        "default": {
+          "description": "The default G0 and G2 designation, a Table 32 value: the region in\nbits 4 to 7, the national option in bits 1 to 3.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "second": {
+          "description": "The second G0 designation, a Table 33 value, or none.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "default"
       ],
       "type": "object"
     },
@@ -2384,6 +2580,32 @@
             "public"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks what a page's encoding costs, sending it to no viewer\n(REQ-2216).",
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/Page",
+              "description": "The page, as `page` carries one."
+            },
+            "request": {
+              "description": "A number the program chooses, which the answer carries back.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "measure",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request",
+            "page"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2514,8 +2736,91 @@
           "const": "wrong_page",
           "description": "A page other than the one the message is about.",
           "type": "string"
+        },
+        {
+          "const": "language_and_character_set",
+          "description": "A page names both a `language` and a `character_set` (REQ-2214\nitem 2).",
+          "type": "string"
+        },
+        {
+          "const": "unknown_language",
+          "description": "A language not in `start.languages`, or one no set writes at the\npage's level (REQ-2215).",
+          "type": "string"
+        },
+        {
+          "const": "text_cell_taken",
+          "description": "A text run's cell at which the page's own triplets select a\ncharacter (REQ-2214 item 6).",
+          "type": "string"
+        },
+        {
+          "const": "text_set_changed",
+          "description": "The page's own codes or triplets change the character set in force\nbefore or within a text run on its row: an ESC, or a triplet of\ncolumn mode 01000 or 01010.",
+          "type": "string"
+        },
+        {
+          "const": "triplets_over_budget",
+          "description": "The page's triplets, its own and its text's, are more than 208\n(REQ-2214 item 8).",
+          "type": "string"
+        },
+        {
+          "const": "text_unshown",
+          "description": "A character of a text run the page cannot show in its language.",
+          "type": "string"
+        },
+        {
+          "const": "text_overlap",
+          "description": "A text run takes a cell another takes.",
+          "type": "string"
+        },
+        {
+          "const": "text_out_of_columns",
+          "description": "A text run does not end by column 39.",
+          "type": "string"
+        },
+        {
+          "const": "mark_rows_out_of_range",
+          "description": "A Thai or Lao run's marks would be outside rows 1 to 24.",
+          "type": "string"
+        },
+        {
+          "const": "text_and_objects",
+          "description": "The page's own enhancement data holds objects, which text runs\ncannot be merged into.",
+          "type": "string"
         }
       ]
+    },
+    "RunCost": {
+      "additionalProperties": false,
+      "description": "What one text run cost.",
+      "properties": {
+        "cells": {
+          "description": "The cells it takes on its row.",
+          "format": "uint8",
+          "maximum": 40,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mark_rows": {
+          "description": "1 when its marks take the row above and the row below it, else 0.",
+          "format": "uint8",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "triplets": {
+          "description": "The triplets it added, its share of row addresses and the\nTermination Marker included.",
+          "format": "uint16",
+          "maximum": 208,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cells",
+        "triplets",
+        "mark_rows"
+      ],
+      "type": "object"
     },
     "SameSite": {
       "description": "`SameSite` (RFC 6265bis section 4.1.2.7).",
@@ -2562,8 +2867,15 @@
               "minimum": 0,
               "type": "integer"
             },
+            "languages": {
+              "description": "The languages a page or text run may name: the engine's table, in\nits order (REQ-2215, REQ-2181).",
+              "items": {
+                "$ref": "#/$defs/LanguageEntry"
+              },
+              "type": "array"
+            },
             "protocol": {
-              "const": 7,
+              "const": 8,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -2583,7 +2895,8 @@
             "protocol",
             "epoch_ms",
             "standard",
-            "budgets"
+            "budgets",
+            "languages"
           ],
           "type": "object"
         },
@@ -2853,6 +3166,16 @@
               "description": "The path to the first fault, such as `magazines[2].pages[14].title`;\nempty for the message as a whole.",
               "type": "string"
             },
+            "request": {
+              "description": "The request number of the message refused, when it carried one\n(`reply`, `page`, `subpages`, `redirect`, `denied`, `measure`), and\nnone otherwise (REQ-2216 item 3).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "rule": {
               "$ref": "#/$defs/Rule",
               "description": "The rule broken."
@@ -2886,6 +3209,58 @@
           "required": [
             "type",
             "page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The answer to `measure` (REQ-2216).",
+          "properties": {
+            "designation": {
+              "$ref": "#/$defs/PageDesignation",
+              "description": "The page's designation."
+            },
+            "limit": {
+              "const": 208,
+              "description": "The most it may use: 208.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request": {
+              "description": "`measure`'s request number.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "runs": {
+              "description": "Each text run's cost, in the order of the page's `text`.",
+              "items": {
+                "$ref": "#/$defs/RunCost"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "triplets": {
+              "description": "The X/26 triplets the page uses, the program's and the encoder's\ntogether, its Termination Marker included.",
+              "format": "uint16",
+              "maximum": 208,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "measured",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request",
+            "triplets",
+            "limit",
+            "designation",
+            "runs"
           ],
           "type": "object"
         }
@@ -2976,6 +3351,21 @@
       ],
       "type": "object"
     },
+    "TextLevel": {
+      "description": "The presentation level a page's text is written for (REQ-2151).",
+      "oneOf": [
+        {
+          "const": "neoteletext",
+          "description": "NeoTeletext's own receivers: Level 3.5 with NeoTeletext's own\nextensions, the row set triplet among them.",
+          "type": "string"
+        },
+        {
+          "const": "3.5",
+          "description": "Level 3.5 as EN 300 706 defines it: another set is reached by\nModified Designation, one triplet a character.",
+          "type": "string"
+        }
+      ]
+    },
     "TextLink": {
       "additionalProperties": false,
       "description": "A run of text on the page that leads elsewhere (`LT`).",
@@ -3014,6 +3404,49 @@
         "column",
         "length",
         "target"
+      ],
+      "type": "object"
+    },
+    "TextRun": {
+      "additionalProperties": false,
+      "description": "A run of Unicode text at its place on the page (REQ-2214 item 4). It\ntakes a cell for each character it shows, from its column rightwards,\nonce combining marks join their letters, right-to-left text is in\nvisual order and Arabic letters take their joined forms; a Thai or Lao\nrun also takes the same columns of the rows above and below for its\nmarks.",
+      "properties": {
+        "column": {
+          "description": "Its first column, 0 to 39.",
+          "format": "uint8",
+          "maximum": 39,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageTag"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its language, a tag of `start.languages`; none for the page's, or\nLatin English when the page names none."
+        },
+        "row": {
+          "description": "Its row, 1 to 24.",
+          "format": "uint8",
+          "maximum": 24,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Its text: 1 to 40 characters in Unicode normalisation form C, no\ncontrol or bidirectional formatting character.",
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "row",
+        "column",
+        "text"
       ],
       "type": "object"
     },
@@ -3061,5 +3494,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 7"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 8"
 }

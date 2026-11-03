@@ -29,7 +29,7 @@ pub mod check;
 mod read;
 
 pub use check::Refusal;
-pub use read::read;
+pub use read::{read, request_of};
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
@@ -39,8 +39,21 @@ pub use read::read;
 /// `denied`, lets a redirect keep a query, and adds `describe` and
 /// `description` (REQ-1728). Version 7 gives input every field a receiver
 /// sends: `mods` on a key, the mouse and the wheel, the dot `px` and `py` on
-/// the mouse and the wheel, and `compose` (REQ-1347).
-pub const PROTOCOL: u32 = 7;
+/// the mouse and the wheel, and `compose` (REQ-1347). Version 8 lets a page
+/// carry Unicode text runs with their languages, which the server encodes
+/// with the engine's encoder (DEC-2199, REQ-2214), lists the languages in
+/// `start` (REQ-2215), adds `measure` and `measured`, and names the request
+/// a refusal answers (REQ-2216).
+pub const PROTOCOL: u32 = 8;
+/// The most text runs a page carries (REQ-2214 item 4).
+pub const MOST_TEXT_RUNS: usize = 64;
+/// The longest text run, in characters: a row (REQ-2214 item 4).
+pub const TEXT_RUN_CHARACTERS: usize = COLUMNS;
+/// The triplets a page's local enhancement data holds: sixteen packets X/26
+/// of thirteen (EN 300 706 clause 9.4.1; REQ-2149).
+pub const TRIPLET_LIMIT: u16 = neoteletext_core::consts::LOCAL_TRIPLETS;
+/// The first row a text run may be on: row 0 is the header.
+const FIRST_TEXT_ROW: u8 = neoteletext_formats::write_text::FIRST_TEXT_ROW;
 /// The longest line either side may send: 16 MiB. A stored sound's two
 /// minutes of 16-bit samples in base64 are about 15 MB, the largest
 /// message there is; a page of the standard's 8,190 sub-pages of whole
@@ -338,6 +351,8 @@ pub enum ServerMessage {
     /// A web visitor or a search engine is at a page's address: answer with
     /// `description` (REQ-1728).
     Describe(Describe),
+    /// The answer to `measure` (REQ-2216).
+    Measured(Measured),
 }
 
 impl ServerMessage {
@@ -349,7 +364,7 @@ impl ServerMessage {
             | Self::Selected(Selected { connection, .. })
             | Self::Input(InputMessage { connection, .. })
             | Self::Left(Left { connection, .. }) => Some(*connection),
-            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) => None,
+            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) => None,
         }
     }
 }
@@ -377,6 +392,58 @@ pub struct Start {
     pub standard: Standard,
     /// The server's own bounds.
     pub budgets: Budgets,
+    /// The languages a page or text run may name: the engine's table, in
+    /// its order (REQ-2215, REQ-2181).
+    pub languages: Vec<LanguageEntry>,
+}
+
+/// One language a page or text run may name (REQ-2215).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageEntry {
+    /// The BCP 47 tag a page or run names it by.
+    pub tag: LanguageTag,
+    /// Its English name.
+    pub name: String,
+    /// Which way it is written.
+    pub direction: Direction,
+    /// 1 when its marks take the row above and the row below its letters
+    /// (Thai and Lao, the engine's DEC-604), else 0.
+    #[schemars(range(max = 1))]
+    pub mark_rows: u8,
+}
+
+/// Which way a language is written.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    /// Left to right.
+    Ltr,
+    /// Right to left: the server puts its text in visual order.
+    Rtl,
+}
+
+/// The server's closed list of languages, from the engine (REQ-2215).
+#[must_use]
+pub fn languages() -> Vec<LanguageEntry> {
+    neoteletext_formats::write_text::languages()
+        .into_iter()
+        .map(|language| LanguageEntry {
+            tag: LanguageTag(language.tag),
+            name: language.name.to_string(),
+            direction: match language.direction {
+                neoteletext_formats::write_text::Direction::Ltr => Direction::Ltr,
+                neoteletext_formats::write_text::Direction::Rtl => Direction::Rtl,
+            },
+            mark_rows: language.mark_rows,
+        })
+        .collect()
+}
+
+/// Every tag of [`languages`].
+#[must_use]
+pub fn language_tags() -> Vec<String> {
+    languages().into_iter().map(|language| language.tag.0).collect()
 }
 
 /// The standard's maxima (REQ-1031, `STANDARD-LIMITS.md` section 3).
@@ -723,6 +790,63 @@ pub struct Refused {
     pub rule: Rule,
     /// The fault in words.
     pub detail: String,
+    /// The request number of the message refused, when it carried one
+    /// (`reply`, `page`, `subpages`, `redirect`, `denied`, `measure`), and
+    /// none otherwise (REQ-2216 item 3).
+    #[schemars(range(max = SAFE_INTEGER_LIMIT))]
+    pub request: Option<u64>,
+}
+
+/// `measured`: what the server's encoding of a page `measure` sent costs,
+/// sent to no viewer (REQ-2216 item 2).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Measured {
+    /// `measure`'s request number.
+    pub request: u32,
+    /// The X/26 triplets the page uses, the program's and the encoder's
+    /// together, its Termination Marker included.
+    #[schemars(range(max = TRIPLET_LIMIT))]
+    pub triplets: u16,
+    /// The most it may use: 208.
+    #[schemars(extend("const" = TRIPLET_LIMIT))]
+    pub limit: u16,
+    /// The page's designation.
+    pub designation: PageDesignation,
+    /// Each text run's cost, in the order of the page's `text`.
+    #[schemars(length(max = MOST_TEXT_RUNS))]
+    pub runs: Vec<RunCost>,
+}
+
+/// A page's default G0 and G2 designation and its second G0 designation
+/// (EN 300 706 Tables 32 and 33), as the header's C12 to C14 and X/28/0
+/// Format 1 carry them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PageDesignation {
+    /// The default G0 and G2 designation, a Table 32 value: the region in
+    /// bits 4 to 7, the national option in bits 1 to 3.
+    #[schemars(range(max = TRIPLET_DATA_MAX))]
+    pub default: u8,
+    /// The second G0 designation, a Table 33 value, or none.
+    #[schemars(range(max = TRIPLET_DATA_MAX))]
+    pub second: Option<u8>,
+}
+
+/// What one text run cost.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunCost {
+    /// The cells it takes on its row.
+    #[schemars(range(min = 1, max = TEXT_RUN_CHARACTERS))]
+    pub cells: u8,
+    /// The triplets it added, its share of row addresses and the
+    /// Termination Marker included.
+    #[schemars(range(max = TRIPLET_LIMIT))]
+    pub triplets: u16,
+    /// 1 when its marks take the row above and the row below it, else 0.
+    #[schemars(range(max = 1))]
+    pub mark_rows: u8,
 }
 
 /// The types of message a program sends.
@@ -742,6 +866,7 @@ pub enum MessageType {
     Packets,
     Denied,
     Description,
+    Measure,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -800,6 +925,33 @@ pub enum Rule {
     OneConnection,
     /// A page other than the one the message is about.
     WrongPage,
+    /// A page names both a `language` and a `character_set` (REQ-2214
+    /// item 2).
+    LanguageAndCharacterSet,
+    /// A language not in `start.languages`, or one no set writes at the
+    /// page's level (REQ-2215).
+    UnknownLanguage,
+    /// A text run's cell at which the page's own triplets select a
+    /// character (REQ-2214 item 6).
+    TextCellTaken,
+    /// The page's own codes or triplets change the character set in force
+    /// before or within a text run on its row: an ESC, or a triplet of
+    /// column mode 01000 or 01010.
+    TextSetChanged,
+    /// The page's triplets, its own and its text's, are more than 208
+    /// (REQ-2214 item 8).
+    TripletsOverBudget,
+    /// A character of a text run the page cannot show in its language.
+    TextUnshown,
+    /// A text run takes a cell another takes.
+    TextOverlap,
+    /// A text run does not end by column 39.
+    TextOutOfColumns,
+    /// A Thai or Lao run's marks would be outside rows 1 to 24.
+    MarkRowsOutOfRange,
+    /// The page's own enhancement data holds objects, which text runs
+    /// cannot be merged into.
+    TextAndObjects,
 }
 
 // ------------------------------------------------------- program to server
@@ -835,6 +987,9 @@ pub enum ProgramMessage {
     Denied(Denied),
     /// The answer to `describe` (REQ-1728).
     Description(Description),
+    /// Asks what a page's encoding costs, sending it to no viewer
+    /// (REQ-2216).
+    Measure(Box<Measure>),
 }
 
 impl ProgramMessage {
@@ -854,6 +1009,7 @@ impl ProgramMessage {
             Self::Packets(_) => MessageType::Packets,
             Self::Denied(_) => MessageType::Denied,
             Self::Description(_) => MessageType::Description,
+            Self::Measure(_) => MessageType::Measure,
         }
     }
 
@@ -863,6 +1019,17 @@ impl ProgramMessage {
     pub const fn is_answer(&self) -> bool {
         matches!(self, Self::Reply(_) | Self::Denied(_) | Self::Description(_))
     }
+}
+
+/// `measure`: a page encoded as for sending and sent to no viewer; the
+/// server answers `measured` or `refused` (REQ-2216 item 1).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Measure {
+    /// A number the program chooses, which the answer carries back.
+    pub request: u32,
+    /// The page, as `page` carries one.
+    pub page: Page,
 }
 
 /// `reply` (REQ-1471).
@@ -1089,8 +1256,21 @@ pub struct Page {
     pub link_extension: LinkExtension,
     /// The control bits C4 to C11 (clause 9.3.1.3).
     pub control: Control,
-    /// The default character set.
-    pub character_set: CharacterSet,
+    /// The default character set by its region and national option; none
+    /// with `language`, which sets it, or for the defaults (region none,
+    /// national option 0).
+    pub character_set: Option<CharacterSet>,
+    /// The page's default language, a tag of `start.languages`: it sets the
+    /// default G0 and G2 designation and is the language of each text run
+    /// that names none (REQ-2214 item 2). Never with `character_set`.
+    pub language: Option<LanguageTag>,
+    /// The presentation level the page is written for; none for
+    /// `neoteletext` (REQ-2214 item 3, REQ-2151).
+    pub level: Option<TextLevel>,
+    /// Unicode text the server writes over `rows` with the engine's encoder
+    /// (REQ-2214 item 4), at most 64 runs; none for no text.
+    #[schemars(length(max = MOST_TEXT_RUNS))]
+    pub text: Option<Vec<TextRun>>,
     /// Packets X/26, at most one of each designation code.
     #[schemars(length(max = neoteletext_core::consts::DESIGNATION_CODES))]
     pub enhancements: Vec<Enhancement>,
@@ -1099,6 +1279,64 @@ pub struct Page {
     pub packets: Vec<PackedLine>,
     /// The input cursor (DOC-1954), or none.
     pub cursor: Option<Cursor>,
+}
+
+/// The presentation level a page's text is written for (REQ-2151).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Deserialize, JsonSchema)]
+pub enum TextLevel {
+    /// NeoTeletext's own receivers: Level 3.5 with NeoTeletext's own
+    /// extensions, the row set triplet among them.
+    #[default]
+    #[serde(rename = "neoteletext")]
+    NeoTeletext,
+    /// Level 3.5 as EN 300 706 defines it: another set is reached by
+    /// Modified Designation, one triplet a character.
+    #[serde(rename = "3.5")]
+    Level35,
+}
+
+/// A run of Unicode text at its place on the page (REQ-2214 item 4). It
+/// takes a cell for each character it shows, from its column rightwards,
+/// once combining marks join their letters, right-to-left text is in
+/// visual order and Arabic letters take their joined forms; a Thai or Lao
+/// run also takes the same columns of the rows above and below for its
+/// marks.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextRun {
+    /// Its row, 1 to 24.
+    #[schemars(range(min = FIRST_TEXT_ROW, max = LAST_ROW))]
+    pub row: u8,
+    /// Its first column, 0 to 39.
+    #[schemars(range(max = LAST_COLUMN))]
+    pub column: u8,
+    /// Its text: 1 to 40 characters in Unicode normalisation form C, no
+    /// control or bidirectional formatting character.
+    #[schemars(length(min = 1, max = TEXT_RUN_CHARACTERS))]
+    pub text: String,
+    /// Its language, a tag of `start.languages`; none for the page's, or
+    /// Latin English when the page names none.
+    pub language: Option<LanguageTag>,
+}
+
+/// A language's BCP 47 tag, one of `start.languages` (REQ-2215); any other
+/// is refused with `unknown_language`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LanguageTag(pub String);
+
+impl JsonSchema for LanguageTag {
+    fn schema_name() -> Cow<'static, str> {
+        "LanguageTag".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "A language's BCP 47 tag, one of start.languages: the engine's table of languages (REQ-2215).",
+            "type": "string",
+            "enum": language_tags()
+        })
+    }
 }
 
 /// A link: a page and a sub-code.

@@ -595,6 +595,7 @@ impl Channel {
                 description_text_characters: wide(protocol::DESCRIPTION_TEXT_CHARACTERS),
                 description_limit_ms: DESCRIPTION_WAIT_MS,
             },
+            languages: protocol::languages(),
         };
         self.tell(&ServerMessage::Start(start));
         let open: Vec<ConnectionId> = self.connections.keys().copied().collect();
@@ -1092,7 +1093,9 @@ impl Channel {
         if let Err(refusal) = acted {
             count(&mut self.stats.refused);
             self.log(Level::Warn, "line_refused", format!("refused a line from the program: {refusal}"));
-            self.tell(&ServerMessage::Refused(refusal.refused()));
+            let mut refused = refusal.refused();
+            refused.request = protocol::request_of(line);
+            self.tell(&ServerMessage::Refused(refused));
         }
     }
 
@@ -1164,6 +1167,18 @@ impl Channel {
             }
             ProgramMessage::Redirect(redirect) => self.redirect(redirect, now)?,
             ProgramMessage::Description(description) => self.described(description, now)?,
+            ProgramMessage::Measure(measure) => {
+                // REQ-2216 item 1: encoded as for sending, sent to no viewer.
+                let protocol::Measure { request, mut page } = *measure;
+                let cost = crate::text::measure(&mut page)?;
+                self.tell(&ServerMessage::Measured(protocol::Measured {
+                    request,
+                    triplets: cost.triplets,
+                    limit: protocol::TRIPLET_LIMIT,
+                    designation: cost.designation,
+                    runs: cost.runs,
+                }));
+            }
             ProgramMessage::Denied(denied) => {
                 if self.is_current(denied.connection, denied.request) {
                     self.deny(denied.connection, denied.status);

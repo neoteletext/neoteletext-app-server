@@ -41,6 +41,7 @@ mod records;
 pub mod session_cookie;
 mod sound;
 pub mod stats;
+mod text;
 
 pub use channel::{Channel, ChannelConfig, Effect, InitialPage, Level, PROGRAM_REPLY_LIMIT_MS, SESSION_GRACE_MS};
 pub use input::{Input, Named};
