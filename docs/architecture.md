@@ -42,21 +42,27 @@ Each host is a short async loop: wait for whatever comes next (a socket, an appl
 - **HTTP and WebSocket:** `hyper` serves the engine's channel layout (DOC-1779) with `ETag`, and performs the WebSocket upgrade with the engine's `ws::accept_for`. The server-side WebSocket framing is this repository's own code, sans I/O, as planned.
 - **The listening socket:** the one systemd passes, when it passes one (socket activation, requirement 5.6, DEC-1767), so a restart refuses no connections; otherwise the address `--listen` names, bound by the server.
 - **TLS:** `rustls`, with certificates from files. A proxy such as Caddy may front it instead.
-- **Applications:** child processes over stdio, or programs of their own over a Unix domain socket (decision 17).
+- **Applications:** child processes over stdio, programs of their own over a Unix domain socket, or programs anywhere, on another machine too, over a WebSocket with the channel's secret (decision 17, REQ-1044).
 - **What survives a restart:** the state directory (`--state`, or systemd's `StateDirectory=`): each channel's kept pages and declarations, the session cookie's keys, the accumulated figures (decisions 17 and 19). On `SIGTERM` every viewer is sent a Close with 4100, try again (DOC-1919), and what is kept is written.
 - **Log and figures:** structured events through `tracing` on standard error (decision 18); `/metrics`, `/healthz` and `/readyz` on the administration listener (decision 19).
 - **Builds:** one static binary each for Linux, macOS and Windows, on x86-64 and arm64.
-- **The channels file:** the native server reads one JSON file, `--channels`, naming each channel's folder, its name, and either the command that runs its program with the directory to run it in, or, on Linux and macOS, the Unix domain socket of a program that runs as a service of its own (decision 17). An entry may also name `initial_page`, three decimal digits such as `"302"`, the page its viewers start on and `channel.ttx` reports; without one it is 100. A folder is letters, digits, `-` and `_`; a relative `directory` or `socket` is taken from the file's own folder, so `../<repository>` names a channel's repository beside the channels'. NeoTeletext's own file is `channels.json` in `~/devel/neoteletext-server-channels`, which `scripts/deploy.sh` reads as its manifest:
+- **The channels file:** the native server reads one JSON file, `--channels`, naming each channel's folder, its name, and one of three ways its program reaches it (decision 17):
+  - `command`, the command that runs its program, with `directory`, the directory to run it in: the server starts it and speaks to it over its standard input and output;
+  - `socket`, on Linux and macOS only, the Unix domain socket of a program that runs as a service of its own; on Windows a channel with a socket is refused at start (DEC-2433);
+  - `secret_variable` or `secret_file`, the environment variable or the file that holds the channel's secret, for a program that connects over a WebSocket from anywhere, on every system (REQ-1044). The secret is never written in the channels file itself; a file's surrounding white space is not part of it, and a file over 4,096 bytes, an empty secret or a variable not set stops the server at start. The program connects to `<channel>program` with `Authorization: Bearer <secret>`, compared in constant time, as on the Cloudflare host (section 3.3, REQ-1024), whose route and check are the runtime's (`landing::Route::Program`, `landing::program_admitted`). A request without the secret is answered 401 before anything else of it is looked at, a second program while one is connected 409, and a channel with another kind of program 404. Each text message is one line of the program protocol, at most `LONGEST_LINE`, the bound of the other transports; the server sends each line as one text message without its newline. Once in, the program is served exactly as one on a Unix domain socket: it is sent `start`, then `connected` for each open connection, and when it goes its channel is told it ended and the next program may connect. A quiet program's connection is pinged as a viewer's is, and dropped when nothing comes back, so that a program whose machine vanished does not keep the next one out. Over plain HTTP the secret crosses the network in the clear: a deployment puts TLS in front (Caddy terminates `https` and `wss`), and a program elsewhere connects with `wss://`.
+
+  An entry may also name `initial_page`, three decimal digits such as `"302"`, the page its viewers start on and `channel.ttx` reports; without one it is 100. A folder is letters, digits, `-` and `_`; a relative `directory`, `socket` or `secret_file` is taken from the file's own folder, so `../<repository>` names a channel's repository beside the channels'. NeoTeletext's own file is `channels.json` in `~/devel/neoteletext-server-channels`, which `scripts/deploy.sh` reads as its manifest:
 
   ```json
   {"channels":[
     {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts"],"directory":"../neoteletext-server-channel-hackaday"},
     {"folder":"oldhackaday","name":"Hackaday (old)","command":["uv","run","--frozen","--no-dev","python","-m","hackaday"],"directory":"hackaday"},
-    {"folder":"radio","name":"Radio","socket":"sockets/radio.sock"}
+    {"folder":"radio","name":"Radio","socket":"sockets/radio.sock"},
+    {"folder":"remote","name":"Remote","secret_file":"/etc/neoteletext/remote.secret"}
   ]}
   ```
 
-  What the server and a program say to each other over either transport is the program protocol, DOC-1964 to DOC-1978 of `neoteletext-common/PROTOCOL.html`.
+  What the server and a program say to each other over any of the three transports is the program protocol, DOC-1964 to DOC-1978 of `neoteletext-common/PROTOCOL.html`.
 
 ### 3.3 The Cloudflare host
 
