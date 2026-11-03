@@ -416,7 +416,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 dependencies = [
  "neoteletext-core",
 ]
@@ -424,20 +424,21 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 dependencies = [
  "neoteletext-core",
+ "unicode-bidi",
 ]
 
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 dependencies = [
  "neoteletext-core",
 ]
@@ -445,7 +446,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -454,12 +455,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-opus"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-engine?rev=61ed70bb095905896bfe0e9a6a7fac64e71ff138#61ed70bb095905896bfe0e9a6a7fac64e71ff138"
+source = "git+https://github.com/neoteletext/neoteletext-engine?rev=edbba2b75411af31f9d87ef2b5cd31988e6cbdaa#edbba2b75411af31f9d87ef2b5cd31988e6cbdaa"
 dependencies = [
  "embedded-io",
  "neoteletext-audio",
@@ -932,6 +933,12 @@ dependencies = [
  "tracing-core",
  "tracing-serde",
 ]
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-ident"
