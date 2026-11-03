@@ -296,6 +296,9 @@ struct Connection {
     welcomed: bool,
     /// The capabilities WELCOME agreed, once HELLO has come.
     agreed: Option<u32>,
+    /// The selection and query a page redirect gave, until the receiver's
+    /// next SELECT, which repeats it.
+    redirected: Option<(Selection, Option<String>)>,
     /// The input count acted on, modulo 65 536 (DOC-1943).
     acked: u16,
     /// What it holds: keys and buttons down, whose releases the program is
@@ -343,6 +346,7 @@ impl Connection {
             cookies,
             welcomed: false,
             agreed: None,
+            redirected: None,
             acked: 0,
             held: Held::new(),
             pointer: (0, 0),
@@ -1040,7 +1044,16 @@ impl Channel {
             return;
         }
         let parameters = (!parameters.is_empty()).then(|| parameters.into());
-        self.select(connection, Selection { page: PageNumber(page), sub: protocol::SubCode(sub) }, parameters, now);
+        let selection = Selection { page: PageNumber(page), sub: protocol::SubCode(sub) };
+        // The SELECT a receiver must send after REDIRECT (DOC-1960) repeats
+        // the redirect's selection, which the program has answered already:
+        // it is no new selection, and asks nothing again (TODO-2135 item 3).
+        if let Some(state) = self.connections.get_mut(&connection)
+            && state.redirected.take() == Some((selection, parameters.clone()))
+        {
+            return;
+        }
+        self.select(connection, selection, parameters, now);
     }
 
     /// The connection selected a page (sub-code 3F7F) or one sub-page: the
@@ -1316,7 +1329,13 @@ impl Channel {
         self.send_records(&[redirect.connection], protocol::MessageType::Redirect, |state| records::redirect(&redirect, &mut state.record_id))?;
         count(&mut self.stats.redirects);
         match (redirect.page, redirect.sub, redirect.address) {
-            (Some(page), Some(sub), _) => self.select(redirect.connection, Selection { page, sub }, redirect.query, now),
+            (Some(page), Some(sub), _) => {
+                let selection = Selection { page, sub };
+                self.select(redirect.connection, selection, redirect.query.clone(), now);
+                if let Some(state) = self.connections.get_mut(&redirect.connection) {
+                    state.redirected = Some((selection, redirect.query));
+                }
+            }
             (_, _, Some(address)) => {
                 if let Some(state) = self.connections.get_mut(&redirect.connection) {
                     state.ending = Ending::Answered;

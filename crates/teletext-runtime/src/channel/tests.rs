@@ -359,6 +359,25 @@ fn a_page_redirect_sends_a_redirect_record_and_selects_the_page() {
     assert_eq!((&lines.last().unwrap()["type"], &lines.last().unwrap()["page"]), (&json!("selected"), &json!("200")));
 }
 
+/// TODO-2135 item 3: the SELECT a receiver sends after a page redirect
+/// repeats the redirect's selection, answered already, so the program is not
+/// asked again and the viewer is not sent the sub-page again; a SELECT after
+/// that is a selection as ever.
+#[test]
+fn the_select_after_a_page_redirect_asks_nothing_again() {
+    let mut channel = selected();
+    channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "request": 2, "page": "200", "sub": "3F7F"})), 2);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&json!({"type": "page", "connections": [CONNECTION], "request": 3, "page": with(&subpage(), "/page", json!("200"))})), 3);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[select(0x200, ANY)]), 4);
+    let effects = channel.take_effects();
+    assert_eq!(told(&effects), [] as [Value; 0], "no second selected");
+    assert_eq!(sends(&effects), 0, "no second sub-page");
+    channel.received(CONNECTION, &message(&[select(0x200, ANY)]), 5);
+    assert_eq!(told(&channel.take_effects()).iter().filter(|line| line["type"] == "selected").count(), 1, "a later SELECT of the page is one");
+}
+
 /// REQ-1688 item 2: a redirect to another channel sends the record, tells
 /// the operator, and changes no selection.
 /// REQ-1473 verification 8 and REQ-1032 verification 8.
