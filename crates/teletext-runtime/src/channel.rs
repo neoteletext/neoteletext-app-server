@@ -1144,6 +1144,24 @@ impl Channel {
         match message {
             ProgramMessage::Reply(reply) => self.reply(reply)?,
             ProgramMessage::Page(message) => {
+                // An answer must be of the selection it answers: another page
+                // or sub-code is the program's mistake, refused at once, where
+                // the viewer would otherwise wait for the deadline (TODO-2135
+                // item 9). One connection carries a number (`one_connection`).
+                if let (Some(request), Connections::Listed(listed)) = (message.request, &message.connections)
+                    && let [connection] = listed.as_slice()
+                    && let Some(state) = self.connections.get(connection)
+                    && state.request == request
+                    && let Some(selection) = state.selection
+                    && !state.shows(message.page.page.0, message.page.sub.0)
+                {
+                    let (path, wanted) = if selection.page == message.page.page { ("page.sub", "sub-code") } else { ("page.page", "page") };
+                    return Err(refuse(
+                        path,
+                        Rule::WrongPage,
+                        format!("{:03X}/{:04X} answers {}, not that {wanted}", message.page.page.0, message.page.sub.0, selection.path()),
+                    ));
+                }
                 let targets = self.targets(&message.connections);
                 let named = matches!(message.connections, Connections::Listed(_));
                 self.send_page(&targets, named, message.request, &message.page);

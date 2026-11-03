@@ -886,3 +886,22 @@ fn start_is_the_first_line_a_started_program_hears() {
     let types: Vec<Value> = told(&channel.take_effects()).iter().map(|line| line["type"].clone()).collect();
     assert_eq!(types, [json!("start"), json!("connected")]);
 }
+
+/// TODO-2135 item 9: an answer of another page, or of another sub-code of the
+/// page selected, is refused `wrong_page` at once, and the viewer is sent
+/// nothing for it; the selection still waits for its answer.
+#[test]
+fn an_answer_of_another_page_or_sub_code_is_refused() {
+    let mut channel = viewers(&[(1, 0x210, 0)]);
+    channel.from_program(&answer(1, 1, &sub_page("100", "0000")), 1);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), [("page.page".into(), "wrong_page".into())]);
+    assert_eq!(sends(&effects), 0);
+    channel.from_program(&answer(1, 1, &sub_page("210", "0005")), 2);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), [("page.sub".into(), "wrong_page".into())]);
+    channel.from_program(&answer(1, 1, &sub_page("210", "0000")), 3);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), Vec::<(String, String)>::new());
+    assert!(!sent_to(&effects, 1).is_empty(), "the right answer is shown");
+}
