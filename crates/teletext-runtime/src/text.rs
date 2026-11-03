@@ -63,7 +63,10 @@ fn fault(error: &RunError) -> Fault {
         RunFault::UnknownLanguage(_) => (at(error.run, "language"), Rule::UnknownLanguage),
         RunFault::OutOfRows => (at(error.run, ""), Rule::OutOfRange),
         RunFault::OutOfColumns(_) => (at(error.run, "text"), Rule::TextOutOfColumns),
-        RunFault::MarkRowsOutOfRange => (at(error.run, "row"), Rule::MarkRowsOutOfRange),
+        // The pinned engine still lays Thai and Lao out with mark rows; the
+        // protocol no longer names that fault (DEC-2239), so it is the run's
+        // row out of range until the pin moves to an engine without them.
+        RunFault::MarkRowsOutOfRange => (at(error.run, "row"), Rule::OutOfRange),
         RunFault::Overlap(_) => (at(error.run, ""), Rule::TextOverlap),
         RunFault::Unshown(_) => (at(error.run, "text"), Rule::TextUnshown),
         RunFault::CellTaken { .. } => (at(error.run, ""), Rule::TextCellTaken),
@@ -159,7 +162,7 @@ pub(crate) fn encode(page: &mut Page) -> Result<Cost, Fault> {
         }
     }
     let second = (designations.second != NO_SECOND_G0).then_some(designations.second);
-    let runs = encoded.runs.iter().map(|report| RunCost { cells: report.cells, triplets: narrow(report.triplets), mark_rows: report.mark_rows }).collect();
+    let runs = encoded.runs.iter().map(|report| RunCost { cells: report.cells, triplets: narrow(report.triplets) }).collect();
     // The encoder refuses a page over the budget, so this is at most 208.
     let triplets = narrow(encoded.count).min(TRIPLET_LIMIT);
     Ok(Cost { triplets, designation: PageDesignation { default: designations.default, second }, runs })

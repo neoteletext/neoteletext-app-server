@@ -43,8 +43,11 @@ pub use read::{read, request_of};
 /// carry Unicode text runs with their languages, which the server encodes
 /// with the engine's encoder (DEC-2199, REQ-2214), lists the languages in
 /// `start` (REQ-2215), adds `measure` and `measured`, and names the request
-/// a refusal answers (REQ-2216).
-pub const PROTOCOL: u32 = 8;
+/// a refusal answers (REQ-2216). Version 9 removes what existed only for
+/// Thai and Lao, which NeoTeletext no longer supports (the engine's
+/// DEC-2239): `mark_rows` from `start.languages` and from `measured`'s
+/// runs, and the refusal `mark_rows_out_of_range`.
+pub const PROTOCOL: u32 = 9;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -407,10 +410,6 @@ pub struct LanguageEntry {
     pub name: String,
     /// Which way it is written.
     pub direction: Direction,
-    /// 1 when its marks take the row above and the row below its letters
-    /// (Thai and Lao, the engine's DEC-604), else 0.
-    #[schemars(range(max = 1))]
-    pub mark_rows: u8,
 }
 
 /// Which way a language is written.
@@ -435,7 +434,6 @@ pub fn languages() -> Vec<LanguageEntry> {
                 neoteletext_formats::write_text::Direction::Ltr => Direction::Ltr,
                 neoteletext_formats::write_text::Direction::Rtl => Direction::Rtl,
             },
-            mark_rows: language.mark_rows,
         })
         .collect()
 }
@@ -844,9 +842,6 @@ pub struct RunCost {
     /// Termination Marker included.
     #[schemars(range(max = TRIPLET_LIMIT))]
     pub triplets: u16,
-    /// 1 when its marks take the row above and the row below it, else 0.
-    #[schemars(range(max = 1))]
-    pub mark_rows: u8,
 }
 
 /// The types of message a program sends.
@@ -947,8 +942,6 @@ pub enum Rule {
     TextOverlap,
     /// A text run does not end by column 39.
     TextOutOfColumns,
-    /// A Thai or Lao run's marks would be outside rows 1 to 24.
-    MarkRowsOutOfRange,
     /// The page's own enhancement data holds objects, which text runs
     /// cannot be merged into.
     TextAndObjects,
@@ -1298,9 +1291,7 @@ pub enum TextLevel {
 /// A run of Unicode text at its place on the page (REQ-2214 item 4). It
 /// takes a cell for each character it shows, from its column rightwards,
 /// once combining marks join their letters, right-to-left text is in
-/// visual order and Arabic letters take their joined forms; a Thai or Lao
-/// run also takes the same columns of the rows above and below for its
-/// marks.
+/// visual order and Arabic letters take their joined forms.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextRun {

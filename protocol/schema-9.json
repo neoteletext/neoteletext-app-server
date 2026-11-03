@@ -985,13 +985,6 @@
           "$ref": "#/$defs/Direction",
           "description": "Which way it is written."
         },
-        "mark_rows": {
-          "description": "1 when its marks take the row above and the row below its letters\n(Thai and Lao, the engine's DEC-604), else 0.",
-          "format": "uint8",
-          "maximum": 1,
-          "minimum": 0,
-          "type": "integer"
-        },
         "name": {
           "description": "Its English name.",
           "type": "string"
@@ -1004,8 +997,7 @@
       "required": [
         "tag",
         "name",
-        "direction",
-        "mark_rows"
+        "direction"
       ],
       "type": "object"
     },
@@ -2778,11 +2770,6 @@
           "type": "string"
         },
         {
-          "const": "mark_rows_out_of_range",
-          "description": "A Thai or Lao run's marks would be outside rows 1 to 24.",
-          "type": "string"
-        },
-        {
           "const": "text_and_objects",
           "description": "The page's own enhancement data holds objects, which text runs\ncannot be merged into.",
           "type": "string"
@@ -2800,13 +2787,6 @@
           "minimum": 1,
           "type": "integer"
         },
-        "mark_rows": {
-          "description": "1 when its marks take the row above and the row below it, else 0.",
-          "format": "uint8",
-          "maximum": 1,
-          "minimum": 0,
-          "type": "integer"
-        },
         "triplets": {
           "description": "The triplets it added, its share of row addresses and the\nTermination Marker included.",
           "format": "uint16",
@@ -2817,8 +2797,7 @@
       },
       "required": [
         "cells",
-        "triplets",
-        "mark_rows"
+        "triplets"
       ],
       "type": "object"
     },
@@ -2875,7 +2854,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 8,
+              "const": 9,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -3409,7 +3388,7 @@
     },
     "TextRun": {
       "additionalProperties": false,
-      "description": "A run of Unicode text at its place on the page (REQ-2214 item 4). It\ntakes a cell for each character it shows, from its column rightwards,\nonce combining marks join their letters, right-to-left text is in\nvisual order and Arabic letters take their joined forms; a Thai or Lao\nrun also takes the same columns of the rows above and below for its\nmarks.",
+      "description": "A run of Unicode text at its place on the page (REQ-2214 item 4). It\ntakes a cell for each character it shows, from its column rightwards,\nonce combining marks join their letters, right-to-left text is in\nvisual order and Arabic letters take their joined forms.",
       "properties": {
         "column": {
           "description": "Its first column, 0 to 39.",
@@ -3494,5 +3473,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 8"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 9"
 }

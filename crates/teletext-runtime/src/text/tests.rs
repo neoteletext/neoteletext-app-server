@@ -145,18 +145,6 @@ fn an_arabic_run_is_in_visual_order() {
     assert_eq!(shown(&page)[6], visual);
 }
 
-/// REQ-2214 verification: a Thai run writes its mark rows.
-#[test]
-fn a_thai_run_writes_its_mark_rows() {
-    let text = json!([{"row": 5, "column": 0, "text": "สวัสดี ครู", "language": "th"}]);
-    let page = encoded(&page_value("en", &text));
-    let rows = shown(&page);
-    assert_eq!(rows[5], "สวสด คร");
-    let above: Vec<char> = rows[4].chars().collect();
-    assert_eq!((above[1], above[3]), ('\u{0E31}', '\u{0E35}'));
-    assert_eq!(rows[6].chars().nth(6), Some('\u{0E39}'));
-}
-
 /// REQ-2214 item 7: the program's X/28/0 Format 1 keeps its colours and
 /// gains the designation.
 #[test]
@@ -191,7 +179,6 @@ fn each_fault_is_refused_by_path_and_rule() {
     assert_eq!(refused(&page(json!([run(1, 0, "one", Value::Null), run(1, 2, "two", Value::Null)]))), ("page.text[1]".into(), Rule::TextOverlap));
     assert_eq!(refused(&page(json!([run(1, 35, "too long", Value::Null)]))), ("page.text[0].text".into(), Rule::TextOutOfColumns));
     assert_eq!(refused(&page(json!([run(2, 0, "中文", Value::Null)]))), ("page.text[0].text".into(), Rule::TextUnshown));
-    assert_eq!(refused(&page(json!([run(1, 0, "สวัสดี", json!("th"))]))), ("page.text[0].row".into(), Rule::MarkRowsOutOfRange));
     assert_eq!(refused(&page(json!([run(1, 0, "x", json!("tlh"))]))), ("page.text[0].language".into(), Rule::UnknownLanguage));
     assert_eq!(refused(&page_value("tlh", &Value::Null)), ("page.language".into(), Rule::UnknownLanguage));
     assert_eq!(refused(&page(json!([run(25, 0, "x", Value::Null)]))), ("page.text[0].row".into(), Rule::OutOfRange));
@@ -247,17 +234,16 @@ fn told(effects: &[Effect]) -> Vec<Value> {
 }
 
 /// REQ-2215 verification: `start` carries every language of the engine's
-/// table with its direction and mark rows, and protocol 8.
+/// table with its direction, and protocol 9.
 #[test]
 fn start_lists_every_language() {
     let mut channel = channel();
     let start = told(&channel.take_effects()).into_iter().find(|line| line["type"] == "start").unwrap();
-    assert_eq!(start["protocol"], 8);
+    assert_eq!(start["protocol"], 9);
     let languages = start["languages"].as_array().unwrap();
     assert_eq!(languages.len(), neoteletext_core::charset::language::LANGUAGES.len());
     let find = |tag: &str| languages.iter().find(|language| language["tag"] == tag).unwrap().clone();
-    assert_eq!(find("ar"), json!({"tag": "ar", "name": "Arabic", "direction": "rtl", "mark_rows": 0}));
-    assert_eq!(find("th"), json!({"tag": "th", "name": "Thai", "direction": "ltr", "mark_rows": 1}));
+    assert_eq!(find("ar"), json!({"tag": "ar", "name": "Arabic", "direction": "rtl"}));
     assert_eq!(find("sr-Latn")["name"], "Serbian (Latin script)");
 }
 
@@ -279,7 +265,7 @@ fn measure_answers_with_the_encoders_figures_and_sends_nothing() {
     assert_eq!(
         answer,
         json!({"type": "measured", "request": 7, "triplets": 5, "limit": LOCAL_TRIPLETS, "designation": {"default": 0, "second": null},
-            "runs": [{"cells": 6, "triplets": 3, "mark_rows": 0}, {"cells": 4, "triplets": 2, "mark_rows": 0}]})
+            "runs": [{"cells": 6, "triplets": 3}, {"cells": 4, "triplets": 2}]})
     );
     let bad = json!({"type": "measure", "request": 9, "page": page_value("en", &json!([{"row": 2, "column": 0, "text": "中"}]))});
     channel.from_program(&line(&bad), 2);
