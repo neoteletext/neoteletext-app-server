@@ -56,3 +56,23 @@ fn headers_use_the_shortest_length() {
     assert_eq!(&header(Opcode::Binary, 126).0[..4], &[FIN | 0x2, LENGTH_16, 0, 126]);
     assert_eq!(header(Opcode::Binary, 70_000).1, 10);
 }
+
+/// REQ-1044: a reader's limit is its own, so a program's reader takes a
+/// line longer than a viewer's message, and refuses one byte more, whether
+/// in one frame or joined from fragments.
+#[test]
+fn a_reader_takes_messages_up_to_its_own_limit() {
+    let most = MAX_MESSAGE * 2;
+    let mut program = Reader::with_limit(most);
+    program.feed(&masked(0x1, true, &vec![b'x'; most]));
+    assert_eq!(program.next_message(), Ok(Some(Message::Text(vec![b'x'; most]))));
+    program.feed(&masked(0x1, true, &vec![b'x'; most + 1]));
+    assert_eq!(program.next_message(), Err(FrameError::TooLong));
+    let mut joined = Reader::with_limit(most);
+    joined.feed(&masked(0x1, false, &vec![b'x'; most]));
+    joined.feed(&masked(0x0, true, b"x"));
+    assert_eq!(joined.next_message(), Err(FrameError::TooLong));
+    let mut viewer = Reader::new();
+    viewer.feed(&masked(0x1, true, &vec![b'x'; MAX_MESSAGE + 1]));
+    assert_eq!(viewer.next_message(), Err(FrameError::TooLong), "a viewer's limit is unchanged");
+}

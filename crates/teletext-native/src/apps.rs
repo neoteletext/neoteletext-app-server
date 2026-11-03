@@ -1,6 +1,6 @@
 //! Applications in other processes (DOC-1965;
 //! DOC-1964): each channel named in the channels file has
-//! one program, in any language, spoken to one JSON object a line. Two
+//! one program, in any language, spoken to one JSON object a line. Three
 //! transports carry the same lines through the same relay (requirement
 //! 6.4):
 //! - **standard input and output** (requirement 6.1): the server starts the
@@ -8,14 +8,20 @@
 //!   to [`LONGEST_PAUSE`], when it ends or breaks the protocol;
 //! - **a Unix domain socket** (requirement 6.2): the program runs as a
 //!   service of its own and connects, and connects again after it or the
-//!   server restarts.
+//!   server restarts;
+//! - **a WebSocket** (REQ-1044): the program runs anywhere, on another
+//!   machine too, and connects to `<channel>program` with the channel's
+//!   secret, as it does to the Cloudflare host (REQ-1024); the module
+//!   `remote` serves it.
 //!
 //! Each time a program starts its channel is told, and sends it `start`
 //! and `connected` for each viewer connected (REQ-1481); while it is away
 //! its channel has no pages to show (DEC-1482).
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use neoteletext_web::map::Place;
@@ -25,8 +31,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWr
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 
+mod remote;
 mod waiting;
 
+pub use remote::{Claim, Door, LONGEST_MESSAGE as LONGEST_PROGRAM_MESSAGE};
 pub use waiting::{Outgoing, ToProgram};
 
 /// The longest line either side may send, which `start` tells a program:
@@ -59,6 +67,45 @@ const OWNER_ONLY_FOLDER: u32 = 0o700;
 #[cfg(unix)]
 const OWNER_ONLY_SOCKET: u32 = 0o600;
 
+/// The longest secret read from a file: a secret is a token of a few dozen
+/// bytes, and the bound refuses a file named by mistake, such as a log,
+/// rather than reading it whole.
+pub const LONGEST_SECRET: usize = 4_096;
+
+/// A channel's secret, which its program presents to connect over a
+/// WebSocket (REQ-1044). It is never written out: its `Debug` names none of
+/// it, so no log can carry it.
+#[derive(Clone)]
+pub struct Secret(Arc<[u8]>);
+
+impl Secret {
+    /// A secret of these bytes.
+    #[must_use]
+    pub fn new(bytes: &[u8]) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Its bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Secret(..)")
+    }
+}
+
+impl PartialEq for Secret {
+    fn eq(&self, other: &Self) -> bool {
+        teletext_runtime::landing::same_secret(self.bytes(), other.bytes())
+    }
+}
+
+impl Eq for Secret {}
+
 /// How a channel's program reaches it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Program {
@@ -71,6 +118,9 @@ pub enum Program {
     },
     /// It connects to this Unix domain socket.
     Socket(PathBuf),
+    /// It connects to `<channel>program` over a WebSocket, presenting this
+    /// secret (REQ-1044).
+    WebSocket(Secret),
 }
 
 /// One channel of the channels file.
@@ -98,8 +148,11 @@ const HEXADECIMAL: u32 = 16;
 
 /// Reads the channels file: `{"channels":[{"folder","name","command":[…],
 /// "directory","initial_page"}]}`, or `"socket"` in place of `"command"` and
-/// `"directory"`. A relative directory or socket is taken from the file's
-/// own folder. `initial_page`, three decimal digits such as `"100"`, is the
+/// `"directory"`, or, for a program that connects over a WebSocket,
+/// `"secret_variable"` or `"secret_file"`, the environment variable or file
+/// that holds the channel's secret, never the secret itself (REQ-1044). A
+/// relative directory, socket or secret file is taken from the file's own
+/// folder. `initial_page`, three decimal digits such as `"100"`, is the
 /// page the channel's viewers start on, [`DEFAULT_INITIAL_PAGE`] when left
 /// out (TODO-2135 item 11: `channel.ttx` reports it, so it can vary).
 ///
@@ -122,11 +175,24 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
             return Err(format!("{}: {folder} belongs to the channel above it: a channel cannot be named like a page, contents or wall", path.display()));
         }
         let command: Vec<String> = item.get("command").and_then(Value::items).unwrap_or(&[]).iter().filter_map(Value::text).map(str::to_owned).collect();
-        let program = match (command.is_empty(), text("socket").filter(|socket| !socket.is_empty())) {
-            (false, None) => Program::Command { command, directory: base.join(text("directory").unwrap_or_default()) },
-            (true, Some(socket)) => Program::Socket(base.join(socket)),
-            (false, Some(_)) => return Err(format!("{}: {folder} has a command and a socket; it needs one", path.display())),
-            (true, None) => return Err(format!("{}: {folder} needs a command or a socket", path.display())),
+        let socket = text("socket").filter(|socket| !socket.is_empty());
+        let variable = text("secret_variable").filter(|variable| !variable.is_empty());
+        let secret_file = text("secret_file").filter(|file| !file.is_empty());
+        let named = [!command.is_empty(), socket.is_some(), variable.is_some() || secret_file.is_some()];
+        if named.iter().filter(|&&named| named).count() != 1 {
+            return Err(format!("{}: {folder} needs one of a command, a socket, or a secret for a program over a WebSocket", path.display()));
+        }
+        let program = if let Some(socket) = socket {
+            Program::Socket(base.join(socket))
+        } else if command.is_empty() {
+            let secret = match (variable, secret_file) {
+                (Some(variable), None) => secret_from_variable(&variable),
+                (None, Some(file)) => secret_from_file(&base.join(file)),
+                _ => Err("names a secret_variable and a secret_file; it needs one".to_owned()),
+            };
+            Program::WebSocket(secret.map_err(|fault| format!("{}: {folder}'s secret: {fault}", path.display()))?)
+        } else {
+            Program::Command { command, directory: base.join(text("directory").unwrap_or_default()) }
         };
         if specs.iter().any(|spec| spec.folder == folder) {
             return Err(format!("{}: {folder} twice", path.display()));
@@ -146,6 +212,34 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
     Ok(specs)
 }
 
+/// The secret in the environment variable `name`, its surrounding white
+/// space dropped.
+fn secret_from_variable(name: &str) -> Result<Secret, String> {
+    let value = std::env::var_os(name).ok_or_else(|| format!("the environment variable {name} is not set"))?;
+    let value = value.into_string().map_err(|_| format!("the environment variable {name} is not UTF-8"))?;
+    nonempty_secret(value.as_bytes()).ok_or_else(|| format!("the environment variable {name} is empty"))
+}
+
+/// The secret in the file at `path`, of at most [`LONGEST_SECRET`] bytes,
+/// its surrounding white space dropped, so that the newline an editor ends
+/// it with is not part of it.
+fn secret_from_file(path: &Path) -> Result<Secret, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    let limit = u64::try_from(LONGEST_SECRET).unwrap_or(u64::MAX).saturating_add(1);
+    file.take(limit).read_to_end(&mut bytes).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if bytes.len() > LONGEST_SECRET {
+        return Err(format!("{} is over {LONGEST_SECRET} bytes", path.display()));
+    }
+    nonempty_secret(&bytes).ok_or_else(|| format!("{} is empty", path.display()))
+}
+
+/// `bytes` without surrounding white space as a secret, unless nothing is
+/// left: an empty secret would admit no program anyway.
+fn nonempty_secret(bytes: &[u8]) -> Option<Secret> {
+    Some(bytes.trim_ascii()).filter(|secret| !secret.is_empty()).map(Secret::new)
+}
+
 /// What the program sends the channel.
 #[derive(Debug)]
 pub enum FromApplication {
@@ -159,24 +253,31 @@ pub enum FromApplication {
 }
 
 /// The two directions of a channel's program, as its channel's task holds
-/// them.
+/// them, and, for a program that connects over a WebSocket, the door the
+/// HTTP side lets it in by.
 #[derive(Debug)]
 pub struct Link {
     /// What the program sends.
     pub from: mpsc::Receiver<FromApplication>,
     /// What is sent to the program.
     pub to: ToProgram,
+    /// Where an upgraded connection of the program's is handed over
+    /// (REQ-1044); none for a program over standard input and output or a
+    /// Unix domain socket.
+    pub door: Option<Door>,
 }
 
 /// Starts serving `spec`'s program, which is kept running or awaited, and
 /// started again or awaited again whenever it ends, until the server
-/// stops. Its declarations and lines arrive on the link.
+/// stops. Its declarations and lines arrive on the link; a program over a
+/// WebSocket comes in by the link's door.
 ///
 /// # Errors
 /// A socket that cannot be made, or a socket on a system without them.
 pub fn start(spec: ChannelSpec) -> Result<Link, String> {
     let (to, outgoing) = waiting::waiting();
     let (arrived, from) = mpsc::channel::<FromApplication>(ARRIVING_LINES);
+    let mut door = None;
     match spec.program {
         Program::Command { command, directory } => {
             tokio::spawn(supervise(spec.folder, command, directory, arrived, outgoing));
@@ -194,8 +295,14 @@ pub fn start(spec: ChannelSpec) -> Result<Link, String> {
                 return Err(format!("{}: a socket ({}) needs Linux or macOS", spec.folder, path.display()));
             }
         }
+        Program::WebSocket(secret) => {
+            let (opened, arrivals) = remote::door(secret);
+            tracing::info!(target: "program", channel = spec.folder, "waiting for the program to connect over a WebSocket");
+            tokio::spawn(remote::await_programs(spec.folder, arrivals, arrived, outgoing));
+            door = Some(opened);
+        }
     }
-    Ok(Link { from, to })
+    Ok(Link { from, to, door })
 }
 
 /// Keeps a program of the server's own running: starts it, relays its

@@ -155,11 +155,16 @@ async fn write_binary<W: AsyncWrite + Unpin>(writing: &mut W, bytes: &[u8], stat
     true
 }
 
+/// Writes one message to a viewer, counted in the server's figures.
+async fn write<W: AsyncWrite + Unpin>(writing: &mut W, opcode: Opcode, payload: &[u8], stats: &ServerStats) -> bool {
+    stats.sent(header(opcode, payload.len()).1.saturating_add(payload.len()));
+    write_frame(writing, opcode, payload).await
+}
+
 /// Writes one message: the header and the payload, straight from its
 /// shared buffer, in one write, so a frame is one segment when it fits.
-async fn write<W: AsyncWrite + Unpin>(writing: &mut W, opcode: Opcode, payload: &[u8], stats: &ServerStats) -> bool {
+pub(crate) async fn write_frame<W: AsyncWrite + Unpin>(writing: &mut W, opcode: Opcode, payload: &[u8]) -> bool {
     let (head, length) = header(opcode, payload.len());
-    stats.sent(length.saturating_add(payload.len()));
     let mut head = head.get(..length).unwrap_or(&[]);
     let mut body = payload;
     while !head.is_empty() || !body.is_empty() {

@@ -16,7 +16,7 @@ use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
-use crate::apps::{FromApplication, Link, ToProgram};
+use crate::apps::{Door, FromApplication, Link, ToProgram};
 use crate::logging;
 use crate::stats::{ChannelFigures, Histogram, ServerStats, count};
 
@@ -102,6 +102,9 @@ pub struct Hub {
     pub commands: mpsc::Sender<Command>,
     /// The server's figures, which every connection adds to.
     pub stats: Arc<ServerStats>,
+    /// The way in for the channel's program over a WebSocket, when that is
+    /// how it connects (REQ-1044).
+    pub door: Option<Door>,
 }
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
@@ -112,8 +115,8 @@ pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>,
     let descriptor: Arc<[u8]> = channel.descriptor().into();
     let (name, address) = (channel.name().into(), channel.address().into());
     let (commands, queue) = mpsc::channel::<Command>(COMMANDS);
-    let hub = Hub { folder: folder.to_owned(), descriptor, name, address, commands, stats: Arc::clone(&stats) };
-    let (to_application, from_application) = link.map_or((None, None), |link| (Some(link.to), Some(link.from)));
+    let (to_application, from_application, door) = link.map_or((None, None, None), |link| (Some(link.to), Some(link.from), link.door));
+    let hub = Hub { folder: folder.to_owned(), descriptor, name, address, commands, stats: Arc::clone(&stats), door };
     let task = Task {
         folder: folder.to_owned(),
         outboxes: BTreeMap::new(),

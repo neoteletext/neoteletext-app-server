@@ -81,17 +81,33 @@ pub enum FrameError {
 }
 
 /// Reads the client's frames from the bytes as they arrive.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Reader {
     buffer: Vec<u8>,
     partial: Option<(Opcode, Vec<u8>)>,
+    /// The longest message taken: a longer one is refused before its
+    /// bytes are kept.
+    most: usize,
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Reader {
-    /// A reader.
+    /// A reader of a viewer's messages, at most [`MAX_MESSAGE`] bytes.
     #[must_use]
     pub const fn new() -> Self {
-        Self { buffer: Vec::new(), partial: None }
+        Self::with_limit(MAX_MESSAGE)
+    }
+
+    /// A reader of messages of at most `most` bytes: a program's lines are
+    /// longer than a viewer's input (REQ-1044).
+    #[must_use]
+    pub const fn with_limit(most: usize) -> Self {
+        Self { buffer: Vec::new(), partial: None, most }
     }
 
     /// Takes more bytes from the connection.
@@ -122,7 +138,7 @@ impl Reader {
                 (Opcode::Continuation, None) | (_, Some(_)) => return Err(FrameError::Fragmentation),
                 (kind, None) => (kind, payload),
             };
-            if data.len() > MAX_MESSAGE {
+            if data.len() > self.most {
                 return Err(FrameError::TooLong);
             }
             if !fin {
@@ -154,7 +170,7 @@ impl Reader {
             }
             short => (usize::from(short), 2_usize),
         };
-        if length > MAX_MESSAGE || (opcode.is_control() && (length > MAX_CONTROL || !fin)) {
+        if length > self.most || (opcode.is_control() && (length > MAX_CONTROL || !fin)) {
             return Err(FrameError::TooLong);
         }
         let Some(mask) = self.buffer.get(at..at.saturating_add(MASK_BYTES)) else { return Ok(None) };

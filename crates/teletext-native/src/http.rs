@@ -12,8 +12,8 @@ use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::header::{
-    CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY, SEC_WEBSOCKET_PROTOCOL,
-    SEC_WEBSOCKET_VERSION, SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
+    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY,
+    SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::{Method, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioIo;
@@ -115,7 +115,8 @@ pub async fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Who
             response
         }
         Route::Push => upgrade(routes, hub, request),
-        Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Program | Route::Missing => status(StatusCode::NOT_FOUND),
+        Route::Program => program_upgrade(hub, request),
+        Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
     }
 }
 
@@ -185,13 +186,15 @@ fn refused_upgrade(refusal: PushRefusal) -> Response<Whole> {
     }
 }
 
-/// The push WebSocket: answers 101 and serves the upgraded socket.
-fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
+/// The key of a WebSocket opening handshake, or the answer to a request
+/// that is not one.
+fn handshake(request: &Request<Incoming>) -> Result<Vec<u8>, Box<Response<Whole>>> {
     // RFC 6455 section 4.2.1: the opening handshake is a GET of HTTP/1.1 or
-    // later; anything else is not one, and is answered 400. The push address
-    // takes no query (DOC-1917), so one with a query is not it either.
+    // later; anything else is not one, and is answered 400. Neither the push
+    // address (DOC-1917) nor the program's takes a query, so one with a
+    // query is not it either.
     if request.method() != Method::GET || request.version() < Version::HTTP_11 || request.uri().query().is_some() {
-        return status(StatusCode::BAD_REQUEST);
+        return Err(Box::new(status(StatusCode::BAD_REQUEST)));
     }
     // Section 4.2.2 item 4: another WebSocket version is answered 426 with
     // the version spoken.
@@ -201,17 +204,70 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
         if let Ok(spoken) = HeaderValue::from_bytes(neoteletext_web::consts::WEBSOCKET_VERSION) {
             response.headers_mut().insert(SEC_WEBSOCKET_VERSION, spoken);
         }
-        return response;
+        return Err(Box::new(response));
     }
     let wants = request.headers().get(UPGRADE).is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
-    let Some(key) = request.headers().get("sec-websocket-key").map(|value| value.as_bytes().to_vec()).filter(|_| wants) else {
-        return status(StatusCode::UPGRADE_REQUIRED);
+    request
+        .headers()
+        .get("sec-websocket-key")
+        .map(|value| value.as_bytes().to_vec())
+        .filter(|_| wants)
+        .ok_or_else(|| Box::new(status(StatusCode::UPGRADE_REQUIRED)))
+}
+
+/// The answer 101 to a handshake whose key is `key` (RFC 6455 section
+/// 4.2.2 item 5).
+fn switching(key: &[u8]) -> Response<Whole> {
+    let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
+    let headers = response.headers_mut();
+    headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
+    headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+    if let Ok(value) = HeaderValue::from_bytes(&neoteletext_web::ws::accept_for(key)) {
+        headers.insert("sec-websocket-accept", value);
+    }
+    response
+}
+
+/// The channel's program's WebSocket (REQ-1044): 404 for a channel whose
+/// program does not connect this way; 401 without the channel's secret,
+/// before anything else of the request is looked at, so that nothing is
+/// told to whoever lacks it, as the Cloudflare host's Worker answers
+/// (REQ-1024); 409 while a program is connected, one at a time; else 101,
+/// and the upgraded socket goes to the channel's program task.
+fn program_upgrade(hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
+    let Some(door) = hub.door else { return status(StatusCode::NOT_FOUND) };
+    if !door.admits(request.headers().get(AUTHORIZATION).map(HeaderValue::as_bytes)) {
+        tracing::warn!(target: "program", channel = hub.folder, "a program without the channel's secret was refused");
+        return status(StatusCode::UNAUTHORIZED);
+    }
+    let key = match handshake(&request) {
+        Ok(key) => key,
+        Err(response) => return *response,
+    };
+    let Some(claim) = door.claim() else {
+        tracing::warn!(target: "program", channel = hub.folder, "a second program was refused: one at a time");
+        return status(StatusCode::CONFLICT);
+    };
+    let pending = hyper::upgrade::on(&mut request);
+    tokio::spawn(async move {
+        // An upgrade that fails drops the claim, which lets the next in.
+        let Ok(upgraded) = pending.await else { return };
+        let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
+        door.arrive(parts.io.into_inner(), parts.read_buf.to_vec(), claim).await;
+    });
+    switching(&key)
+}
+
+/// The push WebSocket: answers 101 and serves the upgraded socket.
+fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
+    let key = match handshake(&request) {
+        Ok(key) => key,
+        Err(response) => return *response,
     };
     let offered = request.headers().get_all(SEC_WEBSOCKET_PROTOCOL).iter().map(HeaderValue::as_bytes);
     if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
         return refused_upgrade(refusal);
     }
-    let accept = neoteletext_web::ws::accept_for(&key);
     let (session, set_cookie) = session_for(routes, &hub, &request);
     let mut cookies: Vec<CookiePair> = Vec::new();
     for header in request.headers().get_all(COOKIE) {
@@ -225,17 +281,12 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
         let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
         connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session, cookies).await;
     });
-    let mut response = status(StatusCode::SWITCHING_PROTOCOLS);
+    let mut response = switching(&key);
     let headers = response.headers_mut();
     if let Some(value) = set_cookie.and_then(|cookie| HeaderValue::from_str(&cookie).ok()) {
         headers.insert(SET_COOKIE, value);
     }
-    headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
-    headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
     headers.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
-    if let Ok(value) = HeaderValue::from_bytes(&accept) {
-        headers.insert("sec-websocket-accept", value);
-    }
     response
 }
 

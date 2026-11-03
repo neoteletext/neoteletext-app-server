@@ -369,3 +369,38 @@ async fn a_program_connects_to_its_socket() {
     }
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// REQ-1044: a channel whose program connects over a WebSocket names where
+/// its secret is, a file here (a variable is the server's own test, which
+/// sets one in the server's environment), and never the secret itself; the
+/// file's last newline is not part of it. A file that is empty, too long or
+/// missing is refused, as is an entry that names a secret with a command or a
+/// socket, or both a variable and a file.
+#[test]
+fn a_channel_names_where_its_programs_secret_is() {
+    let folder = scratch("secret");
+    let file = folder.join("channels.json");
+    std::fs::write(folder.join("remote.secret"), b"correct horse battery staple\n").unwrap();
+    std::fs::write(&file, br#"{"channels":[{"folder":"remote","secret_file":"remote.secret"}]}"#).unwrap();
+    let specs = read_channels(&file).unwrap();
+    assert_eq!(specs[0].program, Program::WebSocket(Secret::new(b"correct horse battery staple")));
+    assert_eq!(format!("{:?}", specs[0].program), "WebSocket(Secret(..))", "no log can carry it");
+    std::fs::write(folder.join("empty.secret"), b" \n").unwrap();
+    std::fs::write(folder.join("long.secret"), vec![b'x'; LONGEST_SECRET + 1]).unwrap();
+    for (bad, why) in [
+        (&br#"{"channels":[{"folder":"a","secret_file":"empty.secret"}]}"#[..], "empty"),
+        (br#"{"channels":[{"folder":"a","secret_file":"long.secret"}]}"#, "over 4096 bytes"),
+        (br#"{"channels":[{"folder":"a","secret_file":"missing.secret"}]}"#, "cannot read"),
+        (br#"{"channels":[{"folder":"a","secret_variable":"TELETEXT_TEST_NO_SUCH_VARIABLE"}]}"#, "is not set"),
+        (br#"{"channels":[{"folder":"a","secret_variable":"X","secret_file":"remote.secret"}]}"#, "needs one"),
+        (br#"{"channels":[{"folder":"a","command":["x"],"secret_file":"remote.secret"}]}"#, "needs one of"),
+        (br#"{"channels":[{"folder":"a","socket":"a.sock","secret_file":"remote.secret"}]}"#, "needs one of"),
+    ] {
+        std::fs::write(&file, bad).unwrap();
+        let refused = read_channels(&file);
+        assert!(refused.as_ref().is_err_and(|error| error.contains(why)), "{}: {refused:?}", String::from_utf8_lossy(bad));
+    }
+    std::fs::write(folder.join("exact.secret"), vec![b'x'; LONGEST_SECRET]).unwrap();
+    std::fs::write(&file, br#"{"channels":[{"folder":"a","secret_file":"exact.secret"}]}"#).unwrap();
+    assert!(read_channels(&file).is_ok(), "the longest secret is taken");
+}

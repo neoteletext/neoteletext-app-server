@@ -898,3 +898,174 @@ fn the_log_is_json_lines_and_rust_log_chooses_the_level() {
     quiet.child.stderr.take().unwrap().read_to_string(&mut written).unwrap();
     assert_eq!(written, "", "nothing below WARN");
 }
+
+/// The variable the program's secret is in, for the server's environment.
+const SECRET_VARIABLE: &str = "TELETEXT_TEST_PROGRAM_SECRET";
+/// The secret a test's channel is given.
+const SECRET: &str = "correct horse battery staple";
+/// A final text frame's first byte (RFC 6455 section 5.2).
+const TEXT_FINAL: u8 = 0x81;
+/// A final Close frame's first byte.
+const CLOSE_FINAL: u8 = 0x88;
+/// A text frame's opcode.
+const TEXT: u8 = 0x1;
+/// The mask bit, set on every frame a client sends (RFC 6455 section 5.3).
+const MASK_BIT: u8 = 0x80;
+/// The length that says two length bytes follow (RFC 6455 section 5.2).
+const LENGTH_16: u8 = 0x7E;
+/// The length that says eight length bytes follow.
+const LENGTH_64: u8 = 0x7F;
+
+/// A channel, `remote`, whose program connects over a WebSocket with the
+/// secret in [`SECRET_VARIABLE`].
+fn remote_channel(folder: &Path) -> PathBuf {
+    let file = folder.join("channels.json");
+    std::fs::write(&file, format!(r#"{{"channels":[{{"folder":"remote","name":"Remote","secret_variable":"{SECRET_VARIABLE}"}}]}}"#)).unwrap();
+    file
+}
+
+/// A program's upgrade to `/remote/program` with these header lines: the
+/// head of the answer, and the stream.
+fn program_upgrade(address: &str, headers: &str) -> (String, TcpStream) {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(WITHIN)).unwrap();
+    write!(stream, "{}\r\n", upgrade_request(address, "/remote/program", headers)).unwrap();
+    let head = response_head(&mut stream);
+    (head, stream)
+}
+
+/// The status of an answer's head.
+fn status_of(head: &str) -> &str {
+    head.split(' ').nth(1).unwrap_or_default()
+}
+
+/// Sends `payload` as one masked frame with this first byte, a key of
+/// zeros so that the masked payload is the payload.
+fn send_frame(stream: &mut TcpStream, first: u8, payload: &[u8]) {
+    let mut frame = vec![first];
+    match u16::try_from(payload.len()) {
+        Ok(short) if short < 126 => frame.push(MASK_BIT | u8::try_from(short).unwrap()),
+        Ok(medium) => {
+            frame.push(MASK_BIT | LENGTH_16);
+            frame.extend_from_slice(&medium.to_be_bytes());
+        }
+        Err(_) => {
+            frame.push(MASK_BIT | LENGTH_64);
+            frame.extend_from_slice(&u64::try_from(payload.len()).unwrap().to_be_bytes());
+        }
+    }
+    frame.extend_from_slice(&[0; 4]);
+    frame.extend_from_slice(payload);
+    stream.write_all(&frame).unwrap();
+}
+
+/// The next frame from the server: its first byte and its payload.
+fn frame_from(stream: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut head = [0_u8; 2];
+    stream.read_exact(&mut head).unwrap();
+    let length = match head[1] & 0x7F {
+        126 => {
+            let mut bytes = [0_u8; 2];
+            stream.read_exact(&mut bytes).unwrap();
+            usize::from(u16::from_be_bytes(bytes))
+        }
+        127 => {
+            let mut bytes = [0_u8; 8];
+            stream.read_exact(&mut bytes).unwrap();
+            usize::try_from(u64::from_be_bytes(bytes)).unwrap()
+        }
+        short => usize::from(short),
+    };
+    let mut payload = vec![0_u8; length];
+    stream.read_exact(&mut payload).unwrap();
+    (head[0], payload)
+}
+
+/// The next line the server sends the program, one a text message.
+fn line_to_program(stream: &mut TcpStream) -> Value {
+    loop {
+        let (first, payload) = frame_from(stream);
+        if first & 0x0F == TEXT {
+            assert!(!payload.ends_with(b"\n"), "one line a message, without its newline");
+            return json::parse(&payload).unwrap();
+        }
+    }
+}
+
+/// The next line of `kind` the server sends the program.
+fn line_of_kind(stream: &mut TcpStream, kind: &str) -> Value {
+    loop {
+        let line = line_to_program(stream);
+        if line.get("type").and_then(Value::text) == Some(kind) {
+            return line;
+        }
+    }
+}
+
+/// REQ-1044: a program on another machine connects to its channel over a
+/// WebSocket with the channel's secret, read from the variable the channels
+/// file names; it is sent `start` and then `connected` for the viewer
+/// already there, as a program on a Unix domain socket is; and its lines
+/// reach the viewer. Without the secret, or with another, it is refused 401;
+/// a second program while one is connected is refused 409; and once the
+/// first has gone, the next is let in and started afresh.
+#[test]
+fn a_program_connects_over_a_websocket_with_the_channels_secret() {
+    let folder = scratch("program-websocket");
+    let file = remote_channel(&folder);
+    let server = serve(&["--channels", &file.display().to_string()], &[(SECRET_VARIABLE, SECRET)], Stdio::null());
+    until_status(&server.address, &settings("remote"), 200);
+    for refused in ["", "Authorization: Bearer correct horse battery stapl\r\n", "Authorization: correct horse battery staple\r\n"] {
+        let (head, _) = program_upgrade(&server.address, refused);
+        assert_eq!(status_of(&head), "401", "{refused:?}: {head}");
+    }
+    let (mut viewer, _) = push_to(&server.address, "/remote/push", None);
+    send_input(&mut viewer, &[Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: 0, agent: None })]);
+    let authorised = format!("Authorization: Bearer {SECRET}\r\n");
+    let (head, mut program) = program_upgrade(&server.address, &authorised);
+    assert_eq!(status_of(&head), "101", "{head}");
+    let start = line_to_program(&mut program);
+    assert_eq!(start.get("type").and_then(Value::text), Some("start"), "start comes first");
+    let connected = line_of_kind(&mut program, "connected");
+    let Some(Value::Integer(connection)) = connected.get("connection") else { panic!("{connected:?}") };
+    let (head, _) = program_upgrade(&server.address, &authorised);
+    assert_eq!(status_of(&head), "409", "one at a time: {head}");
+    let cookie = format!(
+        r#"{{"type":"cookie","connection":{connection},"name":"theme","value":"dark","path":null,"max_age":null,"same_site":null,"secure":false,"http_only":false}}"#
+    );
+    send_frame(&mut program, TEXT_FINAL, cookie.as_bytes());
+    let set = set_cookie_record(&mut viewer);
+    assert!(set.starts_with("theme=dark"), "the program's line reached the viewer: {set}");
+    send_frame(&mut program, CLOSE_FINAL, &[]);
+    loop {
+        let (first, _) = frame_from(&mut program);
+        if first & 0x0F == CLOSE {
+            break;
+        }
+    }
+    let started = Instant::now();
+    let mut again = loop {
+        let (head, stream) = program_upgrade(&server.address, &authorised);
+        if status_of(&head) == "101" {
+            break stream;
+        }
+        assert_eq!(status_of(&head), "409", "{head}");
+        assert!(started.elapsed() < WITHIN, "the first program's claim was never let go");
+        std::thread::sleep(RETRY);
+    };
+    assert_eq!(line_to_program(&mut again).get("type").and_then(Value::text), Some("start"), "started afresh");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-1044: a channel whose program is started by the server has no door
+/// for one over a WebSocket, whatever is presented.
+#[test]
+fn a_channel_with_a_command_has_no_program_websocket() {
+    let folder = scratch("no-program-websocket");
+    let file = channel_in(&folder, "remote", &publishing("Hello"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("remote"), 200);
+    let (head, _) = program_upgrade(&server.address, &format!("Authorization: Bearer {SECRET}\r\n"));
+    assert_eq!(status_of(&head), "404", "{head}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
