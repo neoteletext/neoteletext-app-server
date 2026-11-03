@@ -1121,3 +1121,30 @@ fn what_was_not_agreed_is_a_protocol_error() {
     channel.received(CONNECTION, &message(&[finger]), 1);
     assert!(closed(&mut channel), "TOUCH not agreed");
 }
+
+/// The record id of each record's first fragment in `bytes`, in order.
+fn record_ids(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .as_chunks::<PACKET_BYTES>()
+        .0
+        .iter()
+        .filter_map(|bytes| neoteletext_audio::idl::fragment(&Packet { bytes: *bytes })?.ok())
+        .filter(|fragment| fragment.index == 0)
+        .map(|fragment| fragment.record)
+        .collect()
+}
+
+/// TODO-2135 item 6: a record id is taken only by a record sent. The
+/// acknowledgement of HELLO with no page selected sends no cursor record, so
+/// the next record after WELCOME has the next id.
+#[test]
+fn record_ids_run_on_with_no_gap() {
+    let mut channel = held();
+    channel.received(CONNECTION, &message(&[hello()]), 0);
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
+    channel.deadline(FIRST_SELECTION_WAIT_MS);
+    channel.deadline(FIRST_SELECTION_WAIT_MS + PROGRAM_REPLY_LIMIT_MS);
+    let ids = record_ids(&sent_to(&channel.take_effects(), CONNECTION));
+    assert_eq!(ids, (0..u8::try_from(ids.len()).unwrap()).collect::<Vec<_>>());
+    assert!(ids.len() >= 2, "WELCOME and DENIED: {ids:?}");
+}

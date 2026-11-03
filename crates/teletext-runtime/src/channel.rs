@@ -378,8 +378,11 @@ impl Connection {
     fn cursor_packet(&mut self, page: u16) -> Option<Arc<[u8]>> {
         let line = self.shown.as_ref().filter(|shown| shown.page == page).and_then(|shown| shown.cursor);
         let cursor = cursor_of(page, self.acked, line.as_ref());
-        let record = self.next_record();
-        cursor.packet(SERVICE, record).map(|packet| Arc::from(&packet.bytes[..]))
+        // An id is taken only by a record sent, so the ids a receiver reads
+        // run on with no gap (TODO-2135 item 6).
+        let packet = cursor.packet(SERVICE, self.record_id)?;
+        self.next_record();
+        Some(Arc::from(&packet.bytes[..]))
     }
 
     /// Whether its selection shows the sub-page `sub` of `page`: it
