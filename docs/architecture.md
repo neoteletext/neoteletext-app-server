@@ -45,7 +45,12 @@ Each host is a short async loop: wait for whatever comes next (a socket, an appl
 - **Applications:** child processes over stdio, or programs of their own over a Unix domain socket (decision 17).
 - **What survives a restart:** the state directory (`--state`, or systemd's `StateDirectory=`): each channel's kept pages and declarations, the session cookie's keys, the accumulated figures (decisions 17 and 19). On `SIGTERM` every viewer is sent a Close with 4100, try again (DOC-1919), and what is kept is written.
 - **Log and figures:** structured events through `tracing` on standard error (decision 18); `/metrics`, `/healthz` and `/readyz` on the administration listener (decision 19).
-- **Builds:** one static binary each for Linux, macOS and Windows, on x86-64 and arm64.
+- **Builds:** one binary each for Linux, macOS and Windows, on x86-64 and arm64 (REQ-1020), with no library of its own beside it: the server links no C code and no TLS library. Static as far as each system allows, found on 3 November 2026 (TODO-2055):
+  - **Linux:** static only on the musl target (`x86_64-unknown-linux-musl`, a static PIE, which `deploy/ionos/deploy.sh` builds); the default GNU target links the C library dynamically.
+  - **macOS:** links the system's `libSystem` and `libiconv` dynamically, both part of every macOS, since Apple supports no static executable.
+  - **Windows:** links the system's DLLs (`kernel32`, `ws2_32`, `ntdll`, `bcryptprimitives`, `userenv`). The MSVC target, by Rust's default for it, also needs the Visual C++ runtime DLL unless built with `-C target-feature=+crt-static`; the GNU target uses the system's `msvcrt.dll`.
+  - Where each has been built and tested, and how, is REQ-1020's State.
+  - **What Windows lacks:** a channel's program cannot be a Unix domain socket there, only a command (DEC-2433); and the server makes no session cookie key, since its one source of random bytes is `/dev/urandom` (`state::random_key`), so on Windows a session does not continue across connections and nothing secret is written to the state folder. TODO-2055 holds the owner's choice that would change that.
 - **The channels file:** the native server reads one JSON file, `--channels`, naming each channel's folder, its name, and either the command that runs its program with the directory to run it in, or, on Linux and macOS, the Unix domain socket of a program that runs as a service of its own (decision 17). A folder is letters, digits, `-` and `_`; a relative `directory` or `socket` is taken from the file's own folder, so `../<repository>` names a channel's repository beside the channels'. NeoTeletext's own file is `channels.json` in `~/devel/neoteletext-server-channels`, which `scripts/deploy.sh` reads as its manifest:
 
   ```json
