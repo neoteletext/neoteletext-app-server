@@ -19,6 +19,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use neoteletext_web::map::Place;
+use teletext_runtime::InitialPage;
 use teletext_runtime::json::{self, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
@@ -81,12 +82,26 @@ pub struct ChannelSpec {
     pub name: String,
     /// Its program.
     pub program: Program,
+    /// The page its viewers start on.
+    pub initial_page: InitialPage,
 }
 
+/// The page a channel's viewers start on when its entry names none: the
+/// service's home page (EN 300 706 Annex E.15).
+pub const DEFAULT_INITIAL_PAGE: u16 = neoteletext_core::limits::PAGE_HOME;
+
+/// The digits of a page number, as a channels file writes one.
+const PAGE_DIGITS: usize = 3;
+/// A page number's digits are read as the hexadecimal they also are: page
+/// 100 is `0x100`.
+const HEXADECIMAL: u32 = 16;
+
 /// Reads the channels file: `{"channels":[{"folder","name","command":[…],
-/// "directory"}]}`, or `"socket"` in place of `"command"` and
+/// "directory","initial_page"}]}`, or `"socket"` in place of `"command"` and
 /// `"directory"`. A relative directory or socket is taken from the file's
-/// own folder.
+/// own folder. `initial_page`, three decimal digits such as `"100"`, is the
+/// page the channel's viewers start on, [`DEFAULT_INITIAL_PAGE`] when left
+/// out (TODO-2135 item 11: `channel.ttx` reports it, so it can vary).
 ///
 /// # Errors
 /// A file that cannot be read or is not a valid channels file.
@@ -116,7 +131,17 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
         if specs.iter().any(|spec| spec.folder == folder) {
             return Err(format!("{}: {folder} twice", path.display()));
         }
-        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program });
+        let initial_page = match text("initial_page") {
+            None => InitialPage::new(DEFAULT_INITIAL_PAGE),
+            // Three digits, read as the page number they spell (DOC-1865);
+            // InitialPage refuses a hexadecimal digit or one outside 100 to 899.
+            Some(digits) if digits.len() == PAGE_DIGITS && digits.bytes().all(|byte| byte.is_ascii_digit()) => {
+                u16::from_str_radix(&digits, HEXADECIMAL).map_err(|error| error.to_string()).and_then(InitialPage::new)
+            }
+            Some(digits) => Err(format!("{digits:?} is not three decimal digits")),
+        }
+        .map_err(|fault| format!("{}: {folder}'s initial_page: {fault}", path.display()))?;
+        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program, initial_page });
     }
     Ok(specs)
 }

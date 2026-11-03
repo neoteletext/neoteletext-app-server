@@ -19,8 +19,30 @@ printf '{{"type":"log","text":"got %s"}}\n' "$(printf '%s' "$line" | tr -d '"{{}
     vec!["sh".to_owned(), "-c".to_owned(), script]
 }
 
+/// The page a channel starts on when its entry names none.
+fn home() -> InitialPage {
+    InitialPage::new(DEFAULT_INITIAL_PAGE).unwrap()
+}
+
+/// TODO-2135 item 11: a channel's entry may name the page its viewers start
+/// on, as three decimal digits; anything else is refused, and none is 100.
+#[test]
+fn a_channel_may_name_its_initial_page() {
+    let folder = scratch("initial");
+    let file = folder.join("channels.json");
+    let read = |initial: &str| {
+        std::fs::write(&file, format!(r#"{{"channels":[{{"folder":"news","command":["true"]{initial}}}]}}"#)).unwrap();
+        read_channels(&file)
+    };
+    assert_eq!(read("").unwrap()[0].initial_page, home());
+    assert_eq!(read(r#","initial_page":"302""#).unwrap()[0].initial_page, InitialPage::new(0x302).unwrap());
+    for bad in ["1A0", "099", "900", "30", "3020", "", " 30"] {
+        assert!(read(&format!(r#","initial_page":"{bad}""#)).is_err_and(|error| error.contains("initial_page")), "{bad:?}");
+    }
+}
+
 fn spec(folder: &str, program: Program) -> ChannelSpec {
-    ChannelSpec { folder: folder.to_owned(), name: "Test".to_owned(), program }
+    ChannelSpec { folder: folder.to_owned(), name: "Test".to_owned(), program, initial_page: home() }
 }
 
 /// DEC-1694 rule 2: a folder named like a place in a channel belongs to the
@@ -62,13 +84,15 @@ fn the_channels_file_names_each_program() {
                     command: vec!["uv".to_owned(), "run".to_owned(), "main.py".to_owned()],
                     directory: folder.join("channels/hackaday")
                 },
+                initial_page: home(),
             },
             ChannelSpec {
                 folder: "showcase".to_owned(),
                 name: "showcase".to_owned(),
                 program: Program::Command { command: vec!["node".to_owned(), "main.ts".to_owned()], directory: folder.join("") },
+                initial_page: home(),
             },
-            ChannelSpec { folder: "own".to_owned(), name: "own".to_owned(), program: Program::Socket(folder.join("sockets/own.sock")) },
+            ChannelSpec { folder: "own".to_owned(), name: "own".to_owned(), program: Program::Socket(folder.join("sockets/own.sock")), initial_page: home() },
         ]
     );
     for bad in [

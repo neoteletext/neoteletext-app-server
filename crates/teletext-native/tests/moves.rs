@@ -71,7 +71,13 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
     let folder: PathBuf = std::env::temp_dir().join(format!("teletext-moves-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     let path = folder.join("channel.sock");
-    let link = apps::start(ChannelSpec { folder: name.to_owned(), name: "Moves".to_owned(), program: Program::Socket(path.clone()) }).unwrap();
+    let link = apps::start(ChannelSpec {
+        folder: name.to_owned(),
+        name: "Moves".to_owned(),
+        program: Program::Socket(path.clone()),
+        initial_page: InitialPage::new(apps::DEFAULT_INITIAL_PAGE).unwrap(),
+    })
+    .unwrap();
     let config = ChannelConfig {
         name: "Moves".into(),
         address: "http://127.0.0.1/moves/".into(),
