@@ -247,7 +247,7 @@ fn a_sub_page_list_reaches_the_page_once_a_version() {
 fn the_first_sub_page_answers_a_page_selection_and_becomes_it() {
     for (sub, text) in [(0, "0000"), (3, "0003")] {
         let mut channel = channel();
-        channel.received(super::CONNECTION, &message(&[hello(), select(0x100, ANY)]), 0);
+        channel.received(super::CONNECTION, &message(&[select(0x100, ANY)]), 0);
         let lines = told(&channel.take_effects());
         let asked = lines.iter().filter(|line| line["type"] == "selected").collect::<Vec<_>>();
         assert_eq!(asked.len(), 1, "{lines:?}");

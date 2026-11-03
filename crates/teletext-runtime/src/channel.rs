@@ -23,10 +23,10 @@ use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
 use neoteletext_input::MAX_PER_SECOND;
-use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, Place};
-use neoteletext_input::event::{Action, Event, Item, MouseAction, Stamp, read_message, units};
+use neoteletext_input::event::{Action, Device, Event, Item, MouseAction, Stamp, read_message, units};
 use neoteletext_input::held::{Held, Released};
 use neoteletext_input::pace::{Offer, Pacer};
 use neoteletext_input::session::REMEMBERED;
@@ -294,6 +294,8 @@ struct Connection {
     cookies: Vec<CookiePair>,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
+    /// The capabilities WELCOME agreed, once HELLO has come.
+    agreed: Option<u32>,
     /// The input count acted on, modulo 65 536 (DOC-1943).
     acked: u16,
     /// What it holds: keys and buttons down, whose releases the program is
@@ -340,6 +342,7 @@ impl Connection {
             session,
             cookies,
             welcomed: false,
+            agreed: None,
             acked: 0,
             held: Held::new(),
             pointer: (0, 0),
@@ -788,7 +791,13 @@ impl Channel {
     pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
         let Some(state) = self.connections.get(&connection) else { return };
         let acked = state.acked;
-        if read_message(bytes, &mut |item| self.item(connection, &item, now)).is_err() {
+        let mut broke = false;
+        let read = read_message(bytes, &mut |item| {
+            if !broke {
+                broke = !self.item(connection, &item, now);
+            }
+        });
+        if read.is_err() || broke {
             // A protocol error ends the session (DOC-1919).
             self.effects.push(Effect::Close { connection, code: CLOSE_BROKE_PROTOCOL });
             return;
@@ -873,8 +882,23 @@ impl Channel {
         dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).min()
     }
 
-    fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
-        let Some(state) = self.connections.get_mut(&connection) else { return };
+    /// Takes one item of `connection`'s input; false for one out of the
+    /// session's order, a protocol error (TODO-2135 items 1 and 2): HELLO a
+    /// second time, anything before HELLO (DOC-1921: no input before
+    /// WELCOME), SELECT when SELECT was not agreed, or a finger's MOUSE when
+    /// TOUCH was not.
+    fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) -> bool {
+        let Some(state) = self.connections.get_mut(&connection) else { return true };
+        let in_order = match (item, state.agreed) {
+            (Item::Event(Event::Hello { .. }), agreed) => agreed.is_none(),
+            (_, None) => false,
+            (Item::Event(Event::Select(..)), Some(agreed)) => agreed & SELECT_CAP != 0,
+            (Item::Event(Event::Mouse(mouse)), Some(agreed)) => mouse.device != Device::Touch || agreed & TOUCH_CAP != 0,
+            _ => true,
+        };
+        if !in_order {
+            return false;
+        }
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
         if !input::is_move(item) {
             self.flush_moves(connection, now);
@@ -884,6 +908,7 @@ impl Channel {
             Item::Event(Event::Select(select, parameters)) => self.selected(connection, select.page, select.sub, parameters, now),
             _ => self.input(connection, item, now),
         }
+        true
     }
 
     /// Input from a viewer, checked against the page on screen (REQ-1555,
@@ -986,6 +1011,7 @@ impl Channel {
             self.end_hold(connection, now);
         }
         let Some(state) = self.connections.get_mut(&connection) else { return };
+        state.agreed = Some(caps & USED);
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;

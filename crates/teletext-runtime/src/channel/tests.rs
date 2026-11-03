@@ -66,7 +66,8 @@ fn held() -> Channel {
 /// selection, so that a selection is `selected` and its number 2.
 fn channel() -> Channel {
     let mut channel = held();
-    channel.received(CONNECTION, &message(&[select(0, ANY)]), 0);
+    channel.received(CONNECTION, &message(&[hello(), select(0, ANY)]), 0);
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
     let _ = channel.take_effects();
     channel
 }
@@ -107,7 +108,7 @@ fn mouse(on: Stamp, action: MouseAction, button: u8) -> Item<'static> {
 /// its HELLO acknowledged.
 fn selected() -> Channel {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select(0x100, 0)]), 0);
+    channel.received(CONNECTION, &message(&[select(0x100, 0)]), 0);
     channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
     let _ = channel.take_effects();
     channel
@@ -167,7 +168,7 @@ fn a_stale_stamp_reaches_nothing_and_counts() {
         assert_eq!(channel.stats().stale_input, dropped as u64 + 1);
     }
     let mut none = self::channel();
-    none.received(CONNECTION, &message(&[hello(), key(ON, Action::Press, false)]), 1);
+    none.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 1);
     assert_eq!(inputs(&none.take_effects()), [] as [Value; 0]);
     assert_eq!(none.stats().stale_input, 1);
 }
@@ -495,7 +496,6 @@ fn an_acknowledgement_never_depends_on_the_cursor_it_goes_with() {
 #[test]
 fn a_receiver_without_select_is_shown_the_initial_page() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello()]), 0);
     let _ = channel.take_effects();
     let magazines = json!([{"magazine": 1, "name": "News", "pages": [{"page": "100", "title": "Front", "section": null, "subpages": 1}]}]);
     channel.from_program(&line(&json!({"type": "reply", "connection": CONNECTION, "request": 1, "magazines": magazines, "selected": subpage()})), 1);
@@ -514,7 +514,7 @@ fn a_program_that_does_not_answer_gets_the_viewer_a_503() {
     use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
 
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, 2, "")]), 1);
+    channel.received(CONNECTION, &message(&[select_with(0x302, 2, "")]), 1);
     channel.take_effects();
     channel.deadline(1 + PROGRAM_REPLY_LIMIT_MS);
     let bytes = sent_to(&channel.take_effects(), CONNECTION);
@@ -534,7 +534,7 @@ fn a_program_that_does_not_answer_gets_the_viewer_a_503() {
 #[test]
 fn selected_names_the_place() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, 2, "a=1")]), 1);
+    channel.received(CONNECTION, &message(&[select_with(0x302, 2, "a=1")]), 1);
     let lines = told(&channel.take_effects());
     let selected = lines.iter().find(|line| line["type"] == "selected").unwrap();
     assert_eq!((&selected["path"], &selected["query"]), (&json!("302/0002"), &json!("a=1")));
@@ -551,7 +551,6 @@ fn selections(effects: &[Effect]) -> Vec<(Value, Value)> {
 #[test]
 fn page_parameters_go_with_their_selection_alone() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello()]), 0);
     let _ = channel.take_effects();
     let parameters = "a=1&b=%20x";
     channel.received(CONNECTION, &message(&[select_with(0x302, ANY, parameters)]), 0);
@@ -568,7 +567,7 @@ fn page_parameters_go_with_their_selection_alone() {
 #[test]
 fn the_same_page_with_other_parameters_is_a_selection() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=1")]), 0);
     let _ = channel.take_effects();
     channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=1")]), 0);
     assert_eq!(selections(&channel.take_effects()), []);
@@ -581,7 +580,7 @@ fn the_same_page_with_other_parameters_is_a_selection() {
 #[test]
 fn connected_carries_the_selections_parameters() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=1")]), 0);
     channel.program_ended();
     let _ = channel.take_effects();
     channel.program_started(1);
@@ -594,7 +593,7 @@ fn connected_carries_the_selections_parameters() {
 #[test]
 fn a_page_redirect_leaves_parameters_behind() {
     let mut channel = channel();
-    channel.received(CONNECTION, &message(&[hello(), select_with(0x302, ANY, "a=1")]), 0);
+    channel.received(CONNECTION, &message(&[select_with(0x302, ANY, "a=1")]), 0);
     let _ = channel.take_effects();
     channel.from_program(&line(&json!({"type": "redirect", "connection": CONNECTION, "request": 2, "page": "303", "sub": "3F7F"})), 0);
     assert_eq!(selections(&channel.take_effects()), [(json!("303"), json!(null))]);
@@ -670,7 +669,7 @@ fn connected_carries_the_cookies_the_connection_opened_with() {
     let mut cookies = Vec::new();
     crate::session_cookie::program_cookies(b"_session=1.2.3; theme=dark; =nameless; broken; a=b=c", &mut cookies);
     channel.opened(CONNECTION, 1, cookies, 0);
-    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 0);
+    channel.received(CONNECTION, &message(&[hello(), select(0x100, ANY)]), 0);
     let expected = json!([{"name": "theme", "value": "dark"}, {"name": "a", "value": "b=c"}]);
     assert_eq!(connecteds(&channel.take_effects())[0]["cookies"], expected, "and never the session cookie");
     channel.program_ended();
@@ -838,7 +837,8 @@ fn a_selection_has_an_ending_with_no_program_too() {
     };
     let mut none = Channel::new(config);
     none.opened(CONNECTION, 1, Vec::new(), 0);
-    none.received(CONNECTION, &message(&[select(0x302, ANY)]), 10);
+    none.received(CONNECTION, &message(&[hello(), select(0x302, ANY)]), 10);
+    let _ = none.take_effects();
     assert_eq!(none.next_wake(), Some(10), "at once");
     none.deadline(10);
     assert_eq!(sends(&none.take_effects()), 1, "DENIED 503");
@@ -984,6 +984,9 @@ fn every_row_of_the_wire_vectors_holds() {
             }
             ("input", name) => {
                 let mut channel = held();
+                if !name.starts_with("hello") {
+                    channel.received(CONNECTION, &message(&[hello()]), 0);
+                }
                 channel.received(CONNECTION, &vector_bytes(vector.value), 0);
                 let effects = channel.take_effects();
                 assert!(!effects.iter().any(|effect| matches!(effect, Effect::Close { .. })), "{name} is read: {effects:?}");
@@ -995,6 +998,9 @@ fn every_row_of_the_wire_vectors_holds() {
             }
             ("refused", name) => {
                 let mut channel = held();
+                if !name.starts_with("hello") {
+                    channel.received(CONNECTION, &message(&[hello()]), 0);
+                }
                 channel.received(CONNECTION, &vector_bytes(vector.value), 0);
                 assert!(channel.take_effects().contains(&Effect::Close { connection: CONNECTION, code: CLOSE_BROKE_PROTOCOL }), "{name}");
             }
@@ -1006,10 +1012,16 @@ fn every_row_of_the_wire_vectors_holds() {
     channel.received(CONNECTION, &vector_bytes(row("hello").value), 0);
     assert_eq!(sent_to(&channel.take_effects(), CONNECTION), vector_bytes(row("welcome").value));
     let mut channel = held();
+    channel.received(CONNECTION, &message(&[hello()]), 0);
     channel.received(CONNECTION, &vector_bytes(row("select_sub_page").value), 0);
     let _ = channel.take_effects();
     channel.from_program(&line(&json!({"type": "denied", "connection": CONNECTION, "request": 1, "status": 404})), 1);
-    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), vector_bytes(row("denied_not_found").value));
+    // WELCOME took the connection's first record id, which the table's row
+    // has, since a SELECT comes only after HELLO (DOC-1921): the record is
+    // compared as read, and is one id on.
+    let sent = sent_to(&channel.take_effects(), CONNECTION);
+    let expected = vector_bytes(row("denied_not_found").value);
+    assert_eq!((denied_in(&sent), sent.len()), (denied_in(&expected), expected.len()));
     let mut channel = held();
     channel.deadline(FIRST_SELECTION_WAIT_MS);
     channel.deadline(FIRST_SELECTION_WAIT_MS + PROGRAM_REPLY_LIMIT_MS);
@@ -1052,4 +1064,41 @@ fn a_channels_initial_page_is_three_decimal_digits() {
     for page in [0x1A0, 0x10A, 0x1FF, 0x8FF, 0x099, 0x000, 0x900, 0x999, 0x1000] {
         assert!(InitialPage::new(page).is_err(), "{page:03X}");
     }
+}
+
+/// TODO-2135 item 1: the session's order is held. A second HELLO, or
+/// anything before the first (DOC-1921: no input before WELCOME), is a
+/// protocol error that closes the connection.
+#[test]
+fn the_session_order_is_held() {
+    let closed = |channel: &mut Channel| channel.take_effects().contains(&Effect::Close { connection: CONNECTION, code: CLOSE_BROKE_PROTOCOL });
+    let mut channel = selected();
+    channel.received(CONNECTION, &message(&[hello()]), 1);
+    assert!(closed(&mut channel), "a second HELLO");
+    let resize = Item::Event(Event::Resize { columns: 40, rows: 25, width: 480, height: 500 });
+    for early in [resize, select(0x100, ANY), key(ON, Action::Press, false)] {
+        let mut channel = held();
+        channel.received(CONNECTION, &message(&[early]), 1);
+        assert!(closed(&mut channel), "before HELLO");
+    }
+}
+
+/// TODO-2135 item 2: capabilities are held to. SELECT when SELECT was not
+/// agreed, and a finger's MOUSE when TOUCH was not (the server agrees no
+/// TOUCH), are protocol errors.
+#[test]
+fn what_was_not_agreed_is_a_protocol_error() {
+    let closed = |channel: &mut Channel| channel.take_effects().contains(&Effect::Close { connection: CONNECTION, code: CLOSE_BROKE_PROTOCOL });
+    let mut channel = held();
+    let without_select = Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP, agent: None });
+    channel.received(CONNECTION, &message(&[without_select]), 1);
+    assert!(!closed(&mut channel));
+    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 2);
+    assert!(closed(&mut channel), "SELECT not agreed");
+
+    let mut channel = selected();
+    let at = Point { column: 7, row: 9, pixels: None, mods: 0 };
+    let finger = Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Press, button: 0, at, device: Device::Touch }));
+    channel.received(CONNECTION, &message(&[finger]), 1);
+    assert!(closed(&mut channel), "TOUCH not agreed");
 }
