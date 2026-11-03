@@ -9,6 +9,8 @@
 #      installed from their vendor/; the old Hackaday channel, Python, with
 #      a pinned uv and the engine's neottx for its QR codes; and the Hackaday
 #      dataset both Hackaday channels read, and nothing else (DEC-1568);
+#      each demo channel's state file, outside the folder replaced, is
+#      backed up first and never replaced (REQ-1057);
 #   3. the channels file, the service and its socket (a restart refuses no
 #      connection, REQ-1041), and the container's Caddy, which serves the
 #      home page on neoteletext.com and www and proxies app.neoteletext.com
@@ -39,6 +41,11 @@ dataset_source=$devel/neoteletext-hackaday
 dataset=$app/data/neoteletext-hackaday
 # The engine the server is pinned to builds the neottx the old channel runs.
 engine_rev=$(sed -n 's/^neoteletext-core = .*rev = "\([0-9a-f]*\)".*/\1/p' "$repo/Cargo.toml")
+# What the demo channels keep across a restart (REQ-1057, the component
+# library's DEC-2463): a SQLite file each, named by its --state in the
+# channels file, outside $app/current, which this deploy replaces.
+state_dir=$app/state
+kept_channels=(demosite uicomponentsdemo)
 musl=x86_64-unknown-linux-musl
 stamp=$(date +%Y-%m-%d-%H%M%S)
 
@@ -60,6 +67,28 @@ ssh "$target" "set -e; cd ~
     if [ -d $app/current ]; then sudo tar -C $app/current -czf current.bak-$stamp.tgz --exclude=node_modules --exclude=.venv \
         --exclude='*/hackaday/cache' --exclude='*/hackaday/sounds' --exclude='*/hackaday/people' .; fi
     ls -d ~/*.bak-$stamp*"
+# Each channel's state, copied by SQLite's VACUUM INTO through the
+# container's Node: consistent while its program writes, which a plain copy
+# of a database in write-ahead-log mode is not; the backup's path a bound
+# parameter. A channel that has kept nothing yet has no file to copy.
+ssh "$target" bash -s -- "$state_dir" "$stamp" "${kept_channels[@]}" <<'EOF'
+set -euo pipefail
+state_dir=$1 stamp=$2
+shift 2
+for channel in "$@"; do
+    state="$state_dir/$channel.sqlite"
+    if [ ! -f "$state" ]; then echo "no state for $channel yet"; continue; fi
+    backup=~/"$channel.sqlite.bak-$stamp"
+    node --input-type=module - "$state" "$backup" <<"NODE"
+import { DatabaseSync } from "node:sqlite";
+const [state, backup] = process.argv.slice(2);
+const db = new DatabaseSync(state, { readOnly: true });
+db.prepare("VACUUM INTO ?").run(backup);
+db.close();
+NODE
+    echo "$backup"
+done
+EOF
 
 if [ "$build" = 1 ]; then
     say "the server, built static on $builder"
@@ -77,7 +106,7 @@ ssh "$builder" "cat teletext-server-check/target/$musl/release/teletext-server" 
     ssh "$target" "sudo install -d $app/bin && sudo install -m 755 /dev/stdin $app/bin/teletext-server.new && sudo mv $app/bin/teletext-server.new $app/bin/teletext-server"
 
 say "the channels and the home page into $app/current, the channels' user's"
-ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current"
+ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current $state_dir"
 for c in "${channels[@]}"; do
     rsync -a --delete --exclude node_modules --exclude tmp --exclude .git --exclude .idea "$devel/$c/" "$target:$app/current/$c/"
 done
@@ -149,8 +178,8 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com"},
   {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday"},
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday"},
-  {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-demosite"},
-  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
+  {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite"},
+  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
 ]}
 EOF
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
