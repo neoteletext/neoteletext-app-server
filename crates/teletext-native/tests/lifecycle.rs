@@ -411,6 +411,37 @@ fn only_a_receiver_of_this_version_is_upgraded() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// TODO-2135 item 7: only a WebSocket opening handshake is upgraded (RFC 6455
+/// section 4.2.1): another WebSocket version is answered 426 naming 13
+/// (section 4.2.2 item 4), and a POST, an HTTP/1.0 request or a push address
+/// with a query are not handshakes and are answered 400.
+#[test]
+fn only_an_opening_handshake_is_upgraded() {
+    let folder = scratch("handshake");
+    let file = channels(&folder, &publishing("Handshake"));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    let named = format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n");
+    let send = |request: String| {
+        let mut stream = TcpStream::connect(&server.address).unwrap();
+        write!(stream, "{request}\r\n").unwrap();
+        response_head(&mut stream)
+    };
+    let eight = upgrade_request(&server.address, "/ch/push", &named).replace("Sec-WebSocket-Version: 13", "Sec-WebSocket-Version: 8");
+    let answer = send(eight);
+    assert!(answer.starts_with("HTTP/1.1 426"), "{answer}");
+    assert_eq!(header(&answer, "sec-websocket-version"), Some("13"), "{answer}");
+    let post = upgrade_request(&server.address, "/ch/push", &named).replacen("GET ", "POST ", 1);
+    let old = upgrade_request(&server.address, "/ch/push", &named).replacen("HTTP/1.1", "HTTP/1.0", 1);
+    let query = upgrade_request(&server.address, "/ch/push?a=1", &named);
+    for (what, request) in [("POST", post), ("HTTP/1.0", old), ("a query", query)] {
+        let answer = send(request);
+        assert!(answer.contains(" 400 "), "{what}: {answer}");
+    }
+    assert!(upgrade_answer(&server.address, &named).starts_with("HTTP/1.1 101"), "the handshake itself");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// REQ-1339: an upgrade offering permessage-deflate is answered with no
 /// extension: frames go uncompressed whatever a receiver offers.
 #[test]

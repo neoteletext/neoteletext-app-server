@@ -13,9 +13,9 @@ use std::task::{Context, Poll};
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::header::{
     CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY, SEC_WEBSOCKET_PROTOCOL,
-    SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
+    SEC_WEBSOCKET_VERSION, SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
 };
-use hyper::{Method, Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
@@ -187,6 +187,22 @@ fn refused_upgrade(refusal: PushRefusal) -> Response<Whole> {
 
 /// The push WebSocket: answers 101 and serves the upgraded socket.
 fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
+    // RFC 6455 section 4.2.1: the opening handshake is a GET of HTTP/1.1 or
+    // later; anything else is not one, and is answered 400. The push address
+    // takes no query (DOC-1917), so one with a query is not it either.
+    if request.method() != Method::GET || request.version() < Version::HTTP_11 || request.uri().query().is_some() {
+        return status(StatusCode::BAD_REQUEST);
+    }
+    // Section 4.2.2 item 4: another WebSocket version is answered 426 with
+    // the version spoken.
+    let version = request.headers().get(SEC_WEBSOCKET_VERSION).map(HeaderValue::as_bytes);
+    if version != Some(neoteletext_web::consts::WEBSOCKET_VERSION) {
+        let mut response = status(StatusCode::UPGRADE_REQUIRED);
+        if let Ok(spoken) = HeaderValue::from_bytes(neoteletext_web::consts::WEBSOCKET_VERSION) {
+            response.headers_mut().insert(SEC_WEBSOCKET_VERSION, spoken);
+        }
+        return response;
+    }
     let wants = request.headers().get(UPGRADE).is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
     let Some(key) = request.headers().get("sec-websocket-key").map(|value| value.as_bytes().to_vec()).filter(|_| wants) else {
         return status(StatusCode::UPGRADE_REQUIRED);
