@@ -7,6 +7,7 @@
 //! gives as Prometheus expects, and the totals since the state directory
 //! was first used, which `all_time` gives (requirement 8.3).
 
+use neoteletext_core::limits::{FIRST_PAGE_ADDRESS, LAST_PAGE_ADDRESS};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -163,7 +164,7 @@ impl Totals {
         }
         if let Some(Value::Object(pages)) = value.get("pages_opened") {
             for (page, count) in pages {
-                let page = u16::from_str_radix(page, 16).ok().filter(|page| (0x100..=0x8FF).contains(page));
+                let page = u16::from_str_radix(page, 16).ok().filter(|page| (FIRST_PAGE_ADDRESS..=LAST_PAGE_ADDRESS).contains(page));
                 if let (Some(page), Some(count)) = (page, count.integer().and_then(|count| u64::try_from(count).ok())) {
                     totals.opens.insert(page, count);
                 }
