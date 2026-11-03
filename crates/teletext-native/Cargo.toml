@@ -21,6 +21,8 @@ path = "src/bin/teletext-load.rs"
 teletext-runtime.workspace = true
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true
+# The input protocol's writer, for teletext-load's HELLO and SELECT.
+neoteletext-input.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process", "signal", "fs"] }
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
@@ -29,7 +31,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-neoteletext-input.workspace = true
 # tokio's own clock that tests stop and move on, for the keepalive's
 # timings (`connection/tests.rs`); no other crate.
 tokio = { workspace = true, features = ["test-util"] }
