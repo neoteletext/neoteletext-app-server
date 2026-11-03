@@ -29,7 +29,7 @@ pub mod check;
 mod read;
 
 pub use check::Refusal;
-pub use read::{read, request_of};
+pub use read::{read, read_reporting, request_of};
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
@@ -46,8 +46,12 @@ pub use read::{read, request_of};
 /// a refusal answers (REQ-2216). Version 9 removes what existed only for
 /// Thai and Lao, which NeoTeletext no longer supports (the engine's
 /// DEC-2239): `mark_rows` from `start.languages` and from `measured`'s
-/// runs, and the refusal `mark_rows_out_of_range`.
-pub const PROTOCOL: u32 = 9;
+/// runs, and the refusal `mark_rows_out_of_range`. Version 10 marks a
+/// text run as from outside the program (`outside`), whose characters no
+/// set of its language shows become a stand-in rather than a refusal, and
+/// bounds `measure`'s and `measured`'s request numbers above in the schema
+/// (DEC-2326, REQ-2150).
+pub const PROTOCOL: u32 = 10;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -801,6 +805,7 @@ pub struct Refused {
 #[serde(deny_unknown_fields)]
 pub struct Measured {
     /// `measure`'s request number.
+    #[schemars(range(max = u32::MAX))]
     pub request: u32,
     /// The X/26 triplets the page uses, the program's and the encoder's
     /// together, its Termination Marker included.
@@ -1020,6 +1025,7 @@ impl ProgramMessage {
 #[serde(deny_unknown_fields)]
 pub struct Measure {
     /// A number the program chooses, which the answer carries back.
+    #[schemars(range(max = u32::MAX))]
     pub request: u32,
     /// The page, as `page` carries one.
     pub page: Page,
@@ -1308,6 +1314,28 @@ pub struct TextRun {
     /// Its language, a tag of `start.languages`; none for the page's, or
     /// Latin English when the page names none.
     pub language: Option<LanguageTag>,
+    /// Whether the text came from outside the program: what a viewer typed,
+    /// a feed's data (REQ-2150 item 3). A character of such a run that its
+    /// language cannot show becomes the language's stand-in and is
+    /// reported in the log; in any other run it refuses the page
+    /// (`text_unshown`). False when absent (DEC-2326).
+    #[serde(default)]
+    pub outside: bool,
+}
+
+/// A character a run from outside the program showed as a stand-in,
+/// because its language cannot show it (REQ-2150 item 2, DEC-2326): what
+/// the server reports in its log, once a page message and character.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Replaced {
+    /// The page whose run it was.
+    pub page: PageNumber,
+    /// The character the run's language cannot show.
+    pub character: char,
+    /// What was shown in its place.
+    pub stand_in: char,
+    /// The run's language: its own, else the page's, else Latin English.
+    pub language: String,
 }
 
 /// A language's BCP 47 tag, one of `start.languages` (REQ-2215); any other

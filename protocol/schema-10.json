@@ -2581,6 +2581,7 @@
             "request": {
               "description": "A number the program chooses, which the answer carries back.",
               "format": "uint32",
+              "maximum": 4294967295,
               "minimum": 0,
               "type": "integer"
             },
@@ -2851,7 +2852,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 9,
+              "const": 10,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -3207,6 +3208,7 @@
             "request": {
               "description": "`measure`'s request number.",
               "format": "uint32",
+              "maximum": 4294967295,
               "minimum": 0,
               "type": "integer"
             },
@@ -3405,6 +3407,11 @@
           ],
           "description": "Its language, a tag of `start.languages`; none for the page's, or\nLatin English when the page names none."
         },
+        "outside": {
+          "default": false,
+          "description": "Whether the text came from outside the program: what a viewer typed,\na feed's data (REQ-2150 item 3). A character of such a run that its\nlanguage cannot show becomes the language's stand-in and is\nreported in the log; in any other run it refuses the page\n(`text_unshown`). False when absent (DEC-2326).",
+          "type": "boolean"
+        },
         "row": {
           "description": "Its row, 1 to 24.",
           "format": "uint8",
@@ -3470,5 +3477,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 9"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 10"
 }

@@ -39,7 +39,7 @@ use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
     self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, CookiePair, Describe, Description, InputMessage, Left, OperatorLevel, PageNumber,
-    ProgramMessage, Refusal, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
+    ProgramMessage, Refusal, Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
 };
 use crate::records;
 use crate::sound::{Sounds, audience};
@@ -1084,7 +1084,15 @@ impl Channel {
     /// (REQ-1475).
     pub fn from_program(&mut self, line: &[u8], now: u64) {
         count(&mut self.stats.lines_from_application);
-        let acted = protocol::read(line).and_then(|message| {
+        let acted = protocol::read_reporting(line).and_then(|(message, replaced)| {
+            for Replaced { page, character, stand_in, language } in replaced {
+                // REQ-2150 item 2: each replacement reported, once a page message and character.
+                self.log(
+                    Level::Info,
+                    "stand_in",
+                    format!("page {:X}: text from outside showed U+{:04X} as {stand_in:?}, which {language} cannot show", page.0, u32::from(character)),
+                );
+            }
             let answer = message.is_answer();
             self.act(message, now)?;
             self.answered |= answer;

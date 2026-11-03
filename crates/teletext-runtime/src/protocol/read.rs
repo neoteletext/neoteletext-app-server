@@ -19,6 +19,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 
 use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -26,7 +27,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 use super::check::{self, Refusal};
-use super::{LONGEST_LINE, M29Line, MessageType, PackedLine, ProgramMessage, Rule, Sound, X27Line, X27NibblesLine, X28Line};
+use super::{LONGEST_LINE, M29Line, MessageType, PackedLine, ProgramMessage, Replaced, Rule, Sound, X27Line, X27NibblesLine, X28Line};
 
 /// Marks the path of a fault inside a packed line, which serde's error for
 /// it can carry only as text: the path, then the message (see
@@ -56,6 +57,15 @@ impl Fault {
 /// # Errors
 /// Any rule of REQ-1475 broken, the first found, with its path.
 pub fn read(line: &[u8]) -> Result<ProgramMessage, Refusal> {
+    read_reporting(line).map(|(message, _)| message)
+}
+
+/// Reads one line from a program as [`read`] does, with the characters its
+/// pages' runs from outside showed as a stand-in, for the log (DEC-2326).
+///
+/// # Errors
+/// Any rule of REQ-1475 broken, the first found, with its path.
+pub fn read_reporting(line: &[u8]) -> Result<(ProgramMessage, Vec<Replaced>), Refusal> {
     if line.len() > LONGEST_LINE {
         return Err(Refusal::whole(None, Rule::LineTooLong, format!("{} bytes, at most {LONGEST_LINE}", line.len())));
     }
@@ -68,8 +78,8 @@ pub fn read(line: &[u8]) -> Result<ProgramMessage, Refusal> {
     let kind: MessageType = tag(&mut object, "type", "").map_err(|fault| fault.refusal(None))?;
     let mut message = body(kind, object).map_err(|fault| fault.refusal(Some(kind)))?;
     check::message(&message)?;
-    crate::text::encode_message(&mut message)?;
-    Ok(message)
+    let replaced = crate::text::encode_message(&mut message)?;
+    Ok((message, replaced))
 }
 
 /// The request number a line names at its top level, if it names one that

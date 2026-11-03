@@ -238,13 +238,13 @@ fn told(effects: &[Effect]) -> Vec<Value> {
 }
 
 /// REQ-2215 verification: `start` carries every language of the engine's
-/// table with its direction, and protocol 9; Thai and Lao are not among
-/// them (DEC-2239).
+/// table with its direction, and the protocol's version; Thai and Lao are
+/// not among them (DEC-2239).
 #[test]
 fn start_lists_every_language() {
     let mut channel = channel();
     let start = told(&channel.take_effects()).into_iter().find(|line| line["type"] == "start").unwrap();
-    assert_eq!(start["protocol"], 9);
+    assert_eq!(start["protocol"], crate::protocol::PROTOCOL);
     let languages = start["languages"].as_array().unwrap();
     assert_eq!(languages.len(), neoteletext_core::charset::language::LANGUAGES.len());
     let find = |tag: &str| languages.iter().find(|language| language["tag"] == tag).unwrap().clone();
@@ -292,4 +292,44 @@ fn the_same_page_encodes_to_the_same_bytes() {
     let text = json!([{"row": 2, "column": 0, "text": "Привет", "language": "ru"}, {"row": 8, "column": 0, "text": "Tiếng Việt", "language": "vi"}]);
     let value = page_value("en", &text);
     assert_eq!(crate::page::encode(&encoded(&value)).packets, crate::page::encode(&encoded(&value)).packets);
+}
+
+/// DEC-2326, REQ-2150 item 2: a run from outside the program shows a
+/// stand-in for each character its language cannot show, where the same
+/// run of the program's own is refused (above): the question mark, or the
+/// Arabic script's own where its sets lack ASCII's.
+#[test]
+fn a_run_from_outside_shows_a_stand_in_for_what_its_language_cannot() {
+    let run = |row: u8, text: &str, language: &str| json!({"row": row, "column": 0, "text": text, "language": language, "outside": true});
+    let page = encoded(&page_value("en", &json!([run(2, "Tea 中文 ok", "en"), run(3, "Привет 😀", "ru"), run(4, "سلام 中", "ar")])));
+    let rows = shown(&page);
+    assert_eq!(rows[2], "Tea ?? ok");
+    assert_eq!(rows[3], "Привет ?");
+    assert!(rows[4].contains('\u{061F}') && !rows[4].contains('中'), "Arabic's own question mark: {:?}", rows[4]);
+    // Marked false, or not marked, the program's own text is refused.
+    let own = json!([{"row": 2, "column": 0, "text": "中", "outside": false}]);
+    let refusal = read(&line(&page_message(&page_value("en", &own)))).unwrap_err();
+    assert_eq!(refusal.rule, crate::protocol::Rule::TextUnshown);
+}
+
+/// REQ-2150 item 2: each replacement is reported in the server's log, once
+/// a page message and character, and the page is sent.
+#[test]
+fn each_stand_in_is_logged_once_a_page_and_character() {
+    let mut channel = channel();
+    channel.opened(1, 1, Vec::new(), 0);
+    let _ = channel.take_effects();
+    let text = json!([{"row": 2, "column": 0, "text": "中中文", "outside": true}, {"row": 3, "column": 0, "text": "文", "outside": true}]);
+    channel.from_program(&line(&page_message(&page_value("en", &text))), 1);
+    let effects = channel.take_effects();
+    let logged: Vec<&String> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Log { event: "stand_in", text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(logged.len(), 2, "{logged:?}");
+    assert!(logged[0].contains("U+4E2D") && logged[1].contains("U+6587"), "{logged:?}");
+    assert!(!told(&effects).iter().any(|line| line["type"] == "refused"), "the page is not refused");
 }

@@ -6,7 +6,9 @@
 //! 1, if it sent one. What it cost is the `measured` answer (REQ-2216). The
 //! page has been checked ([`crate::protocol::check`]) before it gets here,
 //! and leaves as a page of codes alone, which the rest of the server sends
-//! as it always has.
+//! as it always has. A run from outside the program (`outside`) shows a
+//! stand-in for a character its language cannot show, rather than refuse
+//! the page (DEC-2326, REQ-2150 item 2).
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -14,16 +16,29 @@ use alloc::vec::Vec;
 
 use neoteletext_core::consts::{COLUMNS, DESIGNATION_GROUP_SHIFT, NATIONAL_INDEX_MASK, NO_SECOND_G0, ROWS, SPACE};
 use neoteletext_core::packet::Triplet;
-use neoteletext_formats::write_text::{Level, PageText, RunError, RunFault, TextRun, designate, packets, write_runs};
+use neoteletext_formats::write_text::{FIRST_TEXT_ROW, Level, PageText, RunError, RunFault, TextRun, designate, packets, write_runs};
 use neoteletext_web::base64;
 
 use crate::protocol::{
-    self, CharacterSet, Enhancement, MessageType, PackedLine, Page, PageDesignation, ProgramMessage, Refusal, Rule, RunCost, TRIPLET_LIMIT, TextLevel, X28Line,
+    self, CharacterSet, Enhancement, MessageType, PackedLine, Page, PageDesignation, ProgramMessage, Refusal, Replaced, Rule, RunCost, TRIPLET_LIMIT,
+    TextLevel, X28Line,
 };
 
 /// The page-related packet X/28 of designation code 0: X/28/0 Format 1
 /// (EN 300 706 clause 9.4.2).
 const PAGE_DATA_DESIGNATION: u8 = 0;
+
+/// What a run from outside shows for a character its language cannot, the
+/// first of these its language shows (REQ-2150 item 2, DEC-2326): the
+/// question mark; the Arabic script's own, where its sets lack ASCII's
+/// (the library's measurement of 3 November 2026, `unshown.ts`); then a
+/// hyphen or a full stop, which every set but one shows.
+const STAND_INS: [char; 4] = ['?', '\u{061F}', '-', '.'];
+
+/// A run's language as the encoder reads it: its own, else the page's.
+fn run_language<'a>(run: &'a protocol::TextRun, page: Option<&'a str>) -> Option<&'a str> {
+    run.language.as_ref().map(|tag| tag.0.as_str()).or(page)
+}
 
 /// What encoding a page cost (REQ-2216 item 2).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -34,6 +49,8 @@ pub(crate) struct Cost {
     pub designation: PageDesignation,
     /// Each run's cost.
     pub runs: Vec<RunCost>,
+    /// The characters runs from outside showed as a stand-in, each once.
+    pub replaced: Vec<Replaced>,
 }
 
 /// A fault the encoder found, at a path under the page.
@@ -124,14 +141,41 @@ pub(crate) fn encode(page: &mut Page) -> Result<Cost, Fault> {
         TextLevel::Level35 => Level::Standard,
     };
     let given = page.character_set.map_or(0, |set| (set.region.unwrap_or(0) << DESIGNATION_GROUP_SHIFT) | set.national_option);
+    let page_language = language.as_ref().map(|tag| tag.0.as_str());
     let before = grid(page);
-    let mut codes = before;
-    let text_runs: Vec<TextRun<'_>> = runs
-        .iter()
-        .map(|run| TextRun { row: run.row, column: run.column, text: &run.text, language: run.language.as_ref().map(|tag| tag.0.as_str()) })
-        .collect();
-    let text = PageText { language: language.as_ref().map(|tag| tag.0.as_str()), designation: given, level, runs: &text_runs };
-    let encoded = write_runs(&mut codes, &text, &program_triplets(page)).map_err(|error| fault(&error))?;
+    let program = program_triplets(page);
+    let mut texts: Vec<String> = runs.iter().map(|run| run.text.clone()).collect();
+    let mut replaced: Vec<Replaced> = Vec::new();
+    // Each pass replaces one character of one run from outside, so the
+    // passes are bounded by the characters sent (REQ-2214 item 4).
+    let most_passes = texts.iter().map(|text| text.chars().count()).sum::<usize>().saturating_add(1);
+    let mut passes = 0_usize;
+    let (codes, encoded) = loop {
+        let text_runs: Vec<TextRun<'_>> = runs
+            .iter()
+            .zip(&texts)
+            .map(|(run, text)| TextRun { row: run.row, column: run.column, text, language: run.language.as_ref().map(|tag| tag.0.as_str()) })
+            .collect();
+        let text = PageText { language: page_language, designation: given, level, runs: &text_runs };
+        let mut codes = before;
+        let error = match write_runs(&mut codes, &text, &program) {
+            Ok(encoded) => break (codes, encoded),
+            Err(error) => error,
+        };
+        passes = passes.saturating_add(1);
+        let (Some(index), RunFault::Unshown(character)) = (error.run, &error.fault) else { return Err(fault(&error)) };
+        let character = *character;
+        let Some(run) = runs.get(index).filter(|run| run.outside) else { return Err(fault(&error)) };
+        let run_tag = run_language(run, page_language);
+        let shows = |candidate: char| candidate != character && shows(page_language, given, level, run_tag, candidate);
+        let (Some(stand_in), true) = (STAND_INS.into_iter().find(|&candidate| shows(candidate)), passes < most_passes) else { return Err(fault(&error)) };
+        let Some(slot) = texts.get_mut(index) else { return Err(fault(&error)) };
+        *slot = slot.replace(character, stand_in.encode_utf8(&mut [0_u8; 4]));
+        let tag = run_tag.unwrap_or(ENGLISH).to_string();
+        if !replaced.iter().any(|seen: &Replaced| seen.character == character && seen.language == tag) {
+            replaced.push(Replaced { page: page.page, character, stand_in, language: tag });
+        }
+    };
     for (slot, (new, old)) in page.rows.iter_mut().zip(codes.iter().zip(&before)) {
         if new != old {
             *slot = Some(row_text(new));
@@ -161,7 +205,20 @@ pub(crate) fn encode(page: &mut Page) -> Result<Cost, Fault> {
     let runs = encoded.runs.iter().map(|report| RunCost { cells: report.cells, triplets: narrow(report.triplets) }).collect();
     // The encoder refuses a page over the budget, so this is at most 208.
     let triplets = narrow(encoded.count).min(TRIPLET_LIMIT);
-    Ok(Cost { triplets, designation: PageDesignation { default: designations.default, second }, runs })
+    Ok(Cost { triplets, designation: PageDesignation { default: designations.default, second }, runs, replaced })
+}
+
+/// The language of a page that names none: Latin English.
+const ENGLISH: &str = "en";
+
+/// Whether `character` alone, in a run of `language` on a blank page of
+/// `page`'s language or designation at `level`, is shown: the encoder's own
+/// answer, so the stand-in is one the run's sets hold.
+fn shows(page: Option<&str>, designation: u8, level: Level, language: Option<&str>, character: char) -> bool {
+    let mut grid = [[SPACE; COLUMNS]; ROWS];
+    let mut buffer = [0_u8; 4];
+    let run = [TextRun { row: FIRST_TEXT_ROW, column: 0, text: character.encode_utf8(&mut buffer), language }];
+    write_runs(&mut grid, &PageText { language: page, designation, level, runs: &run }, &[]).is_ok()
 }
 
 /// A page of `message` encoded in place, a fault refusing the message with
@@ -171,19 +228,21 @@ fn encode_at(kind: MessageType, at: &str, page: &mut Page) -> Result<Cost, Refus
 }
 
 /// Every page `message` carries for viewers, encoded (REQ-2214): `page`'s,
-/// `reply`'s selected sub-page and `description`'s content. `measure` is
-/// encoded where it is answered.
+/// `reply`'s selected sub-page and `description`'s content, with the
+/// characters runs from outside showed as a stand-in (DEC-2326). `measure`
+/// is encoded where it is answered.
 ///
 /// # Errors
 /// The encoder's refusal, at the path of the run at fault.
-pub(crate) fn encode_message(message: &mut ProgramMessage) -> Result<(), Refusal> {
+pub(crate) fn encode_message(message: &mut ProgramMessage) -> Result<Vec<Replaced>, Refusal> {
     let kind = message.kind();
-    match message {
-        ProgramMessage::Page(message) => encode_at(kind, "page", &mut message.page).map(drop),
-        ProgramMessage::Reply(reply) => reply.selected.as_mut().map_or(Ok(()), |page| encode_at(kind, "selected", page).map(drop)),
-        ProgramMessage::Description(description) => description.content.as_mut().map_or(Ok(()), |page| encode_at(kind, "content", page).map(drop)),
-        _ => Ok(()),
-    }
+    let cost = match message {
+        ProgramMessage::Page(message) => Some(encode_at(kind, "page", &mut message.page)?),
+        ProgramMessage::Reply(reply) => reply.selected.as_mut().map(|page| encode_at(kind, "selected", page)).transpose()?,
+        ProgramMessage::Description(description) => description.content.as_mut().map(|page| encode_at(kind, "content", page)).transpose()?,
+        _ => None,
+    };
+    Ok(cost.map(|cost| cost.replaced).unwrap_or_default())
 }
 
 /// `measure`'s page encoded, and what it cost (REQ-2216 item 1).
