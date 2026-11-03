@@ -92,6 +92,7 @@ async fn next(link: &mut Link) -> FromApplication {
 /// it ends the channel is told, and it is started again (requirement 7.5).
 /// REQ-1042 and REQ-1034.
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "its test program is a POSIX shell script, run with sh, which Windows does not have")]
 async fn a_program_is_started_heard_and_started_again() {
     let captured = Captured::default();
     let _log = captured.install();
