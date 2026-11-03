@@ -17,6 +17,9 @@ fn status(route: Route) -> &'static str {
         Route::Page | Route::Described(_) | Route::Descriptor => "200",
         Route::ToFolder | Route::ToPlace => "308",
         Route::Push => "426",
+        // No row of the table names it: a channel without a program over a
+        // WebSocket answers 404, one with one 401 without the secret.
+        Route::Program => "401",
         Route::Missing => "404",
     }
 }
@@ -72,4 +75,46 @@ fn the_page_runs_nothing_and_its_link_names_the_page_asked_for() {
     assert!(page.contains(&format!(r#"href="{LINK_SCHEME}https://a.example/home/302/0002?a=1""#)), "{page}");
     assert!(!page.contains("<script"), "{page}");
     assert!(!CONTENT_SECURITY_POLICY.contains("script-src"));
+}
+
+/// REQ-1024 and REQ-1044: the program's WebSocket is the channel's
+/// `program`, on either host.
+#[test]
+fn the_programs_address_is_its_own_route() {
+    assert_eq!(route("/radio/program"), ("radio", Route::Program));
+    assert_eq!(route("/radio/program/"), ("radio", Route::Missing));
+    assert_eq!(route("/radio/programs"), ("radio", Route::Missing));
+}
+
+/// REQ-1044: a program is admitted with the channel's secret as a bearer
+/// token, and with nothing else; a channel with no secret admits none.
+#[test]
+fn only_the_channels_secret_admits_its_program() {
+    let secret = b"correct horse battery staple";
+    assert!(program_admitted(Some(b"Bearer correct horse battery staple"), secret));
+    for refused in [
+        None,
+        Some(&b""[..]),
+        Some(b"correct horse battery staple"),
+        Some(b"Bearer correct horse battery stapl"),
+        Some(b"Bearer correct horse battery staple "),
+        Some(b"Bearer Correct horse battery staple"),
+        Some(b"Basic correct horse battery staple"),
+    ] {
+        assert!(!program_admitted(refused, secret), "{:?}", refused.map(String::from_utf8_lossy));
+    }
+    assert!(!program_admitted(Some(b"Bearer "), b""), "an empty secret admits nobody");
+    assert!(same_secret(b"", b""));
+    assert!(!same_secret(b"a", b"ab"));
+}
+
+/// REQ-1024: a message is a line, and one of several lines is those lines,
+/// without their ends or empty ones.
+#[test]
+fn a_programs_message_is_its_lines() {
+    let lines: Vec<&[u8]> = program_lines(b"{\"type\":\"log\"}").collect();
+    assert_eq!(lines, [&b"{\"type\":\"log\"}"[..]]);
+    let lines: Vec<&[u8]> = program_lines(b"one\r\n\n two \ntwo\n").collect();
+    assert_eq!(lines, [&b"one"[..], b" two", b"two"]);
+    assert_eq!(program_lines(b"\n\r\n").count(), 0);
 }

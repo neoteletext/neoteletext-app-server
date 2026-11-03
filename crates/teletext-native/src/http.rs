@@ -115,7 +115,7 @@ pub async fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Who
             response
         }
         Route::Push => upgrade(routes, hub, request),
-        Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
+        Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Program | Route::Missing => status(StatusCode::NOT_FOUND),
     }
 }
 

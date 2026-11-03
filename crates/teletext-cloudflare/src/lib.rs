@@ -57,8 +57,6 @@ const ORIGIN_VARIABLE: &str = "ORIGIN";
 /// Each channel's program's secret is the Worker secret of this name and
 /// the channel's folder, upper case, `-` as `_`: `PROGRAM_SECRET_HACKADAY`.
 const SECRET_PREFIX: &str = "PROGRAM_SECRET_";
-/// The program's WebSocket's path within a channel's folder.
-const PROGRAM: &str = "program";
 /// The tags the object gives the connections it accepts.
 const VIEWER_TAG: &str = "viewer";
 const PROGRAM_TAG: &str = "program";
@@ -114,49 +112,35 @@ fn channels(env: &Env) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// The path of a channel's program, `/<folder>/program`, when `path` is one.
-fn program_of(path: &str) -> Option<&str> {
-    path.strip_prefix('/')?.strip_suffix(PROGRAM)?.strip_suffix('/')
-}
-
-/// Whether two secrets are the same, in time that does not depend on
-/// where they differ.
-fn same_secret(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len() && left.iter().zip(right).fold(0_u8, |difference, (a, b)| difference | (a ^ b)) == 0
-}
-
 /// The Worker: routes each channel's requests to its object, and refuses a
 /// program without the channel's secret (requirement 1.5).
 #[event(fetch)]
 async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<Response> {
     let url = request.url()?;
     let (folder, asked) = route(url.path());
-    let program = program_of(url.path());
-    let folder = program.unwrap_or(folder);
     let channels = channels(&env)?;
     // The answers of REQ-1693 item 7 and the program's WebSocket: no listing
     // at `/`, no channel's files.
     let reads = request.method() == Method::Get || request.method() == Method::Head;
-    let answered = program.is_some() || asked == Route::Descriptor || asked == Route::Push || (reads && asked != Route::Missing);
+    let answered = matches!(asked, Route::Program | Route::Descriptor | Route::Push) || (reads && asked != Route::Missing);
     if !channels.iter().any(|(served, _)| served == folder) || !answered {
         return Response::error("Not Found", 404);
     }
-    if program.is_none() && asked == Route::ToFolder {
+    if asked == Route::ToFolder {
         let mut response = Response::empty()?.with_status(308);
         response.headers_mut().set("location", &landing::folder_location(folder, url.query()))?;
         return Ok(response);
     }
-    if program.is_none() && asked == Route::ToPlace {
+    if asked == Route::ToPlace {
         let mut response = Response::empty()?.with_status(308);
         response.headers_mut().set("location", &landing::place_location(url.path(), url.query()))?;
         return Ok(response);
     }
-    if program.is_some() {
+    if asked == Route::Program {
         let name = format!("{SECRET_PREFIX}{}", folder.to_uppercase().replace('-', "_"));
         let expected = env.secret(&name).map(|secret| secret.to_string()).unwrap_or_default();
-        let presented = request.headers().get("authorization")?.unwrap_or_default();
-        let presented = presented.strip_prefix("Bearer ").unwrap_or_default();
-        if expected.is_empty() || !same_secret(presented.as_bytes(), expected.as_bytes()) {
+        let presented = request.headers().get("authorization")?;
+        if !landing::program_admitted(presented.as_deref().map(str::as_bytes), expected.as_bytes()) {
             return Response::error("Unauthorized", 401);
         }
     }
@@ -479,10 +463,9 @@ impl worker::DurableObject for ChannelObject {
     async fn fetch(&self, request: Request) -> Result<Response> {
         let url = request.url()?;
         let (folder, asked) = route(url.path());
-        let program = program_of(url.path());
-        self.wake(Some(program.unwrap_or(folder)))?;
+        self.wake(Some(folder))?;
         let response = match asked {
-            _ if program.is_some() => self.accept_program(),
+            Route::Program => self.accept_program(),
             Route::Push => self.accept_viewer(&request),
             Route::Descriptor => self.descriptor(),
             Route::Page => self.page(&landing::tail(url.path(), url.query())),
@@ -511,8 +494,8 @@ impl worker::DurableObject for ChannelObject {
             let now = live.now();
             match message {
                 WebSocketIncomingMessage::String(text) if program => {
-                    for line in text.split('\n').map(str::trim_end).filter(|line| !line.is_empty()) {
-                        live.channel.from_program(line.as_bytes(), now);
+                    for line in landing::program_lines(text.as_bytes()) {
+                        live.channel.from_program(line, now);
                     }
                 }
                 WebSocketIncomingMessage::Binary(bytes) if !program => {
