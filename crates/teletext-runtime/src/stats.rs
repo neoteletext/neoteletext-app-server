@@ -1,5 +1,5 @@
 //! What a channel counts about itself, for its operator's log and for its
-//! program to show (`docs/applications.md`, `stats`). Counts only:
+//! program to show (DOC-1968). Counts only:
 //! nothing that identifies a viewer, no address, no text typed.
 
 use alloc::collections::BTreeMap;

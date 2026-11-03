@@ -1,4 +1,4 @@
-//! JSON for the application protocol (`docs/applications.md`): a value
+//! JSON for the application protocol (DOC-1964): a value
 //! tree read with the engine's bounded pull reader (`neoteletext_web::json`,
 //! decision 5), and a writer for the lines the server sends. Nesting is
 //! the reader's `MAX_JSON_DEPTH`; the host bounds a line's length.

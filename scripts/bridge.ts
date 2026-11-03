@@ -1,6 +1,6 @@
 // The bridge between a channel's program and the Cloudflare host (decision
 // 20): runs the program over its standard input and output, as the native
-// server does (docs/applications.md), and carries its lines to and from its
+// server does (DOC-1964), and carries its lines to and from its
 // channel's Durable Object over a WebSocket, one line a message
 // (requirements 1.5 and 6.4). The program is unchanged.
 //
@@ -20,7 +20,7 @@ import { createInterface } from "node:readline";
 const SECRET_VARIABLE = "NEOTELETEXT_PROGRAM_SECRET";
 /** The first pause before connecting or starting again, in milliseconds. */
 const FIRST_PAUSE_MS = 1_000;
-/** The longest pause (docs/applications.md section 1). */
+/** The longest pause (DOC-1965). */
 const LONGEST_PAUSE_MS = 30_000;
 /** Lines the program sends before the connection opens that are kept for it. */
 const WAITING_LINES = 4_096;

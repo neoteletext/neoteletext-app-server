@@ -1,5 +1,5 @@
 //! The protocol between the server and a channel's program (DEC-1482,
-//! REQ-1475 to REQ-1479; `docs/applications.md` sections 2 and 3): every
+//! REQ-1475 to REQ-1479; DOC-1968 and DOC-1970): every
 //! message in both directions as one exact Rust type, read serde-strict
 //! (an unknown `type` or field refused, never skipped), then checked
 //! against every bound, from the engine's `neoteletext_core::limits`
@@ -32,7 +32,7 @@ pub use check::Refusal;
 pub use read::{read, read_reporting, request_of};
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
-/// was `docs/applications.md`'s before DEC-1482: declared pages, TTI and
+/// was the protocol before DEC-1482: declared pages, TTI and
 /// publishing for everyone. Version 2 had `goto`, which `redirect` replaced
 /// (DEC-1683), and which could name no other channel. Version 6 numbers
 /// each selection (DEC-1759 lesson 13), passes a program its cookies, adds
@@ -768,7 +768,7 @@ pub struct Closed {
     pub session: SessionId,
 }
 
-/// `stats`: the figures of `docs/applications.md` section 7.
+/// `stats`: the figures of DOC-1968.
 #[derive(Clone, PartialEq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Stats {

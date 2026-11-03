@@ -11,7 +11,7 @@
 //! it at, which each channel's push WebSocket is named on (the engine
 //! requires the push address on the channel's own origin); `--channels` is
 //! the file of the channels it serves, each a program of its own, in any language
-//! (`docs/applications.md`); `--state` is where it keeps the session
+//! (DOC-1964); `--state` is where it keeps the session
 //! cookie's keys and the accumulated figures across a restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
 //! without either); `--admin-listen` is where `/metrics`, `/healthz` and
 //! `/readyz` are served (none unless given); `--log-format` is how events

@@ -1,6 +1,6 @@
 //! The server's figures: what every connection, request and channel adds
 //! up to, for the log, for `/stats.json`, for the channels' own pages
-//! (`docs/applications.md`, `stats`) and for `/metrics` (decision 19).
+//! (DOC-1968) and for `/metrics` (decision 19).
 //! Counts only: no address, no text.
 //!
 //! Two clocks: the figures since the process started, which `/metrics`
@@ -363,7 +363,7 @@ impl ServerStats {
         server
     }
 
-    /// The `stats` line for a channel's application (`docs/applications.md`).
+    /// The `stats` line for a channel's application (DOC-1964).
     #[must_use]
     pub fn line(&self, folder: &str, figures: &ChannelFigures) -> Vec<u8> {
         let mut line = Writer::new("stats");

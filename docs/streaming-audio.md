@@ -42,7 +42,7 @@ There are two kinds of source:
 - **The output is the engine's Opus profile** (decisions E.123 and E.124; this repository's decision 21):
   - Opus, mono, 48 kHz, one 20 ms frame a packet, every packet 40 bytes: 16 kbit/s at constant rate;
   - 16 kbit/s per listener, a quarter of the IMA ADPCM output this design first had;
-  - live Opus sounds, codec 2, the records `opus_live` and `opus_packets` make (`docs/applications.md` section 3.4).
+  - live Opus sounds, codec 2, the records `opus_live` and `opus_packets` make (DOC-1972).
 
   The desktop browser plays it, and plays nothing else (its decision 121). A microcontroller receiver such as tellyboy decodes no Opus (the engine's E.131); a stream for it would be a second output, in IMA ADPCM, which this design does not cover.
 

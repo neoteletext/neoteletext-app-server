@@ -1,5 +1,5 @@
 //! Applications in other processes (DOC-1965;
-//! `docs/applications.md`): each channel named in the channels file has
+//! DOC-1964): each channel named in the channels file has
 //! one program, in any language, spoken to one JSON object a line. Two
 //! transports carry the same lines through the same relay (requirement
 //! 6.4):

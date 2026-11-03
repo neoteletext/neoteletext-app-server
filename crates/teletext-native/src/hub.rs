@@ -106,7 +106,7 @@ pub struct Hub {
 
 /// Starts `channel` in a task of its own, at `start`, the host's clock's
 /// zero; `link`, for a channel whose program is a process of its own,
-/// carries that program's starts and lines (`docs/applications.md`).
+/// carries that program's starts and lines (DOC-1964).
 #[must_use]
 pub fn spawn(folder: &str, channel: Channel, start: Instant, link: Option<Link>, stats: Arc<ServerStats>) -> Hub {
     let descriptor: Arc<[u8]> = channel.descriptor().into();

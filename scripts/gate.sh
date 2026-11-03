@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at bb33cf14984b8621af4284c4c741c347a9ff3fc7
+# neoteletext-common gates at ebe142e74a11e49030910e97318714d19b664927
 # The gate machinery every neoteletext repository shares (DEVELOPMENT.md
 # section 9). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
@@ -26,11 +26,12 @@ git_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
 common_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$common" "$@"; }
 # Names of the documents deleted because rdm or DEVELOPMENT.md now holds
 # them (DEC-2022's protocol documents; the gate and rdm documents folded into
-# DEVELOPMENT.md on 3 November 2026), as a tracked file might write them:
+# DEVELOPMENT.md on 3 November 2026; the server's applications document,
+# deleted for its items the same day, TODO-2245), as a tracked file might write them:
 # bare, or with the dot escaped in a pattern. A longer name that ends in one
 # of them is another document. This text cannot match itself, as a closing
 # bracket stands where a name would meet its extension.
-readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL|gates|rdm)\\*\.md'
+readonly DELETED_DOCUMENT_NAMES='(^|[^-A-Za-z0-9_])(INPUT|SERVER|CHANNEL|gates|rdm|applications)\\*\.md'
 
 fail() {
     printf '\nFAILED: %s\n' "$*" >&2

@@ -7,7 +7,7 @@
 //!   connections with the hibernation interface.
 //! - **The channel's program** connects to `/<channel>/program` with the
 //!   channel's secret (requirement 1.5) and speaks the protocol of
-//!   `docs/applications.md` (DEC-1482), one line a message; the object is
+//!   DOC-1964 (DEC-1482), one line a message; the object is
 //!   the server of that WebSocket too, and opens no connection itself.
 //! - **Nothing of the channel's content is kept** (REQ-1474): the object's
 //!   SQLite storage holds only its folder and its session key.
