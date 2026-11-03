@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The project's one check script (requirement 2.1): its own steps, on the
 # gate machinery every neoteletext repository shares (scripts/gate.sh,
-# copied from neoteletext-common; gates.md there). Every step either
+# copied from neoteletext-common; DEVELOPMENT.md section 9 there). Every step either
 # passes or fails the run: nothing is skipped, a missing tool or an
 # unreachable host is a failure.
 #   scripts/check.sh commit   formatting and Clippy: the code compiles
@@ -143,7 +143,7 @@ full_steps() {
 linux_steps() {
     step "Linux on $linux_host: Clippy and tests"
     need_host
-    # By content, with the host's own times (gates.md).
+    # By content, with the host's own times (DEVELOPMENT.md section 9.3).
     rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on its public repository, which the

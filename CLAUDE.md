@@ -1,6 +1,12 @@
 # teletext-server
 
-The NeoTeletext server. The protocol is `~/devel/neoteletext-common/PROTOCOL.html`, generated from rdm, whose items `DOC-n` citations in this repository name; the development process is `~/devel/neoteletext-common/DEVELOPMENT.md`, shared with the engine and the browser.
+The NeoTeletext server. The protocol is `~/devel/neoteletext-common/PROTOCOL.html`, generated from rdm, whose items `DOC-n` citations in this repository name.
+
+## How we work
+
+@~/devel/neoteletext-common/DEVELOPMENT.md
+
+That is the one document of how we work, for every NeoTeletext repository, with rdm as the record of all work (DEC-2162). This file says only what is particular to this repository; where the two differ, that document holds.
 
 ## Rules particular to this repository
 
@@ -22,4 +28,4 @@ They are records in rdm, reached through its MCP tools (search, get_record, list
 
 - Tools: `scripts/tools.sh` installs the pinned tools into the ignored `tools/`; the check script refuses other versions.
 - Edit loop: `scripts/try.sh` (Clippy on every save) or `scripts/try.sh <crate> [filter]`.
-- Gates and the work branch: `scripts/check.sh commit | push | full`; the Linux stage runs on `TELETEXT_LINUX_HOST`, `foundintelquiet4060` by default. How they work and the day-to-day routine: @~/devel/neoteletext-common/gates.md
+- Gates and the work branch: `scripts/check.sh commit | push | full`; the Linux stage runs on `TELETEXT_LINUX_HOST`, `foundintelquiet4060` by default. How they work and the day-to-day routine: `DEVELOPMENT.md` section 9.
