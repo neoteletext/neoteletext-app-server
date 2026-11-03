@@ -179,6 +179,10 @@ fn each_fault_is_refused_by_path_and_rule() {
     assert_eq!(refused(&page(json!([run(1, 0, "one", Value::Null), run(1, 2, "two", Value::Null)]))), ("page.text[1]".into(), Rule::TextOverlap));
     assert_eq!(refused(&page(json!([run(1, 35, "too long", Value::Null)]))), ("page.text[0].text".into(), Rule::TextOutOfColumns));
     assert_eq!(refused(&page(json!([run(2, 0, "中文", Value::Null)]))), ("page.text[0].text".into(), Rule::TextUnshown));
+    // DEC-2239: Thai and Lao are no languages of NeoTeletext.
+    assert_eq!(refused(&page(json!([run(1, 0, "สวัสดี", json!("th"))]))), ("page.text[0].language".into(), Rule::UnknownLanguage));
+    assert_eq!(refused(&page(json!([run(1, 0, "ສະບາຍດີ", json!("lo"))]))), ("page.text[0].language".into(), Rule::UnknownLanguage));
+    assert_eq!(refused(&page(json!([run(1, 0, "สวัสดี", Value::Null)]))), ("page.text[0].text".into(), Rule::TextUnshown));
     assert_eq!(refused(&page(json!([run(1, 0, "x", json!("tlh"))]))), ("page.text[0].language".into(), Rule::UnknownLanguage));
     assert_eq!(refused(&page_value("tlh", &Value::Null)), ("page.language".into(), Rule::UnknownLanguage));
     assert_eq!(refused(&page(json!([run(25, 0, "x", Value::Null)]))), ("page.text[0].row".into(), Rule::OutOfRange));
@@ -234,7 +238,8 @@ fn told(effects: &[Effect]) -> Vec<Value> {
 }
 
 /// REQ-2215 verification: `start` carries every language of the engine's
-/// table with its direction, and protocol 9.
+/// table with its direction, and protocol 9; Thai and Lao are not among
+/// them (DEC-2239).
 #[test]
 fn start_lists_every_language() {
     let mut channel = channel();
@@ -244,6 +249,7 @@ fn start_lists_every_language() {
     assert_eq!(languages.len(), neoteletext_core::charset::language::LANGUAGES.len());
     let find = |tag: &str| languages.iter().find(|language| language["tag"] == tag).unwrap().clone();
     assert_eq!(find("ar"), json!({"tag": "ar", "name": "Arabic", "direction": "rtl"}));
+    assert!(!languages.iter().any(|language| language["tag"] == "th" || language["tag"] == "lo"), "no Thai or Lao");
     assert_eq!(find("sr-Latn")["name"], "Serbian (Latin script)");
 }
 

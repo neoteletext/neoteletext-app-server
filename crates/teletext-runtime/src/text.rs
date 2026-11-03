@@ -63,10 +63,6 @@ fn fault(error: &RunError) -> Fault {
         RunFault::UnknownLanguage(_) => (at(error.run, "language"), Rule::UnknownLanguage),
         RunFault::OutOfRows => (at(error.run, ""), Rule::OutOfRange),
         RunFault::OutOfColumns(_) => (at(error.run, "text"), Rule::TextOutOfColumns),
-        // The pinned engine still lays Thai and Lao out with mark rows; the
-        // protocol no longer names that fault (DEC-2239), so it is the run's
-        // row out of range until the pin moves to an engine without them.
-        RunFault::MarkRowsOutOfRange => (at(error.run, "row"), Rule::OutOfRange),
         RunFault::Overlap(_) => (at(error.run, ""), Rule::TextOverlap),
         RunFault::Unshown(_) => (at(error.run, "text"), Rule::TextUnshown),
         RunFault::CellTaken { .. } => (at(error.run, ""), Rule::TextCellTaken),
