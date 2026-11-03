@@ -905,3 +905,91 @@ fn an_answer_of_another_page_or_sub_code_is_refused() {
     assert_eq!(refused(&effects), Vec::<(String, String)>::new());
     assert!(!sent_to(&effects, 1).is_empty(), "the right answer is shown");
 }
+
+/// The TypeScript kit's fixture channel's lines (its `test/fixtures/hello.jsonl`,
+/// kept here as `tests/fixtures/kit-channel.jsonl` and checked equal to the
+/// kit's by `scripts/check.sh`).
+const KIT_CHANNEL: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/kit-channel.jsonl"));
+
+/// The display rows a page message gives as bytes, decoded, by row number:
+/// row 0 goes in the header, and a row a text run writes is the server's
+/// encoding of the run, so neither is the given bytes alone.
+fn rows_given(page: &Value) -> Vec<(u8, Vec<u8>)> {
+    let written: Vec<u64> = page["text"].as_array().map(|runs| runs.iter().filter_map(|run| run["row"].as_u64()).collect()).unwrap_or_default();
+    page["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .filter_map(|(row, text)| {
+            let text = text.as_str()?;
+            let mut bytes = vec![0_u8; neoteletext_web::base64::decoded_len_max(text.len())];
+            let length = neoteletext_web::base64::decode(text.as_bytes(), &mut bytes).unwrap();
+            bytes.truncate(length);
+            Some((u8::try_from(row).unwrap(), bytes))
+        })
+        .filter(|(row, _)| *row != 0 && !written.contains(&u64::from(*row)))
+        .collect()
+}
+
+/// The display rows in `bytes` that `given` names, parity stripped, by row
+/// number.
+fn rows_sent(bytes: &[u8], given: &[(u8, Vec<u8>)]) -> Vec<(u8, Vec<u8>)> {
+    packets(bytes)
+        .filter_map(|packet| match decode(&packet) {
+            Ok(Decoded::Row(row)) if given.iter().any(|(number, _)| *number == row.row) => Some((row.row, row.bytes.iter().map(|byte| byte & 0x7F).collect())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// TODO-1537, REQ-1479: the TypeScript kit's fixture channel, replayed in
+/// answer to the server's own events for one connection, is taken as the kit
+/// means it: no line refused; the index; for each selection exactly one
+/// sub-page frame of the page and sub-code selected, whose rows are the
+/// fixture's byte for byte; and for page 101 its list of 0001 and 0002. The
+/// server's events are those the kit's own test scripts.
+#[test]
+fn the_kits_fixture_channel_is_served_as_the_kit_means_it() {
+    let lines: Vec<Value> = KIT_CHANNEL.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(lines.len(), 7, "the kit's fixture as this test knows it");
+    let mut channel = Channel::new(config(0));
+    channel.program_started(0);
+    channel.opened(1, 1, Vec::new(), 0);
+    channel.received(1, &message(&[hello(), select(0, ANY)]), 0);
+    let told_first = told(&channel.take_effects());
+    assert_eq!((&told_first[0]["type"], &told_first[1]["type"], &told_first[1]["selection"]), (&json!("start"), &json!("connected"), &Value::Null));
+    let feed = |channel: &mut Channel, line: &Value, now: u64| {
+        channel.from_program(&line_of(line), now);
+        let effects = channel.take_effects();
+        assert_eq!(refusals(&effects), 0, "{line}");
+        sent_to(&effects, 1)
+    };
+    let bytes = feed(&mut channel, &lines[0], 1);
+    assert!(record_types(&bytes).contains(&TYPE_INDEX), "the index");
+    assert_eq!(headers(&bytes), [(0, true)]);
+    let given = rows_given(&lines[0]["selected"]);
+    assert_ne!(given, [] as [(u8, Vec<u8>); 0]);
+    assert_eq!(rows_sent(&bytes, &given), given, "page 100's rows");
+    // (selection, the fixture's lines that answer it, the sub-page shown)
+    let script: [(u16, u16, &[usize], u16); 5] =
+        [(0x101, ANY, &[1, 2], 1), (0x101, 2, &[3], 2), (0x102, ANY, &[4], 0), (0x103, ANY, &[5], 0), (0x104, ANY, &[6], 0)];
+    for (now, (page, sub, answers, shown)) in (2_u64..).zip(script) {
+        channel.received(1, &message(&[select(page, sub)]), now);
+        let asked = told(&channel.take_effects());
+        let selected = asked.iter().find(|line| line["type"] == "selected").unwrap();
+        assert_eq!(&selected["request"], &lines[answers[0]]["request"], "the server numbers its selections as the kit expects");
+        let bytes: Vec<u8> = answers.iter().flat_map(|&index| feed(&mut channel, &lines[index], now)).collect();
+        assert_eq!(headers(&bytes), [(shown, true)], "{page:03X}: one sub-page frame");
+        let given = rows_given(&lines[answers[0]]["page"]);
+        assert_eq!(rows_sent(&bytes, &given), given, "{page:03X}/{shown:04X}'s rows");
+        if page == 0x101 && sub == ANY {
+            assert_eq!(lists(&bytes), [(1, vec![1, 2])], "page 101's list");
+        }
+    }
+}
+
+/// `value` as a line from the program.
+fn line_of(value: &Value) -> Vec<u8> {
+    line(value)
+}

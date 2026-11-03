@@ -28,7 +28,25 @@ readonly WASM_TARGET="wasm32-unknown-unknown"
 # The crates that build for WebAssembly: everything a Worker links.
 readonly WASM_CRATES=(teletext-runtime teletext-cloudflare)
 # What the gates read.
-readonly CHECKED_PATHS=(crates fuzz scripts .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)
+readonly CHECKED_PATHS=(crates fuzz scripts tests .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)
+
+# The TypeScript kit's repository, and the commit whose
+# test/fixtures/hello.jsonl the server's tests/fixtures/kit-channel.jsonl is
+# a copy of (TODO-1537): the kit's test checks its fixture channel writes
+# those lines, the server's test serves them, and this step keeps the two
+# the same, so a change to either fails until both are taken.
+kit="${NEOTELETEXT_TS_PROTOCOL:-$HOME/devel/neoteletext-server-ts-protocol}"
+readonly KIT_FIXTURE_FROM="a129389e3c055d8f93635c96f465e694cc4ca948"
+readonly KIT_FIXTURE_COPY="tests/fixtures/kit-channel.jsonl"
+kit_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$kit" "$@"; }
+
+check_kit_fixture() {
+    step "$KIT_FIXTURE_COPY is the TypeScript kit's test/fixtures/hello.jsonl at ${KIT_FIXTURE_FROM:0:7}"
+    kit_git rev-parse --git-dir >/dev/null 2>&1 || fail "the TypeScript kit's repository is needed at $kit (or NEOTELETEXT_TS_PROTOCOL) to check the fixture's copy"
+    kit_git cat-file -e "$KIT_FIXTURE_FROM:test/fixtures/hello.jsonl" 2>/dev/null || fail "$kit has no test/fixtures/hello.jsonl at $KIT_FIXTURE_FROM"
+    cmp -s "$KIT_FIXTURE_COPY" <(kit_git show "$KIT_FIXTURE_FROM:test/fixtures/hello.jsonl") ||
+        fail "$KIT_FIXTURE_COPY differs from the kit's test/fixtures/hello.jsonl at $KIT_FIXTURE_FROM; copy that file, or name in scripts/check.sh the commit the copy is from"
+}
 
 . scripts/gate.sh
 
@@ -81,6 +99,7 @@ check_no_agent_text() {
 
 check_workspace() {
     check_engine_pin
+    check_kit_fixture
     check_no_agent_text
     step "lockfiles up to date"
     cargo metadata --quiet --locked --format-version 1 >/dev/null
