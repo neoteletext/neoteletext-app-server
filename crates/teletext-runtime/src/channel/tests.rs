@@ -1148,3 +1148,16 @@ fn record_ids_run_on_with_no_gap() {
     assert_eq!(ids, (0..u8::try_from(ids.len()).unwrap()).collect::<Vec<_>>());
     assert!(ids.len() >= 2, "WELCOME and DENIED: {ids:?}");
 }
+
+/// TODO-2135 item 10: the focus a receiver gives before the program is told
+/// of the connection reaches the program once it is, after `connected`.
+#[test]
+fn focus_before_the_first_selection_reaches_the_program() {
+    let mut channel = held();
+    channel.received(CONNECTION, &message(&[hello(), Item::Event(Event::FocusIn)]), 0);
+    assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "the program does not know the connection yet");
+    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 1);
+    let lines = told(&channel.take_effects());
+    let kinds: Vec<(&Value, &Value)> = lines.iter().map(|line| (&line["type"], &line["event"]["kind"])).collect();
+    assert_eq!(kinds, [(&json!("connected"), &Value::Null), (&json!("input"), &json!("focus"))]);
+}

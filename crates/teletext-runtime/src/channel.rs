@@ -296,6 +296,9 @@ struct Connection {
     welcomed: bool,
     /// The capabilities WELCOME agreed, once HELLO has come.
     agreed: Option<u32>,
+    /// The focus last given before the program knew the connection or its
+    /// selection: true for `FOCUS_IN`.
+    focus_untold: Option<bool>,
     /// The selection and query a page redirect gave, until the receiver's
     /// next SELECT, which repeats it.
     redirected: Option<(Selection, Option<String>)>,
@@ -346,6 +349,7 @@ impl Connection {
             cookies,
             welcomed: false,
             agreed: None,
+            focus_untold: None,
             redirected: None,
             acked: 0,
             held: Held::new(),
@@ -722,6 +726,18 @@ impl Channel {
             query: state.parameters.clone(),
         };
         self.tell(&ServerMessage::Connected(message));
+        self.tell_focus(connection);
+    }
+
+    /// Tells the program the focus `connection` had before the program knew
+    /// it or its selection, once both are so.
+    fn tell_focus(&mut self, connection: ConnectionId) {
+        let Some(state) = self.connections.get_mut(&connection) else { return };
+        let (true, Some(selection)) = (state.announced, state.selection) else { return };
+        let Some(focused) = state.focus_untold.take() else { return };
+        let event = if focused { protocol::InputEvent::Focus } else { protocol::InputEvent::Blur };
+        count(&mut self.stats.inputs);
+        self.tell(&ServerMessage::Input(InputMessage { connection, page: selection.page, sub: selection.sub, lost: false, event }));
     }
 
     /// A connection the host numbered `connection` opened for `session`,
@@ -963,6 +979,16 @@ impl Channel {
             return;
         }
         let Some(input) = Input::of(item) else { return };
+        // Focus before the program was told of the connection, or before it
+        // has a selection, is kept and told once both are so (TODO-2135
+        // item 10), so a program learns the first focus.
+        if let Input::FocusIn | Input::FocusOut = input
+            && let Some(state) = self.connections.get_mut(&connection)
+            && (!state.announced || state.selection.is_none())
+        {
+            state.focus_untold = Some(matches!(input, Input::FocusIn));
+            return;
+        }
         let Some(event) = input.event() else { return };
         let on = stamp.map(|on| (on.page, on.sub)).or_else(|| selection.map(|selection| (selection.page.0, selection.sub.0)));
         let Some((page, sub)) = on else { return };
@@ -1105,6 +1131,7 @@ impl Channel {
         }
         let path = selection.path();
         self.tell(&ServerMessage::Selected(Selected { connection, request, path, page: selection.page, sub: selection.sub, query: parameters }));
+        self.tell_focus(connection);
     }
 
     /// The cursor record says what was acted on, alone: nothing was published
@@ -1308,6 +1335,7 @@ impl Channel {
             && state.selection.is_none()
         {
             state.selection = Some(Selection { page: page.page, sub: ANY_SUBPAGE });
+            self.tell_focus(reply.connection);
         }
         let magazines = reply.magazines;
         self.send_records(&[reply.connection], kind, |state| {
