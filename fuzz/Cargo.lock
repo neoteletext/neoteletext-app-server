@@ -532,6 +532,7 @@ dependencies = [
  "hyper-util",
  "listenfd",
  "neoteletext-core",
+ "neoteletext-input",
  "neoteletext-web",
  "teletext-runtime",
  "tokio",

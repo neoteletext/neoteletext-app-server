@@ -27,6 +27,12 @@ fuzz_seconds="${TELETEXT_FUZZ_SECONDS:-20}"
 readonly WASM_TARGET="wasm32-unknown-unknown"
 # The crates that build for WebAssembly: everything a Worker links.
 readonly WASM_CRATES=(teletext-runtime teletext-cloudflare)
+# The native server's systems besides the one the gate runs on
+# (requirement 1.1, REQ-1020): each is type-checked by the full gate, so a
+# `cfg` that stops compiling on a system is found without that system.
+# Each is in rust-toolchain.toml's targets. Built and tested on each by
+# hand, as REQ-1020's State records (TODO-2055).
+readonly NATIVE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
 # What the gates read.
 readonly CHECKED_PATHS=(crates fuzz scripts tests .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)
 
@@ -144,6 +150,11 @@ check_fuzz() {
 }
 
 full_steps() {
+    local target
+    for target in "${NATIVE_TARGETS[@]}"; do
+        step "the native server type-checks for $target"
+        cargo check --quiet --locked -p teletext-native --all-targets --target "$target"
+    done
     step "documentation tests"
     cargo test --quiet --workspace --doc
     step "documentation builds, warnings as errors"

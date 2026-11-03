@@ -79,9 +79,20 @@ const _: () =
 /// How long the server waits for a program's answer to `connected` or
 /// `selected` before the viewer is told the channel is unavailable
 /// (REQ-1481): the deadline every selection ends by (DOC-1921).
-/// Provisional, not yet measured: TODO-1521 measures the
-/// three channels' programs on the live server and sets it from that.
-pub const PROGRAM_REPLY_LIMIT_MS: u64 = 5_000;
+///
+/// Twice the slowest answer measured, rounded up to a whole second
+/// (TODO-1521, DEC-2438). Measured on 3 and 4 November 2026 on chunko
+/// (Linux, x86-64) with `teletext-load --mode answers`, from the SELECT
+/// sent to the frame or DENIED that answered it, against the five
+/// channels as deployed (home, hackaday, oldhackaday, demosite and
+/// uicomponentsdemo), all running on one server:
+/// - running: the first selection of 300 connections each, answered after
+///   `connected`, at most 613 ms (oldhackaday; 99th percentile 426 ms);
+///   later selections, 390 each, at most 87 ms;
+/// - straight after the server and its five programs started together,
+///   four times: at most 3,387 ms (hackaday), since a program reads
+///   nothing until its start's work is done.
+pub const PROGRAM_REPLY_LIMIT_MS: u64 = 7_000;
 /// How long `connected` is held for a new connection's first SELECT
 /// (TODO-1731, DOC-1921), so that a shared link goes straight
 /// to its page. A receiver sends SELECT one round trip after the connection

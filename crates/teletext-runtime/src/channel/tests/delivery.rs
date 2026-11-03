@@ -5,6 +5,7 @@
 //! the engine's own readers.
 
 use alloc::vec;
+extern crate std;
 
 use neoteletext_core::consts::{C4_ERASE, COLUMNS, PACKET_BYTES};
 use neoteletext_core::packet::{Decoded, Packet, decode, decode_address, encode, is_valid_stream_packet};
@@ -992,4 +993,96 @@ fn the_kits_fixture_channel_is_served_as_the_kit_means_it() {
 /// `value` as a line from the program.
 fn line_of(value: &Value) -> Vec<u8> {
     line(value)
+}
+
+/// What one connection's `Effect::Send`s cost on the WebSocket: each is cut
+/// into messages as the native host cuts it (`frame::messages`), and each
+/// message carries a server frame's header of RFC 6455 section 5.2, which
+/// is unmasked: 2 bytes, then 2 more for a length above 125 and 8 more for
+/// one above 65,535.
+fn wire_bytes(effects: &[Effect], connection: u64) -> usize {
+    /// The header of a frame of at most 125 bytes (RFC 6455 section 5.2).
+    const SHORT_HEADER: usize = 2;
+    /// The longest payload the 7-bit length holds.
+    const SHORT_LENGTH: usize = 125;
+    /// The 16-bit extended length's bytes.
+    const LENGTH_16_BYTES: usize = 2;
+    /// The 64-bit extended length's bytes.
+    const LENGTH_64_BYTES: usize = 8;
+    effects
+        .iter()
+        .filter_map(|effect| if let Effect::Send { connection: to, bytes } = effect { (*to == connection).then_some(bytes) } else { None })
+        .flat_map(|bytes| crate::frame::messages(bytes, crate::frame::MOST_MESSAGE_BYTES))
+        .map(|message| {
+            let extended = if message.len() <= SHORT_LENGTH {
+                0
+            } else if u16::try_from(message.len()).is_ok() {
+                LENGTH_16_BYTES
+            } else {
+                LENGTH_64_BYTES
+            };
+            SHORT_HEADER.saturating_add(extended).saturating_add(message.len())
+        })
+        .sum()
+}
+
+/// TODO-1297, REQ-1032, DEC-1076 (STANDARD-LIMITS item 15): the bytes one
+/// viewer's WebSocket carries for each action on a page of the most
+/// sub-pages, every row of each sub-page written. It prints the figures,
+/// recorded in `IMPLEMENTATION-LOG.md`, and holds each action to its
+/// budget: nothing for sub-pages the viewer does not show, one whole
+/// sub-page and its list for a selection, one sub-page for a step, and a
+/// fraction of the sub-page for a change of one row.
+#[test]
+fn the_bytes_on_the_wire_for_each_action_on_a_page_of_the_most_sub_pages() {
+    let subs: Vec<u16> = (0..=0x3F7E_u16).filter(|sub| sub & UNUSED_SUB_CODE_BIT == 0).take(MOST_SUBPAGES).collect();
+    assert_eq!(subs.len(), MOST_SUBPAGES);
+    let row = base64(&[b'A'; COLUMNS]);
+    let full = |sub: u16| {
+        let rows: Vec<Value> = (0..25).map(|_| json!(row)).collect();
+        with(&with(&without_links(), "/rows", Value::Array(rows)), "/sub", json!(alloc::format!("{sub:04X}")))
+    };
+    let mut channel = viewers(&[(1, 0x200, ANY)]);
+
+    // 1. The program sends every sub-page while the viewer shows page 200.
+    for &sub in &subs {
+        channel.from_program(&change(&full(sub)), 1);
+    }
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), 0);
+    let published = wire_bytes(&effects, 1);
+
+    // 2. The viewer selects page 100: one sub-page and the list of all.
+    channel.received(1, &message(&[select(0x100, ANY)]), 2);
+    let _ = channel.take_effects();
+    channel.from_program(&answer(1, 2, &full(subs[0])), 3);
+    channel.from_program(&list(1, 2, subs.iter().copied()), 3);
+    let effects = channel.take_effects();
+    let selecting = wire_bytes(&effects, 1);
+    let list_records = lists(&sent_to(&effects, 1)).len();
+
+    // 3. The viewer steps to the next sub-page; the list's version is held.
+    channel.received(1, &message(&[select(0x100, subs[1])]), 4);
+    let _ = channel.take_effects();
+    channel.from_program(&answer(1, 3, &full(subs[1])), 5);
+    let stepping = wire_bytes(&channel.take_effects(), 1);
+
+    // 4. The program changes one row of the sub-page shown.
+    let changed_row = with(&full(subs[1]), "/rows/5", json!(base64(&[b'B'; COLUMNS])));
+    channel.from_program(&change(&changed_row), 6);
+    let changing = wire_bytes(&channel.take_effects(), 1);
+
+    std::println!(
+        "page of {MOST_SUBPAGES} sub-pages, bytes on the viewer's WebSocket: published while not shown {published}; \
+         selected {selecting} (one sub-page and its list, in {list_records} SUBPAGES records); stepped {stepping}; one row changed {changing}"
+    );
+    assert_eq!(published, 0, "sub-pages the viewer does not show cost nothing");
+    // A step is one sub-page: its header, its 24 rows, and the few packets
+    // of its links and the frame's own records, in one message.
+    assert!(stepping <= 32 * PACKET_BYTES, "{stepping}: one sub-page, and no list again");
+    // The list adds a few bytes a sub-code to that one sub-page.
+    assert!(selecting <= stepping + MOST_SUBPAGES * 4, "{selecting}: one sub-page and a list of a few bytes a sub-code");
+    // A change of one row is the header, that row and the records that
+    // follow every frame, a fraction of the whole sub-page.
+    assert!(changing * 4 <= stepping, "{changing}: the header and the changed row, not the sub-page");
 }

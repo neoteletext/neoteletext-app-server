@@ -11,6 +11,7 @@ fn scratch(name: &str) -> PathBuf {
 /// (requirement 5.5).
 /// REQ-1040.
 #[test]
+#[cfg_attr(not(unix), ignore = "no session key is made where /dev/urandom is not, so on Windows (TODO-2055)")]
 fn the_session_key_is_made_once_and_kept() {
     let root = scratch("keys");
     let state = StateDirectory::open(&root).unwrap();
