@@ -142,6 +142,7 @@ fn metrics_are_in_the_prometheus_text_format() {
         ("teletext_channel_inputs_total", "counter"),
         ("teletext_channel_keys_total", "counter"),
         ("teletext_channel_pages_sent_total", "counter"),
+        ("teletext_channel_subpages_not_forwarded_total", "counter"),
         ("teletext_channel_redirects_total", "counter"),
         ("teletext_channel_sound_records_total", "counter"),
         ("teletext_channel_program_lines_sent_total", "counter"),

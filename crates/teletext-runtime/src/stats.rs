@@ -25,6 +25,10 @@ pub struct ChannelStats {
     pub keys: u64,
     /// Pages sent to a connection, each copy counted.
     pub pages_sent: u64,
+    /// Sub-pages a program sent to connections it named whose selection
+    /// they were not, so not forwarded (REQ-1473). A page sent to every
+    /// connection is not counted: most of them select something else.
+    pub subpages_not_forwarded: u64,
     /// Lines from the program refused (REQ-1475).
     pub refused: u64,
     /// Packets not sent because they failed the stream's packet check: a

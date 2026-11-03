@@ -1145,7 +1145,8 @@ impl Channel {
             ProgramMessage::Reply(reply) => self.reply(reply)?,
             ProgramMessage::Page(message) => {
                 let targets = self.targets(&message.connections);
-                self.send_page(&targets, message.request, &message.page);
+                let named = matches!(message.connections, Connections::Listed(_));
+                self.send_page(&targets, named, message.request, &message.page);
             }
             ProgramMessage::Subpages(list) => {
                 let page = list.page.0;
@@ -1254,7 +1255,7 @@ impl Channel {
             records::index(state.index_generation, &magazines, &mut state.record_id)
         })?;
         if let Some(page) = &reply.selected {
-            self.send_page(&[reply.connection], Some(reply.request), page);
+            self.send_page(&[reply.connection], true, Some(reply.request), page);
         }
         Ok(())
     }
@@ -1314,7 +1315,11 @@ impl Channel {
     /// `request` is the selection it answers. An unnumbered sub-page is a
     /// change, for what connections already show, so one still awaiting its
     /// answer is not sent it: that answer will be current.
-    fn send_page(&mut self, targets: &[ConnectionId], request: Option<RequestNumber>, page: &protocol::Page) {
+    ///
+    /// `named` says the program named `targets` itself, rather than sending
+    /// to every connection: a sub-page that is then not a target's selection
+    /// is the program's mistake, and is counted (REQ-1473).
+    fn send_page(&mut self, targets: &[ConnectionId], named: bool, request: Option<RequestNumber>, page: &protocol::Page) {
         let encoded = crate::page::encode(page);
         let (number, sub) = (page.page.0, page.sub.0);
         let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
@@ -1322,7 +1327,13 @@ impl Channel {
         for &connection in targets {
             let answers = request.is_none_or(|request| self.is_current(connection, request));
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            if !answers || (request.is_none() && state.ending.due().is_some()) || !state.shows(number, sub) {
+            if !answers || (request.is_none() && state.ending.due().is_some()) {
+                continue;
+            }
+            if !state.shows(number, sub) {
+                if named {
+                    count(&mut self.stats.subpages_not_forwarded);
+                }
                 continue;
             }
             state.selection = Some(Selection { page: page.page, sub: page.sub });

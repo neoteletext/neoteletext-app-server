@@ -199,6 +199,27 @@ fn a_page_for_all_reaches_only_its_selection() {
     assert_eq!(sends(&channel.take_effects()), 0, "a page nobody selected goes nowhere");
 }
 
+/// REQ-1473: a sub-page a program addresses to a connection whose selection it
+/// is not goes nowhere and is counted, as the program's mistake; one sent to
+/// every connection is not counted, since most of them show something else.
+#[test]
+fn a_sub_page_named_to_a_connection_that_does_not_show_it_is_counted() {
+    let mut channel = viewers(&[(1, 0x100, 0), (2, 0x200, 0)]);
+    channel.from_program(&answer(1, 1, &subpage()), 1);
+    channel.from_program(&answer(2, 1, &sub_page("200", "0000")), 1);
+    let _ = channel.take_effects();
+    let before = channel.stats().subpages_not_forwarded;
+    channel.from_program(&change(&changed(&sub_page("300", "0000"))), 2);
+    assert_eq!(channel.stats().subpages_not_forwarded, before, "a page sent to all is not a mistake");
+    let named = line(&json!({"type": "page", "connections": [1, 2], "page": changed(&sub_page("200", "0000"))}));
+    channel.from_program(&named, 3);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), 0);
+    assert!(sent_to(&effects, 1).is_empty(), "connection 1 shows page 100");
+    assert!(!sent_to(&effects, 2).is_empty(), "connection 2 shows page 200");
+    assert_eq!(channel.stats().subpages_not_forwarded, before + 1, "counted once, for connection 1");
+}
+
 /// REQ-1473 verification 7, REQ-1503 verification 3 and REQ-1480 verification
 /// 4's last part: a page's list reaches the connections on that page, once
 /// each at a version.
