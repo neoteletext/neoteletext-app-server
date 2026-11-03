@@ -109,6 +109,292 @@
       ],
       "type": "object"
     },
+    "ChannelCounts": {
+      "additionalProperties": false,
+      "description": "A channel's figures since the server started.",
+      "properties": {
+        "all_time": {
+          "$ref": "#/$defs/ChannelTotals",
+          "description": "Its totals since the server's state was first kept."
+        },
+        "inputs": {
+          "description": "Input events from viewers.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invalid_packets": {
+          "description": "Packets not sent because they failed the stream's check.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keys": {
+          "description": "Key presses among them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_dropped": {
+          "description": "Lines for it dropped because it fell behind.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_from_application": {
+          "description": "Lines from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_to_application": {
+          "description": "Lines sent to the program.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "most_opened": {
+          "description": "The pages opened most, the most opened first, at most ten.",
+          "items": {
+            "$ref": "#/$defs/PageOpens"
+          },
+          "type": "array"
+        },
+        "opens": {
+          "description": "Pages opened.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages_sent": {
+          "description": "Sub-pages sent to connections, each copy counted.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redirects": {
+          "description": "Viewers the program redirected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Lines from the program refused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_resumed": {
+          "description": "Sessions a viewer came back to.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_waiting": {
+          "description": "Sessions waiting for their viewer to come back.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sound_records": {
+          "description": "Audio records sent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_answers": {
+          "description": "Answers dropped for a selection already replaced.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_input": {
+          "description": "Input dropped for a page no longer selected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subpages_not_forwarded": {
+          "description": "Sub-pages the program sent to connections it named that did not\nshow them (REQ-1473).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers": {
+          "description": "Viewers connected now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers_peak": {
+          "description": "The most connected at once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers_total": {
+          "description": "Viewers that connected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "viewers",
+        "viewers_peak",
+        "viewers_total",
+        "opens",
+        "inputs",
+        "keys",
+        "pages_sent",
+        "subpages_not_forwarded",
+        "refused",
+        "invalid_packets",
+        "stale_input",
+        "stale_answers",
+        "redirects",
+        "sound_records",
+        "lines_to_application",
+        "lines_from_application",
+        "lines_dropped",
+        "sessions_waiting",
+        "sessions_resumed",
+        "most_opened",
+        "all_time"
+      ],
+      "type": "object"
+    },
+    "ChannelTotals": {
+      "additionalProperties": false,
+      "description": "A channel's figures accumulated across restarts.",
+      "properties": {
+        "inputs": {
+          "description": "Input events from viewers.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keys": {
+          "description": "Key presses among them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_dropped": {
+          "description": "Lines for it dropped.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_from_application": {
+          "description": "Lines from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lines_to_application": {
+          "description": "Lines sent to the program.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "opens": {
+          "description": "Pages opened.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pages_opened": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Each page's opens, by its number.",
+          "type": "object"
+        },
+        "pages_sent": {
+          "description": "Sub-pages sent to connections.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redirects": {
+          "description": "Viewers the program redirected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Lines from the program refused.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions_resumed": {
+          "description": "Sessions a viewer came back to.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sound_records": {
+          "description": "Audio records sent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_answers": {
+          "description": "Answers dropped for a selection already replaced.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_input": {
+          "description": "Input dropped for a page no longer selected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subpages_not_forwarded": {
+          "description": "Sub-pages sent to connections that did not show them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers_peak": {
+          "description": "The most connected at once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers_total": {
+          "description": "Viewers that connected.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "viewers_total",
+        "viewers_peak",
+        "opens",
+        "inputs",
+        "keys",
+        "pages_sent",
+        "subpages_not_forwarded",
+        "refused",
+        "stale_input",
+        "stale_answers",
+        "redirects",
+        "sound_records",
+        "lines_to_application",
+        "lines_from_application",
+        "lines_dropped",
+        "sessions_resumed",
+        "pages_opened"
+      ],
+      "type": "object"
+    },
     "CharacterSet": {
       "additionalProperties": false,
       "description": "The page's default character set (EN 300 706 clause 15, table 32).",
@@ -563,6 +849,67 @@
             "dx",
             "dy",
             "mods",
+            "column",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A contact after the first (the first goes as `mouse`), down, up,\nmoved or gone, over the page (REQ-1366, DOC-1938). Sent only on a\nconnection that agreed TOUCH.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/MouseAction",
+              "description": "What it did: `press` down, `release` up, `move`, or `gone` when\nthe receiver lost it."
+            },
+            "column": {
+              "description": "The cell's column, 0 to 39.",
+              "format": "uint8",
+              "maximum": 39,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "contact": {
+              "description": "The contact's number, the same from its beginning to its end.",
+              "format": "uint8",
+              "maximum": 9,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "touch",
+              "type": "string"
+            },
+            "px": {
+              "description": "The dot of the page image across, when the receiver knows it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "py": {
+              "description": "The dot down.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "row": {
+              "description": "The cell's row, 0 to 24.",
+              "format": "uint8",
+              "maximum": 24,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "contact",
             "column",
             "row"
           ],
@@ -1215,6 +1562,11 @@
           "const": "move",
           "description": "The pointer moved.",
           "type": "string"
+        },
+        {
+          "const": "gone",
+          "description": "The pointer left the page, or the receiver lost it, so that a\nchannel can stop showing what follows it (REQ-1355, REQ-1367). A\nbutton held is released first, marked `lost`; `gone` itself names no\nbutton.",
+          "type": "string"
         }
       ]
     },
@@ -1554,6 +1906,27 @@
       "description": "A page number: three hexadecimal digits in capitals, the magazine 1 to 8 first (EN 300 706 clause 7.1.2).",
       "pattern": "^[1-8][0-9A-F]{2}$",
       "type": "string"
+    },
+    "PageOpens": {
+      "additionalProperties": false,
+      "description": "A page and how often it was opened.",
+      "properties": {
+        "opens": {
+          "description": "Its opens.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "The page."
+        }
+      },
+      "required": [
+        "page",
+        "opens"
+      ],
+      "type": "object"
     },
     "ProgramMessage": {
       "description": "A message from a program to the server.",
@@ -2827,6 +3200,102 @@
       ],
       "type": "object"
     },
+    "ServerFigures": {
+      "additionalProperties": false,
+      "description": "The server's figures since it started.",
+      "properties": {
+        "all_time": {
+          "$ref": "#/$defs/ServerTotals",
+          "description": "Its totals since its state was first kept."
+        },
+        "bytes_sent": {
+          "description": "Bytes sent in them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "channels": {
+          "description": "Its channels.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections": {
+          "description": "WebSocket connections open now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections_peak": {
+          "description": "The most open at once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections_total": {
+          "description": "Connections made.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_kb": {
+          "description": "Its resident memory in kilobytes, or none where the system does not\nsay.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "messages_sent": {
+          "description": "WebSocket messages sent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requests": {
+          "description": "HTTP requests answered.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "restarts": {
+          "description": "Programs started again after they ended.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uptime_s": {
+          "description": "Seconds since it started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewers": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Each channel's viewers now, by the channel's folder.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "uptime_s",
+        "connections",
+        "connections_peak",
+        "connections_total",
+        "messages_sent",
+        "bytes_sent",
+        "requests",
+        "restarts",
+        "channels",
+        "viewers",
+        "all_time"
+      ],
+      "type": "object"
+    },
     "ServerMessage": {
       "description": "A message from the server to a program.",
       "oneOf": [
@@ -2852,7 +3321,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 10,
+              "const": 11,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -3103,9 +3572,11 @@
           "description": "The server's and the channel's figures, every ten seconds.",
           "properties": {
             "channel": {
+              "$ref": "#/$defs/ChannelCounts",
               "description": "The channel's figures."
             },
             "server": {
+              "$ref": "#/$defs/ServerFigures",
               "description": "The server's figures."
             },
             "type": {
@@ -3244,6 +3715,57 @@
         }
       ]
     },
+    "ServerTotals": {
+      "additionalProperties": false,
+      "description": "The server's figures accumulated across restarts.",
+      "properties": {
+        "bytes_sent": {
+          "description": "Bytes sent in them.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections_peak": {
+          "description": "The most open at once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections_total": {
+          "description": "Connections made.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messages_sent": {
+          "description": "WebSocket messages sent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requests": {
+          "description": "HTTP requests answered.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "restarts": {
+          "description": "Programs started again after they ended.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "connections_total",
+        "connections_peak",
+        "messages_sent",
+        "bytes_sent",
+        "requests",
+        "restarts"
+      ],
+      "type": "object"
+    },
     "Standard": {
       "additionalProperties": false,
       "description": "The standard's maxima (REQ-1031, `STANDARD-LIMITS.md` section 3).",
@@ -3260,8 +3782,20 @@
           "minimum": 0,
           "type": "integer"
         },
+        "link_target_bytes": {
+          "description": "The longest link target, in bytes (the engine's `LINK_TARGET_BYTES`).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "magazines": {
           "description": "Magazines 1 to 8 (EN 300 706 clause 7.1.2).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "numbered_subpages": {
+          "description": "Sub-pages automatic numbering can number: those above the set's last\ndecimal sub-code (the engine's `SUBCODES_ABOVE_SET`, EN 300 706 Annex\nA.1), so a kit numbering a page given whole stops there (TODO-2056).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3298,7 +3832,9 @@
         "pages_in_magazine_1",
         "keyable_pages",
         "subpages",
-        "decimal_subpages"
+        "decimal_subpages",
+        "numbered_subpages",
+        "link_target_bytes"
       ],
       "type": "object"
     },
@@ -3477,5 +4013,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 10"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 11"
 }

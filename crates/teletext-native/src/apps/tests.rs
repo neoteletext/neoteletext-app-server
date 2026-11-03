@@ -163,7 +163,7 @@ async fn lines_for_an_ended_program_are_dropped() {
     let (to, mut outgoing) = waiting::waiting();
     let (arrived, mut from) = mpsc::channel(ARRIVING_LINES);
     assert!(to.line(None, b"{\"type\":\"join\",\"session\":1}\n".to_vec()));
-    to.latest_move(1, b"{\"type\":\"input\"}\n".to_vec());
+    to.latest_move(1, 0, b"{\"type\":\"input\"}\n".to_vec());
     assert!(started(&arrived, &mut outgoing).await);
     assert!(matches!(from.recv().await, Some(FromApplication::Started)));
     drop(to);
@@ -313,13 +313,13 @@ async fn a_program_that_reads_slowly_is_given_the_latest_move() {
     stuck.push(b'\n');
     assert!(to.line(None, stuck.clone()));
     for position in 0..MOVES {
-        to.latest_move(CONNECTION, format!("move {position}\n").into_bytes());
+        to.latest_move(CONNECTION, 0, format!("move {position}\n").into_bytes());
         // The relay has its turn, and is stuck in the first line.
         tokio::task::yield_now().await;
     }
     assert!(to.line(Some(CONNECTION), b"key\n".to_vec()));
     for position in MOVES..2 * MOVES {
-        to.latest_move(CONNECTION, format!("move {position}\n").into_bytes());
+        to.latest_move(CONNECTION, 0, format!("move {position}\n").into_bytes());
     }
     let mut expected = stuck;
     expected.extend_from_slice(format!("move {}\nkey\nmove {}\n", MOVES - 1, 2 * MOVES - 1).as_bytes());

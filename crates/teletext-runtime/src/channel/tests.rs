@@ -245,7 +245,8 @@ fn focus_out_releases_what_is_held() {
 }
 
 /// REQ-207: a pointer's gone lets go of a held button with no click: a
-/// release marked lost, at the pointer's last place.
+/// release marked lost, at the pointer's last place; then the program is
+/// told the pointer is gone (protocol 11, TODO-2057 item 6).
 #[test]
 fn gone_releases_a_held_button_marked_lost() {
     let mut channel = selected();
@@ -253,8 +254,50 @@ fn gone_releases_a_held_button_marked_lost() {
     let _ = channel.take_effects();
     channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Gone, 1)]), 2);
     let lines = inputs(&channel.take_effects());
-    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines.len(), 2, "{lines:?}");
     assert_eq!((&lines[0]["event"]["action"], &lines[0]["event"]["column"], &lines[0]["lost"]), (&json!("release"), &json!(7), &json!(true)));
+    assert_eq!((&lines[1]["event"]["action"], &lines[1]["event"]["button"]), (&json!("gone"), &Value::Null));
+}
+
+/// TODO-2057 item 6: a pointer's gone with nothing held reaches the program
+/// as gone, so that it can stop showing what follows the pointer
+/// (REQ-1355, REQ-1367).
+#[test]
+fn gone_with_nothing_held_reaches_the_program() {
+    let mut channel = selected();
+    channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Gone, 0)]), 1);
+    let lines = inputs(&channel.take_effects());
+    let events: Vec<(&Value, &Value)> = lines.iter().map(|line| (&line["event"]["kind"], &line["event"]["action"])).collect();
+    assert_eq!(events, [(&json!("mouse"), &json!("gone"))]);
+}
+
+/// TODO-2057 item 5, REQ-1366: a contact after the first, on a connection
+/// that agreed TOUCH, reaches the program down, moved, up and gone, with its
+/// number; a contact held when the focus goes is released, marked lost.
+#[test]
+fn a_second_finger_reaches_the_program() {
+    let mut channel = held();
+    let touching = Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP | TOUCH_CAP, agent: None });
+    channel.received(CONNECTION, &message(&[touching, select(0x100, 0)]), 0);
+    assert_eq!(welcomed_caps(&channel.take_effects()) & TOUCH_CAP, TOUCH_CAP, "TOUCH agreed");
+    let finger = |action: MouseAction| Item::Event(Event::Touch(neoteletext_input::event::Touch { on: ON, action, id: 2, column: 5, row: 6, pixels: None }));
+    let mut seen = Vec::new();
+    for (now, action) in [(1, MouseAction::Press), (2_000, MouseAction::Move), (3_000, MouseAction::Release), (4_000, MouseAction::Gone)] {
+        channel.received(CONNECTION, &message(&[finger(action)]), now);
+        channel.deadline(now + 1_000);
+        seen.extend(
+            inputs(&channel.take_effects())
+                .into_iter()
+                .map(|line| (line["event"]["kind"].clone(), line["event"]["action"].clone(), line["event"]["contact"].clone())),
+        );
+    }
+    let expected: Vec<(Value, Value, Value)> = ["press", "move", "release", "gone"].iter().map(|action| (json!("touch"), json!(action), json!(2))).collect();
+    assert_eq!(seen, expected);
+    channel.received(CONNECTION, &message(&[finger(MouseAction::Press)]), 5_000);
+    let _ = channel.take_effects();
+    channel.received(CONNECTION, &message(&[Item::Event(Event::FocusOut)]), 5_001);
+    let lines = inputs(&channel.take_effects());
+    assert_eq!((&lines[0]["event"]["kind"], &lines[0]["event"]["action"], &lines[0]["lost"]), (&json!("touch"), &json!("release"), &json!(true)));
 }
 
 /// The capabilities a WELCOME among `effects` agrees.
@@ -291,10 +334,10 @@ fn a_connection_with_no_capability_is_shown_the_initial_page_and_heard() {
     assert_eq!(channel.stats().stale_input, 0);
 }
 
-/// DOC-1922, REQ-207: a connection that agreed neither TOUCH nor RESUME,
-/// whatever it offered, has the release of a press reach the program marked
-/// lost when the pointer goes: a pointer's gone needs no capability. Guards
-/// behaviour the code of 2 November 2026 had.
+/// DOC-1922, REQ-207: a connection that offered everything is agreed what
+/// the server uses, TOUCH among it and RESUME not, and has the release of a
+/// press reach the program marked lost when the pointer goes, then the gone:
+/// a pointer's gone needs no capability.
 #[test]
 fn gone_needs_no_capability_beyond_those_the_server_uses() {
     let mut channel = held();
@@ -302,13 +345,14 @@ fn gone_needs_no_capability_beyond_those_the_server_uses() {
     channel.received(CONNECTION, &message(&[everything, select(0x100, 0)]), 0);
     let agreed = welcomed_caps(&channel.take_effects());
     assert_eq!(agreed, USED, "as the server uses");
-    assert_eq!(agreed & (TOUCH_CAP | RESUME_CAP), 0, "neither TOUCH nor RESUME");
+    assert_eq!(agreed & (TOUCH_CAP | RESUME_CAP), TOUCH_CAP, "TOUCH and not RESUME");
     channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Press, 0)]), 1);
     assert_eq!(inputs(&channel.take_effects()).len(), 1);
     channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Gone, 1)]), 2);
     let lines = inputs(&channel.take_effects());
-    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines.len(), 2, "{lines:?}");
     assert_eq!((&lines[0]["event"]["action"], &lines[0]["event"]["button"], &lines[0]["lost"]), (&json!("release"), &json!(0), &json!(true)));
+    assert_eq!(lines[1]["event"]["action"], json!("gone"));
 }
 
 /// REQ-207: a program's page redirect is a selection, and lets go too.

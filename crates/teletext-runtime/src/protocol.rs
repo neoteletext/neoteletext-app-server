@@ -14,6 +14,7 @@
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -51,7 +52,7 @@ pub use read::{read, read_reporting, request_of};
 /// set of its language shows become a stand-in rather than a refusal, and
 /// bounds `measure`'s and `measured`'s request numbers above in the schema
 /// (DEC-2326, REQ-2150).
-pub const PROTOCOL: u32 = 10;
+pub const PROTOCOL: u32 = 11;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -352,7 +353,7 @@ pub enum ServerMessage {
     /// A session ended, five minutes after its last connection closed.
     Closed(Closed),
     /// The server's and the channel's figures, every ten seconds.
-    Stats(Stats),
+    Stats(Box<Stats>),
     /// A message the program sent was refused (REQ-1475).
     Refused(Refused),
     /// A web visitor or a search engine is at a page's address: answer with
@@ -467,6 +468,12 @@ pub struct Standard {
     pub subpages: u64,
     /// Sub-codes a viewer can key, 0001 to 3979.
     pub decimal_subpages: u64,
+    /// Sub-pages automatic numbering can number: those above the set's last
+    /// decimal sub-code (the engine's `SUBCODES_ABOVE_SET`, EN 300 706 Annex
+    /// A.1), so a kit numbering a page given whole stops there (TODO-2056).
+    pub numbered_subpages: u64,
+    /// The longest link target, in bytes (the engine's `LINK_TARGET_BYTES`).
+    pub link_target_bytes: u64,
 }
 
 /// The server's own bounds.
@@ -662,6 +669,27 @@ pub enum InputEvent {
         /// The dot down.
         py: Option<u32>,
     },
+    /// A contact after the first (the first goes as `mouse`), down, up,
+    /// moved or gone, over the page (REQ-1366, DOC-1938). Sent only on a
+    /// connection that agreed TOUCH.
+    Touch {
+        /// What it did: `press` down, `release` up, `move`, or `gone` when
+        /// the receiver lost it.
+        action: MouseAction,
+        /// The contact's number, the same from its beginning to its end.
+        #[schemars(range(min = 1, max = neoteletext_input::MAX_TOUCH_ID))]
+        contact: u8,
+        /// The cell's column, 0 to 39.
+        #[schemars(range(max = LAST_COLUMN))]
+        column: u8,
+        /// The cell's row, 0 to 24.
+        #[schemars(range(max = LAST_ROW))]
+        row: u8,
+        /// The dot of the page image across, when the receiver knows it.
+        px: Option<u32>,
+        /// The dot down.
+        py: Option<u32>,
+    },
     /// The pointer came onto one of the page's controls, or went off it.
     Hover {
         /// Which.
@@ -723,6 +751,11 @@ pub enum MouseAction {
     Release,
     /// The pointer moved.
     Move,
+    /// The pointer left the page, or the receiver lost it, so that a
+    /// channel can stop showing what follows it (REQ-1355, REQ-1367). A
+    /// button held is released first, marked `lost`; `gone` itself names no
+    /// button.
+    Gone,
 }
 
 /// The pointer came onto a control or went off it.
@@ -768,14 +801,163 @@ pub struct Closed {
     pub session: SessionId,
 }
 
-/// `stats`: the figures of DOC-1968.
-#[derive(Clone, PartialEq, Debug, Serialize, JsonSchema)]
+/// `stats`: the figures of DOC-1968, every one named and unsigned
+/// (TODO-1525 item 1). Counts only: nothing that identifies a viewer.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Stats {
     /// The server's figures.
-    pub server: serde_json::Value,
+    pub server: ServerFigures,
     /// The channel's figures.
-    pub channel: serde_json::Value,
+    pub channel: ChannelCounts,
+}
+
+/// The server's figures since it started.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ServerFigures {
+    /// Seconds since it started.
+    pub uptime_s: u64,
+    /// WebSocket connections open now.
+    pub connections: u64,
+    /// The most open at once.
+    pub connections_peak: u64,
+    /// Connections made.
+    pub connections_total: u64,
+    /// WebSocket messages sent.
+    pub messages_sent: u64,
+    /// Bytes sent in them.
+    pub bytes_sent: u64,
+    /// HTTP requests answered.
+    pub requests: u64,
+    /// Programs started again after they ended.
+    pub restarts: u64,
+    /// Its resident memory in kilobytes, or none where the system does not
+    /// say.
+    pub memory_kb: Option<u64>,
+    /// Its channels.
+    pub channels: u64,
+    /// Each channel's viewers now, by the channel's folder.
+    pub viewers: BTreeMap<String, u64>,
+    /// Its totals since its state was first kept.
+    pub all_time: ServerTotals,
+}
+
+/// The server's figures accumulated across restarts.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ServerTotals {
+    /// Connections made.
+    pub connections_total: u64,
+    /// The most open at once.
+    pub connections_peak: u64,
+    /// WebSocket messages sent.
+    pub messages_sent: u64,
+    /// Bytes sent in them.
+    pub bytes_sent: u64,
+    /// HTTP requests answered.
+    pub requests: u64,
+    /// Programs started again after they ended.
+    pub restarts: u64,
+}
+
+/// A channel's figures since the server started.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelCounts {
+    /// Viewers connected now.
+    pub viewers: u64,
+    /// The most connected at once.
+    pub viewers_peak: u64,
+    /// Viewers that connected.
+    pub viewers_total: u64,
+    /// Pages opened.
+    pub opens: u64,
+    /// Input events from viewers.
+    pub inputs: u64,
+    /// Key presses among them.
+    pub keys: u64,
+    /// Sub-pages sent to connections, each copy counted.
+    pub pages_sent: u64,
+    /// Sub-pages the program sent to connections it named that did not
+    /// show them (REQ-1473).
+    pub subpages_not_forwarded: u64,
+    /// Lines from the program refused.
+    pub refused: u64,
+    /// Packets not sent because they failed the stream's check.
+    pub invalid_packets: u64,
+    /// Input dropped for a page no longer selected.
+    pub stale_input: u64,
+    /// Answers dropped for a selection already replaced.
+    pub stale_answers: u64,
+    /// Viewers the program redirected.
+    pub redirects: u64,
+    /// Audio records sent.
+    pub sound_records: u64,
+    /// Lines sent to the program.
+    pub lines_to_application: u64,
+    /// Lines from it.
+    pub lines_from_application: u64,
+    /// Lines for it dropped because it fell behind.
+    pub lines_dropped: u64,
+    /// Sessions waiting for their viewer to come back.
+    pub sessions_waiting: u64,
+    /// Sessions a viewer came back to.
+    pub sessions_resumed: u64,
+    /// The pages opened most, the most opened first, at most ten.
+    pub most_opened: Vec<PageOpens>,
+    /// Its totals since the server's state was first kept.
+    pub all_time: ChannelTotals,
+}
+
+/// A page and how often it was opened.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PageOpens {
+    /// The page.
+    pub page: PageNumber,
+    /// Its opens.
+    pub opens: u64,
+}
+
+/// A channel's figures accumulated across restarts.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelTotals {
+    /// Viewers that connected.
+    pub viewers_total: u64,
+    /// The most connected at once.
+    pub viewers_peak: u64,
+    /// Pages opened.
+    pub opens: u64,
+    /// Input events from viewers.
+    pub inputs: u64,
+    /// Key presses among them.
+    pub keys: u64,
+    /// Sub-pages sent to connections.
+    pub pages_sent: u64,
+    /// Sub-pages sent to connections that did not show them.
+    pub subpages_not_forwarded: u64,
+    /// Lines from the program refused.
+    pub refused: u64,
+    /// Input dropped for a page no longer selected.
+    pub stale_input: u64,
+    /// Answers dropped for a selection already replaced.
+    pub stale_answers: u64,
+    /// Viewers the program redirected.
+    pub redirects: u64,
+    /// Audio records sent.
+    pub sound_records: u64,
+    /// Lines sent to the program.
+    pub lines_to_application: u64,
+    /// Lines from it.
+    pub lines_from_application: u64,
+    /// Lines for it dropped.
+    pub lines_dropped: u64,
+    /// Sessions a viewer came back to.
+    pub sessions_resumed: u64,
+    /// Each page's opens, by its number.
+    pub pages_opened: BTreeMap<String, u64>,
 }
 
 /// `refused` (REQ-1475).
@@ -1904,6 +2086,23 @@ pub fn line(message: &ServerMessage) -> Vec<u8> {
     // The types serialise without fail: no maps with other than string
     // keys, no floats.
     let mut bytes = serde_json::to_vec(message).unwrap_or_default();
+    bytes.push(b'\n');
+    bytes
+}
+
+/// `/stats.json`'s document: the server's figures and each channel's, by
+/// folder, from the same types as `stats` (DOC-1968).
+#[must_use]
+pub fn figures_document(server: &ServerFigures, channels: &BTreeMap<String, ChannelCounts>) -> Vec<u8> {
+    #[derive(Serialize)]
+    struct Document<'a> {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        server: &'a ServerFigures,
+        channels: &'a BTreeMap<String, ChannelCounts>,
+    }
+    // As `line`: these types serialise without fail.
+    let mut bytes = serde_json::to_vec(&Document { kind: "stats", server, channels }).unwrap_or_default();
     bytes.push(b'\n');
     bytes
 }

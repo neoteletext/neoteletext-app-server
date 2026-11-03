@@ -90,6 +90,22 @@ pub enum Input<'a> {
         /// Where, and the modifier keys held.
         at: Point,
     },
+    /// The pointer left the page, or the receiver lost it (MOUSE action 3,
+    /// DOC-1938), so that a channel can stop showing what follows it
+    /// (REQ-1355, REQ-1367).
+    Gone {
+        /// Where it last was, and the modifier keys held.
+        at: Point,
+    },
+    /// A contact after the first: down, up, moved or gone (TOUCH, REQ-1366).
+    Touch {
+        /// What it did, as MOUSE's actions.
+        action: EventMouseAction,
+        /// Its number, 1 to the engine's `MAX_TOUCH_ID`.
+        contact: u8,
+        /// Where.
+        at: Point,
+    },
     /// The pointer moved over the page: every move that changes the dot
     /// under it, a button held or not (DOC-1945).
     Moved {
@@ -140,9 +156,12 @@ impl<'a> Input<'a> {
         match *item {
             Item::Text(text) => Some(Self::Text(text)),
             Item::Event(Event::Key(key)) => Some(Self::Key { action: key.action, key: Named::of(key.key), mods: key.mods, text: key.text, base: key.base }),
-            // Gone is not a release (DOC-1938, MOUSE action 3): the protocol
-            // for programs has no event for it, so they are not told.
-            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Gone => None,
+            // Gone is not a release (DOC-1938, MOUSE action 3): a program is
+            // told it as gone (protocol 11).
+            Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Gone => Some(Self::Gone { at: mouse.at }),
+            Item::Event(Event::Touch(touch)) => {
+                Some(Self::Touch { action: touch.action, contact: touch.id, at: Point { column: touch.column, row: touch.row, pixels: touch.pixels, mods: 0 } })
+            }
             Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move => Some(Self::Moved { buttons: mouse.button, at: mouse.at }),
             Item::Event(Event::Mouse(mouse)) => Some(Self::Mouse { pressed: mouse.action == EventMouseAction::Press, button: mouse.button, at: mouse.at }),
             Item::Event(Event::Wheel(wheel)) => Some(Self::Wheel { dx: wheel.dx, dy: wheel.dy, at: wheel.at }),
@@ -196,10 +215,11 @@ pub(crate) const fn stamp(item: &Item<'_>) -> Option<Stamp> {
 }
 
 /// Whether an item is a pointer's move, which goes through its connection's
-/// pace (REQ-1360): a contact's would too, had a program any (TODO-1525).
+/// pace (REQ-1360), a contact's in its own slot (DEC-2137).
 #[must_use]
 pub(crate) fn is_move(item: &Item<'_>) -> bool {
     matches!(item, Item::Event(Event::Mouse(mouse)) if mouse.action == EventMouseAction::Move)
+        || matches!(item, Item::Event(Event::Touch(touch)) if touch.action == EventMouseAction::Move)
 }
 
 /// Whether an item lets go of something: never dropped for its stamp, so
@@ -220,9 +240,9 @@ pub(crate) const fn marked_lost(item: &Item<'_>) -> bool {
     matches!(item, Item::Event(Event::Key(key)) if key.lost)
 }
 
-/// A release the page lost, as the protocol sends it, or none for a TOUCH
-/// contact, which programs are not told of (TODO-1525). `at` is where the
-/// pointer last was: a lost button has no place of its own.
+/// A release the page lost, as the protocol sends it: a contact's as a
+/// TOUCH release. `at` is where the pointer last was: a lost button or
+/// contact has no place of its own.
 #[must_use]
 pub(crate) fn lost_release(released: Released, at: (u8, u8)) -> Option<InputEvent> {
     match released {
@@ -242,7 +262,7 @@ pub(crate) fn lost_release(released: Released, at: (u8, u8)) -> Option<InputEven
                 py: None,
             })
         }
-        Released::Contact(_) => None,
+        Released::Contact(contact) => Some(InputEvent::Touch { action: MouseAction::Release, contact, column: at.0, row: at.1, px: None, py: None }),
     }
 }
 
@@ -287,6 +307,16 @@ fn dot(at: Point) -> Option<(Option<u32>, Option<u32>)> {
     let Some((across, down)) = at.pixels else { return Some((None, None)) };
     let within = |dot: u32, cell: u32, dots_per_cell: usize| matches!((usize::try_from(dot), usize::try_from(cell)), (Ok(dot), Ok(cell)) if dot.checked_div(dots_per_cell) == Some(cell));
     (within(across, at.column, CELL_WIDTH) && within(down, at.row, CELL_HEIGHT)).then_some((Some(across), Some(down)))
+}
+
+/// A MOUSE or TOUCH action as the protocol names it.
+const fn mouse_action(action: EventMouseAction) -> MouseAction {
+    match action {
+        EventMouseAction::Press => MouseAction::Press,
+        EventMouseAction::Release => MouseAction::Release,
+        EventMouseAction::Move => MouseAction::Move,
+        EventMouseAction::Gone => MouseAction::Gone,
+    }
 }
 
 /// A cell's column and row within the page's 40 by 25, or none: the
@@ -341,6 +371,16 @@ impl Input<'_> {
                 let held = Buttons { left: buttons & LEFT != 0, middle: buttons & MIDDLE != 0, right: buttons & RIGHT != 0 };
                 let (px, py) = dot(at)?;
                 InputEvent::Mouse { action: MouseAction::Move, button: None, buttons: Some(held), mods: at.mods, column, row, px, py }
+            }
+            Self::Gone { at } => {
+                let (column, row) = cell(at.column, at.row)?;
+                let (px, py) = dot(at)?;
+                InputEvent::Mouse { action: MouseAction::Gone, button: None, buttons: None, mods: at.mods, column, row, px, py }
+            }
+            Self::Touch { action, contact, at } => {
+                let (column, row) = cell(at.column, at.row)?;
+                let (px, py) = dot(at)?;
+                InputEvent::Touch { action: mouse_action(action), contact, column, row, px, py }
             }
             Self::Wheel { dx, dy, at } => {
                 let (column, row) = cell(at.column, at.row)?;

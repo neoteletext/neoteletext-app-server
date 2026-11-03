@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use teletext_runtime::ChannelStats;
 use teletext_runtime::json::{Value, Writer};
+use teletext_runtime::protocol::{self, ChannelCounts, ChannelTotals, PageNumber, PageOpens, ServerFigures, ServerMessage, ServerTotals, Stats};
 
 /// The upper bounds of the channel's time over an event, in microseconds
 /// (requirement 8.2): from what a key costs to what a whole channel's
@@ -128,6 +129,11 @@ impl Totals {
             *total = total.saturating_add(count);
         }
         Self { counts, opens }
+    }
+
+    /// The figure `name`, 0 when there is none yet.
+    fn get(&self, name: &str) -> u64 {
+        self.counts.get(name).copied().unwrap_or(0)
     }
 
     /// As a JSON object.
@@ -338,85 +344,96 @@ impl ServerStats {
         document.line()
     }
 
-    /// The server's figures, as an object.
+    /// The server's figures (DOC-1968), as the protocol types them.
     #[must_use]
-    pub fn server(&self) -> Writer {
-        let mut server = Writer::nested();
-        server
-            .integer("uptime_s", number(self.uptime_s()))
-            .integer("connections", number(load(&self.connections)))
-            .integer("connections_peak", number(load(&self.connections_peak)))
-            .integer("connections_total", number(load(&self.connections_total)))
-            .integer("messages_sent", number(load(&self.messages_sent)))
-            .integer("bytes_sent", number(load(&self.bytes_sent)))
-            .integer("requests", number(load(&self.requests)))
-            .integer("restarts", number(load(&self.restarts)))
-            .integer("memory_kb", memory_kb().map_or(-1, number));
+    pub fn server(&self) -> ServerFigures {
         let channels = self.channels.lock().unwrap_or_else(PoisonError::into_inner);
-        server.integer("channels", i64::try_from(channels.len()).unwrap_or(i64::MAX));
-        let mut viewers = Writer::nested();
-        for (folder, figures) in channels.iter() {
-            viewers.integer(folder, number(figures.stats.viewers));
-        }
-        server.object("viewers", viewers);
+        let viewers = channels.iter().map(|(folder, figures)| (folder.clone(), figures.stats.viewers)).collect();
+        let count = u64::try_from(channels.len()).unwrap_or(u64::MAX);
         drop(channels);
-        server.object("all_time", self.server_all_time().writer());
-        server
+        let all_time = self.server_all_time();
+        ServerFigures {
+            uptime_s: self.uptime_s(),
+            connections: load(&self.connections),
+            connections_peak: load(&self.connections_peak),
+            connections_total: load(&self.connections_total),
+            messages_sent: load(&self.messages_sent),
+            bytes_sent: load(&self.bytes_sent),
+            requests: load(&self.requests),
+            restarts: load(&self.restarts),
+            memory_kb: memory_kb(),
+            channels: count,
+            viewers,
+            all_time: ServerTotals {
+                connections_total: all_time.get("connections_total"),
+                connections_peak: all_time.get("connections_peak"),
+                messages_sent: all_time.get("messages_sent"),
+                bytes_sent: all_time.get("bytes_sent"),
+                requests: all_time.get("requests"),
+                restarts: all_time.get("restarts"),
+            },
+        }
     }
 
     /// The `stats` line for a channel's application (DOC-1964).
     #[must_use]
     pub fn line(&self, folder: &str, figures: &ChannelFigures) -> Vec<u8> {
-        let mut line = Writer::new("stats");
-        line.object("server", self.server()).object("channel", self.channel(folder, figures));
-        line.line()
+        protocol::line(&ServerMessage::Stats(Box::new(Stats { server: self.server(), channel: self.channel(folder, figures) })))
     }
 
     /// Every figure, for `/stats.json`.
     #[must_use]
     pub fn document(&self) -> Vec<u8> {
-        let mut document = Writer::new("stats");
-        document.object("server", self.server());
-        let mut channels = Writer::nested();
         let latest = self.channels.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        for (folder, figures) in &latest {
-            channels.object(folder, self.channel(folder, figures));
-        }
-        document.object("channels", channels);
-        document.line()
+        let channels: BTreeMap<String, ChannelCounts> = latest.iter().map(|(folder, figures)| (folder.clone(), self.channel(folder, figures))).collect();
+        protocol::figures_document(&self.server(), &channels)
     }
 
-    /// A channel's figures, as an object.
-    fn channel(&self, folder: &str, figures: &ChannelFigures) -> Writer {
+    /// A channel's figures, as the protocol types them.
+    fn channel(&self, folder: &str, figures: &ChannelFigures) -> ChannelCounts {
         let stats = &figures.stats;
-        let mut channel = Writer::nested();
-        channel
-            .integer("viewers", number(stats.viewers))
-            .integer("viewers_peak", number(stats.viewers_peak))
-            .integer("viewers_total", number(stats.viewers_total))
-            .integer("opens", number(stats.total_opens()))
-            .integer("inputs", number(stats.inputs))
-            .integer("keys", number(stats.keys))
-            .integer("pages_sent", number(stats.pages_sent))
-            .integer("subpages_not_forwarded", number(stats.subpages_not_forwarded))
-            .integer("refused", number(stats.refused))
-            .integer("invalid_packets", number(stats.invalid_packets))
-            .integer("stale_input", number(stats.stale_input))
-            .integer("stale_answers", number(stats.stale_answers))
-            .integer("redirects", number(stats.redirects))
-            .integer("sound_records", number(stats.sound_records))
-            .integer("lines_to_application", number(stats.lines_to_application))
-            .integer("lines_from_application", number(stats.lines_from_application))
-            .integer("lines_dropped", number(figures.lines_dropped))
-            .integer("sessions_waiting", number(stats.sessions_waiting))
-            .integer("sessions_resumed", number(stats.sessions_resumed));
-        let mut opened = Writer::nested();
-        for (page, opens) in stats.most_opened() {
-            opened.integer(&format!("{page:03X}"), number(opens));
+        let all_time = self.channel_all_time(folder, Some(figures));
+        ChannelCounts {
+            viewers: stats.viewers,
+            viewers_peak: stats.viewers_peak,
+            viewers_total: stats.viewers_total,
+            opens: stats.total_opens(),
+            inputs: stats.inputs,
+            keys: stats.keys,
+            pages_sent: stats.pages_sent,
+            subpages_not_forwarded: stats.subpages_not_forwarded,
+            refused: stats.refused,
+            invalid_packets: stats.invalid_packets,
+            stale_input: stats.stale_input,
+            stale_answers: stats.stale_answers,
+            redirects: stats.redirects,
+            sound_records: stats.sound_records,
+            lines_to_application: stats.lines_to_application,
+            lines_from_application: stats.lines_from_application,
+            lines_dropped: figures.lines_dropped,
+            sessions_waiting: stats.sessions_waiting,
+            sessions_resumed: stats.sessions_resumed,
+            most_opened: stats.most_opened().into_iter().map(|(page, opens)| PageOpens { page: PageNumber(page), opens }).collect(),
+            all_time: ChannelTotals {
+                viewers_total: all_time.get("viewers_total"),
+                viewers_peak: all_time.get("viewers_peak"),
+                opens: all_time.get("opens"),
+                inputs: all_time.get("inputs"),
+                keys: all_time.get("keys"),
+                pages_sent: all_time.get("pages_sent"),
+                subpages_not_forwarded: all_time.get("subpages_not_forwarded"),
+                refused: all_time.get("refused"),
+                stale_input: all_time.get("stale_input"),
+                stale_answers: all_time.get("stale_answers"),
+                redirects: all_time.get("redirects"),
+                sound_records: all_time.get("sound_records"),
+                lines_to_application: all_time.get("lines_to_application"),
+                lines_from_application: all_time.get("lines_from_application"),
+                lines_dropped: all_time.get("lines_dropped"),
+                sessions_resumed: all_time.get("sessions_resumed"),
+                pages_opened: all_time.opens.iter().map(|(&page, &opens)| (format!("{page:03X}"), opens)).collect(),
+            },
         }
-        channel.object("most_opened", opened);
-        channel.object("all_time", self.channel_all_time(folder, Some(figures)).writer());
-        channel
     }
 
     /// The figures at a glance, for the log's event once a minute.

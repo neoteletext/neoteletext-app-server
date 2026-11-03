@@ -22,8 +22,9 @@ use super::WAITING_LINES;
 struct Entry {
     /// What is written, with its newline.
     line: Vec<u8>,
-    /// The connection it is a move of; a line is of none.
-    move_of: Option<ConnectionId>,
+    /// The connection and pointer it is a move of (contact 0 the mouse or
+    /// first finger, then each later contact); a line is of none.
+    move_of: Option<Slot>,
 }
 
 /// Everything waiting: at most [`WAITING_LINES`] lines, at most as many
@@ -35,9 +36,13 @@ struct Queue {
     first: u64,
     /// The lines among `entries`.
     lines: usize,
-    /// Each connection's move a newer one may replace, by its number.
-    open: BTreeMap<ConnectionId, u64>,
+    /// Each pointer's move a newer one may replace, by its number.
+    open: BTreeMap<Slot, u64>,
 }
+
+/// A connection's pointer: its mouse or first finger as contact 0, and each
+/// later contact by its number (DEC-2137, TOUCH).
+type Slot = (ConnectionId, u8);
 
 impl Queue {
     fn line(&mut self, about: Option<ConnectionId>, line: Vec<u8>) -> bool {
@@ -45,35 +50,35 @@ impl Queue {
             return false;
         }
         if let Some(connection) = about {
-            self.open.remove(&connection);
+            self.open.retain(|&(of, _), _| of != connection);
         }
         self.lines = self.lines.saturating_add(1);
         self.entries.push_back(Entry { line, move_of: None });
         true
     }
 
-    fn latest_move(&mut self, connection: ConnectionId, line: Vec<u8>) {
-        if let Some(entry) = self.open_entry(connection) {
+    fn latest_move(&mut self, slot: Slot, line: Vec<u8>) {
+        if let Some(entry) = self.open_entry(slot) {
             entry.line = line;
             return;
         }
         let number = self.first.saturating_add(u64::try_from(self.entries.len()).unwrap_or(u64::MAX));
-        self.entries.push_back(Entry { line, move_of: Some(connection) });
-        self.open.insert(connection, number);
+        self.entries.push_back(Entry { line, move_of: Some(slot) });
+        self.open.insert(slot, number);
     }
 
-    /// `connection`'s open move.
-    fn open_entry(&mut self, connection: ConnectionId) -> Option<&mut Entry> {
-        let place = self.open.get(&connection)?.checked_sub(self.first)?;
+    /// `slot`'s open move.
+    fn open_entry(&mut self, slot: Slot) -> Option<&mut Entry> {
+        let place = self.open.get(&slot)?.checked_sub(self.first)?;
         self.entries.get_mut(usize::try_from(place).ok()?)
     }
 
     fn take(&mut self) -> Option<Vec<u8>> {
         let entry = self.entries.pop_front()?;
         match entry.move_of {
-            Some(connection) => {
-                if self.open.get(&connection) == Some(&self.first) {
-                    self.open.remove(&connection);
+            Some(slot) => {
+                if self.open.get(&slot) == Some(&self.first) {
+                    self.open.remove(&slot);
                 }
             }
             None => self.lines = self.lines.saturating_sub(1),
@@ -112,8 +117,8 @@ impl ToProgram {
     }
 
     /// `connection`'s latest move, which takes the place of one not taken.
-    pub fn latest_move(&self, connection: ConnectionId, line: Vec<u8>) {
-        held(&self.queue).latest_move(connection, line);
+    pub fn latest_move(&self, connection: ConnectionId, contact: u8, line: Vec<u8>) {
+        held(&self.queue).latest_move((connection, contact), line);
         self.wake();
     }
 
@@ -174,12 +179,12 @@ mod tests {
     fn the_latest_move_takes_the_place_of_those_not_taken() {
         let mut queue = Queue::default();
         for position in 0..1_000 {
-            queue.latest_move(ONE, format!("one {position}").into_bytes());
-            queue.latest_move(TWO, format!("two {position}").into_bytes());
+            queue.latest_move((ONE, 0), format!("one {position}").into_bytes());
+            queue.latest_move((TWO, 0), format!("two {position}").into_bytes());
         }
         assert_eq!(everything(&mut queue), [b"one 999".to_vec(), b"two 999".to_vec()]);
         assert!(queue.open.is_empty(), "nothing is left to replace");
-        queue.latest_move(ONE, b"later".to_vec());
+        queue.latest_move((ONE, 0), b"later".to_vec());
         assert_eq!(everything(&mut queue), [b"later".to_vec()], "a move after the last taken waits afresh");
     }
 
@@ -188,12 +193,12 @@ mod tests {
     #[test]
     fn a_line_about_a_connection_closes_its_move() {
         let mut queue = Queue::default();
-        queue.latest_move(ONE, b"move 1".to_vec());
-        queue.latest_move(TWO, b"other 1".to_vec());
+        queue.latest_move((ONE, 0), b"move 1".to_vec());
+        queue.latest_move((TWO, 0), b"other 1".to_vec());
         assert!(queue.line(Some(ONE), b"release".to_vec()));
-        queue.latest_move(ONE, b"move 2".to_vec());
-        queue.latest_move(ONE, b"move 3".to_vec());
-        queue.latest_move(TWO, b"other 2".to_vec());
+        queue.latest_move((ONE, 0), b"move 2".to_vec());
+        queue.latest_move((ONE, 0), b"move 3".to_vec());
+        queue.latest_move((TWO, 0), b"other 2".to_vec());
         assert_eq!(everything(&mut queue), [&b"move 1"[..], b"other 2", b"release", b"move 3"].map(<[u8]>::to_vec));
     }
 
@@ -201,10 +206,10 @@ mod tests {
     #[test]
     fn other_lines_leave_a_move_open() {
         let mut queue = Queue::default();
-        queue.latest_move(ONE, b"move 1".to_vec());
+        queue.latest_move((ONE, 0), b"move 1".to_vec());
         assert!(queue.line(None, b"stats".to_vec()));
         assert!(queue.line(Some(TWO), b"key".to_vec()));
-        queue.latest_move(ONE, b"move 2".to_vec());
+        queue.latest_move((ONE, 0), b"move 2".to_vec());
         assert_eq!(everything(&mut queue), [&b"move 2"[..], b"stats", b"key"].map(<[u8]>::to_vec));
     }
 
@@ -214,7 +219,7 @@ mod tests {
     fn moves_take_no_room_from_lines() {
         let mut queue = Queue::default();
         for connection in 1..=ConnectionId::try_from(WAITING_LINES * 2).unwrap() {
-            queue.latest_move(connection, b"move".to_vec());
+            queue.latest_move((connection, 0), b"move".to_vec());
         }
         for _ in 0..WAITING_LINES {
             assert!(queue.line(None, b"key".to_vec()), "every key fits");
@@ -230,11 +235,11 @@ mod tests {
     fn clearing_leaves_nothing_to_replace() {
         let mut queue = Queue::default();
         assert!(queue.line(None, b"key".to_vec()));
-        queue.latest_move(ONE, b"move".to_vec());
+        queue.latest_move((ONE, 0), b"move".to_vec());
         let _ = queue.take();
         queue.clear();
         assert_eq!(queue.lines, 0);
-        queue.latest_move(ONE, b"after".to_vec());
+        queue.latest_move((ONE, 0), b"after".to_vec());
         assert_eq!(everything(&mut queue), [b"after".to_vec()]);
     }
 
@@ -245,7 +250,7 @@ mod tests {
         assert_eq!(outgoing.next().await, Some(b"first".to_vec()));
         let later = {
             let to = to.clone();
-            tokio::spawn(async move { to.latest_move(ONE, b"second".to_vec()) })
+            tokio::spawn(async move { to.latest_move(ONE, 0, b"second".to_vec()) })
         };
         assert_eq!(outgoing.next().await, Some(b"second".to_vec()));
         later.await.unwrap();

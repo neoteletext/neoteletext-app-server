@@ -23,13 +23,13 @@ fn a_drag_is_input() {
     assert_eq!(Input::of(&Item::Event(Event::Mouse(pressed))), Some(Input::Mouse { pressed: true, button: 0, at }));
 }
 
-/// A pointer gone is not a release, which would click what it was over:
-/// an application is not told of it.
+/// A pointer gone is not a release, which would click what it was over: an
+/// application is told it as gone (protocol 11).
 #[test]
 fn a_pointer_gone_is_not_a_release() {
     let at = Point { column: 39, row: 12, pixels: None, mods: 0 };
     let gone = Mouse { on: ON, action: MouseAction::Gone, button: 1, at, device: Device::Mouse };
-    assert_eq!(Input::of(&Item::Event(Event::Mouse(gone))), None);
+    assert_eq!(Input::of(&Item::Event(Event::Mouse(gone))), Some(Input::Gone { at }));
 }
 
 /// A hover reaches an application with the control's first cell, entered

@@ -50,10 +50,13 @@ use crate::stats::{ChannelStats, count};
 const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
-/// (DOC-1922): the cursor record, and SELECT, the tab's
-/// selection (REQ-INT-140). There are no modes to agree: every event is
+/// (DOC-1922): the cursor record, SELECT, the tab's selection
+/// (REQ-INT-140), and TOUCH, contacts after the first (REQ-1366). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (DOC-1922).
-const USED: u32 = CURSOR_CAP | SELECT_CAP;
+const USED: u32 = CURSOR_CAP | SELECT_CAP | TOUCH_CAP;
+/// The move slot of the mouse, or of the first finger, which goes as MOUSE;
+/// a later contact's slot is its number, 1 and up (DEC-2137).
+const MOUSE_CONTACT: u8 = 0;
 
 /// How often the operator is told of input dropped for its stamp, at most
 /// (REQ-1557): the interval of invalid packets (REQ-1462).
@@ -224,6 +227,9 @@ pub enum Effect {
     MoveToProgram {
         /// The connection.
         connection: ConnectionId,
+        /// The pointer: 0 the mouse or first finger, else the TOUCH contact's
+        /// number, each with a slot of its own (DEC-2137).
+        contact: u8,
         /// The line.
         line: Vec<u8>,
     },
@@ -569,12 +575,13 @@ impl Channel {
 
     /// A pointer's move for the program, as it left its pace.
     fn tell_move(&mut self, connection: ConnectionId, event: Event<'static>) {
+        let contact = if let Event::Touch(touch) = event { touch.id } else { MOUSE_CONTACT };
         let item = Item::Event(event);
         let (Some(on), Some(moved)) = (input::stamp(&item), Input::of(&item).and_then(|input| input.event())) else { return };
         if self.program {
             count(&mut self.stats.lines_to_application);
             let message = InputMessage { connection, page: PageNumber(on.page), sub: protocol::SubCode(on.sub), lost: false, event: moved };
-            self.effects.push(Effect::MoveToProgram { connection, line: protocol::line(&ServerMessage::Input(message)) });
+            self.effects.push(Effect::MoveToProgram { connection, contact, line: protocol::line(&ServerMessage::Input(message)) });
         }
     }
 
@@ -917,6 +924,7 @@ impl Channel {
             (_, None) => false,
             (Item::Event(Event::Select(..)), Some(agreed)) => agreed & SELECT_CAP != 0,
             (Item::Event(Event::Mouse(mouse)), Some(agreed)) => mouse.device != Device::Touch || agreed & TOUCH_CAP != 0,
+            (Item::Event(Event::Touch(_)), Some(agreed)) => agreed & TOUCH_CAP != 0,
             _ => true,
         };
         if !in_order {
@@ -956,6 +964,18 @@ impl Channel {
         }
         if let Some(cell) = input::pointer_cell(item) {
             state.pointer = cell;
+        }
+        if let Item::Event(Event::Touch(touch)) = *item {
+            if touch.action == MouseAction::Gone {
+                state.moves.forget(usize::from(touch.id));
+            } else if touch.action == MouseAction::Move {
+                let offered = state.moves.offer(Event::Touch(touch), microseconds(now));
+                count(&mut self.stats.inputs);
+                if let Offer::Now(event) = offered {
+                    self.tell_move(connection, event);
+                }
+                return;
+            }
         }
         if let Item::Event(Event::Mouse(mouse)) = *item {
             if mouse.action == MouseAction::Gone {
@@ -1509,6 +1529,8 @@ fn standard() -> Standard {
         keyable_pages: wide(limits::KEYABLE_PAGES),
         subpages: wide(limits::MAX_SUBPAGES),
         decimal_subpages: wide(limits::DECIMAL_SUBCODES),
+        numbered_subpages: wide(limits::SUBCODES_ABOVE_SET),
+        link_target_bytes: wide(neoteletext_formats::page::LINK_TARGET_BYTES),
     }
 }
 

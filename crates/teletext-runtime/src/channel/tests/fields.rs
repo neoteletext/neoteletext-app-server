@@ -144,6 +144,9 @@ fn a_lost_release_has_no_modifiers_or_dot() {
     let mut channel = selected();
     channel.received(CONNECTION, &message(&[pointer(MouseAction::Press, 0, Some(DOT), HELD)]), 1);
     let _ = channel.take_effects();
-    let event = event_of(&mut channel, pointer(MouseAction::Gone, 1, Some(DOT), HELD), 2);
-    assert_eq!((&event["mods"], &event["px"], &event["py"]), (&json!(0), &Value::Null, &Value::Null));
+    channel.received(CONNECTION, &message(&[pointer(MouseAction::Gone, 1, Some(DOT), HELD)]), 2);
+    let lines = inputs(&channel.take_effects());
+    let event = &lines[0]["event"];
+    assert_eq!((&event["action"], &event["mods"], &event["px"], &event["py"]), (&json!("release"), &json!(0), &Value::Null, &Value::Null));
+    assert_eq!((&lines[1]["event"]["action"], &lines[1]["event"]["mods"]), (&json!("gone"), &json!(HELD)), "the gone itself has them");
 }

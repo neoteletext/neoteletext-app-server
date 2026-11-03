@@ -41,12 +41,13 @@ fn a_channels_figures_reach_its_line_and_the_document() {
     assert_eq!(channel.get("keys").and_then(Value::integer), Some(42));
     assert_eq!(channel.get("opens").and_then(Value::integer), Some(16));
     assert_eq!(channel.get("lines_dropped").and_then(Value::integer), Some(2));
-    let Some(Value::Object(most)) = channel.get("most_opened") else { panic!("most_opened is an object") };
+    let Some(most) = channel.get("most_opened").and_then(Value::items) else { panic!("most_opened is a list") };
     assert_eq!(
-        most.iter().map(|(page, count)| (page.as_str(), count.integer())).collect::<Vec<_>>(),
+        most.iter().map(|each| (each.get("page").and_then(Value::text).unwrap(), each.get("opens").and_then(Value::integer))).collect::<Vec<_>>(),
         [("200", Some(9)), ("100", Some(7))],
         "most opened first"
     );
+    assert_eq!(server.get("memory_kb").map(|kb| kb.integer().is_some() || *kb == Value::Null), Some(true), "a count, or null where unknown");
     let document = value(&stats.document());
     assert!(document.get("channels").and_then(|channels| channels.get("hackaday")).is_some());
     assert_eq!(stats.glance().viewers, "hackaday 3 (peak 5)");

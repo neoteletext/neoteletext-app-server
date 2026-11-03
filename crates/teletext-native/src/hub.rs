@@ -283,9 +283,9 @@ impl Task {
             match effect {
                 Effect::Send { connection, bytes } => self.send(connection, Outbound::Bytes(bytes)),
                 Effect::Close { connection, code } => self.send(connection, Outbound::Close(code)),
-                Effect::MoveToProgram { connection, line } => {
+                Effect::MoveToProgram { connection, contact, line } => {
                     if let Some(to) = self.to_application.as_ref() {
-                        to.latest_move(connection, line);
+                        to.latest_move(connection, contact, line);
                     }
                 }
                 Effect::ToProgram { line, about } => {
