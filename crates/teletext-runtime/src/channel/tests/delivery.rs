@@ -758,3 +758,131 @@ fn a_selection_of_no_page_ends_its_updates() {
     channel.from_program(&change(&changed(&subpage())), 2);
     assert_eq!(sends(&channel.take_effects()), 0);
 }
+
+/// The `refused` lines among `effects`, as `(path, rule)`.
+fn refused(effects: &[Effect]) -> Vec<(String, String)> {
+    told(effects)
+        .iter()
+        .filter(|line| line["type"] == "refused")
+        .map(|line| (line["path"].as_str().unwrap().into(), line["rule"].as_str().unwrap().into()))
+        .collect()
+}
+
+/// REQ-1471: a `reply` naming a connection that is not open is refused
+/// `unknown_connection` at its `connection`, and reaches no viewer.
+#[test]
+fn a_reply_to_a_connection_not_open_is_refused() {
+    let mut channel = viewers(&[(1, 0x100, 0)]);
+    channel.from_program(&line(&json!({"type": "reply", "connection": 7, "request": 1, "magazines": news(), "selected": null})), 1);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), [("connection".into(), "unknown_connection".into())]);
+    assert_eq!(sends(&effects), 0, "nothing reaches any viewer");
+}
+
+/// REQ-1471: a second `reply` to a connection already answered is refused
+/// `not_awaited` at its `connection`, and reaches no viewer.
+#[test]
+fn a_second_reply_to_a_connection_is_refused() {
+    let mut channel = viewers(&[(1, 0x100, 0)]);
+    let reply = line(&json!({"type": "reply", "connection": 1, "request": 1, "magazines": news(), "selected": null}));
+    channel.from_program(&reply, 1);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), Vec::<(String, String)>::new(), "the first is taken");
+    channel.from_program(&reply, 2);
+    let effects = channel.take_effects();
+    assert_eq!(refused(&effects), [("connection".into(), "not_awaited".into())]);
+    assert_eq!(sends(&effects), 0, "nothing reaches any viewer");
+}
+
+/// REQ-1504: a row the kept sub-page had and the new version has not is
+/// cleared only by the erase bit, so the sub-page goes whole.
+#[test]
+fn a_row_removed_sends_the_sub_page_whole() {
+    let mut channel = viewers(&[(1, 0x100, 0)]);
+    let page = without_links();
+    assert!(page["rows"][5].is_null(), "the fixture has no row 5");
+    channel.from_program(&answer(1, 1, &changed(&page)), 1);
+    let _ = channel.take_effects();
+    channel.from_program(&change(&page), 2);
+    let bytes = sent_to(&channel.take_effects(), 1);
+    assert_eq!(headers(&bytes), [(0, true)], "a header with the erase bit");
+    assert!(!numbers(&bytes).contains(&5), "and no row 5");
+}
+
+/// The links of the LINKS records in `bytes`, read by the engine's reader:
+/// each key link's key and page, each number link's number, and each text
+/// link's row, column and length.
+fn read_links(bytes: &[u8]) -> Vec<String> {
+    let mut reader = RecordReader::new();
+    let mut links = Vec::new();
+    for packet in packets(bytes) {
+        if let Read::Record(ChannelRecord::Links(record)) = reader.push(&packet) {
+            links.extend(record.key_links().map(|link| alloc::format!("key {:?} {:?}", link.key, link.address)));
+            links.extend(record.number_links().map(|link| alloc::format!("number {:?}", link.number)));
+            links.extend(record.text_links().map(|link| alloc::format!("text {} {} {}", link.row, link.column, link.length)));
+        }
+    }
+    links
+}
+
+/// REQ-1480 verification 3 and neoteletext-common's REQ-1494: the LINKS
+/// record after a changed-rows frame carries the same links as the whole
+/// frame's, and the record after a change to the links alone carries the new
+/// ones.
+#[test]
+fn a_links_record_carries_the_sub_pages_links() {
+    let mut channel = viewers(&[(1, 0x100, 0)]);
+    channel.from_program(&answer(1, 1, &subpage()), 1);
+    let whole = read_links(&sent_to(&channel.take_effects(), 1));
+    assert_eq!(whole.len(), 4, "two keys, a number and a text: {whole:?}");
+    channel.from_program(&change(&changed(&subpage())), 2);
+    assert_eq!(read_links(&sent_to(&channel.take_effects(), 1)), whole, "changed rows, the same links");
+    let moved = with(&changed(&subpage()), "/link_extension/keys/0/target", json!("201"));
+    channel.from_program(&change(&moved), 3);
+    let after = read_links(&sent_to(&channel.take_effects(), 1));
+    assert_eq!(after.len(), whole.len());
+    assert_ne!(after, whole, "the red key leads elsewhere");
+    let red = alloc::format!("key Red {:?}", neoteletext_core::types::PageAddress::from_mpp(0x201).unwrap());
+    assert_eq!(after.first(), Some(&red), "{after:?}");
+}
+
+/// `frame::messages`: a run of frames longer than a message is cut before a
+/// sub-page's header, so each message stands alone; a sub-page longer than a
+/// message by itself is cut at whole packets; what fits, or is not whole
+/// packets, is one message; and nothing is lost or reordered.
+#[test]
+fn a_long_run_of_frames_is_cut_into_messages_before_headers() {
+    let mut channel = viewers(&[(1, 0x100, 0)]);
+    channel.from_program(&answer(1, 1, &subpage()), 1);
+    let frame = sent_to(&channel.take_effects(), 1);
+    assert!(frame.len().is_multiple_of(PACKET_BYTES) && frame.len() > PACKET_BYTES);
+    let run = [frame.as_slice(), frame.as_slice(), frame.as_slice()].concat();
+
+    assert_eq!(crate::frame::messages(&run, run.len()), [run.as_slice()], "it fits");
+    let ragged = [run.as_slice(), &[0]].concat();
+    assert_eq!(crate::frame::messages(&ragged, frame.len()), [ragged.as_slice()], "not whole packets");
+
+    let limit = frame.len() + PACKET_BYTES;
+    let parts = crate::frame::messages(&run, limit);
+    assert_eq!(parts, [frame.as_slice(), frame.as_slice(), frame.as_slice()], "one frame a message");
+
+    let short = 3 * PACKET_BYTES + 5;
+    let parts = crate::frame::messages(&frame, short);
+    assert!(parts.len() > 1);
+    assert!(parts.iter().all(|part| part.len() <= short && part.len().is_multiple_of(PACKET_BYTES)), "whole packets within the limit");
+    assert_eq!(parts.concat(), frame, "nothing lost or reordered");
+}
+
+/// The native hub's old test, restored on the runtime: a program that starts
+/// hears `start` first, and only then `connected` for each connection
+/// already open.
+#[test]
+fn start_is_the_first_line_a_started_program_hears() {
+    let mut channel = Channel::new(config(0));
+    channel.opened(1, 1, Vec::new(), 0);
+    channel.received(1, &message(&[hello(), select(0x100, 0)]), 0);
+    let _ = channel.take_effects();
+    channel.program_started(1);
+    let types: Vec<Value> = told(&channel.take_effects()).iter().map(|line| line["type"].clone()).collect();
+    assert_eq!(types, [json!("start"), json!("connected")]);
+}
