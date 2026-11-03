@@ -1,5 +1,5 @@
 # Copied by neoteletext-common gates/sync; change it there, not here.
-# neoteletext-common gates at ebe142e74a11e49030910e97318714d19b664927
+# neoteletext-common gates at d2008378754a6101219ed88d440f3775e7165307
 # The gate machinery every neoteletext repository shares (DEVELOPMENT.md
 # section 9). A
 # repository's scripts/check.sh sets its own steps and sources its copy of
@@ -152,6 +152,10 @@ check_gate_copy() {
     revision="$(sed -n '2s/^# neoteletext-common gates at \([0-9a-f]*\)$/\1/p' scripts/gate.sh)"
     [[ -n "$revision" ]] || fail "scripts/gate.sh names no neoteletext-common commit; run $common/gates/sync"
     [[ -d "$common/.git" ]] || fail "neoteletext-common is needed at $common (or NEOTELETEXT_COMMON) to check the gate's copy"
+    # A commit neoteletext-common lacks is a checkout to bring up to date,
+    # not a copy that differs: say which, rather than blame the copy.
+    common_git cat-file -e "$revision:gates/gate.sh" 2>/dev/null ||
+        fail "neoteletext-common at $common could not be read at $revision, which scripts/gate.sh names; pull or fetch neoteletext-common so that it has that commit"
     tail -n +3 scripts/gate.sh | cmp -s - <(common_git show "$revision:gates/gate.sh") ||
         fail "scripts/gate.sh differs from neoteletext-common's gates/gate.sh at $revision; change it there and run gates/sync"
     for file in pre-commit pre-merge-commit pre-push; do
