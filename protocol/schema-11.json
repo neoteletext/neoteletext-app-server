@@ -917,6 +917,61 @@
         },
         {
           "additionalProperties": false,
+          "description": "On a page drawn in ReGIS, what lay under the pointer of the mouse,\ntouch or wheel event before this one (PICK, DEC-6335): the receiver\nlooks it up in the picture it is showing.",
+          "properties": {
+            "commits": {
+              "description": "The commits the receiver had applied to the picture on screen.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "drawing": {
+              "description": "The numbered drawing picked, or 0 for none.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "pick",
+              "type": "string"
+            },
+            "picture_x": {
+              "description": "The place in the picture, in its pixels from the top left.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "picture_y": {
+              "description": "See `picture_x`.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "x": {
+              "description": "The place within that drawing, from its origin; 0 for none.",
+              "format": "int32",
+              "type": "integer"
+            },
+            "y": {
+              "description": "See `x`.",
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "drawing",
+            "x",
+            "y",
+            "picture_x",
+            "picture_y",
+            "commits"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "The pointer came onto one of the page's controls, or went off it.",
           "properties": {
             "action": {
@@ -1541,7 +1596,8 @@
         "packets",
         "denied",
         "description",
-        "measure"
+        "measure",
+        "regis"
       ],
       "type": "string"
     },
@@ -2969,6 +3025,45 @@
             "page"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bytes of a sub-page's ReGIS, drawn by a receiver's ReGIS renderer in\nplace of the sub-page's teletext page (DEC-6335).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "data": {
+              "description": "The bytes, exact base64: ReGIS commands as a terminal would receive\nthem inside a device control string, without the string's framing.",
+              "type": "string"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "restart": {
+              "default": false,
+              "description": "Begin the sub-page's ReGIS again: the receiver starts a new\nrenderer for it, with nothing drawn and no numbered drawings.",
+              "type": "boolean"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "regis",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "data"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3088,6 +3183,11 @@
         {
           "const": "invalid_packet",
           "description": "A raw packet the stream may not carry (REQ-1462).",
+          "type": "string"
+        },
+        {
+          "const": "invalid_regis",
+          "description": "ReGIS whose commit a receiver would refuse (DEC-6335).",
           "type": "string"
         },
         {

@@ -62,6 +62,54 @@ impl Named {
     }
 }
 
+/// PICK's type among the input extension events (the engine's REQ-6337).
+const PICK: u8 = 0x46;
+/// The farthest a pick's place lies from its drawing's origin, either way.
+const MAX_PICK_OFFSET: i32 = 1 << 20;
+/// A pick's place in the picture is below this on each axis.
+const MAX_PICK_POSITION: u32 = 1 << 16;
+
+/// What lay under a pointer on a page drawn in ReGIS.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Pick {
+    /// The page on screen.
+    pub on: Stamp,
+    /// The numbered drawing picked, or 0 for none.
+    pub drawing: u16,
+    /// The place within that drawing.
+    pub x: i32,
+    /// See `x`.
+    pub y: i32,
+    /// The place in the picture.
+    pub picture_x: u32,
+    /// See `picture_x`.
+    pub picture_y: u32,
+    /// The commits applied to the picture on screen.
+    pub commits: u32,
+}
+
+impl Pick {
+    /// Reads PICK's payload: the stamp, the drawing, the place within it,
+    /// the place in the picture and the commit count's four bytes. `None`
+    /// for anything the engine's reader refuses; the engine this server is
+    /// pinned to predates PICK and gives it as an extension it does not
+    /// know, so it is read here.
+    fn read(payload: &[u8]) -> Option<Self> {
+        let mut reader = neoteletext_input::wire::Reader::new(payload);
+        let on = Stamp::new(u16::try_from(reader.uv().ok()?).ok()?, u16::try_from(reader.uv().ok()?).ok()?)?;
+        let drawing = u16::try_from(reader.uv().ok()?).ok()?;
+        let (x, y) = (reader.sv().ok()?, reader.sv().ok()?);
+        let (picture_x, picture_y) = (reader.uv().ok()?, reader.uv().ok()?);
+        let commits: [u8; 4] = reader.take(4).ok()?.try_into().ok()?;
+        let within = x.checked_abs().is_some_and(|x| x <= MAX_PICK_OFFSET)
+            && y.checked_abs().is_some_and(|y| y <= MAX_PICK_OFFSET)
+            && picture_x < MAX_PICK_POSITION
+            && picture_y < MAX_PICK_POSITION;
+        let placed = drawing != 0 || (x, y) == (0, 0);
+        (within && placed && reader.used() == payload.len()).then_some(Self { on, drawing, x, y, picture_x, picture_y, commits: u32::from_be_bytes(commits) })
+    }
+}
+
 /// One thing the viewer did on the page.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Input<'a> {
@@ -133,6 +181,9 @@ pub enum Input<'a> {
         /// The control's top row.
         row: u32,
     },
+    /// On a page drawn in ReGIS, what lay under the pointer (PICK, the
+    /// engine's REQ-6337).
+    Pick(Pick),
     /// An input method's text as it stands: empty when composing ended.
     Compose {
         /// Where the caret is, in code points from the text's start.
@@ -170,6 +221,7 @@ impl<'a> Input<'a> {
             Item::Event(Event::Compose { cursor, text, .. }) => Some(Self::Compose { cursor, text }),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
+            Item::Event(Event::Extension { kind: PICK, payload }) => Pick::read(payload).map(Self::Pick),
             Item::Event(_) => None,
         }
     }
@@ -202,7 +254,7 @@ impl<'a> Input<'a> {
 /// stamp (REQ-1555): focus and the session's own events have none, and
 /// raw text cannot.
 #[must_use]
-pub(crate) const fn stamp(item: &Item<'_>) -> Option<Stamp> {
+pub(crate) fn stamp(item: &Item<'_>) -> Option<Stamp> {
     let Item::Event(event) = item else { return None };
     match event {
         Event::Key(key) => Some(key.on),
@@ -210,6 +262,7 @@ pub(crate) const fn stamp(item: &Item<'_>) -> Option<Stamp> {
         Event::Wheel(wheel) => Some(wheel.on),
         Event::Touch(touch) => Some(touch.on),
         Event::Paste { on, .. } | Event::Compose { on, .. } | Event::Hover { on, .. } => Some(*on),
+        Event::Extension { kind: PICK, payload } => Pick::read(payload).map(|pick| pick.on),
         _ => None,
     }
 }
@@ -391,6 +444,9 @@ impl Input<'_> {
             Self::Hover { entered, column, row } => {
                 let (column, row) = cell(column, row)?;
                 InputEvent::Hover { action: if entered { HoverAction::Enter } else { HoverAction::Leave }, column, row }
+            }
+            Self::Pick(pick) => {
+                InputEvent::Pick { drawing: pick.drawing, x: pick.x, y: pick.y, picture_x: pick.picture_x, picture_y: pick.picture_y, commits: pick.commits }
             }
             Self::FocusIn => InputEvent::Focus,
             Self::FocusOut => InputEvent::Blur,

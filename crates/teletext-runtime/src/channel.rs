@@ -357,6 +357,24 @@ struct Connection {
     index_generation: u16,
     /// The sub-page list it holds of its selected page, and its version.
     list_held: Option<(u16, u16)>,
+    /// The ReGIS it has been sent for the sub-page it shows (DEC-6335).
+    regis: Option<RegisStream>,
+    /// The number of its last ReGIS stream: a new one takes the next.
+    regis_generation: u16,
+}
+
+/// One connection's stream of ReGIS for the sub-page it shows: what it has
+/// been sent, read by the receiver's own renderer, so that a commit it
+/// would refuse is refused here first (the ReGIS renderer's REQ-6332).
+struct RegisStream {
+    page: u16,
+    sub: u16,
+    generation: u16,
+    /// The bytes sent of it.
+    offset: u32,
+    validator: regis::Validator,
+    /// The bytes of the message being acted on were read and are to be sent.
+    pending: bool,
 }
 
 impl Connection {
@@ -384,7 +402,45 @@ impl Connection {
             acknowledgement_due: None,
             index_generation: 0,
             list_held: None,
+            regis: None,
+            regis_generation: 0,
         }
+    }
+
+    /// Reads a `regis` message's bytes as its receiver will, starting the
+    /// sub-page's stream again when asked. A connection with no stream of
+    /// the sub-page is passed over until one is started.
+    ///
+    /// # Errors
+    /// What the receiver would refuse: a commit that fails, with its code.
+    fn read_regis(&mut self, page: u16, sub: u16, restart: bool, bytes: &[u8]) -> Result<(), String> {
+        if restart {
+            self.regis_generation = self.regis_generation.wrapping_add(1);
+            let generation = self.regis_generation;
+            self.regis = Some(RegisStream { page, sub, generation, offset: 0, validator: regis::Validator::new(), pending: false });
+        }
+        let Some(stream) = self.regis.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(()) };
+        let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        if stream.offset.checked_add(length).is_none() {
+            return Err(String::from("the sub-page's ReGIS passed 4,294,967,295 bytes; start it again"));
+        }
+        for event in stream.validator.feed_regis(bytes) {
+            if let regis::Event::CommitFailed { error, drawing } = event {
+                return Err(format!("a commit fails with code {} ({error:?}), drawing {drawing}", error.code()));
+            }
+        }
+        stream.pending = true;
+        Ok(())
+    }
+
+    /// The REGIS records of the bytes [`Connection::read_regis`] just read,
+    /// or nothing for a connection it passed over.
+    fn regis_records(&mut self, bytes: &[u8]) -> Result<Vec<u8>, records::Refused> {
+        let Some(stream) = self.regis.as_mut().filter(|stream| stream.pending) else { return Ok(Vec::new()) };
+        stream.pending = false;
+        let sent = records::regis(stream.page, stream.sub, stream.generation, stream.offset, bytes, &mut self.record_id)?;
+        stream.offset = stream.offset.saturating_add(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
+        Ok(sent)
     }
 
     /// The next record number, advanced.
@@ -1144,6 +1200,8 @@ impl Channel {
         let before = state.selection.replace(selection);
         state.parameters.clone_from(&parameters);
         state.shown = None;
+        // Another selection: the ReGIS it was sent is not of this one.
+        state.regis = None;
         let announced = state.announced;
         if announced {
             state.request = state.request.saturating_add(1);
@@ -1335,6 +1393,7 @@ impl Channel {
                 };
                 self.log(level, "program_log", format!("{}: {}", line.event, line.text));
             }
+            ProgramMessage::Regis(message) => self.regis(&message)?,
             ProgramMessage::Packets(packets) => {
                 let bytes: Arc<[u8]> = Arc::from(protocol::check::bytes_of(&packets.packets));
                 for connection in self.targets(&packets.connections) {
@@ -1343,6 +1402,34 @@ impl Channel {
             }
         }
         Ok(())
+    }
+
+    /// `regis`: more of a sub-page's ReGIS, to the connections named that
+    /// show it (DEC-6335). It is read for every one of them before any is
+    /// sent; one that would refuse a commit refuses the message, and the
+    /// streams of all its targets, which read it, are started again.
+    fn regis(&mut self, message: &protocol::Regis) -> Result<(), Refusal> {
+        let kind = protocol::MessageType::Regis;
+        let bytes = protocol::check::bytes_of(&message.data);
+        let (page, sub) = (message.page.0, message.sub.0);
+        let targets: Vec<ConnectionId> = self
+            .targets(&message.connections)
+            .into_iter()
+            .filter(|connection| self.connections.get(connection).is_some_and(|state| state.shows(page, sub)))
+            .collect();
+        let read = targets.iter().try_for_each(|connection| match self.connections.get_mut(connection) {
+            Some(state) => state.read_regis(page, sub, message.restart, &bytes),
+            None => Ok(()),
+        });
+        if let Err(detail) = read {
+            for connection in &targets {
+                if let Some(state) = self.connections.get_mut(connection) {
+                    state.regis = None;
+                }
+            }
+            return Err(Refusal { message: Some(kind), path: "data".to_string(), rule: Rule::InvalidRegis, detail });
+        }
+        self.send_records(&targets, kind, |state| state.regis_records(&bytes))
     }
 
     /// `reply`, the answer to `connected` (REQ-1471).

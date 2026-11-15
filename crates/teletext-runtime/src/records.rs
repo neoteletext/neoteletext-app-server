@@ -75,6 +75,39 @@ pub(crate) fn subpage_list(list: &SubPages, record_id: &mut u8) -> Result<Vec<u8
     Ok(bytes)
 }
 
+/// The fixed fields of a REGIS record's body: page, sub-code, generation
+/// and offset (the engine's REQ-6336).
+const REGIS_FIXED: usize = 2 + 2 + 2 + 4;
+/// The most ReGIS one REGIS record carries.
+pub(crate) const REGIS_DATA: usize = neoteletext_audio::MAX_FRAMED_BODY - REGIS_FIXED;
+
+/// Bytes of a sub-page's ReGIS as REGIS records (the engine's REQ-6336),
+/// as many as they need: the stream `generation` of the sub-page, from
+/// `offset` in it. With no bytes, one record of none, which starts a new
+/// generation. The engine this server is pinned to predates the record,
+/// so its body is written here, through the engine's frame.
+pub(crate) fn regis(page: u16, sub: u16, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    let mut bytes = Vec::new();
+    let mut at = offset;
+    let empty: &[u8] = &[];
+    let chunks: Vec<&[u8]> = if data.is_empty() { alloc::vec![empty] } else { data.chunks(REGIS_DATA).collect() };
+    for chunk in chunks {
+        let mut body = Vec::with_capacity(REGIS_FIXED.saturating_add(chunk.len()));
+        body.extend_from_slice(&page.to_be_bytes());
+        body.extend_from_slice(&sub.to_be_bytes());
+        body.extend_from_slice(&generation.to_be_bytes());
+        body.extend_from_slice(&at.to_be_bytes());
+        body.extend_from_slice(chunk);
+        let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_REGIS, &body, SERVICE, *record_id, &mut |packet| {
+            bytes.extend_from_slice(&packet.bytes);
+        });
+        written.ok_or_else(|| String::from("a REGIS record over the frame's largest"))?;
+        *record_id = record_id.wrapping_add(1);
+        at = at.checked_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX)).ok_or_else(|| String::from("the ReGIS stream passed 4,294,967,295 bytes"))?;
+    }
+    Ok(bytes)
+}
+
 /// A line for the channel's author (DOC-1956).
 pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let level = match line.level {

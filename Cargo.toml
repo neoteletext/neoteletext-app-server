@@ -34,6 +34,10 @@ neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-render
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
 neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
+# The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
+# a program's ReGIS is checked with the receiver's own code before it is
+# sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
+regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e25752f2a1c3bb6fa4eb7d930192bbf6115d0688" }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the

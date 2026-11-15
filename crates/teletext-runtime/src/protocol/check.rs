@@ -134,6 +134,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Packets(Packets { connections, packets }) => {
             check_connections(&root.field("connections"), connections).and_then(|()| check_packets(&root.field("packets"), packets))
         }
+        ProgramMessage::Regis(regis) => check_regis(&root, regis),
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }
@@ -804,6 +805,22 @@ fn check_log(root: &Path<'_>, log: &Log) -> Checked {
     check_text(&root.field("text"), &log.text, 1, super::OPERATOR_LOG_CHARACTERS)
 }
 
+/// The most ReGIS one message may carry: a megabyte, a quarter of all the
+/// contents a receiver's numbered drawings may hold.
+const MOST_REGIS_BYTES: usize = 1024 * 1024;
+
+fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
+    check_connections(&root.field("connections"), &regis.connections)?;
+    if regis.sub == super::ANY_SUBPAGE {
+        return Err(fault(&root.field("sub"), Rule::OutOfRange, "3F7F names no sub-page".to_string()));
+    }
+    check_base64(&root.field("data"), &regis.data, MOST_REGIS_BYTES).map(|_| ())
+}
+
+/// The record type of a sub-page's ReGIS (the engine's REQ-6336), which
+/// only the `regis` message sends.
+pub(crate) const TYPE_REGIS: u8 = 14;
+
 /// The most raw packets one message may carry: a megabyte of them.
 const MOST_RAW_BYTES: usize = 1024 * 1024;
 
@@ -817,8 +834,17 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
     // an address that decodes under Hamming 8/4, and a kind the stream may
     // carry.
     for (index, chunk) in bytes.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().enumerate() {
-        if !is_valid_stream_packet(&Packet { bytes: *chunk }) {
+        let packet = Packet { bytes: *chunk };
+        if !is_valid_stream_packet(&packet) {
             return Err(fault(&path.item(index), Rule::InvalidPacket, "its address does not decode, or it is a kind the stream may not carry".to_string()));
+        }
+        // A record's type is in its first fragment: no REGIS record can
+        // begin here, so none passes unchecked (DEC-6335).
+        if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
+            && fragment.index == 0
+            && fragment.data.get(1) == Some(&TYPE_REGIS)
+        {
+            return Err(fault(&path.item(index), Rule::InvalidPacket, "a REGIS record goes in a regis message, which checks it".to_string()));
         }
     }
     Ok(())

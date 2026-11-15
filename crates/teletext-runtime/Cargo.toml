@@ -17,6 +17,7 @@ neoteletext-input.workspace = true
 neoteletext-audio.workspace = true
 neoteletext-web = { workspace = true, features = ["alloc"] }
 neoteletext-opus.workspace = true
+regis.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

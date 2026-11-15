@@ -690,6 +690,23 @@ pub enum InputEvent {
         /// The dot down.
         py: Option<u32>,
     },
+    /// On a page drawn in ReGIS, what lay under the pointer of the mouse,
+    /// touch or wheel event before this one (PICK, DEC-6335): the receiver
+    /// looks it up in the picture it is showing.
+    Pick {
+        /// The numbered drawing picked, or 0 for none.
+        drawing: u16,
+        /// The place within that drawing, from its origin; 0 for none.
+        x: i32,
+        /// See `x`.
+        y: i32,
+        /// The place in the picture, in its pixels from the top left.
+        picture_x: u32,
+        /// See `picture_x`.
+        picture_y: u32,
+        /// The commits the receiver had applied to the picture on screen.
+        commits: u32,
+    },
     /// The pointer came onto one of the page's controls, or went off it.
     Hover {
         /// Which.
@@ -1049,6 +1066,7 @@ pub enum MessageType {
     Denied,
     Description,
     Measure,
+    Regis,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1102,6 +1120,8 @@ pub enum Rule {
     OutsideProfile,
     /// A raw packet the stream may not carry (REQ-1462).
     InvalidPacket,
+    /// ReGIS whose commit a receiver would refuse (DEC-6335).
+    InvalidRegis,
     /// A selection's number given with other than one connection: a number
     /// belongs to one connection.
     OneConnection,
@@ -1170,6 +1190,9 @@ pub enum ProgramMessage {
     /// Asks what a page's encoding costs, sending it to no viewer
     /// (REQ-2216).
     Measure(Box<Measure>),
+    /// Bytes of a sub-page's ReGIS, drawn by a receiver's ReGIS renderer in
+    /// place of the sub-page's teletext page (DEC-6335).
+    Regis(Regis),
 }
 
 impl ProgramMessage {
@@ -1190,6 +1213,7 @@ impl ProgramMessage {
             Self::Denied(_) => MessageType::Denied,
             Self::Description(_) => MessageType::Description,
             Self::Measure(_) => MessageType::Measure,
+            Self::Regis(_) => MessageType::Regis,
         }
     }
 
@@ -2066,6 +2090,32 @@ pub enum OperatorLevel {
     Warn,
     Info,
     Debug,
+}
+
+/// `regis`: more bytes of a sub-page's ReGIS, the vector graphics language
+/// a receiver's ReGIS renderer draws in place of the sub-page's teletext
+/// page (DEC-6335). It goes to the connections named whose selection shows
+/// the sub-page. Each of them has one stream of ReGIS for the sub-page it
+/// shows: `restart` begins it again, and a message without `restart` adds
+/// to it, and is not sent to a connection that has no stream yet. The
+/// server reads the bytes with the receiver's own renderer first, and
+/// refuses the message if a commit in them would fail at the receiver.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Regis {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The page.
+    pub page: PageNumber,
+    /// The sub-page: never 3F7F, which names none.
+    pub sub: SubCode,
+    /// Begin the sub-page's ReGIS again: the receiver starts a new
+    /// renderer for it, with nothing drawn and no numbered drawings.
+    #[serde(default)]
+    pub restart: bool,
+    /// The bytes, exact base64: ReGIS commands as a terminal would receive
+    /// them inside a device control string, without the string's framing.
+    pub data: Base64,
 }
 
 /// `packets`.

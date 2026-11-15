@@ -107,6 +107,7 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::AuthorLog => ProgramMessage::AuthorLog(typed(object, "")?),
         MessageType::Log => ProgramMessage::Log(typed(object, "")?),
         MessageType::Packets => ProgramMessage::Packets(typed(object, "")?),
+        MessageType::Regis => ProgramMessage::Regis(typed(object, "")?),
     })
 }
 

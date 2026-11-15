@@ -28,6 +28,7 @@ use crate::protocol::tests::{line, subpage, with};
 mod delivery;
 mod fields;
 mod moves;
+mod regis;
 mod sound;
 
 /// The connection and session of a test.
