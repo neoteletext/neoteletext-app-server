@@ -145,7 +145,7 @@ ssh "$target" "set -e
 # A glibc build: the musl one needs a musl C compiler, which the builder
 # lacks, for the TLS that neottx's qr and keyboard commands bring.
 # shellcheck disable=SC2029
-ssh "$builder" ". ~/.cargo/env; set -e; cd ~; [ -d neottx-build ] || git clone --quiet https://github.com/neoteletext/neoteletext-engine neottx-build
+ssh "$builder" ". ~/.cargo/env; set -e; cd ~; [ -d neottx-build ] || git clone --quiet https://github.com/neoteletext/neoteletext-renderer-teletext neottx-build
     cd neottx-build; git fetch --quiet origin; git checkout --quiet $engine_rev; cargo build --quiet --release --locked -p neoteletext-cli"
 # shellcheck disable=SC2029
 glibc_needed=$(ssh "$builder" "objdump -T neottx-build/target/release/neottx | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1")
