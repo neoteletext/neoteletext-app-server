@@ -2,13 +2,18 @@
 #
 # Deploy the NeoTeletext app server into the neoteletext container on
 # crowdwaveaudio (create_container.sh, then provision.sh, made it):
-#   1. the server, a static build (musl) made on the Linux build host, so it
-#      runs on the container's Ubuntu 24.04 whatever that host runs;
+#   1. the server, a static build (musl) made on this machine, so it runs on
+#      the container's Ubuntu 24.04 whatever this machine runs; made here
+#      because the ReGIS renderer the server checks ReGIS with (REQ-6338) is
+#      pinned by a commit of the repository beside this one, which the Linux
+#      build host does not have;
 #   2. the TypeScript channels and the neoteletext.com home page, copied from
 #      their working trees beside this repository, the channels' libraries
 #      installed from their vendor/; the old Hackaday channel, Python, with
 #      a pinned uv and the engine's neottx for its QR codes; and the Hackaday
 #      dataset both Hackaday channels read, and nothing else (DEC-1568);
+#      the ReGIS gallery's kept pictures, as their ReGIS source, for the
+#      gallery channel (REQ-6347);
 #      each demo channel's state file, outside the folder replaced, is
 #      backed up first and never replaced (REQ-1057);
 #   3. the channels file, the service and its socket (a restart refuses no
@@ -30,7 +35,7 @@ target=neoteletext      # ~/.ssh/config alias: 10.70.0.18 via crowdwaveaudio
 edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
-channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo)
+channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisgallery neoteletext-server-channel-regisdemo)
 # The old Hackaday channel, Python, beside the Python kit.
 python_channels=neoteletext-server-channels
 # The development machine's uv, so uv.lock is read by the version that wrote it.
@@ -39,6 +44,10 @@ uv_version=0.13.6
 # the development machine's folder, copied to the container in its own layout.
 dataset_source=$devel/neoteletext-hackaday
 dataset=$app/data/neoteletext-hackaday
+# The ReGIS gallery the gallery channel serves (REQ-6347): the folder here
+# with sets.json, kept.txt and regis/, and where its kept pictures go.
+gallery_source=${REGIS_GALLERY:-$devel/regisexperiment/corpus}
+gallery=$app/regisgallery
 # The engine the server is pinned to builds the neottx the old channel runs.
 engine_rev=$(sed -n 's/^neoteletext-core = .*rev = "\([0-9a-f]*\)".*/\1/p' "$repo/Cargo.toml")
 # What the demo channels keep across a restart (REQ-1057, the component
@@ -56,6 +65,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 for c in "${channels[@]}" neoteletext-www "$python_channels"; do [ -d "$devel/$c" ] || die "$devel/$c not found"; done
 [ -f "$dataset_source/analysis.sqlite" ] && [ -f "$dataset_source/hackaday.sqlite" ] || die "no Hackaday dataset in $dataset_source"
+[ -f "$gallery_source/sets.json" ] && [ -f "$gallery_source/kept.txt" ] && [ -d "$gallery_source/regis" ] || die "no ReGIS gallery in $gallery_source"
 [ -n "$engine_rev" ] || die "no engine rev in $repo/Cargo.toml"
 
 say "backups on the container, stamped $stamp"
@@ -90,20 +100,19 @@ NODE
 done
 EOF
 
+# A target folder of its own, so a deploy build never waits on, or is
+# confused with, the development builds in target/.
+deploy_target=$repo/target/deploy
 if [ "$build" = 1 ]; then
-    say "the server, built static on $builder"
-    rsync -a --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
-        --exclude node_modules --exclude .wrangler "$repo/" "$builder:teletext-server-check/"
-    # The engine comes from its public repository, which the builder fetches by itself.
-    # shellcheck disable=SC2029 # the target is expanded here on purpose
-    ssh "$builder" ". ~/.cargo/env; cd teletext-server-check; rustup target add $musl >/dev/null 2>&1
-        cargo build --quiet --release --locked --target $musl -p teletext-native"
+    say "the server, built static here"
+    (cd "$repo" && cargo build --quiet --release --locked --target $musl --target-dir "$deploy_target" -p teletext-native)
 fi
+server_binary=$deploy_target/$musl/release/teletext-server
+[ -x "$server_binary" ] || die "no server binary at $server_binary; run without --no-build"
 
 say "the server binary into $app/bin"
 # shellcheck disable=SC2029
-ssh "$builder" "cat teletext-server-check/target/$musl/release/teletext-server" |
-    ssh "$target" "sudo install -d $app/bin && sudo install -m 755 /dev/stdin $app/bin/teletext-server.new && sudo mv $app/bin/teletext-server.new $app/bin/teletext-server"
+ssh "$target" "sudo install -d $app/bin && sudo install -m 755 /dev/stdin $app/bin/teletext-server.new && sudo mv $app/bin/teletext-server.new $app/bin/teletext-server" < "$server_binary"
 
 say "the channels and the home page into $app/current, the channels' user's"
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current $state_dir"
@@ -121,6 +130,17 @@ say "the Hackaday dataset into $dataset"
 # shellcheck disable=SC2029
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/data $dataset"
 rsync -a --checksum --exclude '*.sqlite-wal' --exclude '*.sqlite-shm' --exclude '*.bak-*' "$dataset_source/" "$target:$dataset/"
+
+say "the ReGIS gallery's kept pictures into $gallery"
+# Only what the channel reads: the two lists, and the ReGIS of each picture
+# kept. Compared by content, so an unchanged picture is not sent again.
+# shellcheck disable=SC2029
+ssh "$target" "sudo install -d -o ubuntu -g ubuntu $gallery"
+kept=$(mktemp)
+sed -n 's|^png/\(.*\)\.png$|regis/\1.regis|p' "$gallery_source/kept.txt" > "$kept"
+printf 'sets.json\nkept.txt\n' >> "$kept"
+rsync -a --checksum --files-from="$kept" "$gallery_source/" "$target:$gallery/"
+rm -f "$kept"
 
 say "the old Hackaday channel, uv, and the engine's tools into $app/tools"
 # The channel's former downloads (cache) and its local sounds and people are
@@ -179,7 +199,9 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday"},
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite"},
-  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"}
+  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"},
+  {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
+  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo"}
 ]}
 EOF
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
@@ -243,4 +265,4 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
 say "inside the container"
 ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in home hackaday oldhackaday demosite uicomponentsdemo; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'
+    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'
