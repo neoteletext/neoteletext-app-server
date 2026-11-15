@@ -135,6 +135,10 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_connections(&root.field("connections"), connections).and_then(|()| check_packets(&root.field("packets"), packets))
         }
         ProgramMessage::Regis(regis) => check_regis(&root, regis),
+        ProgramMessage::RegisLinks(links) => check_regis_links(&root, links),
+        ProgramMessage::RegisCursor(cursor) => {
+            check_connections(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
+        }
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }
@@ -809,17 +813,61 @@ fn check_log(root: &Path<'_>, log: &Log) -> Checked {
 /// contents a receiver's numbered drawings may hold.
 const MOST_REGIS_BYTES: usize = 1024 * 1024;
 
-fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
-    check_connections(&root.field("connections"), &regis.connections)?;
-    if regis.sub == super::ANY_SUBPAGE {
+/// A message about one sub-page's picture names that sub-page.
+fn check_shown_subpage(root: &Path<'_>, sub: super::SubCode) -> Checked {
+    if sub == super::ANY_SUBPAGE {
         return Err(fault(&root.field("sub"), Rule::OutOfRange, "3F7F names no sub-page".to_string()));
     }
+    Ok(())
+}
+
+fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
+    check_connections(&root.field("connections"), &regis.connections)?;
+    check_shown_subpage(root, regis.sub)?;
     check_base64(&root.field("data"), &regis.data, MOST_REGIS_BYTES).map(|_| ())
+}
+
+/// Whether a drawing link's target is one a receiver reads (the engine's
+/// REQ-6370): printable ASCII with no comma, of a length a link target may
+/// be, in a form the engine's own parser of link targets takes.
+fn is_drawing_link_target(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    let printable = bytes.iter().all(|&byte| byte.is_ascii_graphic() && byte != b',');
+    !bytes.is_empty() && bytes.len() <= neoteletext_formats::page::LINK_TARGET_BYTES && printable && neoteletext_formats::tti::parse_target(bytes).is_some()
+}
+
+fn check_regis_links(root: &Path<'_>, links: &super::RegisLinks) -> Checked {
+    check_connections(&root.field("connections"), &links.connections)?;
+    check_shown_subpage(root, links.sub)?;
+    let path = root.field("links");
+    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidDrawingLinks, detail));
+    if links.links.len() > super::MOST_DRAWING_LINKS {
+        return refuse(&path, format!("{} links, at most {}", links.links.len(), super::MOST_DRAWING_LINKS));
+    }
+    for (index, link) in links.links.iter().enumerate() {
+        let item = path.item(index);
+        if link.drawing == 0 {
+            return refuse(&item.field("drawing"), "drawing numbers are 1 to 65,535".to_string());
+        }
+        if links.links.iter().take(index).any(|earlier| earlier.drawing == link.drawing) {
+            return refuse(&item.field("drawing"), format!("drawing {} is named twice", link.drawing));
+        }
+        if !is_drawing_link_target(&link.target) {
+            return refuse(&item.field("target"), "not a link target: a page, a page of another service, an address or web: and a web address".to_string());
+        }
+    }
+    Ok(())
 }
 
 /// The record type of a sub-page's ReGIS (the engine's REQ-6336), which
 /// only the `regis` message sends.
 pub(crate) const TYPE_REGIS: u8 = 14;
+/// The record type of a sub-page's drawing links (the engine's REQ-6370),
+/// which only the `regis_links` message sends.
+pub(crate) const TYPE_DRAWING_LINKS: u8 = 15;
+/// The record type of a sub-page's cursor drawing (the engine's REQ-6371),
+/// which only the `regis_cursor` message sends.
+pub(crate) const TYPE_REGIS_CURSOR: u8 = 16;
 
 /// The most raw packets one message may carry: a megabyte of them.
 const MOST_RAW_BYTES: usize = 1024 * 1024;
@@ -838,13 +886,16 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
         if !is_valid_stream_packet(&packet) {
             return Err(fault(&path.item(index), Rule::InvalidPacket, "its address does not decode, or it is a kind the stream may not carry".to_string()));
         }
-        // A record's type is in its first fragment: no REGIS record can
-        // begin here, so none passes unchecked (DEC-6335).
+        // A record's type is in its first fragment: no record of a
+        // sub-page's ReGIS, its drawing links or its cursor can begin
+        // here, so none passes unchecked (DEC-6335, REQ-6372).
         if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
             && fragment.index == 0
-            && fragment.data.get(1) == Some(&TYPE_REGIS)
+            && let Some(kind) = fragment.data.get(1)
+            && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR].contains(kind)
         {
-            return Err(fault(&path.item(index), Rule::InvalidPacket, "a REGIS record goes in a regis message, which checks it".to_string()));
+            let detail = "a record of a sub-page's ReGIS goes in a regis, regis_links or regis_cursor message, which checks it";
+            return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
         }
     }
     Ok(())

@@ -11,7 +11,7 @@ use neoteletext_input::event::{Event, Item};
 use serde_json::{Value, json};
 
 use super::{CONNECTION, Channel, Effect, ON, answered, inputs, line, message, record_types, sent_to, told};
-use crate::protocol::check::TYPE_REGIS;
+use crate::protocol::check::{TYPE_DRAWING_LINKS, TYPE_REGIS, TYPE_REGIS_CURSOR};
 use crate::protocol::tests::base64;
 use crate::records::REGIS_DATA;
 
@@ -151,4 +151,145 @@ fn pick_reaches_the_program() {
     let elsewhere = payload(1);
     channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x46, payload: &elsewhere })]), 6);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
+}
+
+/// The records in `bytes`, each as its type and body, reassembled from
+/// its fragments and its frame taken off.
+fn bodies(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut record: Vec<u8> = Vec::new();
+    for bytes in bytes.as_chunks::<PACKET_BYTES>().0 {
+        let fragment = neoteletext_audio::idl::fragment(&Packet { bytes: *bytes }).unwrap().unwrap();
+        if fragment.index == 0 {
+            record.clear();
+        }
+        record.extend_from_slice(&fragment.data);
+        if fragment.last {
+            let (kind, body) = neoteletext_audio::record::split(&record[..neoteletext_audio::record::framed_length(&record).unwrap()]).unwrap();
+            found.push((kind, body.to_vec()));
+        }
+    }
+    found
+}
+
+fn regis_links(page: &str, links: &Value) -> Vec<u8> {
+    line(&json!({"type": "regis_links", "connections": [CONNECTION], "page": page, "sub": "0000", "links": links}))
+}
+
+/// REQ-6372: a sub-page's drawing links reach the viewer who shows it as a
+/// `DRAWING_LINKS` record (the engine's REQ-6370), byte for byte; a viewer
+/// showing another page gets none; an empty list is a record of no links.
+#[test]
+fn drawing_links_reach_the_viewer_who_shows_the_sub_page() {
+    let mut channel = answered();
+    channel.from_program(&regis_links("100", &json!([{"drawing": 12, "target": "200"}, {"drawing": 13, "target": "web:https://example.org/"}])), 1);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [(Value, String); 0]);
+    let mut expected = alloc::vec![0x01, 0x00, 0x00, 0x00, 0, 1, 2, 0, 12, 0, 3, b'2', b'0', b'0', 0, 13, 0, 24];
+    expected.extend_from_slice(b"web:https://example.org/");
+    assert_eq!(bodies(&sent_to(&effects, CONNECTION)), [(TYPE_DRAWING_LINKS, expected)]);
+
+    channel.from_program(&regis_links("200", &json!([{"drawing": 12, "target": "300"}])), 2);
+    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), NOTHING, "another page than the one shown");
+
+    channel.from_program(&regis_links("100", &json!([])), 3);
+    assert_eq!(bodies(&sent_to(&channel.take_effects(), CONNECTION)), [(TYPE_DRAWING_LINKS, alloc::vec![0x01, 0x00, 0x00, 0x00, 0, 1, 0])]);
+}
+
+/// Links too long for one record go in as many as they need, none split,
+/// each naming how many there are.
+#[test]
+fn long_drawing_links_go_in_several_records() {
+    let mut channel = answered();
+    let target = alloc::format!("web:https://example.org/{}", "a".repeat(3000));
+    let links: Vec<Value> = (1..=5).map(|drawing| json!({"drawing": drawing, "target": target})).collect();
+    channel.from_program(&regis_links("100", &json!(links)), 1);
+    let sent = bodies(&sent_to(&channel.take_effects(), CONNECTION));
+    assert_eq!(
+        sent.iter().map(|(kind, body)| (*kind, body[4], body[5], body[6])).collect::<Vec<_>>(),
+        [(TYPE_DRAWING_LINKS, 0, 3, 2), (TYPE_DRAWING_LINKS, 1, 3, 2), (TYPE_DRAWING_LINKS, 2, 3, 1)]
+    );
+}
+
+/// What a receiver would discard is refused here, with where the fault is.
+#[test]
+fn drawing_links_a_receiver_would_refuse_are_refused() {
+    let many: Vec<Value> = (1..=65).map(|drawing| json!({"drawing": drawing, "target": "200"})).collect();
+    for (links, path) in [
+        (json!(many), "links"),
+        (json!([{"drawing": 0, "target": "200"}]), "links[0].drawing"),
+        (json!([{"drawing": 7, "target": "200"}, {"drawing": 7, "target": "300"}]), "links[1].drawing"),
+        (json!([{"drawing": 7, "target": ""}]), "links[0].target"),
+        (json!([{"drawing": 7, "target": "2 00"}]), "links[0].target"),
+        (json!([{"drawing": 7, "target": "zzz"}]), "links[0].target"),
+    ] {
+        let mut channel = answered();
+        channel.from_program(&regis_links("100", &links), 1);
+        let effects = channel.take_effects();
+        let refused: Vec<(Value, Value)> =
+            told(&effects).iter().filter(|line| line["type"] == "refused").map(|line| (line["rule"].clone(), line["path"].clone())).collect();
+        assert_eq!(refused, [(json!("invalid_drawing_links"), json!(path))], "{links}");
+        assert_eq!(sent_to(&effects, CONNECTION), NOTHING);
+    }
+}
+
+/// REQ-6372: a sub-page's cursor drawing reaches the viewer as a
+/// `REGIS_CURSOR` record (the engine's REQ-6371): page, sub-code, drawing.
+#[test]
+fn the_cursor_drawing_reaches_the_viewer() {
+    let mut channel = answered();
+    let cursor = |drawing: u16| line(&json!({"type": "regis_cursor", "connections": [CONNECTION], "page": "100", "sub": "0000", "drawing": drawing}));
+    channel.from_program(&cursor(40), 1);
+    assert_eq!(bodies(&sent_to(&channel.take_effects(), CONNECTION)), [(TYPE_REGIS_CURSOR, alloc::vec![0x01, 0x00, 0x00, 0x00, 0, 40])]);
+    channel.from_program(&cursor(0), 2);
+    assert_eq!(bodies(&sent_to(&channel.take_effects(), CONNECTION)), [(TYPE_REGIS_CURSOR, alloc::vec![0x01, 0x00, 0x00, 0x00, 0, 0])]);
+}
+
+/// Neither record can be sent as raw packets, past its check.
+#[test]
+fn drawing_links_and_cursor_records_in_raw_packets_are_refused() {
+    let mut channel = answered();
+    channel.from_program(&regis_links("100", &json!([{"drawing": 12, "target": "200"}])), 1);
+    channel.from_program(&line(&json!({"type": "regis_cursor", "connections": [CONNECTION], "page": "100", "sub": "0000", "drawing": 4})), 1);
+    let sent = sent_to(&channel.take_effects(), CONNECTION);
+    for record in sent.chunks(PACKET_BYTES) {
+        channel.from_program(&line(&json!({"type": "packets", "connections": [CONNECTION], "packets": base64(record)})), 2);
+        let effects = channel.take_effects();
+        assert_eq!(refusals(&effects).iter().map(|(rule, _)| rule.clone()).collect::<Vec<_>>(), [json!("invalid_packet")]);
+        assert_eq!(sent_to(&effects, CONNECTION), NOTHING);
+    }
+}
+
+/// `DRAWING_HOVER` (the engine's REQ-6369): the pointer coming onto a
+/// drawing and going off it reach the program as inputs of kind
+/// `drawing_hover`; one stamped with another page, and one the engine's
+/// reader would refuse, are dropped.
+#[test]
+fn drawing_hover_reaches_the_program() {
+    // Page 100, sub-code 0000; the flags; drawing 12; 7 commits.
+    let payload = |page_low: u8, flags: u8, drawing: u8| [0x80 | page_low, 0x02, 0, flags, drawing, 0, 0, 0, 7];
+    let mut channel: Channel = answered();
+    for (flags, leave) in [(0, false), (1, true)] {
+        let on = payload(0, flags, 12);
+        channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x47, payload: &on })]), 5);
+        let hovers = inputs(&channel.take_effects());
+        assert_eq!(hovers.len(), 1);
+        assert_eq!(hovers[0]["event"], json!({"kind": "drawing_hover", "drawing": 12, "leave": leave, "commits": 7}));
+    }
+    for bad in [payload(1, 0, 12), payload(0, 2, 12), payload(0, 0, 0)] {
+        channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x47, payload: &bad })]), 6);
+        assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "{bad:?}");
+    }
+}
+
+/// The renderer's REQ-6367: looks that lead back to their drawing are a
+/// ring, refused by the validator as a receiver would refuse them.
+#[test]
+fn looks_that_form_a_ring_are_refused() {
+    let mut channel = answered();
+    channel.from_program(&regis(b"D(S1(H2),S2(A1),C)", true), 1);
+    let refused = refusals(&channel.take_effects());
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].0, json!("invalid_regis"));
+    assert!(refused[0].1.contains("code 4"), "{}", refused[0].1);
 }

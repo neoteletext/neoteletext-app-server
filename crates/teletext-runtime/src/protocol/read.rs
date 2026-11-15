@@ -108,6 +108,8 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::Log => ProgramMessage::Log(typed(object, "")?),
         MessageType::Packets => ProgramMessage::Packets(typed(object, "")?),
         MessageType::Regis => ProgramMessage::Regis(typed(object, "")?),
+        MessageType::RegisLinks => ProgramMessage::RegisLinks(typed(object, "")?),
+        MessageType::RegisCursor => ProgramMessage::RegisCursor(typed(object, "")?),
     })
 }
 

@@ -1384,16 +1384,10 @@ impl Channel {
                 let targets = self.targets(&line.connections);
                 self.send_records(&targets, kind, |state| records::author_log(&line, &mut state.record_id))?;
             }
-            ProgramMessage::Log(line) => {
-                let level = match line.level {
-                    OperatorLevel::Error => Level::Error,
-                    OperatorLevel::Warn => Level::Warn,
-                    OperatorLevel::Info => Level::Info,
-                    OperatorLevel::Debug => Level::Debug,
-                };
-                self.log(level, "program_log", format!("{}: {}", line.event, line.text));
-            }
+            ProgramMessage::Log(line) => self.log(operator_level(line.level), "program_log", format!("{}: {}", line.event, line.text)),
             ProgramMessage::Regis(message) => self.regis(&message)?,
+            ProgramMessage::RegisLinks(message) => self.regis_links(&message)?,
+            ProgramMessage::RegisCursor(message) => self.regis_cursor(&message)?,
             ProgramMessage::Packets(packets) => {
                 let bytes: Arc<[u8]> = Arc::from(protocol::check::bytes_of(&packets.packets));
                 for connection in self.targets(&packets.connections) {
@@ -1404,6 +1398,28 @@ impl Channel {
         Ok(())
     }
 
+    /// The connections named whose selection shows a sub-page: who what a
+    /// program says of that sub-page's picture goes to.
+    fn showing(&self, connections: &Connections, page: u16, sub: u16) -> Vec<ConnectionId> {
+        self.targets(connections).into_iter().filter(|connection| self.connections.get(connection).is_some_and(|state| state.shows(page, sub))).collect()
+    }
+
+    /// `regis_links`: a sub-page's drawing links, to the connections named
+    /// that show it (REQ-6372).
+    fn regis_links(&mut self, message: &protocol::RegisLinks) -> Result<(), Refusal> {
+        let (page, sub) = (message.page.0, message.sub.0);
+        let targets = self.showing(&message.connections, page, sub);
+        self.send_records(&targets, protocol::MessageType::RegisLinks, |state| records::drawing_links(page, sub, &message.links, &mut state.record_id))
+    }
+
+    /// `regis_cursor`: a sub-page's cursor drawing, to the connections
+    /// named that show it (REQ-6372).
+    fn regis_cursor(&mut self, message: &protocol::RegisCursor) -> Result<(), Refusal> {
+        let (page, sub) = (message.page.0, message.sub.0);
+        let targets = self.showing(&message.connections, page, sub);
+        self.send_records(&targets, protocol::MessageType::RegisCursor, |state| records::regis_cursor(page, sub, message.drawing, &mut state.record_id))
+    }
+
     /// `regis`: more of a sub-page's ReGIS, to the connections named that
     /// show it (DEC-6335). It is read for every one of them before any is
     /// sent; one that would refuse a commit refuses the message, and the
@@ -1412,11 +1428,7 @@ impl Channel {
         let kind = protocol::MessageType::Regis;
         let bytes = protocol::check::bytes_of(&message.data);
         let (page, sub) = (message.page.0, message.sub.0);
-        let targets: Vec<ConnectionId> = self
-            .targets(&message.connections)
-            .into_iter()
-            .filter(|connection| self.connections.get(connection).is_some_and(|state| state.shows(page, sub)))
-            .collect();
+        let targets = self.showing(&message.connections, page, sub);
         let read = targets.iter().try_for_each(|connection| match self.connections.get_mut(connection) {
             Some(state) => state.read_regis(page, sub, message.restart, &bytes),
             None => Ok(()),
@@ -1642,6 +1654,16 @@ fn cursor_of(page: u16, acked: u16, line: Option<&CursorLine>) -> Cursor {
     // Only BLOCK is a flag now: echo and masked echo are withdrawn (the
     // engine's E.134). No cursor takes no flags (DOC-1954).
     Cursor { page, acked, place, flags: shown.map_or(0, |line| line.flags & BLOCK) }
+}
+
+/// The log's level for a level a program gives its own lines.
+const fn operator_level(level: OperatorLevel) -> Level {
+    match level {
+        OperatorLevel::Error => Level::Error,
+        OperatorLevel::Warn => Level::Warn,
+        OperatorLevel::Info => Level::Info,
+        OperatorLevel::Debug => Level::Debug,
+    }
 }
 
 #[cfg(test)]

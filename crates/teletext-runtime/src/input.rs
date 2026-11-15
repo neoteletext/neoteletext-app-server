@@ -69,6 +69,41 @@ const MAX_PICK_OFFSET: i32 = 1 << 20;
 /// A pick's place in the picture is below this on each axis.
 const MAX_PICK_POSITION: u32 = 1 << 16;
 
+/// `DRAWING_HOVER`'s type among the input extension events (the engine's
+/// REQ-6369).
+const DRAWING_HOVER: u8 = 0x47;
+/// `DRAWING_HOVER`'s flag: the pointer left the drawing.
+const DRAWING_HOVER_LEAVE: u8 = 1;
+
+/// The pointer came onto a detectable numbered drawing of a page drawn in
+/// ReGIS, or went off it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct DrawingHover {
+    /// The page on screen.
+    pub on: Stamp,
+    /// The numbered drawing, 1 to 65,535.
+    pub drawing: u16,
+    /// It went off the drawing; false when it came onto it.
+    pub leave: bool,
+    /// The commits applied to the picture on screen.
+    pub commits: u32,
+}
+
+impl DrawingHover {
+    /// Reads `DRAWING_HOVER`'s payload: the stamp, the flags, the drawing
+    /// and the commit count's four bytes. `None` for anything the engine's
+    /// reader refuses; it is read here for the reason [`Pick::read`] gives.
+    fn read(payload: &[u8]) -> Option<Self> {
+        let mut reader = neoteletext_input::wire::Reader::new(payload);
+        let on = Stamp::new(u16::try_from(reader.uv().ok()?).ok()?, u16::try_from(reader.uv().ok()?).ok()?)?;
+        let flags = reader.byte().ok()?;
+        let drawing = u16::try_from(reader.uv().ok()?).ok()?;
+        let commits: [u8; 4] = reader.take(4).ok()?.try_into().ok()?;
+        let good = flags & !DRAWING_HOVER_LEAVE == 0 && drawing != 0 && reader.used() == payload.len();
+        good.then_some(Self { on, drawing, leave: flags & DRAWING_HOVER_LEAVE != 0, commits: u32::from_be_bytes(commits) })
+    }
+}
+
 /// What lay under a pointer on a page drawn in ReGIS.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pick {
@@ -184,6 +219,10 @@ pub enum Input<'a> {
     /// On a page drawn in ReGIS, what lay under the pointer (PICK, the
     /// engine's REQ-6337).
     Pick(Pick),
+    /// On a page drawn in ReGIS, the pointer came onto a detectable
+    /// numbered drawing or went off it (`DRAWING_HOVER`, the engine's
+    /// REQ-6369).
+    DrawingHover(DrawingHover),
     /// An input method's text as it stands: empty when composing ended.
     Compose {
         /// Where the caret is, in code points from the text's start.
@@ -222,6 +261,7 @@ impl<'a> Input<'a> {
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
             Item::Event(Event::Extension { kind: PICK, payload }) => Pick::read(payload).map(Self::Pick),
+            Item::Event(Event::Extension { kind: DRAWING_HOVER, payload }) => DrawingHover::read(payload).map(Self::DrawingHover),
             Item::Event(_) => None,
         }
     }
@@ -263,6 +303,7 @@ pub(crate) fn stamp(item: &Item<'_>) -> Option<Stamp> {
         Event::Touch(touch) => Some(touch.on),
         Event::Paste { on, .. } | Event::Compose { on, .. } | Event::Hover { on, .. } => Some(*on),
         Event::Extension { kind: PICK, payload } => Pick::read(payload).map(|pick| pick.on),
+        Event::Extension { kind: DRAWING_HOVER, payload } => DrawingHover::read(payload).map(|hover| hover.on),
         _ => None,
     }
 }
@@ -448,6 +489,7 @@ impl Input<'_> {
             Self::Pick(pick) => {
                 InputEvent::Pick { drawing: pick.drawing, x: pick.x, y: pick.y, picture_x: pick.picture_x, picture_y: pick.picture_y, commits: pick.commits }
             }
+            Self::DrawingHover(hover) => InputEvent::DrawingHover { drawing: hover.drawing, leave: hover.leave, commits: hover.commits },
             Self::FocusIn => InputEvent::Focus,
             Self::FocusOut => InputEvent::Blur,
         })

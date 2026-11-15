@@ -559,6 +559,30 @@
         }
       ]
     },
+    "DrawingLink": {
+      "additionalProperties": false,
+      "description": "One drawing link of `regis_links`.",
+      "properties": {
+        "drawing": {
+          "description": "The numbered drawing that is the link.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "target": {
+          "description": "Where it leads, in any form a text link's target takes: a page\n(`200`), a sub-page (`200:0001`), a page of another service\n(`news:300`), an address, or `web:` and a web address.",
+          "maxLength": 8004,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "drawing",
+        "target"
+      ],
+      "type": "object"
+    },
     "Enhancement": {
       "additionalProperties": false,
       "description": "A packet X/26 (EN 300 706 clause 12.3).",
@@ -966,6 +990,40 @@
             "y",
             "picture_x",
             "picture_y",
+            "commits"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "On a page drawn in ReGIS, the pointer came onto a detectable\nnumbered drawing, or went off it (the engine's REQ-6369).",
+          "properties": {
+            "commits": {
+              "description": "The commits the receiver had applied to the picture on screen.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "drawing": {
+              "description": "The numbered drawing, 1 to 65,535.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "drawing_hover",
+              "type": "string"
+            },
+            "leave": {
+              "description": "It went off the drawing; false when it came onto it.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "drawing",
+            "leave",
             "commits"
           ],
           "type": "object"
@@ -1597,7 +1655,9 @@
         "denied",
         "description",
         "measure",
-        "regis"
+        "regis",
+        "regis_links",
+        "regis_cursor"
       ],
       "type": "string"
     },
@@ -3064,6 +3124,81 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The numbered drawings of a sub-page's ReGIS picture that are links\n(REQ-6372).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "links": {
+              "description": "The links, each drawing named once.",
+              "items": {
+                "$ref": "#/$defs/DrawingLink"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "regis_links",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "links"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The numbered drawing that is a ReGIS sub-page's cursor (REQ-6372).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "drawing": {
+              "description": "The drawing, or 0 for no cursor.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "regis_cursor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "drawing"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3188,6 +3323,11 @@
         {
           "const": "invalid_regis",
           "description": "ReGIS whose commit a receiver would refuse (DEC-6335).",
+          "type": "string"
+        },
+        {
+          "const": "invalid_drawing_links",
+          "description": "Drawing links a receiver would refuse (REQ-6372).",
           "type": "string"
         },
         {

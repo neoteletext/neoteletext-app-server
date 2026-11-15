@@ -707,6 +707,17 @@ pub enum InputEvent {
         /// The commits the receiver had applied to the picture on screen.
         commits: u32,
     },
+    /// On a page drawn in ReGIS, the pointer came onto a detectable
+    /// numbered drawing, or went off it (the engine's REQ-6369).
+    DrawingHover {
+        /// The numbered drawing, 1 to 65,535.
+        #[schemars(range(min = 1))]
+        drawing: u16,
+        /// It went off the drawing; false when it came onto it.
+        leave: bool,
+        /// The commits the receiver had applied to the picture on screen.
+        commits: u32,
+    },
     /// The pointer came onto one of the page's controls, or went off it.
     Hover {
         /// Which.
@@ -1067,6 +1078,8 @@ pub enum MessageType {
     Description,
     Measure,
     Regis,
+    RegisLinks,
+    RegisCursor,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1122,6 +1135,8 @@ pub enum Rule {
     InvalidPacket,
     /// ReGIS whose commit a receiver would refuse (DEC-6335).
     InvalidRegis,
+    /// Drawing links a receiver would refuse (REQ-6372).
+    InvalidDrawingLinks,
     /// A selection's number given with other than one connection: a number
     /// belongs to one connection.
     OneConnection,
@@ -1193,6 +1208,11 @@ pub enum ProgramMessage {
     /// Bytes of a sub-page's ReGIS, drawn by a receiver's ReGIS renderer in
     /// place of the sub-page's teletext page (DEC-6335).
     Regis(Regis),
+    /// The numbered drawings of a sub-page's ReGIS picture that are links
+    /// (REQ-6372).
+    RegisLinks(RegisLinks),
+    /// The numbered drawing that is a ReGIS sub-page's cursor (REQ-6372).
+    RegisCursor(RegisCursor),
 }
 
 impl ProgramMessage {
@@ -1214,6 +1234,8 @@ impl ProgramMessage {
             Self::Description(_) => MessageType::Description,
             Self::Measure(_) => MessageType::Measure,
             Self::Regis(_) => MessageType::Regis,
+            Self::RegisLinks(_) => MessageType::RegisLinks,
+            Self::RegisCursor(_) => MessageType::RegisCursor,
         }
     }
 
@@ -2116,6 +2138,60 @@ pub struct Regis {
     /// The bytes, exact base64: ReGIS commands as a terminal would receive
     /// them inside a device control string, without the string's framing.
     pub data: Base64,
+}
+
+/// The most drawing links a sub-page has (the engine's REQ-6370,
+/// `MAX_DRAWING_LINKS`; the engine this server is pinned to predates it).
+pub const MOST_DRAWING_LINKS: usize = 64;
+
+/// `regis_links`: the numbered drawings of a sub-page's ReGIS picture that
+/// are links, and where each leads (REQ-6372). A receiver follows a click
+/// on one itself, as it follows a text link of a teletext page. The list
+/// replaces the sub-page's drawing links, and an empty one removes them.
+/// It goes to the connections named whose selection shows the sub-page.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisLinks {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The page.
+    pub page: PageNumber,
+    /// The sub-page: never 3F7F, which names none.
+    pub sub: SubCode,
+    /// The links, each drawing named once.
+    #[schemars(length(max = MOST_DRAWING_LINKS))]
+    pub links: Vec<DrawingLink>,
+}
+
+/// One drawing link of `regis_links`.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DrawingLink {
+    /// The numbered drawing that is the link.
+    #[schemars(range(min = 1))]
+    pub drawing: u16,
+    /// Where it leads, in any form a text link's target takes: a page
+    /// (`200`), a sub-page (`200:0001`), a page of another service
+    /// (`news:300`), an address, or `web:` and a web address.
+    #[schemars(length(min = 1, max = neoteletext_formats::page::LINK_TARGET_BYTES))]
+    pub target: String,
+}
+
+/// `regis_cursor`: the numbered drawing of a sub-page's ReGIS picture that
+/// is its cursor, which a receiver blinks while keys go to the channel, or
+/// 0 for none (REQ-6372). It goes to the connections named whose selection
+/// shows the sub-page.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisCursor {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The page.
+    pub page: PageNumber,
+    /// The sub-page: never 3F7F, which names none.
+    pub sub: SubCode,
+    /// The drawing, or 0 for no cursor.
+    pub drawing: u16,
 }
 
 /// `packets`.

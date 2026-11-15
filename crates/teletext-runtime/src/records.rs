@@ -108,6 +108,79 @@ pub(crate) fn regis(page: u16, sub: u16, generation: u16, offset: u32, data: &[u
     Ok(bytes)
 }
 
+/// The fixed fields of a `DRAWING_LINKS` record's body: page, sub-code,
+/// part, parts and the count of links (the engine's REQ-6370).
+const DRAWING_LINKS_FIXED: usize = 2 + 2 + 1 + 1 + 1;
+/// A drawing link's fields other than its target's bytes: its drawing and
+/// the target's length.
+const DRAWING_LINK_FIELDS: usize = 2 + 2;
+
+/// A sub-page's drawing links as `DRAWING_LINKS` records (the engine's
+/// REQ-6370): as many links in each as fit, none split, and with no links
+/// one record of none, which removes those a receiver held. The engine
+/// this server is pinned to predates the record, so its body is written
+/// here, through the engine's frame; the message's check has bounded the
+/// links and their targets.
+pub(crate) fn drawing_links(page: u16, sub: u16, links: &[crate::protocol::DrawingLink], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    let room = neoteletext_audio::MAX_FRAMED_BODY.saturating_sub(DRAWING_LINKS_FIXED);
+    let size = |link: &crate::protocol::DrawingLink| DRAWING_LINK_FIELDS.saturating_add(link.target.len());
+    // The parts are counted before the first is written: each names their number.
+    let mut parts: Vec<&[crate::protocol::DrawingLink]> = Vec::new();
+    let mut left = links;
+    loop {
+        let mut used = 0_usize;
+        let taken = left.iter().take_while(|link| {
+            used = used.saturating_add(size(link));
+            used <= room
+        });
+        let (now, later) = left.split_at_checked(taken.count()).ok_or_else(String::new)?;
+        if now.is_empty() && !later.is_empty() {
+            return Err(String::from("a drawing link over a record's largest"));
+        }
+        parts.push(now);
+        left = later;
+        if left.is_empty() {
+            break;
+        }
+    }
+    let count = u8::try_from(parts.len()).map_err(|_| String::from("more DRAWING_LINKS records than a sub-page may have"))?;
+    let mut bytes = Vec::new();
+    for (part, now) in (0_u8..).zip(parts) {
+        let mut body = Vec::new();
+        body.extend_from_slice(&page.to_be_bytes());
+        body.extend_from_slice(&sub.to_be_bytes());
+        body.extend_from_slice(&[part, count, u8::try_from(now.len()).map_err(|_| String::new())?]);
+        for link in now {
+            body.extend_from_slice(&link.drawing.to_be_bytes());
+            body.extend_from_slice(&u16::try_from(link.target.len()).map_err(|_| String::new())?.to_be_bytes());
+            body.extend_from_slice(link.target.as_bytes());
+        }
+        let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_DRAWING_LINKS, &body, SERVICE, *record_id, &mut |packet| {
+            bytes.extend_from_slice(&packet.bytes);
+        });
+        written.ok_or_else(|| String::from("a DRAWING_LINKS record over the frame's largest"))?;
+        *record_id = record_id.wrapping_add(1);
+    }
+    Ok(bytes)
+}
+
+/// A sub-page's cursor drawing as a `REGIS_CURSOR` record (the engine's
+/// REQ-6371): page, sub-code and drawing, written here for the reason
+/// [`drawing_links`] gives.
+pub(crate) fn regis_cursor(page: u16, sub: u16, drawing: u16, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&page.to_be_bytes());
+    body.extend_from_slice(&sub.to_be_bytes());
+    body.extend_from_slice(&drawing.to_be_bytes());
+    let mut bytes = Vec::new();
+    let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_REGIS_CURSOR, &body, SERVICE, *record_id, &mut |packet| {
+        bytes.extend_from_slice(&packet.bytes);
+    });
+    written.ok_or_else(|| String::from("a REGIS_CURSOR record over the frame's largest"))?;
+    *record_id = record_id.wrapping_add(1);
+    Ok(bytes)
+}
+
 /// A line for the channel's author (DOC-1956).
 pub(crate) fn author_log(line: &AuthorLog, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let level = match line.level {
