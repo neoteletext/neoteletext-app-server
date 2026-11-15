@@ -37,7 +37,7 @@ neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-rendere
 # The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
 # a program's ReGIS is checked with the receiver's own code before it is
 # sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
-regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e25752f2a1c3bb6fa4eb7d930192bbf6115d0688" }
+regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e7895719bca91d06760c5fe25d078b1509413581" }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the
