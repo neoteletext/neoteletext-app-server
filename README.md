@@ -4,4 +4,4 @@ The NeoTeletext server: a teletext application server that applications publish 
 
 The protocol it speaks is `~/devel/neoteletext-common/PROTOCOL.html`.
 
-It imports the teletext it needs from `neoteletext-engine`, pinned at one commit, and never copies it. What the engine lacks for a server is written here, once.
+It imports the teletext it needs from `neoteletext-renderer-teletext`, pinned at one commit, and never copies it. What the engine lacks for a server is written here, once.

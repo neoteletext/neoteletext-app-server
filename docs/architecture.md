@@ -4,7 +4,7 @@ The design of the server's behaviour is `~/devel/neoteletext-common/PROTOCOL.htm
 
 ## 1. What it is
 
-The NeoTeletext server is a teletext application server: applications publish pages and streams, and each client receives, as 42-byte teletext packets, only what changed in the pages it shows. It imports its teletext from `neoteletext-engine` at one pinned commit and writes here, once, what the engine lacks for a server.
+The NeoTeletext server is a teletext application server: applications publish pages and streams, and each client receives, as 42-byte teletext packets, only what changed in the pages it shows. It imports its teletext from `neoteletext-renderer-teletext` at one pinned commit and writes here, once, what the engine lacks for a server.
 
 ## 3. How the server runs where it runs
 
@@ -98,7 +98,7 @@ The runtime and the engine's `core` and `formats` already build for `wasm32-unkn
 
 ## 4. The engine
 
-Every `neoteletext-*` dependency is a git dependency on the engine's public repository, `https://github.com/neoteletext/neoteletext-engine`, at one `rev`, with `default-features = false` and the features named; the check script refuses two revisions. Until 28 October 2026 it was the engine's local repository, `file:///Users/andrewstuart/devel/neoteletext-engine`, whose history the gates and deploys copied to the Linux host; the engine went public that day, on the owner's instruction, and the dependency moved to it at the same commit, `e09a589`.
+Every `neoteletext-*` dependency is a git dependency on the engine's public repository, `https://github.com/neoteletext/neoteletext-engine`, at one `rev`, with `default-features = false` and the features named; the check script refuses two revisions. Until 28 October 2026 it was the engine's local repository, `file:///Users/andrewstuart/devel/neoteletext-renderer-teletext`, whose history the gates and deploys copied to the Linux host; the engine went public that day, on the owner's instruction, and the dependency moved to it at the same commit, `e09a589`.
 
 ## 5. What is built
 

@@ -10,7 +10,7 @@ That is the one document of how we work, for every NeoTeletext repository, with 
 
 ## Rules particular to this repository
 
-- **Import, never copy.** Teletext parsing, encoding, the page model, the input protocol and audio come from `neoteletext-engine`, as git dependencies pinned at one `rev`, as the browser pins them. Code is never copied out of the engine or the browser.
+- **Import, never copy.** Teletext parsing, encoding, the page model, the input protocol and audio come from `neoteletext-renderer-teletext`, as git dependencies pinned at one `rev`, as the browser pins them. Code is never copied out of the engine or the browser.
 - **What the engine lacks for a server is written here, once** (the owner's decision of 25 October 2026, `docs/architecture.md` section 2): the engine's scope is unchanged.
 - **`runtime` does no I/O and reads no clock**: it works through a `Host` trait; `native` holds the sockets, TLS and processes.
 
