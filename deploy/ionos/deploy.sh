@@ -35,7 +35,7 @@ target=neoteletext      # ~/.ssh/config alias: 10.70.0.18 via crowdwaveaudio
 edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
-channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisgallery neoteletext-server-channel-regisdemo)
+channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisgallery neoteletext-server-channel-regisdemo neoteletext-server-channel-naplpsdemo)
 # The old Hackaday channel, Python, beside the Python kit.
 python_channels=neoteletext-server-channels
 # The development machine's uv, so uv.lock is read by the version that wrote it.
@@ -201,7 +201,8 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite"},
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"},
   {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
-  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo"}
+  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo"},
+  {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo"}
 ]}
 EOF
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
@@ -265,4 +266,4 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
 say "inside the container"
 ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'
+    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'
