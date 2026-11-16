@@ -135,6 +135,7 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_connections(&root.field("connections"), connections).and_then(|()| check_packets(&root.field("packets"), packets))
         }
         ProgramMessage::Regis(regis) => check_regis(&root, regis),
+        ProgramMessage::Naplps(naplps) => check_naplps(&root, naplps),
         ProgramMessage::RegisLinks(links) => check_regis_links(&root, links),
         ProgramMessage::RegisCursor(cursor) => {
             check_connections(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
@@ -827,6 +828,14 @@ fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
     check_base64(&root.field("data"), &regis.data, MOST_REGIS_BYTES).map(|_| ())
 }
 
+/// `naplps`: who it is for, a sub-page that can be shown, and at most as
+/// many bytes as a `regis` message may carry.
+fn check_naplps(root: &Path<'_>, naplps: &super::Naplps) -> Checked {
+    check_connections(&root.field("connections"), &naplps.connections)?;
+    check_shown_subpage(root, naplps.sub)?;
+    check_base64(&root.field("data"), &naplps.data, MOST_REGIS_BYTES).map(|_| ())
+}
+
 /// Whether a drawing link's target is one a receiver reads (the engine's
 /// REQ-6370): printable ASCII with no comma, of a length a link target may
 /// be, in a form the engine's own parser of link targets takes.
@@ -868,6 +877,9 @@ pub(crate) const TYPE_DRAWING_LINKS: u8 = 15;
 /// The record type of a sub-page's cursor drawing (the engine's REQ-6371),
 /// which only the `regis_cursor` message sends.
 pub(crate) const TYPE_REGIS_CURSOR: u8 = 16;
+/// The record type of a sub-page's NAPLPS (the engine's NAPLPS record, the
+/// NAPLPS renderer's REQ-6408 item 2), which only the `naplps` message sends.
+pub(crate) const TYPE_NAPLPS: u8 = 17;
 
 /// The most raw packets one message may carry: a megabyte of them.
 const MOST_RAW_BYTES: usize = 1024 * 1024;
@@ -892,9 +904,9 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
         if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
             && fragment.index == 0
             && let Some(kind) = fragment.data.get(1)
-            && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR].contains(kind)
+            && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR, TYPE_NAPLPS].contains(kind)
         {
-            let detail = "a record of a sub-page's ReGIS goes in a regis, regis_links or regis_cursor message, which checks it";
+            let detail = "a record of a sub-page's ReGIS or NAPLPS goes in a regis, regis_links, regis_cursor or naplps message, which checks it";
             return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
         }
     }

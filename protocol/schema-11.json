@@ -1657,7 +1657,8 @@
         "measure",
         "regis",
         "regis_links",
-        "regis_cursor"
+        "regis_cursor",
+        "naplps"
       ],
       "type": "string"
     },
@@ -3197,6 +3198,45 @@
             "page",
             "sub",
             "drawing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bytes of a sub-page's NAPLPS, drawn by a receiver's NAPLPS renderer\nin place of the sub-page's teletext page (the NAPLPS renderer's\nREQ-6408 item 3).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "data": {
+              "description": "The bytes, exact base64: NAPLPS as a terminal would receive it.",
+              "type": "string"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "restart": {
+              "default": false,
+              "description": "Begin the sub-page's NAPLPS again: the receiver starts a new\nrenderer for it, with nothing drawn.",
+              "type": "boolean"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "naplps",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "data"
           ],
           "type": "object"
         }

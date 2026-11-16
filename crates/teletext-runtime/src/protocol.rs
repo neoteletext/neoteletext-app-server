@@ -1080,6 +1080,7 @@ pub enum MessageType {
     Regis,
     RegisLinks,
     RegisCursor,
+    Naplps,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1213,6 +1214,10 @@ pub enum ProgramMessage {
     RegisLinks(RegisLinks),
     /// The numbered drawing that is a ReGIS sub-page's cursor (REQ-6372).
     RegisCursor(RegisCursor),
+    /// Bytes of a sub-page's NAPLPS, drawn by a receiver's NAPLPS renderer
+    /// in place of the sub-page's teletext page (the NAPLPS renderer's
+    /// REQ-6408 item 3).
+    Naplps(Naplps),
 }
 
 impl ProgramMessage {
@@ -1236,6 +1241,7 @@ impl ProgramMessage {
             Self::Regis(_) => MessageType::Regis,
             Self::RegisLinks(_) => MessageType::RegisLinks,
             Self::RegisCursor(_) => MessageType::RegisCursor,
+            Self::Naplps(_) => MessageType::Naplps,
         }
     }
 
@@ -2137,6 +2143,32 @@ pub struct Regis {
     pub restart: bool,
     /// The bytes, exact base64: ReGIS commands as a terminal would receive
     /// them inside a device control string, without the string's framing.
+    pub data: Base64,
+}
+
+/// `naplps`: bytes of a sub-page's NAPLPS (ANSI X3.110-1983), the picture
+/// language a receiver's NAPLPS renderer draws in place of the sub-page's
+/// teletext page (the NAPLPS renderer's REQ-6408 item 3). It goes to the
+/// connections named whose selection shows the sub-page. Each of them has
+/// one stream of NAPLPS for the sub-page it shows: `restart` begins it
+/// again, and a message without `restart` adds to it, drawing on over what
+/// is there, and is not sent to a connection that has no stream yet. The
+/// server does not read the bytes: the receiver's renderer bounds what
+/// they can cost.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Naplps {
+    /// Who it is for.
+    pub connections: Connections,
+    /// The page.
+    pub page: PageNumber,
+    /// The sub-page: never 3F7F, which names none.
+    pub sub: SubCode,
+    /// Begin the sub-page's NAPLPS again: the receiver starts a new
+    /// renderer for it, with nothing drawn.
+    #[serde(default)]
+    pub restart: bool,
+    /// The bytes, exact base64: NAPLPS as a terminal would receive it.
     pub data: Base64,
 }
 

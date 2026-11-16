@@ -87,6 +87,18 @@ pub(crate) const REGIS_DATA: usize = neoteletext_audio::MAX_FRAMED_BODY - REGIS_
 /// generation. The engine this server is pinned to predates the record,
 /// so its body is written here, through the engine's frame.
 pub(crate) fn regis(page: u16, sub: u16, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    stream(crate::protocol::check::TYPE_REGIS, page, sub, generation, offset, data, record_id)
+}
+
+/// Bytes of a sub-page's NAPLPS as NAPLPS records (the NAPLPS renderer's
+/// REQ-6408 item 2), whose body is the REGIS record's: as many as they
+/// need, the stream `generation` of the sub-page, from `offset` in it.
+pub(crate) fn naplps(page: u16, sub: u16, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    stream(crate::protocol::check::TYPE_NAPLPS, page, sub, generation, offset, data, record_id)
+}
+
+/// A stream of a sub-page's bytes as records of type `kind`.
+fn stream(kind: u8, page: u16, sub: u16, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let mut bytes = Vec::new();
     let mut at = offset;
     let empty: &[u8] = &[];
@@ -98,12 +110,12 @@ pub(crate) fn regis(page: u16, sub: u16, generation: u16, offset: u32, data: &[u
         body.extend_from_slice(&generation.to_be_bytes());
         body.extend_from_slice(&at.to_be_bytes());
         body.extend_from_slice(chunk);
-        let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_REGIS, &body, SERVICE, *record_id, &mut |packet| {
+        let written = neoteletext_web::records::write_packets(kind, &body, SERVICE, *record_id, &mut |packet| {
             bytes.extend_from_slice(&packet.bytes);
         });
-        written.ok_or_else(|| String::from("a REGIS record over the frame's largest"))?;
+        written.ok_or_else(|| String::from("a record over the frame's largest"))?;
         *record_id = record_id.wrapping_add(1);
-        at = at.checked_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX)).ok_or_else(|| String::from("the ReGIS stream passed 4,294,967,295 bytes"))?;
+        at = at.checked_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX)).ok_or_else(|| String::from("the stream passed 4,294,967,295 bytes"))?;
     }
     Ok(bytes)
 }

@@ -361,6 +361,19 @@ struct Connection {
     regis: Option<RegisStream>,
     /// The number of its last ReGIS stream: a new one takes the next.
     regis_generation: u16,
+    /// Its stream of NAPLPS for the sub-page it shows, once one is begun
+    /// (the NAPLPS renderer's REQ-6408 item 3), and its last one's number.
+    naplps: Option<NaplpsStream>,
+    naplps_generation: u16,
+}
+
+/// One connection's stream of NAPLPS for the sub-page it shows.
+struct NaplpsStream {
+    page: u16,
+    sub: u16,
+    generation: u16,
+    /// The bytes sent of it.
+    offset: u32,
 }
 
 /// One connection's stream of ReGIS for the sub-page it shows: what it has
@@ -404,6 +417,8 @@ impl Connection {
             list_held: None,
             regis: None,
             regis_generation: 0,
+            naplps: None,
+            naplps_generation: 0,
         }
     }
 
@@ -431,6 +446,23 @@ impl Connection {
         }
         stream.pending = true;
         Ok(())
+    }
+
+    /// The NAPLPS records of `bytes` for this connection: of a new stream
+    /// when `restart` begins one, else of the stream it has for the
+    /// sub-page, and nothing when it has none.
+    fn naplps_records(&mut self, page: u16, sub: u16, restart: bool, bytes: &[u8]) -> Result<Vec<u8>, records::Refused> {
+        if restart {
+            self.naplps_generation = self.naplps_generation.wrapping_add(1);
+            self.naplps = Some(NaplpsStream { page, sub, generation: self.naplps_generation, offset: 0 });
+        }
+        let Some(stream) = self.naplps.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(Vec::new()) };
+        let sent = records::naplps(stream.page, stream.sub, stream.generation, stream.offset, bytes, &mut self.record_id)?;
+        stream.offset = stream
+            .offset
+            .checked_add(u32::try_from(bytes.len()).unwrap_or(u32::MAX))
+            .ok_or_else(|| String::from("the sub-page's NAPLPS passed 4,294,967,295 bytes; start it again"))?;
+        Ok(sent)
     }
 
     /// The REGIS records of the bytes [`Connection::read_regis`] just read,
@@ -1202,6 +1234,7 @@ impl Channel {
         state.shown = None;
         // Another selection: the ReGIS it was sent is not of this one.
         state.regis = None;
+        state.naplps = None;
         let announced = state.announced;
         if announced {
             state.request = state.request.saturating_add(1);
@@ -1388,6 +1421,7 @@ impl Channel {
             ProgramMessage::Regis(message) => self.regis(&message)?,
             ProgramMessage::RegisLinks(message) => self.regis_links(&message)?,
             ProgramMessage::RegisCursor(message) => self.regis_cursor(&message)?,
+            ProgramMessage::Naplps(message) => self.naplps(&message)?,
             ProgramMessage::Packets(packets) => {
                 let bytes: Arc<[u8]> = Arc::from(protocol::check::bytes_of(&packets.packets));
                 for connection in self.targets(&packets.connections) {
@@ -1402,6 +1436,15 @@ impl Channel {
     /// program says of that sub-page's picture goes to.
     fn showing(&self, connections: &Connections, page: u16, sub: u16) -> Vec<ConnectionId> {
         self.targets(connections).into_iter().filter(|connection| self.connections.get(connection).is_some_and(|state| state.shows(page, sub))).collect()
+    }
+
+    /// `naplps`: bytes of a sub-page's NAPLPS, to the connections named
+    /// that show it (the NAPLPS renderer's REQ-6408 item 3).
+    fn naplps(&mut self, message: &protocol::Naplps) -> Result<(), Refusal> {
+        let bytes = protocol::check::bytes_of(&message.data);
+        let (page, sub, restart) = (message.page.0, message.sub.0, message.restart);
+        let targets = self.showing(&message.connections, page, sub);
+        self.send_records(&targets, protocol::MessageType::Naplps, |state| state.naplps_records(page, sub, restart, &bytes))
     }
 
     /// `regis_links`: a sub-page's drawing links, to the connections named

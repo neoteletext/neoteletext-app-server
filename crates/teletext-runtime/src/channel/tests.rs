@@ -28,6 +28,7 @@ use crate::protocol::tests::{line, subpage, with};
 mod delivery;
 mod fields;
 mod moves;
+mod naplps;
 mod regis;
 mod sound;
 
