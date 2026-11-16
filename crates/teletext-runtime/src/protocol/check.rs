@@ -26,6 +26,11 @@ use super::{
 use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
 };
+use super::{
+    Dx7BankSound, Dx7BlocksSound, Dx7LiveSound, Dx7Sound, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_INSTRUMENT_BLOCKS, SidBlocksSound, SidLiveSound, SidSound,
+};
+
+mod instrument;
 
 /// Why a message was refused: what `refused` carries back.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -636,6 +641,19 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             check_connections(&root.field("connections"), connections)?;
             check_rate(&root.field("rate"), *rate)
         }
+        Sound::Sid(SidSound { connections, images_per_block, images, .. }) => {
+            instrument::sid(root, connections, *images_per_block, Some((images, MOST_INSTRUMENT_BLOCKS)))
+        }
+        Sound::SidLive(SidLiveSound { connections, images_per_block, .. }) => instrument::sid(root, connections, *images_per_block, None),
+        Sound::SidBlocks(SidBlocksSound { connections, images_per_block, images, .. }) => {
+            instrument::sid(root, connections, *images_per_block, Some((images, MOST_LIVE_INSTRUMENT_BLOCKS)))
+        }
+        Sound::Dx7(Dx7Sound { connections, slots, blocks, .. }) => instrument::dx7(root, connections, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS))),
+        Sound::Dx7Live(Dx7LiveSound { connections, slots, .. }) => instrument::dx7(root, connections, *slots, None),
+        Sound::Dx7Blocks(Dx7BlocksSound { connections, slots, blocks, .. }) => {
+            instrument::dx7(root, connections, *slots, Some((blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
+        }
+        Sound::Dx7Bank(Dx7BankSound { connections, patches, .. }) => instrument::bank(root, connections, patches),
         Sound::Play(PlaySound { connections, channel, gain, duck, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;

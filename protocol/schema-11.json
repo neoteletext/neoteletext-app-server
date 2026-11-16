@@ -2613,6 +2613,384 @@
               "type": "object"
             },
             {
+              "description": "A stored SID sound: images of the chip's registers (DEC-6410).",
+              "properties": {
+                "chip": {
+                  "$ref": "#/$defs/SidChip",
+                  "description": "The chip that plays it."
+                },
+                "clock": {
+                  "$ref": "#/$defs/SidClock",
+                  "description": "The clock the chip runs from."
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images": {
+                  "description": "Its blocks back to back, each `images_per_block` images of 25\nbytes, exact base64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "sid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "chip",
+                "clock",
+                "images"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live SID sound's object.",
+              "properties": {
+                "chip": {
+                  "$ref": "#/$defs/SidChip",
+                  "description": "The chip that plays it."
+                },
+                "clock": {
+                  "$ref": "#/$defs/SidClock",
+                  "description": "The clock the chip runs from."
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "sid_live",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "chip",
+                "clock"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live SID sound's next blocks.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "sid_blocks",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "first",
+                "images"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored DX7 sound: timed MIDI messages for the instrument (DEC-6410).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "dx7",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live DX7 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "dx7_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live DX7 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "dx7_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of DX7 patches, which DX7 sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "dx7_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, each the instrument's 128 packed bytes,\nevery byte at most 127, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
               "description": "Play a sound on an audio channel.",
               "properties": {
                 "after": {
@@ -4045,6 +4423,36 @@
         "restarts"
       ],
       "type": "object"
+    },
+    "SidChip": {
+      "description": "The SID chip that plays a sound: the two differ in their filter and\ntheir combined waveforms.",
+      "oneOf": [
+        {
+          "const": "6581",
+          "description": "The MOS 6581.",
+          "type": "string"
+        },
+        {
+          "const": "8580",
+          "description": "The MOS 8580.",
+          "type": "string"
+        }
+      ]
+    },
+    "SidClock": {
+      "description": "The clock a SID chip runs from, which sets the pitch of a frequency\nregister's value.",
+      "oneOf": [
+        {
+          "const": "pal",
+          "description": "A PAL Commodore 64's: 985,248 Hz.",
+          "type": "string"
+        },
+        {
+          "const": "ntsc",
+          "description": "An NTSC Commodore 64's: 1,022,727 Hz.",
+          "type": "string"
+        }
+      ]
     },
     "Standard": {
       "additionalProperties": false,

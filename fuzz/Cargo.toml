@@ -59,3 +59,10 @@ path = "fuzz_targets/opus_sound.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "instrument_sound"
+path = "fuzz_targets/instrument_sound.rs"
+test = false
+doc = false
+bench = false

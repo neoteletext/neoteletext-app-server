@@ -95,6 +95,33 @@ pub const SAFE_INTEGER_LIMIT: u64 = crate::session_cookie::SESSION_LIMIT - 1;
 /// The longest a sound may be: two minutes at 48 kHz, the browser's own
 /// limit for one sound.
 pub const MOST_SAMPLES: usize = 48_000 * 120;
+/// The sample rate of the instrument codecs, the SID chip's and the DX7's
+/// (the engine's REQ-6411, DEC-6410).
+pub const INSTRUMENT_RATE: u32 = 48_000;
+/// The blocks of an instrument's sound in a second: a block is 20 ms.
+pub const INSTRUMENT_BLOCKS_A_SECOND: u32 = 50;
+/// The samples a block of an instrument's sound plays for: 960.
+pub const INSTRUMENT_BLOCK_SAMPLES: u32 = INSTRUMENT_RATE / INSTRUMENT_BLOCKS_A_SECOND;
+/// The most blocks of a stored instrument sound: two minutes, 6,000 blocks,
+/// the receivers' limit on a stored sound.
+pub const MOST_INSTRUMENT_BLOCKS: usize = MOST_SAMPLES / INSTRUMENT_BLOCK_SAMPLES as usize;
+/// The most blocks one message adds to a live instrument sound: two
+/// seconds, far more than a program keeps ahead of what is heard.
+pub const MOST_LIVE_INSTRUMENT_BLOCKS: usize = 100;
+/// The SID chip's writable registers, one image of them: 25 bytes.
+pub const SID_IMAGE_BYTES: u16 = 25;
+/// How many images of the SID chip's registers a block may hold: one every
+/// 20, 10 or 5 ms.
+pub const SID_IMAGES_PER_BLOCK: [u8; 3] = [1, 2, 4];
+/// One slot of a DX7 block: a time, a MIDI status byte and its two data
+/// bytes.
+pub const DX7_SLOT_BYTES: u16 = 4;
+/// The most slots a DX7 block holds.
+pub const DX7_MOST_SLOTS: u8 = 16;
+/// One DX7 patch in the instrument's packed form: 128 bytes.
+pub const DX7_PATCH_BYTES: u16 = 128;
+/// The most patches a DX7 bank holds: the instrument's 32 voices.
+pub const DX7_MOST_PATCHES: usize = 32;
 /// The sample rates of the audio profile (the engine's `audio.md`).
 pub const SAMPLE_RATES: [u32; 8] = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000];
 /// The highest duck step (`audio.md` section 4.4: 0 to 6).
@@ -1856,6 +1883,20 @@ pub enum Sound {
     Live(LiveSound),
     /// A live sound's next blocks of samples.
     Blocks(BlocksSound),
+    /// A stored SID sound: images of the chip's registers (DEC-6410).
+    Sid(SidSound),
+    /// A live SID sound's object.
+    SidLive(SidLiveSound),
+    /// A live SID sound's next blocks.
+    SidBlocks(SidBlocksSound),
+    /// A stored DX7 sound: timed MIDI messages for the instrument (DEC-6410).
+    Dx7(Dx7Sound),
+    /// A live DX7 sound's object.
+    Dx7Live(Dx7LiveSound),
+    /// A live DX7 sound's next blocks.
+    Dx7Blocks(Dx7BlocksSound),
+    /// A bank of DX7 patches, which DX7 sounds name.
+    Dx7Bank(Dx7BankSound),
     /// Play a sound on an audio channel.
     Play(PlaySound),
     /// Stop an audio channel.
@@ -1969,6 +2010,167 @@ pub struct BlocksSound {
     pub first: u16,
     /// The samples, exact base64.
     pub pcm: Base64,
+}
+
+/// The SID chip that plays a sound: the two differ in their filter and
+/// their combined waveforms.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+pub enum SidChip {
+    /// The MOS 6581.
+    #[serde(rename = "6581")]
+    Mos6581,
+    /// The MOS 8580.
+    #[serde(rename = "8580")]
+    Mos8580,
+}
+
+/// The clock a SID chip runs from, which sets the pitch of a frequency
+/// register's value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SidClock {
+    /// A PAL Commodore 64's: 985,248 Hz.
+    Pal,
+    /// An NTSC Commodore 64's: 1,022,727 Hz.
+    Ntsc,
+}
+
+/// A stored SID sound: images of the chip's 25 writable registers, 1, 2 or
+/// 4 to a 20 ms block (the audio profile's codec 3, DEC-6410).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SidSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
+    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    pub images_per_block: u8,
+    /// The chip that plays it.
+    pub chip: SidChip,
+    /// The clock the chip runs from.
+    pub clock: SidClock,
+    /// Its blocks back to back, each `images_per_block` images of 25
+    /// bytes, exact base64: 1 to 6,000 blocks, two minutes.
+    pub images: Base64,
+}
+
+/// A live SID sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SidLiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
+    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    pub images_per_block: u8,
+    /// The chip that plays it.
+    pub chip: SidChip,
+    /// The clock the chip runs from.
+    pub clock: SidClock,
+}
+
+/// A live SID sound's next blocks.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SidBlocksSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
+    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    pub images_per_block: u8,
+    /// The first block's number, counting modulo 65,536.
+    pub first: u16,
+    /// The blocks back to back, exact base64: 1 to 100 blocks.
+    pub images: Base64,
+}
+
+/// A stored DX7 sound: MIDI messages for the instrument, each timed within
+/// its 20 ms block (the audio profile's codec 4, DEC-6410). A slot is a
+/// time in tenths of a millisecond, 0 to 199, a status byte and two data
+/// bytes; four zero bytes are an empty slot. The messages taken are note
+/// off and note on, control changes 1, 7, 64, 120, 121 and 123, a program
+/// change to one of the bank's 32 patches, and pitch bend.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Dx7Sound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank its program changes choose patches from.
+    pub bank: u8,
+    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
+    /// base64: 1 to 6,000 blocks, two minutes.
+    pub blocks: Base64,
+}
+
+/// A live DX7 sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Dx7LiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank its program changes choose patches from.
+    pub bank: u8,
+}
+
+/// A live DX7 sound's next blocks.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Dx7BlocksSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The first block's number, counting modulo 65,536.
+    pub first: u16,
+    /// The blocks back to back, exact base64: 1 to 100 blocks.
+    pub blocks: Base64,
+}
+
+/// A bank of DX7 patches (the audio profile's codec 5, DEC-6410), which a
+/// DX7 sound names by this handle.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Dx7BankSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Its patches back to back, each the instrument's 128 packed bytes,
+    /// every byte at most 127, exact base64: 1 to 32 patches.
+    pub patches: Base64,
 }
 
 /// Play a sound on an audio channel.
