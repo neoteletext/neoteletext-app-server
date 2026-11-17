@@ -1,6 +1,6 @@
 //! A program's instrument sounds as a viewer receives them (REQ-6413,
-//! DEC-6410): a SID sound, a DX7 sound and a bank of DX7 patches as OBJECT
-//! and DATA records of the audio profile's codecs 3, 4 and 5, each read
+//! DEC-6410, DEC-6461): a sound of synth6581 or synth8580, a synth7 sound
+//! and a bank of synth7 patches as OBJECT and DATA records of the audio profile's codecs 3, 4 and 5, each read
 //! back here byte by byte against the engine's REQ-6411, and each fault a
 //! receiver would refuse refused whole, with nothing sent. The figures are
 //! written out here, not taken from the code they test.
@@ -22,17 +22,17 @@ const GENERATION: u16 = 0x0102;
 const TYPE_OBJECT: u8 = 1;
 const TYPE_DATA: u8 = 2;
 const TYPE_CONTROL: u8 = 3;
-/// The profile's codecs of a SID sound, a DX7 sound and a bank.
-const CODEC_SID: u8 = 3;
-const CODEC_DX7: u8 = 4;
+/// The profile's codecs of a synth6581 sound, a synth7 sound and a bank.
+const CODEC_SYNTH6581: u8 = 3;
+const CODEC_SYNTH7: u8 = 4;
 const CODEC_BANK: u8 = 5;
 /// The sample-rate code of 48,000 Hz.
 const RATE_48K: u8 = 7;
 /// The samples of a 20 ms block at 48,000 Hz.
 const BLOCK_SAMPLES: u32 = 960;
-/// One image of the SID chip's registers.
+/// One image of the chip's registers.
 const IMAGE: usize = 25;
-/// One DX7 slot, and one patch.
+/// One synth7 slot, and one patch.
 const SLOT: usize = 4;
 const PATCH: usize = 128;
 /// The most blocks of a stored sound, and of one message of a live one.
@@ -144,23 +144,24 @@ fn pattern(length: usize) -> Vec<u8> {
     (0..length).map(|index| u8::try_from(index % 251).unwrap()).collect()
 }
 
-/// Blocks of note-on slots: every slot one the DX7 codec takes.
+/// Blocks of note-on slots: every slot one the synth7 codec takes.
 fn notes(slots: usize, blocks: usize) -> Vec<u8> {
     (0..slots.saturating_mul(blocks)).flat_map(|index| [u8::try_from(index % 200).unwrap(), 0x90, u8::try_from(index % 128).unwrap(), 100]).collect()
 }
 
-/// A stored SID sound reaches the viewer as an OBJECT record of codec 3
-/// that names its chip and clock, then its images as DATA from block 0;
-/// any byte is an image's.
+/// A stored sound of synth6581 or synth8580 reaches the viewer as an
+/// OBJECT record of codec 3 that names its chip, which its kind gives
+/// (DEC-6461), and its clock, then its images as DATA from block 0; any
+/// byte is an image's.
 #[test]
-fn a_stored_sid_sound_is_an_object_of_codec_3_and_its_images() {
+fn a_stored_synth6581_sound_is_an_object_of_codec_3_and_its_images() {
     const BLOCKS: usize = 3;
     let images: Vec<u8> = (0..IMAGE * BLOCKS).map(|index| u8::try_from(255 - index).unwrap()).collect();
-    for (chip, clock, byte) in [("6581", "pal", 0), ("8580", "pal", 1), ("6581", "ntsc", 2), ("8580", "ntsc", 3)] {
+    for (chip, clock, byte) in [("synth6581", "pal", 0), ("synth8580", "pal", 1), ("synth6581", "ntsc", 2), ("synth8580", "ntsc", 3)] {
         let mut channel = answered();
-        let got = sent(&mut channel, &sound("sid", json!({"images_per_block": 1, "chip": chip, "clock": clock, "images": base64(&images)})));
+        let got = sent(&mut channel, &sound(chip, json!({"images_per_block": 1, "clock": clock, "images": base64(&images)})));
         assert_eq!(got.iter().map(|record| record.0).collect::<Vec<u8>>(), [TYPE_OBJECT, TYPE_DATA]);
-        assert_eq!(object(&got[0].1), expected(CODEC_SID, IMAGE, 3 * BLOCK_SAMPLES, 3, &[3, 1, byte]), "{chip} {clock}");
+        assert_eq!(object(&got[0].1), expected(CODEC_SYNTH6581, IMAGE, 3 * BLOCK_SAMPLES, 3, &[3, 1, byte]), "{chip} {clock}");
         assert_eq!(data(&got[1].1), (0, images.clone()));
     }
 }
@@ -176,44 +177,44 @@ fn a_stored_sound_is_cut_into_records_at_whole_blocks() {
     assert_eq!(A_RECORD, 10);
     let images = pattern(BLOCK * BLOCKS);
     let mut channel = answered();
-    let got = sent(&mut channel, &sound("sid", json!({"images_per_block": 4, "chip": "6581", "clock": "pal", "images": base64(&images)})));
-    assert_eq!(object(&got[0].1), expected(CODEC_SID, BLOCK, 25 * BLOCK_SAMPLES, 25, &[3, 1, 0]));
+    let got = sent(&mut channel, &sound("synth6581", json!({"images_per_block": 4, "clock": "pal", "images": base64(&images)})));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH6581, BLOCK, 25 * BLOCK_SAMPLES, 25, &[3, 1, 0]));
     let cut: Vec<(u16, Vec<u8>)> = got[1..].iter().map(|(kind, body)| (assert_eq!(*kind, TYPE_DATA), data(body)).1).collect();
     assert_eq!(cut, [(0, images[..1_000].to_vec()), (10, images[1_000..2_000].to_vec()), (20, images[2_000..].to_vec())]);
 
-    // A DX7 sound of 16 slots: 64 bytes a block, 15 blocks a record.
+    // A synth7 sound of 16 slots: 64 bytes a block, 15 blocks a record.
     let blocks = notes(16, 31);
-    let got = sent(&mut channel, &sound("dx7", json!({"slots": 16, "bank": 0, "blocks": base64(&blocks)})));
+    let got = sent(&mut channel, &sound("synth7", json!({"slots": 16, "bank": 0, "blocks": base64(&blocks)})));
     let cut: Vec<(u16, usize)> = got[1..].iter().map(|(_, body)| (data(body).0, data(body).1.len())).collect();
     assert_eq!(cut, [(0, 15 * 64), (15, 15 * 64), (30, 64)]);
     assert_eq!(got[1..].iter().flat_map(|(_, body)| data(body).1).collect::<Vec<u8>>(), blocks);
 }
 
-/// A live SID sound is announced by an OBJECT record with no length, and
+/// A live synth8580 sound is announced by an OBJECT record with no length, and
 /// its blocks go as DATA records only, numbered from the block named,
 /// counting modulo 65,536.
 #[test]
-fn a_live_sid_sound_is_announced_and_its_blocks_follow() {
+fn a_live_synth8580_sound_is_announced_and_its_blocks_follow() {
     const BLOCK: usize = IMAGE * 2;
     let mut channel = answered();
-    let got = sent(&mut channel, &sound("sid_live", json!({"images_per_block": 2, "chip": "8580", "clock": "ntsc"})));
+    let got = sent(&mut channel, &sound("synth8580_live", json!({"images_per_block": 2, "clock": "ntsc"})));
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].0, TYPE_OBJECT);
-    assert_eq!(object(&got[0].1), expected(CODEC_SID, BLOCK, 0, 0, &[3, 1, 3]));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH6581, BLOCK, 0, 0, &[3, 1, 3]));
 
     // 20 blocks of 50 bytes fit a record; 25 blocks from 65,530 pass 65,535.
     let images = pattern(BLOCK * 25);
-    let got = sent(&mut channel, &sound("sid_blocks", json!({"images_per_block": 2, "first": 65_530, "images": base64(&images)})));
+    let got = sent(&mut channel, &sound("synth8580_blocks", json!({"images_per_block": 2, "first": 65_530, "images": base64(&images)})));
     assert_eq!(got.iter().map(|record| record.0).collect::<Vec<u8>>(), [TYPE_DATA, TYPE_DATA]);
     assert_eq!(data(&got[0].1), (65_530, images[..1_000].to_vec()));
     assert_eq!(data(&got[1].1), (14, images[1_000..].to_vec()));
 }
 
-/// A stored DX7 sound is an OBJECT record of codec 4 that names its bank,
+/// A stored synth7 sound is an OBJECT record of codec 4 that names its bank,
 /// then its slots as DATA; a live one is announced with no length and its
 /// blocks follow as DATA records only.
 #[test]
-fn a_dx7_sound_is_an_object_of_codec_4_that_names_its_bank() {
+fn a_synth7_sound_is_an_object_of_codec_4_that_names_its_bank() {
     /// The bank's handle.
     const BANK: u8 = 200;
     // Every message the codec takes, at its bounds, and an empty slot.
@@ -233,17 +234,17 @@ fn a_dx7_sound_is_an_object_of_codec_4_that_names_its_bank() {
     ];
     let blocks: Vec<u8> = slots.as_flattened().to_vec();
     let mut channel = answered();
-    let got = sent(&mut channel, &sound("dx7", json!({"slots": 3, "bank": BANK, "blocks": base64(&blocks)})));
+    let got = sent(&mut channel, &sound("synth7", json!({"slots": 3, "bank": BANK, "blocks": base64(&blocks)})));
     assert_eq!(got.iter().map(|record| record.0).collect::<Vec<u8>>(), [TYPE_OBJECT, TYPE_DATA]);
-    assert_eq!(object(&got[0].1), expected(CODEC_DX7, 3 * SLOT, 4 * BLOCK_SAMPLES, 4, &[4, 1, BANK]));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH7, 3 * SLOT, 4 * BLOCK_SAMPLES, 4, &[4, 1, BANK]));
     assert_eq!(data(&got[1].1), (0, blocks.clone()));
 
-    let got = sent(&mut channel, &sound("dx7_live", json!({"slots": 16, "bank": BANK})));
+    let got = sent(&mut channel, &sound("synth7_live", json!({"slots": 16, "bank": BANK})));
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].0, TYPE_OBJECT);
-    assert_eq!(object(&got[0].1), expected(CODEC_DX7, 16 * SLOT, 0, 0, &[4, 1, BANK]));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH7, 16 * SLOT, 0, 0, &[4, 1, BANK]));
 
-    let got = sent(&mut channel, &sound("dx7_blocks", json!({"slots": 3, "first": 7, "blocks": base64(&blocks)})));
+    let got = sent(&mut channel, &sound("synth7_blocks", json!({"slots": 3, "first": 7, "blocks": base64(&blocks)})));
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].0, TYPE_DATA);
     assert_eq!(data(&got[0].1), (7, blocks));
@@ -252,18 +253,18 @@ fn a_dx7_sound_is_an_object_of_codec_4_that_names_its_bank() {
 /// A bank is an OBJECT record of codec 5 with no extension, whose length
 /// and blocks are its patches, then the patches as DATA, seven to a record.
 #[test]
-fn a_dx7_bank_is_an_object_of_codec_5_and_its_patches() {
+fn a_synth7_bank_is_an_object_of_codec_5_and_its_patches() {
     assert_eq!(DATA_ROOM / PATCH, 7);
     let patches: Vec<u8> = (0..PATCH * 32).map(|index| u8::try_from(index % 128).unwrap()).collect();
     let mut channel = answered();
-    let got = sent(&mut channel, &sound("dx7_bank", json!({"patches": base64(&patches)})));
+    let got = sent(&mut channel, &sound("synth7_bank", json!({"patches": base64(&patches)})));
     assert_eq!(object(&got[0].1), expected(CODEC_BANK, PATCH, 32, 32, &[]));
     let cut: Vec<(u16, usize)> = got[1..].iter().map(|(kind, body)| (assert_eq!(*kind, TYPE_DATA), (data(body).0, data(body).1.len())).1).collect();
     assert_eq!(cut, [(0, 7 * PATCH), (7, 7 * PATCH), (14, 7 * PATCH), (21, 7 * PATCH), (28, 4 * PATCH)]);
     assert_eq!(got[1..].iter().flat_map(|(_, body)| data(body).1).collect::<Vec<u8>>(), patches);
 
     let one = &patches[..PATCH];
-    let got = sent(&mut channel, &sound("dx7_bank", json!({"patches": base64(one)})));
+    let got = sent(&mut channel, &sound("synth7_bank", json!({"patches": base64(one)})));
     assert_eq!(object(&got[0].1), expected(CODEC_BANK, PATCH, 1, 1, &[]));
     assert_eq!(data(&got[1].1), (0, one.to_vec()));
 }
@@ -279,11 +280,11 @@ fn refused(message: &[u8], path: &str, rule: &str) -> String {
     told(&effects).iter().find(|line| line["type"] == "refused").unwrap()["detail"].as_str().unwrap().into()
 }
 
-/// A DX7 slot the codec does not take refuses the whole message, naming
+/// A synth7 slot the codec does not take refuses the whole message, naming
 /// its block and slot: a time past the block, a status that is not one of
 /// the five messages, and each message's data out of its range.
 #[test]
-fn a_dx7_slot_the_codec_does_not_take_is_refused_with_its_block_and_slot() {
+fn a_synth7_slot_the_codec_does_not_take_is_refused_with_its_block_and_slot() {
     let bad: [[u8; SLOT]; 16] = [
         [200, 0x90, 60, 100],
         [1, 0, 0, 0],
@@ -306,9 +307,10 @@ fn a_dx7_slot_the_codec_does_not_take_is_refused_with_its_block_and_slot() {
         // The third block's second slot, among slots that are taken.
         let mut blocks = notes(2, 3);
         blocks[5 * SLOT..6 * SLOT].copy_from_slice(&slot);
-        for (kind, fields) in
-            [("dx7", json!({"slots": 2, "bank": 0, "blocks": base64(&blocks)})), ("dx7_blocks", json!({"slots": 2, "first": 0, "blocks": base64(&blocks)}))]
-        {
+        for (kind, fields) in [
+            ("synth7", json!({"slots": 2, "bank": 0, "blocks": base64(&blocks)})),
+            ("synth7_blocks", json!({"slots": 2, "first": 0, "blocks": base64(&blocks)})),
+        ] {
             let detail = refused(&sound(kind, fields), "blocks", "outside_profile");
             assert!(detail.starts_with("block 2 slot 1 "), "{slot:?}: {detail}");
         }
@@ -317,46 +319,46 @@ fn a_dx7_slot_the_codec_does_not_take_is_refused_with_its_block_and_slot() {
 
 /// Blocks that are not whole, none, or more than a sound may have are
 /// refused by the rules the other sounds' data is; so are a number out of
-/// its range and a chip or clock that is not one of the two.
+/// its range, a clock that is not one of the two, and a chip, which is
+/// the kind's to name (DEC-6461).
 #[test]
 fn an_instrument_sound_out_of_its_bounds_is_refused() {
-    let sid = |fields: Value| {
-        let mut all = json!({"images_per_block": 2, "chip": "6581", "clock": "pal", "images": base64(&[0; 2 * IMAGE])});
+    let synth6581 = |fields: Value| {
+        let mut all = json!({"images_per_block": 2, "clock": "pal", "images": base64(&[0; 2 * IMAGE])});
         all.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
-        sound("sid", all)
+        sound("synth6581", all)
     };
-    refused(&sid(json!({"images": base64(&[0; IMAGE])})), "images", "wrong_length");
-    refused(&sid(json!({"images": base64(&[0; 2 * IMAGE + 1])})), "images", "wrong_length");
-    refused(&sid(json!({"images": ""})), "images", "wrong_length");
-    refused(&sid(json!({"images_per_block": 1, "images": base64(&alloc::vec![0; IMAGE * (MOST_STORED + 1)])})), "images", "too_long");
-    refused(&sid(json!({"images_per_block": 3})), "images_per_block", "not_listed");
-    refused(&sid(json!({"images_per_block": 0})), "images_per_block", "not_listed");
-    refused(&sid(json!({"chip": "6582"})), "chip", "not_listed");
-    refused(&sid(json!({"chip": 6581})), "chip", "wrong_type");
-    refused(&sid(json!({"clock": "PAL"})), "clock", "not_listed");
-    refused(&sound("sid_live", json!({"images_per_block": 8, "chip": "6581", "clock": "pal"})), "images_per_block", "not_listed");
-    refused(&sound("sid_live", json!({"images_per_block": 1, "chip": "sid", "clock": "pal"})), "chip", "not_listed");
-    refused(&sound("sid_live", json!({"images_per_block": 1, "chip": "8580", "clock": "secam"})), "clock", "not_listed");
-    let live = |images: &[u8]| sound("sid_blocks", json!({"images_per_block": 1, "first": 0, "images": base64(images)}));
+    refused(&synth6581(json!({"images": base64(&[0; IMAGE])})), "images", "wrong_length");
+    refused(&synth6581(json!({"images": base64(&[0; 2 * IMAGE + 1])})), "images", "wrong_length");
+    refused(&synth6581(json!({"images": ""})), "images", "wrong_length");
+    refused(&synth6581(json!({"images_per_block": 1, "images": base64(&alloc::vec![0; IMAGE * (MOST_STORED + 1)])})), "images", "too_long");
+    refused(&synth6581(json!({"images_per_block": 3})), "images_per_block", "not_listed");
+    refused(&synth6581(json!({"images_per_block": 0})), "images_per_block", "not_listed");
+    refused(&synth6581(json!({"chip": "6581"})), "chip", "unknown_field");
+    refused(&synth6581(json!({"clock": "PAL"})), "clock", "not_listed");
+    refused(&sound("synth6581_live", json!({"images_per_block": 8, "clock": "pal"})), "images_per_block", "not_listed");
+    refused(&sound("synth8580_live", json!({"images_per_block": 1, "chip": "8580", "clock": "pal"})), "chip", "unknown_field");
+    refused(&sound("synth8580_live", json!({"images_per_block": 1, "clock": "secam"})), "clock", "not_listed");
+    let live = |images: &[u8]| sound("synth6581_blocks", json!({"images_per_block": 1, "first": 0, "images": base64(images)}));
     refused(&live(&[]), "images", "wrong_length");
     refused(&live(&[0; IMAGE - 1]), "images", "wrong_length");
     refused(&live(&alloc::vec![0; IMAGE * (MOST_LIVE + 1)]), "images", "too_long");
-    refused(&sound("sid_blocks", json!({"images_per_block": 1, "first": 65_536, "images": base64(&[0; IMAGE])})), "first", "wrong_type");
+    refused(&sound("synth6581_blocks", json!({"images_per_block": 1, "first": 65_536, "images": base64(&[0; IMAGE])})), "first", "wrong_type");
 
-    let dx7 = |slots: usize, blocks: &[u8]| sound("dx7", json!({"slots": slots, "bank": 0, "blocks": base64(blocks)}));
-    refused(&dx7(2, &[0; SLOT]), "blocks", "wrong_length");
-    refused(&dx7(1, &[]), "blocks", "wrong_length");
-    refused(&dx7(1, &alloc::vec![0; SLOT * (MOST_STORED + 1)]), "blocks", "too_long");
-    refused(&dx7(0, &[0; SLOT]), "slots", "out_of_range");
-    refused(&dx7(17, &[0; 17 * SLOT]), "slots", "out_of_range");
-    refused(&sound("dx7", json!({"slots": 1, "bank": 256, "blocks": base64(&[0; SLOT])})), "bank", "wrong_type");
-    refused(&sound("dx7_live", json!({"slots": 17, "bank": 0})), "slots", "out_of_range");
-    let live = |blocks: &[u8]| sound("dx7_blocks", json!({"slots": 1, "first": 0, "blocks": base64(blocks)}));
+    let synth7 = |slots: usize, blocks: &[u8]| sound("synth7", json!({"slots": slots, "bank": 0, "blocks": base64(blocks)}));
+    refused(&synth7(2, &[0; SLOT]), "blocks", "wrong_length");
+    refused(&synth7(1, &[]), "blocks", "wrong_length");
+    refused(&synth7(1, &alloc::vec![0; SLOT * (MOST_STORED + 1)]), "blocks", "too_long");
+    refused(&synth7(0, &[0; SLOT]), "slots", "out_of_range");
+    refused(&synth7(17, &[0; 17 * SLOT]), "slots", "out_of_range");
+    refused(&sound("synth7", json!({"slots": 1, "bank": 256, "blocks": base64(&[0; SLOT])})), "bank", "wrong_type");
+    refused(&sound("synth7_live", json!({"slots": 17, "bank": 0})), "slots", "out_of_range");
+    let live = |blocks: &[u8]| sound("synth7_blocks", json!({"slots": 1, "first": 0, "blocks": base64(blocks)}));
     refused(&live(&[]), "blocks", "wrong_length");
     refused(&live(&[0; SLOT + 1]), "blocks", "wrong_length");
     refused(&live(&alloc::vec![0; SLOT * (MOST_LIVE + 1)]), "blocks", "too_long");
 
-    let bank = |patches: &[u8]| sound("dx7_bank", json!({"patches": base64(patches)}));
+    let bank = |patches: &[u8]| sound("synth7_bank", json!({"patches": base64(patches)}));
     refused(&bank(&[]), "patches", "wrong_length");
     refused(&bank(&[0; PATCH - 1]), "patches", "wrong_length");
     refused(&bank(&alloc::vec![0; PATCH * 33]), "patches", "too_long");
@@ -371,14 +373,15 @@ fn an_instrument_sound_out_of_its_bounds_is_refused() {
 fn an_instrument_sound_at_its_bounds_is_sent() {
     let mut channel = answered();
     let images = alloc::vec![0xFF_u8; IMAGE * 4 * MOST_STORED];
-    let got = sent(&mut channel, &sound("sid", json!({"images_per_block": 4, "chip": "6581", "clock": "pal", "images": base64(&images)})));
-    assert_eq!(object(&got[0].1), expected(CODEC_SID, IMAGE * 4, 5_760_000, 6_000, &[3, 1, 0]));
+    let got = sent(&mut channel, &sound("synth6581", json!({"images_per_block": 4, "clock": "pal", "images": base64(&images)})));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH6581, IMAGE * 4, 5_760_000, 6_000, &[3, 1, 0]));
     assert_eq!(got.len(), 1 + 600);
-    let got = sent(&mut channel, &sound("dx7", json!({"slots": 16, "bank": 0, "blocks": base64(&notes(16, MOST_STORED))})));
-    assert_eq!(object(&got[0].1), expected(CODEC_DX7, 16 * SLOT, 5_760_000, 6_000, &[4, 1, 0]));
-    let got = sent(&mut channel, &sound("sid_blocks", json!({"images_per_block": 4, "first": 0, "images": base64(&alloc::vec![0; IMAGE * 4 * MOST_LIVE])})));
+    let got = sent(&mut channel, &sound("synth7", json!({"slots": 16, "bank": 0, "blocks": base64(&notes(16, MOST_STORED))})));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH7, 16 * SLOT, 5_760_000, 6_000, &[4, 1, 0]));
+    let got =
+        sent(&mut channel, &sound("synth6581_blocks", json!({"images_per_block": 4, "first": 0, "images": base64(&alloc::vec![0; IMAGE * 4 * MOST_LIVE])})));
     assert_eq!(got.len(), 10);
-    let got = sent(&mut channel, &sound("dx7_blocks", json!({"slots": 16, "first": 0, "blocks": base64(&notes(16, MOST_LIVE))})));
+    let got = sent(&mut channel, &sound("synth7_blocks", json!({"slots": 16, "first": 0, "blocks": base64(&notes(16, MOST_LIVE))})));
     assert_eq!(got.len(), 7);
 }
 
@@ -387,7 +390,7 @@ fn an_instrument_sound_at_its_bounds_is_sent() {
 #[test]
 fn play_names_an_instrument_sound_as_any_other() {
     let mut channel = answered();
-    sent(&mut channel, &sound("sid", json!({"images_per_block": 1, "chip": "6581", "clock": "pal", "images": base64(&[0; IMAGE])})));
+    sent(&mut channel, &sound("synth6581", json!({"images_per_block": 1, "clock": "pal", "images": base64(&[0; IMAGE])})));
     let play = json!({"channel": 2, "gain": 80, "fade_ms": 0, "loop": true, "after": false, "duck": 0, "page": null});
     let got = sent(&mut channel, &sound("play", play));
     assert_eq!(got.len(), 1);
@@ -399,28 +402,32 @@ fn play_names_an_instrument_sound_as_any_other() {
 
 /// The profile's codecs of the analogue synthesizers' sounds, and of a
 /// bank of their patches (DEC-6429).
-const CODEC_JUNO: u8 = 6;
-const CODEC_MINIMOOG: u8 = 7;
-const CODEC_PROPHET5: u8 = 8;
-const CODEC_JUPITER8: u8 = 9;
-const CODEC_CS80: u8 = 10;
+const CODEC_SYNTH106: u8 = 6;
+const CODEC_SYNTHD: u8 = 7;
+const CODEC_SYNTH53: u8 = 8;
+const CODEC_SYNTH8: u8 = 9;
+const CODEC_SYNTH80: u8 = 10;
 const CODEC_PATCH_BANK: u8 = 11;
 /// The OBJECT extensions: the bank's handle, the model, a bank's family and
-/// a Jupiter-8's keyboard.
+/// synth8's keyboard.
 const TAG_BANK: u8 = 4;
 const TAG_MODEL: u8 = 5;
 const TAG_FAMILY: u8 = 6;
 const TAG_KEYS: u8 = 7;
 
-/// Each synthesizer's kind, its codec, a sound's fields beyond the DX7's,
-/// the extensions after the bank's that they write, and its patch's bytes.
-fn synths() -> [(&'static str, u8, Value, Vec<u8>, usize); 5] {
+/// Each synthesizer's kind (DEC-6461), its family's codec, a sound's
+/// fields beyond synth7's, the extensions after the bank's that it writes,
+/// the model its name gives among them, and its patch's bytes.
+fn synths() -> [(&'static str, u8, Value, Vec<u8>, usize); 8] {
     [
-        ("juno", CODEC_JUNO, json!({"model": "60"}), alloc::vec![TAG_MODEL, 1, 1], 18),
-        ("minimoog", CODEC_MINIMOOG, json!({}), Vec::new(), 36),
-        ("prophet5", CODEC_PROPHET5, json!({"model": "revisions_1_and_2"}), alloc::vec![TAG_MODEL, 1, 1], 24),
-        ("jupiter8", CODEC_JUPITER8, json!({"key_mode": "split", "split_key": 60}), alloc::vec![TAG_KEYS, 2, 2, 60], 43),
-        ("cs80", CODEC_CS80, json!({}), Vec::new(), 85),
+        ("synth106", CODEC_SYNTH106, json!({}), alloc::vec![TAG_MODEL, 1, 0], 18),
+        ("synth60", CODEC_SYNTH106, json!({}), alloc::vec![TAG_MODEL, 1, 1], 18),
+        ("synthd", CODEC_SYNTHD, json!({}), Vec::new(), 36),
+        ("synth53", CODEC_SYNTH53, json!({}), alloc::vec![TAG_MODEL, 1, 0], 24),
+        ("synth52", CODEC_SYNTH53, json!({}), alloc::vec![TAG_MODEL, 1, 1], 24),
+        ("synth51", CODEC_SYNTH53, json!({}), alloc::vec![TAG_MODEL, 1, 1], 24),
+        ("synth8", CODEC_SYNTH8, json!({"key_mode": "split", "split_key": 60}), alloc::vec![TAG_KEYS, 2, 2, 60], 43),
+        ("synth80", CODEC_SYNTH80, json!({}), Vec::new(), 85),
     ]
 }
 
@@ -430,7 +437,7 @@ fn joined(mut fields: Value, more: &Value) -> Value {
     fields
 }
 
-/// A synthesizer's sound is the DX7's in its own codec: a stored one an
+/// A synthesizer's sound is synth7's in its family's codec: a stored one an
 /// OBJECT record that names its bank, then its model or keyboard, then its
 /// slots as DATA; a live one announced with no length, its blocks following
 /// as DATA records only.
@@ -458,37 +465,42 @@ fn a_synthesizer_sound_is_an_object_of_its_codec_that_names_its_bank() {
     }
 }
 
-/// Each model and key mode is the byte the engine counts it by: the
-/// Juno-106 and revision 3 are 0; whole, dual and split are 0, 1 and 2.
+/// Each key mode is the byte the engine counts it by: whole, dual and
+/// split are 0, 1 and 2. (Each name's model is in `synths`: synth52 and
+/// synth51 write the earlier revision's, 1.)
 #[test]
-fn a_synthesizer_sound_names_its_model_and_keyboard_by_the_engines_numbers() {
+fn a_synth8_sound_names_its_keyboard_by_the_engines_numbers() {
     let blocks = notes(1, 1);
     let cases = [
-        ("juno", json!({"model": "106"}), [TAG_MODEL, 1, 0].to_vec()),
-        ("juno", json!({"model": "60"}), [TAG_MODEL, 1, 1].to_vec()),
-        ("prophet5", json!({"model": "revision_3"}), [TAG_MODEL, 1, 0].to_vec()),
-        ("prophet5", json!({"model": "revisions_1_and_2"}), [TAG_MODEL, 1, 1].to_vec()),
-        ("jupiter8", json!({"key_mode": "whole", "split_key": 0}), [TAG_KEYS, 2, 0, 0].to_vec()),
-        ("jupiter8", json!({"key_mode": "dual", "split_key": 127}), [TAG_KEYS, 2, 1, 127].to_vec()),
-        ("jupiter8", json!({"key_mode": "split", "split_key": 48}), [TAG_KEYS, 2, 2, 48].to_vec()),
+        (json!({"key_mode": "whole", "split_key": 0}), [TAG_KEYS, 2, 0, 0]),
+        (json!({"key_mode": "dual", "split_key": 127}), [TAG_KEYS, 2, 1, 127]),
+        (json!({"key_mode": "split", "split_key": 48}), [TAG_KEYS, 2, 2, 48]),
     ];
-    for (kind, more, tail) in cases {
+    for (more, tail) in cases {
         let mut channel = answered();
-        let got = sent(&mut channel, &sound(kind, joined(json!({"slots": 1, "bank": 3, "blocks": base64(&blocks)}), &more)));
+        let got = sent(&mut channel, &sound("synth8", joined(json!({"slots": 1, "bank": 3, "blocks": base64(&blocks)}), &more)));
         let named: Vec<u8> = [TAG_BANK, 1, 3].into_iter().chain(tail).collect();
-        assert_eq!(object(&got[0].1).extensions, named, "{kind} {more}");
+        assert_eq!(object(&got[0].1).extensions, named, "{more}");
+    }
+}
+
+/// DEC-6461: a kind the names replaced is no kind, and nothing is sent.
+#[test]
+fn a_kind_the_names_replaced_is_refused() {
+    for old in ["juno", "sid", "prophet5_live"] {
+        refused(&sound(old, json!({"slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "kind", "not_listed");
     }
 }
 
 /// A patch of `kind`, `bytes` long, that its instrument reads: every byte 0
-/// but the Juno's range, which must name one, here 8'.
+/// but the range of synth106 and synth60, which must name one, here 8'.
 fn plain(kind: &str, bytes: usize) -> Vec<u8> {
-    /// The Juno's switch byte with the 8' range bit (JUNO-106 owner's
-    /// manual, MIDI Implementation 3.4).
-    const JUNO_EIGHT_FEET: u8 = 0b010;
+    /// The switch byte with the 8' range bit. Source: JUNO-106 owner's
+    /// manual, MIDI Implementation 3.4.
+    const SYNTH106_EIGHT_FEET: u8 = 0b010;
     let mut patch = alloc::vec![0; bytes];
-    if kind == "juno" {
-        patch[16] = JUNO_EIGHT_FEET;
+    if kind == "synth106" || kind == "synth60" {
+        patch[16] = SYNTH106_EIGHT_FEET;
     }
     patch
 }
@@ -516,8 +528,8 @@ fn a_synthesizer_bank_is_an_object_of_codec_11_that_names_its_family() {
 #[test]
 fn a_synthesizer_patch_out_of_its_ranges_is_refused_with_its_byte_and_control() {
     // A patch of each at every control's largest, and a byte past one.
-    let juno: Vec<u8> = [[127; 16].as_slice(), &[0x7C, 0x1F]].concat();
-    let minimoog: Vec<u8> = [
+    let synth106: Vec<u8> = [[127; 16].as_slice(), &[0x7C, 0x1F]].concat();
+    let monophonic: Vec<u8> = [
         &242_i16.to_le_bytes()[..],
         &[100, 100, 5, 5, 5, 5],
         &(-700_i16).to_le_bytes(),
@@ -534,8 +546,8 @@ fn a_synthesizer_patch_out_of_its_ranges_is_refused_with_its_byte_and_control() 
         &[100, 100, 0x7F, 0x3F],
     ]
     .concat();
-    let prophet5: Vec<u8> = [[255; 22].as_slice(), &[127, 127]].concat();
-    let mut jupiter8 = alloc::vec![255_u8; 43];
+    let synth53: Vec<u8> = [[255; 22].as_slice(), &[127, 127]].concat();
+    let mut synth8 = alloc::vec![255_u8; 43];
     for (at, most) in [
         (2, 3),
         (5, 1),
@@ -556,35 +568,35 @@ fn a_synthesizer_patch_out_of_its_ranges_is_refused_with_its_byte_and_control() 
         (41, 1),
         (42, 1),
     ] {
-        jupiter8[at] = most;
+        synth8[at] = most;
     }
-    let mut cs80 = alloc::vec![127_u8; 85];
+    let mut synth80 = alloc::vec![127_u8; 85];
     for at in [3, 4, 29, 30, 76, 78, 80, 81, 82] {
-        cs80[at] = 1;
+        synth80[at] = 1;
     }
     for at in [52, 53, 62] {
-        cs80[at] = 5;
+        synth80[at] = 5;
     }
     let cases: [(&str, Vec<u8>, usize, u8, &str); 13] = [
-        ("juno", juno.clone(), 3, 128, "byte 3 (DCO PWM) is 128: at most 127"),
+        ("synth106", synth106.clone(), 3, 128, "byte 3 (DCO PWM) is 128: at most 127"),
         (
-            "juno",
-            juno.clone(),
+            "synth60",
+            synth106.clone(),
             16,
             0x13,
             "byte 16 (range, waveforms and chorus) is 0x13: at most 0x7F, with exactly one of the range bits 0x01 (16'), 0x02 (8') and 0x04 (4')",
         ),
-        ("juno", juno, 17, 0x20, "byte 17 (PWM, ENV, VCA and HPF switches) is 0x20: no bit outside 0x1F"),
-        ("minimoog", minimoog.clone(), 2, 101, "byte 2 (GLIDE) is 101: at most 100"),
-        ("minimoog", minimoog.clone(), 7, 6, "byte 7 (OSCILLATOR 2 WAVEFORM) is 6: at most 5"),
-        ("minimoog", minimoog.clone(), 9, 0x03, "byte 8 (OSCILLATOR 2 FREQUENCY) is 836: -700 to 700, the low byte first"),
-        ("minimoog", minimoog.clone(), 26, 0x28, "byte 25 (filter DECAY TIME) is 10256: at most 10000, the low byte first"),
-        ("minimoog", minimoog, 35, 0x40, "byte 35 (noise, filter, keyboard, glide and decay switches) is 0x40: no bit outside 0x3F"),
-        ("prophet5", prophet5, 23, 128, "byte 23 (OSC B FINE) is 128: at most 127"),
-        ("jupiter8", jupiter8.clone(), 14, 37, "byte 14 (VCO-2 RANGE) is 37: at most 36"),
-        ("jupiter8", jupiter8, 38, 4, "byte 38 (ASSIGN MODE) is 4: at most 3"),
-        ("cs80", cs80.clone(), 30, 2, "byte 30 (channel II SAWTOOTH) is 2: at most 1"),
-        ("cs80", cs80.clone(), 62, 6, "byte 62 (SUB OSCILLATOR FUNCTION) is 6: at most 5"),
+        ("synth106", synth106, 17, 0x20, "byte 17 (PWM, ENV, VCA and HPF switches) is 0x20: no bit outside 0x1F"),
+        ("synthd", monophonic.clone(), 2, 101, "byte 2 (GLIDE) is 101: at most 100"),
+        ("synthd", monophonic.clone(), 7, 6, "byte 7 (OSCILLATOR 2 WAVEFORM) is 6: at most 5"),
+        ("synthd", monophonic.clone(), 9, 0x03, "byte 8 (OSCILLATOR 2 FREQUENCY) is 836: -700 to 700, the low byte first"),
+        ("synthd", monophonic.clone(), 26, 0x28, "byte 25 (filter DECAY TIME) is 10256: at most 10000, the low byte first"),
+        ("synthd", monophonic, 35, 0x40, "byte 35 (noise, filter, keyboard, glide and decay switches) is 0x40: no bit outside 0x3F"),
+        ("synth52", synth53, 23, 128, "byte 23 (OSC B FINE) is 128: at most 127"),
+        ("synth8", synth8.clone(), 14, 37, "byte 14 (VCO-2 RANGE) is 37: at most 36"),
+        ("synth8", synth8, 38, 4, "byte 38 (ASSIGN MODE) is 4: at most 3"),
+        ("synth80", synth80.clone(), 30, 2, "byte 30 (channel II SAWTOOTH) is 2: at most 1"),
+        ("synth80", synth80.clone(), 62, 6, "byte 62 (SUB OSCILLATOR FUNCTION) is 6: at most 5"),
     ];
     for (kind, good, at, bad, why) in cases {
         let bank = |patch: &[u8]| sound(&alloc::format!("{kind}_bank"), json!({"patches": base64(&[good.as_slice(), patch].concat())}));
@@ -593,10 +605,10 @@ fn a_synthesizer_patch_out_of_its_ranges_is_refused_with_its_byte_and_control() 
         patch[at] = bad;
         assert_eq!(refused(&bank(&patch), "patches", "outside_profile"), alloc::format!("patch 1 {why}"), "{kind}");
     }
-    // The CS-80's levers are seven bits.
-    let mut patch = cs80;
+    // The levers of synth80 are seven bits.
+    let mut patch = synth80;
     patch[84] = 128;
-    let detail = refused(&sound("cs80_bank", json!({"patches": base64(&patch)})), "patches", "outside_profile");
+    let detail = refused(&sound("synth80_bank", json!({"patches": base64(&patch)})), "patches", "outside_profile");
     assert_eq!(detail, "patch 0 byte 84 (TREMOLO/CHORUS DEPTH) is 128: at most 127");
 }
 
@@ -610,13 +622,13 @@ fn a_synthesizer_bank_out_of_its_bounds_is_refused() {
         refused(&bank(&alloc::vec![0; patch - 1]), "patches", "wrong_length");
         refused(&bank(&plain(kind, patch).repeat(33)), "patches", "too_long");
     }
-    refused(&sound("minimoog_bank", json!({"patches": base64(&[0; 18])})), "patches", "wrong_length");
+    refused(&sound("synthd_bank", json!({"patches": base64(&[0; 18])})), "patches", "wrong_length");
 }
 
-/// Each synthesizer takes the DX7's messages, and its own: the CS-80 key
-/// and channel pressure, the Juno controllers 124 to 127, the Jupiter-8
-/// controllers 5, 8 and 65 and program changes on MIDI channels 1 and 2 only. What one takes another refuses,
-/// naming the block and slot.
+/// Each synthesizer takes synth7's messages, and its own: synth80 key and
+/// channel pressure, synth106 and synth60 controllers 124 to 127, synth8
+/// controllers 5, 8 and 65 and program changes on MIDI channels 1 and 2
+/// only. What one takes another refuses, naming the block and slot.
 #[test]
 fn each_synthesizer_takes_its_own_messages() {
     let common: [[u8; SLOT]; 9] = [
@@ -630,10 +642,10 @@ fn each_synthesizer_takes_its_own_messages() {
         [0, 0xC1, 0, 0],
         [0, 0xEF, 127, 127],
     ];
-    let cs80: [[u8; SLOT]; 3] = [[0, 0xA0, 60, 127], [0, 0xAF, 0, 0], [0, 0xD3, 127, 0]];
-    let jupiter8: [[u8; SLOT]; 3] = [[0, 0xB0, 5, 127], [0, 0xB1, 8, 0], [0, 0xB0, 65, 127]];
-    let juno: [[u8; SLOT]; 4] = [[0, 0xB0, 124, 0], [0, 0xB0, 125, 0], [0, 0xB0, 126, 1], [0, 0xBF, 127, 0]];
-    let only_jupiter8_refuses: [u8; SLOT] = [0, 0xC2, 0, 0];
+    let synth80: [[u8; SLOT]; 3] = [[0, 0xA0, 60, 127], [0, 0xAF, 0, 0], [0, 0xD3, 127, 0]];
+    let synth8: [[u8; SLOT]; 3] = [[0, 0xB0, 5, 127], [0, 0xB1, 8, 0], [0, 0xB0, 65, 127]];
+    let synth106: [[u8; SLOT]; 4] = [[0, 0xB0, 124, 0], [0, 0xB0, 125, 0], [0, 0xB0, 126, 1], [0, 0xBF, 127, 0]];
+    let only_synth8_refuses: [u8; SLOT] = [0, 0xC2, 0, 0];
     let stored = |kind: &str, slots: &[[u8; SLOT]]| {
         let more = synths().into_iter().find(|synth| synth.0 == kind).unwrap().2;
         sound(kind, joined(json!({"slots": slots.len(), "bank": 0, "blocks": base64(slots.as_flattened())}), &more))
@@ -641,9 +653,9 @@ fn each_synthesizer_takes_its_own_messages() {
     for (kind, ..) in synths() {
         sent(&mut answered(), &stored(kind, &common));
         let live = |slots: &[[u8; SLOT]]| sound(&alloc::format!("{kind}_blocks"), json!({"slots": 1, "first": 0, "blocks": base64(slots.as_flattened())}));
-        for (own, extra) in [("cs80", &cs80[..]), ("jupiter8", &jupiter8[..]), ("juno", &juno[..])] {
+        for (own, extra) in [(&["synth80"][..], &synth80[..]), (&["synth8"], &synth8[..]), (&["synth106", "synth60"], &synth106[..])] {
             for slot in extra {
-                if kind == own {
+                if own.contains(&kind) {
                     sent(&mut answered(), &live(&[*slot]));
                 } else {
                     let detail = refused(&live(&[[0; SLOT], *slot]), "blocks", "outside_profile");
@@ -651,47 +663,44 @@ fn each_synthesizer_takes_its_own_messages() {
                 }
             }
         }
-        if kind == "jupiter8" {
-            let detail = refused(&stored(kind, &[only_jupiter8_refuses]), "blocks", "outside_profile");
-            assert!(detail.ends_with("a Jupiter-8's program change is on MIDI channel 1, the upper patch, or 2, the lower"), "{detail}");
+        if kind == "synth8" {
+            let detail = refused(&stored(kind, &[only_synth8_refuses]), "blocks", "outside_profile");
+            assert!(detail.ends_with("a synth8's program change is on MIDI channel 1, the upper patch, or 2, the lower"), "{detail}");
         } else {
-            sent(&mut answered(), &stored(kind, &[only_jupiter8_refuses]));
+            sent(&mut answered(), &stored(kind, &[only_synth8_refuses]));
         }
     }
     // Their data out of range.
     for slot in [[0, 0xA0, 128, 0], [0, 0xA0, 0, 128], [0, 0xD0, 128, 0], [0, 0xD0, 1, 1]] {
-        refused(&stored("cs80", &[slot]), "blocks", "outside_profile");
+        refused(&stored("synth80", &[slot]), "blocks", "outside_profile");
     }
-    refused(&stored("jupiter8", &[[0, 0xB0, 5, 128]]), "blocks", "outside_profile");
-    refused(&stored("jupiter8", &[[0, 0xB0, 9, 0]]), "blocks", "outside_profile");
-    refused(&stored("juno", &[[0, 0xB0, 127, 128]]), "blocks", "outside_profile");
-    let detail = refused(&stored("juno", &[[0, 0xB0, 122, 0]]), "blocks", "outside_profile");
-    assert!(detail.ends_with("a Juno's control change is of controller 1, 7, 64, 120, 121 or 123 to 127"), "{detail}");
+    refused(&stored("synth8", &[[0, 0xB0, 5, 128]]), "blocks", "outside_profile");
+    refused(&stored("synth8", &[[0, 0xB0, 9, 0]]), "blocks", "outside_profile");
+    refused(&stored("synth106", &[[0, 0xB0, 127, 128]]), "blocks", "outside_profile");
+    for kind in ["synth106", "synth60"] {
+        let detail = refused(&stored(kind, &[[0, 0xB0, 122, 0]]), "blocks", "outside_profile");
+        assert!(detail.ends_with(&alloc::format!("a {kind}'s control change is of controller 1, 7, 64, 120, 121 or 123 to 127")), "{detail}");
+    }
 }
 
 /// A synthesizer sound's fields out of their bounds are refused, naming the
 /// field; the longest sounds are taken.
 #[test]
 fn a_synthesizer_sound_out_of_its_bounds_is_refused() {
-    refused(&sound("juno", json!({"model": "106A", "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "model", "not_listed");
-    refused(&sound("juno_live", json!({"slots": 1, "bank": 0})), "model", "missing_field");
-    refused(&sound("prophet5_live", json!({"model": "revision2", "slots": 1, "bank": 0})), "model", "not_listed");
-    refused(
-        &sound("jupiter8", json!({"key_mode": "split", "split_key": 128, "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})),
-        "split_key",
-        "out_of_range",
-    );
-    refused(&sound("jupiter8_live", json!({"key_mode": "layer", "split_key": 60, "slots": 1, "bank": 0})), "key_mode", "not_listed");
-    refused(&sound("minimoog", json!({"model": "106", "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "model", "unknown_field");
-    refused(&sound("cs80", json!({"slots": 0, "bank": 0, "blocks": base64(&[0; SLOT])})), "slots", "out_of_range");
-    refused(&sound("cs80_live", json!({"slots": 17, "bank": 0})), "slots", "out_of_range");
-    refused(&sound("minimoog", json!({"slots": 1, "bank": 0, "blocks": base64(&alloc::vec![0; SLOT * (MOST_STORED + 1)])})), "blocks", "too_long");
-    refused(&sound("minimoog_blocks", json!({"slots": 1, "first": 0, "blocks": base64(&alloc::vec![0; SLOT * (MOST_LIVE + 1)])})), "blocks", "too_long");
-    refused(&sound("prophet5_blocks", json!({"slots": 2, "first": 0, "blocks": base64(&[0; SLOT])})), "blocks", "wrong_length");
+    refused(&sound("synth60", json!({"model": "60", "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "model", "unknown_field");
+    refused(&sound("synth52_live", json!({"model": "revisions_1_and_2", "slots": 1, "bank": 0})), "model", "unknown_field");
+    refused(&sound("synth8", json!({"key_mode": "split", "split_key": 128, "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "split_key", "out_of_range");
+    refused(&sound("synth8_live", json!({"key_mode": "layer", "split_key": 60, "slots": 1, "bank": 0})), "key_mode", "not_listed");
+    refused(&sound("synthd", json!({"model": "106", "slots": 1, "bank": 0, "blocks": base64(&[0; SLOT])})), "model", "unknown_field");
+    refused(&sound("synth80", json!({"slots": 0, "bank": 0, "blocks": base64(&[0; SLOT])})), "slots", "out_of_range");
+    refused(&sound("synth80_live", json!({"slots": 17, "bank": 0})), "slots", "out_of_range");
+    refused(&sound("synthd", json!({"slots": 1, "bank": 0, "blocks": base64(&alloc::vec![0; SLOT * (MOST_STORED + 1)])})), "blocks", "too_long");
+    refused(&sound("synthd_blocks", json!({"slots": 1, "first": 0, "blocks": base64(&alloc::vec![0; SLOT * (MOST_LIVE + 1)])})), "blocks", "too_long");
+    refused(&sound("synth53_blocks", json!({"slots": 2, "first": 0, "blocks": base64(&[0; SLOT])})), "blocks", "wrong_length");
 
     let mut channel = answered();
-    let got = sent(&mut channel, &sound("cs80", json!({"slots": 16, "bank": 0, "blocks": base64(&notes(16, MOST_STORED))})));
-    assert_eq!(object(&got[0].1), expected(CODEC_CS80, 16 * SLOT, 5_760_000, 6_000, &[TAG_BANK, 1, 0]));
-    let got = sent(&mut channel, &sound("juno_blocks", json!({"slots": 16, "first": 0, "blocks": base64(&notes(16, MOST_LIVE))})));
+    let got = sent(&mut channel, &sound("synth80", json!({"slots": 16, "bank": 0, "blocks": base64(&notes(16, MOST_STORED))})));
+    assert_eq!(object(&got[0].1), expected(CODEC_SYNTH80, 16 * SLOT, 5_760_000, 6_000, &[TAG_BANK, 1, 0]));
+    let got = sent(&mut channel, &sound("synth106_blocks", json!({"slots": 16, "first": 0, "blocks": base64(&notes(16, MOST_LIVE))})));
     assert_eq!(got.len(), 7);
 }

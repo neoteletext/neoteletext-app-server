@@ -9,7 +9,7 @@
 use alloc::format;
 use alloc::string::String;
 
-use super::super::super::{CS80_PATCH_BYTES, JUNO_PATCH_BYTES, JUPITER8_PATCH_BYTES, PROPHET5_PATCH_BYTES, Synth};
+use super::super::super::{SYNTH8_PATCH_BYTES, SYNTH53_PATCH_BYTES, SYNTH80_PATCH_BYTES, SYNTH106_PATCH_BYTES, Synth};
 
 /// What a field of a patch may hold.
 #[derive(Clone, Copy)]
@@ -22,9 +22,9 @@ enum Range {
     Word(u16),
     /// One byte of switches: no bit outside this mask.
     Bits(u8),
-    /// The Juno's first switch byte: seven bits, and its three range bits
-    /// exactly one of 16', 8' and 4'.
-    JunoFeet,
+    /// The first switch byte of a synth106 patch: seven bits, and its
+    /// three range bits exactly one of 16', 8' and 4'.
+    Synth106Feet,
 }
 
 impl Range {
@@ -32,7 +32,7 @@ impl Range {
     const fn bytes(self) -> usize {
         match self {
             Self::Signed(_) | Self::Word(_) => 2,
-            Self::Byte(_) | Self::Bits(_) | Self::JunoFeet => 1,
+            Self::Byte(_) | Self::Bits(_) | Self::Synth106Feet => 1,
         }
     }
 }
@@ -41,23 +41,25 @@ impl Range {
 type Field = (u8, &'static str, Range);
 
 /// A slider's or knob's largest value, the MIDI data byte's seven bits:
-/// the Juno-106's sliders (owner's manual, MIDI Implementation 3.1, "value
-/// 0 to 127"), the Prophet-5's knobs (Operation Manual section 6-7, "0-127
-/// steps") and the CS-80's levers.
+/// synth106's sliders, synth53's knobs and synth80's levers. Source:
+/// Juno-106 owner's manual, MIDI Implementation 3.1, "value 0 to 127";
+/// Prophet-5 Operation Manual, section 6-7, "0-127 steps".
 const SEVEN_BITS: u8 = 0x7F;
 
-/// The Juno's first switch byte's range bits, one for each of 16', 8' and
-/// 4' (JUNO-106 owner's manual, MIDI Implementation 3.4, "for switches").
-const JUNO_RANGE_BITS: [u8; 3] = [0b001, 0b010, 0b100];
+/// The range bits of a synth106 patch's first switch byte, one for each of
+/// 16', 8' and 4'. Source: SYNTH106-106 owner's manual, MIDI Implementation
+/// 3.4, "for switches".
+const SYNTH106_RANGE_BITS: [u8; 3] = [0b001, 0b010, 0b100];
 /// The mask of those bits.
-const JUNO_RANGE_MASK: u8 = 0b111;
-/// The Juno's second switch byte: PWM, ENV polarity, VCA mode and two bits
+const SYNTH106_RANGE_MASK: u8 = 0b111;
+/// The second switch byte of a synth106 patch: PWM, ENV polarity, VCA mode and two bits
 /// of the high-pass filter (the same table).
-const JUNO_SWITCHES: u8 = 0b1_1111;
+const SYNTH106_SWITCHES: u8 = 0b1_1111;
 
-/// The Juno-106's patch message (owner's manual, MIDI Implementation 3.1
-/// and 3.4): sixteen sliders, then two bytes of switches.
-const JUNO: [Field; 18] = [
+/// The patch of synth106 and synth60: sixteen sliders, then two bytes of
+/// switches. Source: Juno-106 owner's manual, MIDI Implementation 3.1 and
+/// 3.4.
+const SYNTH106: [Field; 18] = [
     (0, "LFO RATE", Range::Byte(SEVEN_BITS)),
     (1, "LFO DELAY TIME", Range::Byte(SEVEN_BITS)),
     (2, "DCO LFO", Range::Byte(SEVEN_BITS)),
@@ -74,72 +76,73 @@ const JUNO: [Field; 18] = [
     (13, "ENV S", Range::Byte(SEVEN_BITS)),
     (14, "ENV R", Range::Byte(SEVEN_BITS)),
     (15, "DCO SUB", Range::Byte(SEVEN_BITS)),
-    (16, "range, waveforms and chorus", Range::JunoFeet),
-    (17, "PWM, ENV, VCA and HPF switches", Range::Bits(JUNO_SWITCHES)),
+    (16, "range, waveforms and chorus", Range::Synth106Feet),
+    (17, "PWM, ENV, VCA and HPF switches", Range::Bits(SYNTH106_SWITCHES)),
 ];
 
-/// A Minimoog knob's largest value: tenths of its dial's 0 to 10.
-const MINIMOOG_KNOB: u8 = 100;
-/// A range or waveform switch's last position: six of each (owner's
-/// manual, page 4).
-const MINIMOOG_POSITION: u8 = 5;
-/// TUNE's travel either way, in cents (the engine's `minimoog::law`).
-const MINIMOOG_TUNE_CENTS: i16 = 242;
+/// A synthD knob's largest value: tenths of its dial's 0 to 10.
+const SYNTHD_KNOB: u8 = 100;
+/// A range or waveform switch's last position: six of each. Source:
+/// Minimoog owner's manual, page 4.
+const SYNTHD_POSITION: u8 = 5;
+/// TUNE's travel either way, in cents (the engine's `synthd::law`).
+const SYNTHD_TUNE_CENTS: i16 = 242;
 /// An oscillator's FREQUENCY travel either way, in cents: seven semitones.
-const MINIMOOG_FREQUENCY_CENTS: i16 = 700;
+const SYNTHD_FREQUENCY_CENTS: i16 = 700;
 /// CUTOFF FREQUENCY's ends: hundredths of the dial's -5 to 5.
-const MINIMOOG_CUTOFF: i16 = 500;
+const SYNTHD_CUTOFF: i16 = 500;
 /// A contour's longest time, in milliseconds: the dial's 10 seconds.
-const MINIMOOG_TIME_MS: u16 = 10_000;
+const SYNTHD_TIME_MS: u16 = 10_000;
 /// The first switch byte: oscillator modulation, oscillator 3 control and
 /// the mixer's five switches.
-const MINIMOOG_FIRST_SWITCHES: u8 = (1 << 7) - 1;
+const SYNTHD_FIRST_SWITCHES: u8 = (1 << 7) - 1;
 /// The second: pink noise, filter modulation, the two keyboard controls,
 /// glide and decay.
-const MINIMOOG_SECOND_SWITCHES: u8 = (1 << 6) - 1;
+const SYNTHD_SECOND_SWITCHES: u8 = (1 << 6) - 1;
 
-/// The Minimoog's panel in the engine's own layout (`minimoog/patch.rs`,
-/// after the owner's manual's sections E to J).
-const MINIMOOG: [Field; 28] = [
-    (0, "TUNE", Range::Signed(MINIMOOG_TUNE_CENTS)),
-    (2, "GLIDE", Range::Byte(MINIMOOG_KNOB)),
-    (3, "MODULATION MIX", Range::Byte(MINIMOOG_KNOB)),
-    (4, "OSCILLATOR 1 RANGE", Range::Byte(MINIMOOG_POSITION)),
-    (5, "OSCILLATOR 1 WAVEFORM", Range::Byte(MINIMOOG_POSITION)),
-    (6, "OSCILLATOR 2 RANGE", Range::Byte(MINIMOOG_POSITION)),
-    (7, "OSCILLATOR 2 WAVEFORM", Range::Byte(MINIMOOG_POSITION)),
-    (8, "OSCILLATOR 2 FREQUENCY", Range::Signed(MINIMOOG_FREQUENCY_CENTS)),
-    (10, "OSCILLATOR 3 RANGE", Range::Byte(MINIMOOG_POSITION)),
-    (11, "OSCILLATOR 3 WAVEFORM", Range::Byte(MINIMOOG_POSITION)),
-    (12, "OSCILLATOR 3 FREQUENCY", Range::Signed(MINIMOOG_FREQUENCY_CENTS)),
-    (14, "OSCILLATOR 1 VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (15, "OSCILLATOR 2 VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (16, "OSCILLATOR 3 VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (17, "EXTERNAL INPUT VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (18, "NOISE VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (19, "CUTOFF FREQUENCY", Range::Signed(MINIMOOG_CUTOFF)),
-    (21, "EMPHASIS", Range::Byte(MINIMOOG_KNOB)),
-    (22, "AMOUNT OF CONTOUR", Range::Byte(MINIMOOG_KNOB)),
-    (23, "filter ATTACK TIME", Range::Word(MINIMOOG_TIME_MS)),
-    (25, "filter DECAY TIME", Range::Word(MINIMOOG_TIME_MS)),
-    (27, "filter SUSTAIN LEVEL", Range::Byte(MINIMOOG_KNOB)),
-    (28, "loudness ATTACK TIME", Range::Word(MINIMOOG_TIME_MS)),
-    (30, "loudness DECAY TIME", Range::Word(MINIMOOG_TIME_MS)),
-    (32, "loudness SUSTAIN LEVEL", Range::Byte(MINIMOOG_KNOB)),
-    (33, "main output VOLUME", Range::Byte(MINIMOOG_KNOB)),
-    (34, "modulation and mixer switches", Range::Bits(MINIMOOG_FIRST_SWITCHES)),
-    (35, "noise, filter, keyboard, glide and decay switches", Range::Bits(MINIMOOG_SECOND_SWITCHES)),
+/// synthD's panel in the engine's own layout (`synthd/patch.rs`). Source:
+/// Minimoog owner's manual, sections E to J.
+const SYNTHD: [Field; 28] = [
+    (0, "TUNE", Range::Signed(SYNTHD_TUNE_CENTS)),
+    (2, "GLIDE", Range::Byte(SYNTHD_KNOB)),
+    (3, "MODULATION MIX", Range::Byte(SYNTHD_KNOB)),
+    (4, "OSCILLATOR 1 RANGE", Range::Byte(SYNTHD_POSITION)),
+    (5, "OSCILLATOR 1 WAVEFORM", Range::Byte(SYNTHD_POSITION)),
+    (6, "OSCILLATOR 2 RANGE", Range::Byte(SYNTHD_POSITION)),
+    (7, "OSCILLATOR 2 WAVEFORM", Range::Byte(SYNTHD_POSITION)),
+    (8, "OSCILLATOR 2 FREQUENCY", Range::Signed(SYNTHD_FREQUENCY_CENTS)),
+    (10, "OSCILLATOR 3 RANGE", Range::Byte(SYNTHD_POSITION)),
+    (11, "OSCILLATOR 3 WAVEFORM", Range::Byte(SYNTHD_POSITION)),
+    (12, "OSCILLATOR 3 FREQUENCY", Range::Signed(SYNTHD_FREQUENCY_CENTS)),
+    (14, "OSCILLATOR 1 VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (15, "OSCILLATOR 2 VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (16, "OSCILLATOR 3 VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (17, "EXTERNAL INPUT VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (18, "NOISE VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (19, "CUTOFF FREQUENCY", Range::Signed(SYNTHD_CUTOFF)),
+    (21, "EMPHASIS", Range::Byte(SYNTHD_KNOB)),
+    (22, "AMOUNT OF CONTOUR", Range::Byte(SYNTHD_KNOB)),
+    (23, "filter ATTACK TIME", Range::Word(SYNTHD_TIME_MS)),
+    (25, "filter DECAY TIME", Range::Word(SYNTHD_TIME_MS)),
+    (27, "filter SUSTAIN LEVEL", Range::Byte(SYNTHD_KNOB)),
+    (28, "loudness ATTACK TIME", Range::Word(SYNTHD_TIME_MS)),
+    (30, "loudness DECAY TIME", Range::Word(SYNTHD_TIME_MS)),
+    (32, "loudness SUSTAIN LEVEL", Range::Byte(SYNTHD_KNOB)),
+    (33, "main output VOLUME", Range::Byte(SYNTHD_KNOB)),
+    (34, "modulation and mixer switches", Range::Bits(SYNTHD_FIRST_SWITCHES)),
+    (35, "noise, filter, keyboard, glide and decay switches", Range::Bits(SYNTHD_SECOND_SWITCHES)),
 ];
 
-/// Every value of a byte: the Prophet-5 keeps a knob in its low seven bits
+/// Every value of a byte: synth53 keeps a knob in its low seven bits
 /// and a switch in its top bit.
 const ANY: u8 = u8::MAX;
 
-/// The Prophet-5's program in its memory (Operation Manual, CM1000D,
-/// section 6-7, the table of the 24 bytes): a knob and a switch in each
-/// byte but the last two, whose top bit holds nothing and is refused here
-/// though the instrument would drop it, so that a bank means what it says.
-const PROPHET5: [Field; 24] = [
+/// The program of synth53, synth52 and synth51 in its memory: a knob and
+/// a switch in each byte but the last two, whose top bit holds nothing and
+/// is refused here though the instrument would drop it, so that a bank
+/// means what it says. Source: Prophet-5 Operation Manual, CM1000D,
+/// section 6-7, the table of the 24 bytes.
+const SYNTH53: [Field; 24] = [
     (0, "FILTER ATTACK, OSC A PULSE", Range::Byte(ANY)),
     (1, "FILTER DECAY, OSC A SAW", Range::Byte(ANY)),
     (2, "FILTER SUSTAIN, SYNC", Range::Byte(ANY)),
@@ -166,45 +169,45 @@ const PROPHET5: [Field; 24] = [
     (23, "OSC B FINE", Range::Byte(SEVEN_BITS)),
 ];
 
-/// A Jupiter-8 switch of two positions.
-const J8_SWITCH: u8 = 1;
-/// A selector of four positions: waveforms, VCO-1's ranges, assign modes
-/// (owner's manual, printed pages 12 and 15 to 17).
-const J8_SELECTOR: u8 = 3;
+/// A synth8 switch of two positions.
+const SYNTH8_SWITCH: u8 = 1;
+/// A selector of four positions: waveforms, VCO-1's ranges, assign modes.
+/// Source: Jupiter-8 owner's manual, printed pages 12 and 15 to 17.
+const SYNTH8_SELECTOR: u8 = 3;
 /// The pulse width's sources: LFO, manual, envelope 1 (printed page 17).
-const J8_PWM_SOURCE: u8 = 2;
+const SYNTH8_PWM_SOURCE: u8 = 2;
 /// VCO-2's range: three octaves of semitones above 16' (printed page 16).
-const J8_VCO2_RANGE: u8 = 36;
+const SYNTH8_VCO2_RANGE: u8 = 36;
 
-/// The Jupiter-8's panel in the order of Roland's Jupiter-8/System-8
-/// Parameter Correspondence Table (the engine's `jupiter8/patch.rs`). A
-/// slider is any byte; a signed control is any byte too, 128 being none.
-const JUPITER8: [Field; 43] = [
+/// synth8's panel (the engine's `synth8/patch.rs`). A slider is any byte;
+/// a signed control is any byte too, 128 being none. Source: Roland's
+/// Jupiter-8/System-8 Parameter Correspondence Table, whose order this is.
+const SYNTH8: [Field; 43] = [
     (0, "LFO RATE", Range::Byte(ANY)),
     (1, "LFO DELAY TIME", Range::Byte(ANY)),
-    (2, "LFO WAVEFORM", Range::Byte(J8_SELECTOR)),
+    (2, "LFO WAVEFORM", Range::Byte(SYNTH8_SELECTOR)),
     (3, "VCO MODULATOR LFO MOD", Range::Byte(ANY)),
     (4, "VCO MODULATOR ENV MOD", Range::Byte(ANY)),
-    (5, "VCO MODULATOR to VCO-1", Range::Byte(J8_SWITCH)),
-    (6, "VCO MODULATOR to VCO-2", Range::Byte(J8_SWITCH)),
+    (5, "VCO MODULATOR to VCO-1", Range::Byte(SYNTH8_SWITCH)),
+    (6, "VCO MODULATOR to VCO-2", Range::Byte(SYNTH8_SWITCH)),
     (7, "PULSE WIDTH MODULATION", Range::Byte(ANY)),
-    (8, "PWM source", Range::Byte(J8_PWM_SOURCE)),
+    (8, "PWM source", Range::Byte(SYNTH8_PWM_SOURCE)),
     (9, "VCO-1 CROSS MOD", Range::Byte(ANY)),
-    (10, "VCO-1 RANGE", Range::Byte(J8_SELECTOR)),
-    (11, "VCO-1 WAVEFORM", Range::Byte(J8_SELECTOR)),
-    (12, "VCO-2 SYNC", Range::Byte(J8_SWITCH)),
-    (13, "VCO-2 LOW FREQ", Range::Byte(J8_SWITCH)),
-    (14, "VCO-2 RANGE", Range::Byte(J8_VCO2_RANGE)),
+    (10, "VCO-1 RANGE", Range::Byte(SYNTH8_SELECTOR)),
+    (11, "VCO-1 WAVEFORM", Range::Byte(SYNTH8_SELECTOR)),
+    (12, "VCO-2 SYNC", Range::Byte(SYNTH8_SWITCH)),
+    (13, "VCO-2 LOW FREQ", Range::Byte(SYNTH8_SWITCH)),
+    (14, "VCO-2 RANGE", Range::Byte(SYNTH8_VCO2_RANGE)),
     (15, "VCO-2 FINE TUNE", Range::Byte(ANY)),
-    (16, "VCO-2 WAVEFORM", Range::Byte(J8_SELECTOR)),
+    (16, "VCO-2 WAVEFORM", Range::Byte(SYNTH8_SELECTOR)),
     (17, "SOURCE MIX, VCO-1", Range::Byte(ANY)),
     (18, "SOURCE MIX, VCO-2", Range::Byte(ANY)),
     (19, "HPF CUTOFF FREQ", Range::Byte(ANY)),
     (20, "VCF CUTOFF FREQ", Range::Byte(ANY)),
     (21, "VCF RESONANCE", Range::Byte(ANY)),
-    (22, "VCF SLOPE", Range::Byte(J8_SWITCH)),
+    (22, "VCF SLOPE", Range::Byte(SYNTH8_SWITCH)),
     (23, "VCF ENV MOD", Range::Byte(ANY)),
-    (24, "VCF envelope", Range::Byte(J8_SWITCH)),
+    (24, "VCF envelope", Range::Byte(SYNTH8_SWITCH)),
     (25, "VCF LFO MOD", Range::Byte(ANY)),
     (26, "VCF KEY FOLLOW", Range::Byte(ANY)),
     (27, "VCA LEVEL", Range::Byte(ANY)),
@@ -213,31 +216,31 @@ const JUPITER8: [Field; 43] = [
     (30, "ENV-1 DECAY", Range::Byte(ANY)),
     (31, "ENV-1 SUSTAIN", Range::Byte(ANY)),
     (32, "ENV-1 RELEASE", Range::Byte(ANY)),
-    (33, "ENV-1 polarity", Range::Byte(J8_SWITCH)),
+    (33, "ENV-1 polarity", Range::Byte(SYNTH8_SWITCH)),
     (34, "ENV-2 ATTACK", Range::Byte(ANY)),
     (35, "ENV-2 DECAY", Range::Byte(ANY)),
     (36, "ENV-2 SUSTAIN", Range::Byte(ANY)),
     (37, "ENV-2 RELEASE", Range::Byte(ANY)),
-    (38, "ASSIGN MODE", Range::Byte(J8_SELECTOR)),
-    (39, "ENV-1 KEY FOLLOW", Range::Byte(J8_SWITCH)),
-    (40, "ENV-2 KEY FOLLOW", Range::Byte(J8_SWITCH)),
-    (41, "BENDER to VCO-1", Range::Byte(J8_SWITCH)),
-    (42, "BENDER to VCO-2", Range::Byte(J8_SWITCH)),
+    (38, "ASSIGN MODE", Range::Byte(SYNTH8_SELECTOR)),
+    (39, "ENV-1 KEY FOLLOW", Range::Byte(SYNTH8_SWITCH)),
+    (40, "ENV-2 KEY FOLLOW", Range::Byte(SYNTH8_SWITCH)),
+    (41, "BENDER to VCO-1", Range::Byte(SYNTH8_SWITCH)),
+    (42, "BENDER to VCO-2", Range::Byte(SYNTH8_SWITCH)),
 ];
 
-/// A CS-80 switch.
-const CS80_SWITCH: u8 = 1;
+/// A synth80 switch.
+const SYNTH80_SWITCH: u8 = 1;
 /// A selector of six positions: FEET and SUB OSCILLATOR FUNCTION.
-const CS80_SELECTOR: u8 = 5;
+const SYNTH80_SELECTOR: u8 = 5;
 
-/// A CS-80 tone, one row of the panel, as its memory panel orders it
-/// (owner's manual, page 36).
-const CS80_TONE: [(&str, u8); 26] = [
+/// A synth80 tone, one row of the panel, as its memory panel orders it.
+/// Source: CS-80 owner's manual, page 36.
+const SYNTH80_TONE: [(&str, u8); 26] = [
     ("PWM SPEED", SEVEN_BITS),
     ("PWM", SEVEN_BITS),
     ("PW", SEVEN_BITS),
-    ("SQUARE", CS80_SWITCH),
-    ("SAWTOOTH", CS80_SWITCH),
+    ("SQUARE", SYNTH80_SWITCH),
+    ("SAWTOOTH", SYNTH80_SWITCH),
     ("NOISE", SEVEN_BITS),
     ("HPF", SEVEN_BITS),
     ("RESh", SEVEN_BITS),
@@ -261,11 +264,11 @@ const CS80_TONE: [(&str, u8); 26] = [
     ("AFTER LEVEL", SEVEN_BITS),
 ];
 
-/// The CS-80's controls outside its tones (the engine's `cs80/patch.rs`,
-/// after the owner's manual's items 1 to 46).
-const CS80_GLOBAL: [(&str, u8); 33] = [
-    ("FEET of channel I", CS80_SELECTOR),
-    ("FEET of channel II", CS80_SELECTOR),
+/// synth80's controls outside its tones (the engine's `synth80/patch.rs`).
+/// Source: CS-80 owner's manual, items 1 to 46.
+const SYNTH80_GLOBAL: [(&str, u8); 33] = [
+    ("FEET of channel I", SYNTH80_SELECTOR),
+    ("FEET of channel II", SYNTH80_SELECTOR),
     ("DETUNE CH II", SEVEN_BITS),
     ("MIX", SEVEN_BITS),
     ("BRILLIANCE", SEVEN_BITS),
@@ -274,7 +277,7 @@ const CS80_GLOBAL: [(&str, u8); 33] = [
     ("KEYBOARD CONTROL BRILLIANCE HIGH", SEVEN_BITS),
     ("KEYBOARD CONTROL LEVEL LOW", SEVEN_BITS),
     ("KEYBOARD CONTROL LEVEL HIGH", SEVEN_BITS),
-    ("SUB OSCILLATOR FUNCTION", CS80_SELECTOR),
+    ("SUB OSCILLATOR FUNCTION", SYNTH80_SELECTOR),
     ("SUB OSCILLATOR SPEED", SEVEN_BITS),
     ("SUB OSCILLATOR VCO", SEVEN_BITS),
     ("SUB OSCILLATOR VCF", SEVEN_BITS),
@@ -288,44 +291,44 @@ const CS80_GLOBAL: [(&str, u8); 33] = [
     ("RING MODULATOR DEPTH", SEVEN_BITS),
     ("RING MODULATOR SPEED", SEVEN_BITS),
     ("RING MODULATOR MODULATION", SEVEN_BITS),
-    ("SUSTAIN I or II", CS80_SWITCH),
+    ("SUSTAIN I or II", SYNTH80_SWITCH),
     ("SUSTAIN", SEVEN_BITS),
-    ("PORTAMENTO or GLISSANDO", CS80_SWITCH),
+    ("PORTAMENTO or GLISSANDO", SYNTH80_SWITCH),
     ("PORTAMENTO/GLISSANDO", SEVEN_BITS),
-    ("TREMOLO/CHORUS ON", CS80_SWITCH),
-    ("CHORUS", CS80_SWITCH),
-    ("TREMOLO", CS80_SWITCH),
+    ("TREMOLO/CHORUS ON", SYNTH80_SWITCH),
+    ("CHORUS", SYNTH80_SWITCH),
+    ("TREMOLO", SYNTH80_SWITCH),
     ("TREMOLO/CHORUS SPEED", SEVEN_BITS),
     ("TREMOLO/CHORUS DEPTH", SEVEN_BITS),
 ];
 
-// Each table covers its patch: the CS-80's two tones and its other
+// Each table covers its patch: synth80's two tones and its other
 // controls, and every other table's last field ending at the patch's end
 // (the test `every_table_covers_its_patch_once` checks each byte once).
-const _: () = assert!(CS80_TONE.len() * 2 + CS80_GLOBAL.len() == CS80_PATCH_BYTES as usize);
-const _: () = assert!(JUNO.len() == JUNO_PATCH_BYTES as usize);
-const _: () = assert!(PROPHET5.len() == PROPHET5_PATCH_BYTES as usize);
-const _: () = assert!(JUPITER8.len() == JUPITER8_PATCH_BYTES as usize);
+const _: () = assert!(SYNTH80_TONE.len() * 2 + SYNTH80_GLOBAL.len() == SYNTH80_PATCH_BYTES as usize);
+const _: () = assert!(SYNTH106.len() == SYNTH106_PATCH_BYTES as usize);
+const _: () = assert!(SYNTH53.len() == SYNTH53_PATCH_BYTES as usize);
+const _: () = assert!(SYNTH8.len() == SYNTH8_PATCH_BYTES as usize);
 
 /// Why a patch's bytes are not one `synth`'s reader takes, naming the byte,
 /// its control and the range it broke; `bytes` is one whole patch.
 pub(super) fn check(synth: Synth, bytes: &[u8]) -> Result<(), String> {
     match synth {
-        Synth::Juno => fields(&JUNO, bytes),
-        Synth::Minimoog => fields(&MINIMOOG, bytes),
-        Synth::Prophet5 => fields(&PROPHET5, bytes),
-        Synth::Jupiter8 => fields(&JUPITER8, bytes),
-        Synth::Cs80 => cs80(bytes),
+        Synth::Synth106 | Synth::Synth60 => fields(&SYNTH106, bytes),
+        Synth::SynthD => fields(&SYNTHD, bytes),
+        Synth::Synth53 | Synth::Synth52 | Synth::Synth51 => fields(&SYNTH53, bytes),
+        Synth::Synth8 => fields(&SYNTH8, bytes),
+        Synth::Synth80 => synth80(bytes),
     }
 }
 
-/// The CS-80's patch: channel I's tone, channel II's, then the rest.
-fn cs80(bytes: &[u8]) -> Result<(), String> {
-    let named = CS80_TONE
+/// synth80's patch: channel I's tone, channel II's, then the rest.
+fn synth80(bytes: &[u8]) -> Result<(), String> {
+    let named = SYNTH80_TONE
         .iter()
         .map(|&(name, most)| (format!("channel I {name}"), most))
-        .chain(CS80_TONE.iter().map(|&(name, most)| (format!("channel II {name}"), most)))
-        .chain(CS80_GLOBAL.iter().map(|&(name, most)| (String::from(name), most)));
+        .chain(SYNTH80_TONE.iter().map(|&(name, most)| (format!("channel II {name}"), most)))
+        .chain(SYNTH80_GLOBAL.iter().map(|&(name, most)| (String::from(name), most)));
     for (at, ((name, most), &value)) in named.zip(bytes).enumerate() {
         if value > most {
             return Err(format!("byte {at} ({name}) is {value}: at most {most}"));
@@ -353,9 +356,9 @@ fn field_fault(field: &[u8], range: Range) -> Option<String> {
     match (range, field) {
         (Range::Byte(most), &[value]) => (value > most).then(|| format!("is {value}: at most {most}")),
         (Range::Bits(mask), &[value]) => (value & !mask != 0).then(|| format!("is {value:#04X}: no bit outside {mask:#04X}")),
-        (Range::JunoFeet, &[value]) => {
-            let range_bits = value & JUNO_RANGE_MASK;
-            (value > SEVEN_BITS || !JUNO_RANGE_BITS.contains(&range_bits))
+        (Range::Synth106Feet, &[value]) => {
+            let range_bits = value & SYNTH106_RANGE_MASK;
+            (value > SEVEN_BITS || !SYNTH106_RANGE_BITS.contains(&range_bits))
                 .then(|| format!("is {value:#04X}: at most 0x7F, with exactly one of the range bits 0x01 (16'), 0x02 (8') and 0x04 (4')"))
         }
         (Range::Signed(most), &[low, high]) => {
@@ -374,13 +377,13 @@ fn field_fault(field: &[u8], range: Range) -> Option<String> {
 mod tests {
     use alloc::vec::Vec;
 
-    use super::{Field, JUNO, JUPITER8, MINIMOOG, PROPHET5};
+    use super::{Field, SYNTH8, SYNTH53, SYNTH106, SYNTHD};
     use crate::protocol::Synth;
 
     /// Every byte of the patch is in exactly one field, in order.
     #[test]
     fn every_table_covers_its_patch_once() {
-        for (synth, table) in [(Synth::Juno, &JUNO[..]), (Synth::Minimoog, &MINIMOOG[..]), (Synth::Prophet5, &PROPHET5[..]), (Synth::Jupiter8, &JUPITER8[..])] {
+        for (synth, table) in [(Synth::Synth106, &SYNTH106[..]), (Synth::SynthD, &SYNTHD[..]), (Synth::Synth53, &SYNTH53[..]), (Synth::Synth8, &SYNTH8[..])] {
             let covered: Vec<usize> = table.iter().flat_map(|&(at, _, range): &Field| usize::from(at)..usize::from(at) + range.bytes()).collect();
             assert_eq!(covered, (0..usize::from(synth.patch_bytes())).collect::<Vec<usize>>(), "{synth:?}");
         }

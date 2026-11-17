@@ -1,8 +1,10 @@
-//! The instrument sounds' records (REQ-6413, DEC-6410, DEC-6429): a SID
-//! sound, a DX7 sound and a bank of DX7 patches as the audio profile's
-//! OBJECT and DATA records of codecs 3, 4 and 5 (the engine's REQ-6411),
-//! and an analogue synthesizer's sound and bank as those of codecs 6 to 10
-//! and 11. The engine this
+//! The instrument sounds' records (REQ-6413, DEC-6410, DEC-6429, DEC-6461):
+//! a sound of synth6581 or synth8580, a synth7 sound and a bank of synth7
+//! patches as the audio profile's OBJECT and DATA records of codecs 3, 4
+//! and 5 (the engine's REQ-6411), and an analogue synthesizer's sound and
+//! bank as those of codecs 6 to 10 and 11. A sound's kind names its
+//! synthesizer, and so the chip or the model its record's extension says
+//! plays it. The engine this
 //! server is pinned to predates those codecs, so the records' bodies are
 //! written here, through the engine's frame, as the REGIS and NAPLPS
 //! records are. The message has been checked whole before it gets here.
@@ -16,38 +18,47 @@ use neoteletext_audio::{MAX_BODY, rate_code};
 
 use super::{Refused, bytes_of};
 use crate::protocol::{
-    DX7_PATCH_BYTES, DX7_SLOT_BYTES, Dx7BankSound, Dx7BlocksSound, Dx7LiveSound, Dx7Sound, INSTRUMENT_BLOCK_SAMPLES, INSTRUMENT_RATE, JunoLiveSound, JunoModel,
-    JunoSound, Jupiter8KeyMode, Jupiter8LiveSound, Jupiter8Sound, Prophet5LiveSound, Prophet5Model, Prophet5Sound, Rule, SID_IMAGE_BYTES, SidBlocksSound,
-    SidChip, SidClock, SidLiveSound, SidSound, Sound, Synth, SynthBankSound, SynthBlocksSound, SynthLiveSound, SynthSound,
+    INSTRUMENT_BLOCK_SAMPLES, INSTRUMENT_RATE, Rule, SYNTH7_PATCH_BYTES, SYNTH7_SLOT_BYTES, SYNTH6581_IMAGE_BYTES, Sound, Synth, Synth7BankSound,
+    Synth7BlocksSound, Synth7LiveSound, Synth7Sound, Synth8KeyMode, Synth8LiveSound, Synth8Sound, Synth6581BlocksSound, Synth6581Clock, Synth6581LiveSound,
+    Synth6581Sound, SynthBankSound, SynthBlocksSound, SynthLiveSound, SynthSound,
 };
 
-/// The profile's codec of a SID sound.
-const CODEC_SID: u8 = 3;
-/// The profile's codec of a DX7 sound.
-const CODEC_DX7: u8 = 4;
-/// The profile's codec of a bank of DX7 patches.
-const CODEC_DX7_BANK: u8 = 5;
-/// The OBJECT record's extension that names a SID sound's chip and clock:
-/// one byte of the two bits below.
-const TAG_SID_CHIP: u8 = 3;
-/// The chip is the 8580; clear, the 6581.
-const SID_CHIP_8580: u8 = 1;
+/// The profile's codec of a sound of synth6581 or synth8580.
+const CODEC_SYNTH6581: u8 = 3;
+/// The profile's codec of a synth7 sound.
+const CODEC_SYNTH7: u8 = 4;
+/// The profile's codec of a bank of synth7 patches.
+const CODEC_SYNTH7_BANK: u8 = 5;
+/// The OBJECT record's extension that names the chip and clock of a sound
+/// of codec 3: one byte of the two bits below.
+const TAG_SYNTH6581_CHIP: u8 = 3;
+/// The chip is synth8580's; clear, synth6581's.
+const CHIP_SYNTH8580: u8 = 1;
 /// The clock is NTSC's; clear, PAL's.
-const SID_CLOCK_NTSC: u8 = 2;
-/// The OBJECT record's extension that names a DX7 sound's bank: one byte,
-/// the bank's handle.
-const TAG_DX7_BANK: u8 = 4;
+const CLOCK_NTSC: u8 = 2;
+/// The OBJECT record's extension that names a synth7 sound's bank: one
+/// byte, the bank's handle.
+const TAG_SYNTH7_BANK: u8 = 4;
 /// The OBJECT record's extension that names the model of an analogue
 /// synthesizer a sound plays: one byte, counted from 0.
 const TAG_MODEL: u8 = 5;
 /// The OBJECT record's extension that names the family a patch bank is
 /// for: one byte, the code of that family's codec.
 const TAG_BANK_FAMILY: u8 = 6;
-/// The OBJECT record's extension of a Jupiter-8 sound's keyboard: two
-/// bytes, the key mode and the split point.
-const TAG_JUPITER8_KEYS: u8 = 7;
+/// The OBJECT record's extension of a synth8 sound's keyboard: two bytes,
+/// the key mode and the split point.
+const TAG_SYNTH8_KEYS: u8 = 7;
 /// The profile's codec of a bank of an analogue synthesizer's patches.
 const CODEC_PATCH_BANK: u8 = 11;
+
+/// Which of the two chips of codec 3 a sound's kind names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Chip {
+    /// synth6581's.
+    Synth6581,
+    /// synth8580's.
+    Synth8580,
+}
 
 /// What an OBJECT record says of a sound, after its handle and generation.
 struct Object {
@@ -112,101 +123,124 @@ fn stored(handle: u8, generation: u16, mut object: Object, samples_a_block: u32,
     Ok(records)
 }
 
-/// What a SID sound's OBJECT record says before its length.
-fn sid_object(images_per_block: u8, chip: SidChip, clock: SidClock) -> Object {
+/// What the OBJECT record of a sound of codec 3 says before its length.
+fn synth6581_object(images_per_block: u8, chip: Chip, clock: Synth6581Clock) -> Object {
     let mut byte = 0;
-    if chip == SidChip::Mos8580 {
-        byte |= SID_CHIP_8580;
+    if chip == Chip::Synth8580 {
+        byte |= CHIP_SYNTH8580;
     }
-    if clock == SidClock::Ntsc {
-        byte |= SID_CLOCK_NTSC;
+    if clock == Synth6581Clock::Ntsc {
+        byte |= CLOCK_NTSC;
     }
-    Object { codec: CODEC_SID, block_bytes: sid_block_bytes(images_per_block), samples: 0, blocks: 0, extensions: alloc::vec![TAG_SID_CHIP, 1, byte] }
+    Object {
+        codec: CODEC_SYNTH6581,
+        block_bytes: synth6581_block_bytes(images_per_block),
+        samples: 0,
+        blocks: 0,
+        extensions: alloc::vec![TAG_SYNTH6581_CHIP, 1, byte],
+    }
 }
 
-/// The bytes of a SID sound's block.
-fn sid_block_bytes(images_per_block: u8) -> u16 {
-    SID_IMAGE_BYTES.saturating_mul(u16::from(images_per_block))
+/// The bytes of a block of codec 3.
+fn synth6581_block_bytes(images_per_block: u8) -> u16 {
+    SYNTH6581_IMAGE_BYTES.saturating_mul(u16::from(images_per_block))
 }
 
-/// What a DX7 sound's OBJECT record says before its length.
-fn dx7_object(slots: u8, bank: u8) -> Object {
-    Object { codec: CODEC_DX7, block_bytes: dx7_block_bytes(slots), samples: 0, blocks: 0, extensions: alloc::vec![TAG_DX7_BANK, 1, bank] }
+/// What a synth7 sound's OBJECT record says before its length.
+fn synth7_object(slots: u8, bank: u8) -> Object {
+    Object { codec: CODEC_SYNTH7, block_bytes: synth7_block_bytes(slots), samples: 0, blocks: 0, extensions: alloc::vec![TAG_SYNTH7_BANK, 1, bank] }
 }
 
-/// The bytes of a DX7 sound's block.
-fn dx7_block_bytes(slots: u8) -> u16 {
-    DX7_SLOT_BYTES.saturating_mul(u16::from(slots))
+/// The bytes of a synth7 sound's block.
+fn synth7_block_bytes(slots: u8) -> u16 {
+    SYNTH7_SLOT_BYTES.saturating_mul(u16::from(slots))
 }
 
-/// A stored SID sound's records.
-fn sid(sound: &SidSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = sid_object(sound.images_per_block, sound.chip, sound.clock);
+/// A stored sound's records, of synth6581 or synth8580.
+fn synth6581(chip: Chip, sound: &Synth6581Sound) -> Result<Vec<Vec<u8>>, Refused> {
+    let object = synth6581_object(sound.images_per_block, chip, sound.clock);
     stored(sound.handle, sound.generation, object, INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.images))
 }
 
-/// A live SID sound's object.
-fn sid_live(sound: &SidLiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    Ok(alloc::vec![object_record(sound.handle, sound.generation, &sid_object(sound.images_per_block, sound.chip, sound.clock))?])
+/// A live sound's object, of synth6581 or synth8580.
+fn synth6581_live(chip: Chip, sound: &Synth6581LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
+    Ok(alloc::vec![object_record(sound.handle, sound.generation, &synth6581_object(sound.images_per_block, chip, sound.clock))?])
 }
 
-/// A live SID sound's next blocks.
-fn sid_blocks(sound: &SidBlocksSound) -> Vec<Vec<u8>> {
-    data_records(sound.handle, sound.generation, sound.first, sid_block_bytes(sound.images_per_block), &bytes_of(&sound.images))
+/// A live sound's next blocks, of synth6581 or synth8580.
+fn synth6581_blocks(sound: &Synth6581BlocksSound) -> Vec<Vec<u8>> {
+    data_records(sound.handle, sound.generation, sound.first, synth6581_block_bytes(sound.images_per_block), &bytes_of(&sound.images))
 }
 
-/// A stored DX7 sound's records.
-fn dx7(sound: &Dx7Sound) -> Result<Vec<Vec<u8>>, Refused> {
-    stored(sound.handle, sound.generation, dx7_object(sound.slots, sound.bank), INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
+/// A stored synth7 sound's records.
+fn synth7(sound: &Synth7Sound) -> Result<Vec<Vec<u8>>, Refused> {
+    stored(sound.handle, sound.generation, synth7_object(sound.slots, sound.bank), INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
 }
 
-/// A live DX7 sound's object.
-fn dx7_live(sound: &Dx7LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    Ok(alloc::vec![object_record(sound.handle, sound.generation, &dx7_object(sound.slots, sound.bank))?])
+/// A live synth7 sound's object.
+fn synth7_live(sound: &Synth7LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
+    Ok(alloc::vec![object_record(sound.handle, sound.generation, &synth7_object(sound.slots, sound.bank))?])
 }
 
-/// A live DX7 sound's next blocks.
-fn dx7_blocks(sound: &Dx7BlocksSound) -> Vec<Vec<u8>> {
-    data_records(sound.handle, sound.generation, sound.first, dx7_block_bytes(sound.slots), &bytes_of(&sound.blocks))
+/// A live synth7 sound's next blocks.
+fn synth7_blocks(sound: &Synth7BlocksSound) -> Vec<Vec<u8>> {
+    data_records(sound.handle, sound.generation, sound.first, synth7_block_bytes(sound.slots), &bytes_of(&sound.blocks))
 }
 
 /// A bank's records: a sound whose blocks are its patches, and whose
 /// length is their number.
-fn dx7_bank(sound: &Dx7BankSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = Object { codec: CODEC_DX7_BANK, block_bytes: DX7_PATCH_BYTES, samples: 0, blocks: 0, extensions: Vec::new() };
+fn synth7_bank(sound: &Synth7BankSound) -> Result<Vec<Vec<u8>>, Refused> {
+    let object = Object { codec: CODEC_SYNTH7_BANK, block_bytes: SYNTH7_PATCH_BYTES, samples: 0, blocks: 0, extensions: Vec::new() };
     stored(sound.handle, sound.generation, object, 1, &bytes_of(&sound.patches))
 }
 
-/// The records of an instrument's sound or bank, of whichever kind: the
-/// SID's, the DX7's or an analogue synthesizer's. Any other kind of sound
-/// is written by [`super::Sounds::records`] and has none here.
+/// The records of an instrument's sound or bank, of whichever kind:
+/// synth6581's, synth8580's, synth7's or an analogue synthesizer's. Any
+/// other kind of sound is written by [`super::Sounds::records`] and has
+/// none here.
 pub(super) fn records(sound: &Sound) -> Result<Vec<Vec<u8>>, Refused> {
     match sound {
-        Sound::Sid(sound) => sid(sound),
-        Sound::SidLive(sound) => sid_live(sound),
-        Sound::SidBlocks(sound) => Ok(sid_blocks(sound)),
-        Sound::Dx7(sound) => dx7(sound),
-        Sound::Dx7Live(sound) => dx7_live(sound),
-        Sound::Dx7Blocks(sound) => Ok(dx7_blocks(sound)),
-        Sound::Dx7Bank(sound) => dx7_bank(sound),
-        Sound::Juno(sound) => juno(sound),
-        Sound::JunoLive(sound) => juno_live(sound),
-        Sound::Minimoog(sound) => synth(Synth::Minimoog, sound),
-        Sound::MinimoogLive(sound) => synth_live(Synth::Minimoog, sound),
-        Sound::Prophet5(sound) => prophet5(sound),
-        Sound::Prophet5Live(sound) => prophet5_live(sound),
-        Sound::Jupiter8(sound) => jupiter8(sound),
-        Sound::Jupiter8Live(sound) => jupiter8_live(sound),
-        Sound::Cs80(sound) => synth(Synth::Cs80, sound),
-        Sound::Cs80Live(sound) => synth_live(Synth::Cs80, sound),
-        Sound::JunoBlocks(sound) | Sound::MinimoogBlocks(sound) | Sound::Prophet5Blocks(sound) | Sound::Jupiter8Blocks(sound) | Sound::Cs80Blocks(sound) => {
-            Ok(synth_blocks(sound))
-        }
-        Sound::JunoBank(sound) => synth_bank(Synth::Juno, sound),
-        Sound::MinimoogBank(sound) => synth_bank(Synth::Minimoog, sound),
-        Sound::Prophet5Bank(sound) => synth_bank(Synth::Prophet5, sound),
-        Sound::Jupiter8Bank(sound) => synth_bank(Synth::Jupiter8, sound),
-        Sound::Cs80Bank(sound) => synth_bank(Synth::Cs80, sound),
+        Sound::Synth6581(sound) => synth6581(Chip::Synth6581, sound),
+        Sound::Synth6581Live(sound) => synth6581_live(Chip::Synth6581, sound),
+        Sound::Synth8580(sound) => synth6581(Chip::Synth8580, sound),
+        Sound::Synth8580Live(sound) => synth6581_live(Chip::Synth8580, sound),
+        Sound::Synth6581Blocks(sound) | Sound::Synth8580Blocks(sound) => Ok(synth6581_blocks(sound)),
+        Sound::Synth7(sound) => synth7(sound),
+        Sound::Synth7Live(sound) => synth7_live(sound),
+        Sound::Synth7Blocks(sound) => Ok(synth7_blocks(sound)),
+        Sound::Synth7Bank(sound) => synth7_bank(sound),
+        Sound::Synth106(sound) => synth(Synth::Synth106, sound),
+        Sound::Synth106Live(sound) => synth_live(Synth::Synth106, sound),
+        Sound::Synth60(sound) => synth(Synth::Synth60, sound),
+        Sound::Synth60Live(sound) => synth_live(Synth::Synth60, sound),
+        Sound::SynthD(sound) => synth(Synth::SynthD, sound),
+        Sound::SynthDLive(sound) => synth_live(Synth::SynthD, sound),
+        Sound::Synth53(sound) => synth(Synth::Synth53, sound),
+        Sound::Synth53Live(sound) => synth_live(Synth::Synth53, sound),
+        Sound::Synth52(sound) => synth(Synth::Synth52, sound),
+        Sound::Synth52Live(sound) => synth_live(Synth::Synth52, sound),
+        Sound::Synth51(sound) => synth(Synth::Synth51, sound),
+        Sound::Synth51Live(sound) => synth_live(Synth::Synth51, sound),
+        Sound::Synth8(sound) => synth8(sound),
+        Sound::Synth8Live(sound) => synth8_live(sound),
+        Sound::Synth80(sound) => synth(Synth::Synth80, sound),
+        Sound::Synth80Live(sound) => synth_live(Synth::Synth80, sound),
+        Sound::Synth106Blocks(sound)
+        | Sound::Synth60Blocks(sound)
+        | Sound::SynthDBlocks(sound)
+        | Sound::Synth53Blocks(sound)
+        | Sound::Synth52Blocks(sound)
+        | Sound::Synth51Blocks(sound)
+        | Sound::Synth8Blocks(sound)
+        | Sound::Synth80Blocks(sound) => Ok(synth_blocks(sound)),
+        Sound::Synth106Bank(sound) => synth_bank(Synth::Synth106, sound),
+        Sound::Synth60Bank(sound) => synth_bank(Synth::Synth60, sound),
+        Sound::SynthDBank(sound) => synth_bank(Synth::SynthD, sound),
+        Sound::Synth53Bank(sound) => synth_bank(Synth::Synth53, sound),
+        Sound::Synth52Bank(sound) => synth_bank(Synth::Synth52, sound),
+        Sound::Synth51Bank(sound) => synth_bank(Synth::Synth51, sound),
+        Sound::Synth8Bank(sound) => synth_bank(Synth::Synth8, sound),
+        Sound::Synth80Bank(sound) => synth_bank(Synth::Synth80, sound),
         Sound::Opus(_)
         | Sound::OpusLive(_)
         | Sound::OpusPackets(_)
@@ -223,90 +257,55 @@ pub(super) fn records(sound: &Sound) -> Result<Vec<Vec<u8>>, Refused> {
 /// its codec, its block, its bank, and `more` of its extensions after the
 /// bank's.
 fn synth_object(synth: Synth, slots: u8, bank: u8, more: &[u8]) -> Object {
-    let mut extensions = alloc::vec![TAG_DX7_BANK, 1, bank];
+    let mut extensions = alloc::vec![TAG_SYNTH7_BANK, 1, bank];
     extensions.extend_from_slice(more);
-    Object { codec: synth.codec(), block_bytes: dx7_block_bytes(slots), samples: 0, blocks: 0, extensions }
+    Object { codec: synth.codec(), block_bytes: synth7_block_bytes(slots), samples: 0, blocks: 0, extensions }
 }
 
-/// A Juno's model as the engine's `TAG_MODEL` counts it.
-const fn juno_model(model: JunoModel) -> [u8; 3] {
-    let byte = match model {
-        JunoModel::Juno106 => 0,
-        JunoModel::Juno60 => 1,
-    };
-    [TAG_MODEL, 1, byte]
+/// The extension that names which model of its family `synth` is, as the
+/// engine's `TAG_MODEL` counts it; none for a synthesizer whose family has
+/// one model.
+fn model(synth: Synth) -> Vec<u8> {
+    synth.model().map_or_else(Vec::new, |byte| alloc::vec![TAG_MODEL, 1, byte])
 }
 
-/// A Prophet-5's revision as the engine's `TAG_MODEL` counts it.
-const fn prophet5_model(model: Prophet5Model) -> [u8; 3] {
-    let byte = match model {
-        Prophet5Model::Revision3 => 0,
-        Prophet5Model::Revisions1And2 => 1,
-    };
-    [TAG_MODEL, 1, byte]
-}
-
-/// A Jupiter-8's keyboard as the engine's `TAG_JUPITER8_KEYS` writes it.
-const fn jupiter8_keys(mode: Jupiter8KeyMode, split_key: u8) -> [u8; 4] {
+/// The keyboard of synth8 as the engine's `TAG_SYNTH8_KEYS` writes it.
+const fn synth8_keys(mode: Synth8KeyMode, split_key: u8) -> [u8; 4] {
     let mode = match mode {
-        Jupiter8KeyMode::Whole => 0,
-        Jupiter8KeyMode::Dual => 1,
-        Jupiter8KeyMode::Split => 2,
+        Synth8KeyMode::Whole => 0,
+        Synth8KeyMode::Dual => 1,
+        Synth8KeyMode::Split => 2,
     };
-    [TAG_JUPITER8_KEYS, 2, mode, split_key]
+    [TAG_SYNTH8_KEYS, 2, mode, split_key]
 }
 
-/// A stored Juno sound's records.
-fn juno(sound: &JunoSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Juno, sound.slots, sound.bank, &juno_model(sound.model));
+/// A stored synth8 sound's records.
+fn synth8(sound: &Synth8Sound) -> Result<Vec<Vec<u8>>, Refused> {
+    let object = synth_object(Synth::Synth8, sound.slots, sound.bank, &synth8_keys(sound.key_mode, sound.split_key));
     stored(sound.handle, sound.generation, object, INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
 }
 
-/// A live Juno sound's object.
-fn juno_live(sound: &JunoLiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Juno, sound.slots, sound.bank, &juno_model(sound.model));
+/// A live synth8 sound's object.
+fn synth8_live(sound: &Synth8LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
+    let object = synth_object(Synth::Synth8, sound.slots, sound.bank, &synth8_keys(sound.key_mode, sound.split_key));
     Ok(alloc::vec![object_record(sound.handle, sound.generation, &object)?])
 }
 
-/// A stored Prophet-5 sound's records.
-fn prophet5(sound: &Prophet5Sound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Prophet5, sound.slots, sound.bank, &prophet5_model(sound.model));
-    stored(sound.handle, sound.generation, object, INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
-}
-
-/// A live Prophet-5 sound's object.
-fn prophet5_live(sound: &Prophet5LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Prophet5, sound.slots, sound.bank, &prophet5_model(sound.model));
-    Ok(alloc::vec![object_record(sound.handle, sound.generation, &object)?])
-}
-
-/// A stored Jupiter-8 sound's records.
-fn jupiter8(sound: &Jupiter8Sound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Jupiter8, sound.slots, sound.bank, &jupiter8_keys(sound.key_mode, sound.split_key));
-    stored(sound.handle, sound.generation, object, INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
-}
-
-/// A live Jupiter-8 sound's object.
-fn jupiter8_live(sound: &Jupiter8LiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(Synth::Jupiter8, sound.slots, sound.bank, &jupiter8_keys(sound.key_mode, sound.split_key));
-    Ok(alloc::vec![object_record(sound.handle, sound.generation, &object)?])
-}
-
-/// A stored sound's records of a synthesizer with one model and one way
-/// of playing its keys: the Minimoog or the CS-80.
+/// A stored sound's records, of any analogue synthesizer but synth8: its
+/// name gives its model, where its family has more than one.
 fn synth(synth: Synth, sound: &SynthSound) -> Result<Vec<Vec<u8>>, Refused> {
-    let object = synth_object(synth, sound.slots, sound.bank, &[]);
+    let object = synth_object(synth, sound.slots, sound.bank, &model(synth));
     stored(sound.handle, sound.generation, object, INSTRUMENT_BLOCK_SAMPLES, &bytes_of(&sound.blocks))
 }
 
-/// A live sound's object, of the Minimoog or the CS-80.
+/// A live sound's object, of any analogue synthesizer but synth8.
 fn synth_live(synth: Synth, sound: &SynthLiveSound) -> Result<Vec<Vec<u8>>, Refused> {
-    Ok(alloc::vec![object_record(sound.handle, sound.generation, &synth_object(synth, sound.slots, sound.bank, &[]))?])
+    Ok(alloc::vec![object_record(sound.handle, sound.generation, &synth_object(synth, sound.slots, sound.bank, &model(synth)))?])
 }
 
 /// A live synthesizer sound's next blocks, of any of them.
 fn synth_blocks(sound: &SynthBlocksSound) -> Vec<Vec<u8>> {
-    data_records(sound.handle, sound.generation, sound.first, dx7_block_bytes(sound.slots), &bytes_of(&sound.blocks))
+    data_records(sound.handle, sound.generation, sound.first, synth7_block_bytes(sound.slots), &bytes_of(&sound.blocks))
 }
 
 /// A synthesizer's patch bank's records: a sound of codec 11 whose blocks

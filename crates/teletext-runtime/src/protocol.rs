@@ -95,8 +95,9 @@ pub const SAFE_INTEGER_LIMIT: u64 = crate::session_cookie::SESSION_LIMIT - 1;
 /// The longest a sound may be: two minutes at 48 kHz, the browser's own
 /// limit for one sound.
 pub const MOST_SAMPLES: usize = 48_000 * 120;
-/// The sample rate of the instrument codecs, the SID chip's and the DX7's
-/// (the engine's REQ-6411, DEC-6410).
+/// The sample rate of the instrument codecs, synth6581's and synth7's
+/// (the engine's REQ-6411, DEC-6410). Which instrument each synthesizer
+/// models is in neoteletext-common's `docs/audio/synthesizers.md`.
 pub const INSTRUMENT_RATE: u32 = 48_000;
 /// The blocks of an instrument's sound in a second: a block is 20 ms.
 pub const INSTRUMENT_BLOCKS_A_SECOND: u32 = 50;
@@ -108,43 +109,47 @@ pub const MOST_INSTRUMENT_BLOCKS: usize = MOST_SAMPLES / INSTRUMENT_BLOCK_SAMPLE
 /// The most blocks one message adds to a live instrument sound: two
 /// seconds, far more than a program keeps ahead of what is heard.
 pub const MOST_LIVE_INSTRUMENT_BLOCKS: usize = 100;
-/// The SID chip's writable registers, one image of them: 25 bytes.
-pub const SID_IMAGE_BYTES: u16 = 25;
-/// How many images of the SID chip's registers a block may hold: one every
-/// 20, 10 or 5 ms.
-pub const SID_IMAGES_PER_BLOCK: [u8; 3] = [1, 2, 4];
-/// One slot of a DX7 block: a time, a MIDI status byte and its two data
+/// The writable registers of synth6581's chip, one image of them: 25
 /// bytes.
-pub const DX7_SLOT_BYTES: u16 = 4;
-/// The most slots a DX7 block holds.
-pub const DX7_MOST_SLOTS: u8 = 16;
-/// One DX7 patch in the instrument's packed form: 128 bytes.
-pub const DX7_PATCH_BYTES: u16 = 128;
-/// The most patches a DX7 bank holds: the instrument's 32 voices.
-pub const DX7_MOST_PATCHES: usize = 32;
-/// The bytes of one Juno patch: the Juno-106's sixteen sliders and two
-/// bytes of switches (its owner's manual, MIDI Implementation 3.1), the
-/// layout of the engine's `juno::Patch` (DEC-6429).
-pub const JUNO_PATCH_BYTES: u16 = 18;
-/// The bytes of one Minimoog patch, the layout of the engine's
-/// `minimoog::Patch`: the panel's knobs and switches, the engine's own
+pub const SYNTH6581_IMAGE_BYTES: u16 = 25;
+/// How many images of the chip's registers a synth6581 block may hold: one
+/// every 20, 10 or 5 ms.
+pub const SYNTH6581_IMAGES_PER_BLOCK: [u8; 3] = [1, 2, 4];
+/// One slot of a synth7 block: a time, a MIDI status byte and its two data
+/// bytes.
+pub const SYNTH7_SLOT_BYTES: u16 = 4;
+/// The most slots a synth7 block holds.
+pub const SYNTH7_MOST_SLOTS: u8 = 16;
+/// One synth7 patch in the instrument's packed form: 128 bytes.
+pub const SYNTH7_PATCH_BYTES: u16 = 128;
+/// The most patches a synth7 bank holds: the instrument's 32 voices.
+pub const SYNTH7_MOST_PATCHES: usize = 32;
+/// The bytes of one synth106 patch, which synth60 shares: sixteen sliders
+/// and two bytes of switches, the layout of the engine's `synth106::Patch`
+/// (DEC-6429). Source: Juno-106 owner's manual, MIDI Implementation 3.1.
+pub const SYNTH106_PATCH_BYTES: u16 = 18;
+/// The bytes of one synthD patch, the layout of the engine's
+/// `synthd::Patch`: the panel's knobs and switches, the engine's own
 /// layout since the instrument has no patch memory.
-pub const MINIMOOG_PATCH_BYTES: u16 = 36;
-/// The bytes of one Prophet-5 program: the 24 bytes of its memory
-/// (Prophet-5 Operation Manual, section 6-7).
-pub const PROPHET5_PATCH_BYTES: u16 = 24;
-/// The bytes of one Jupiter-8 patch, the layout of the engine's
-/// `jupiter8::Patch`, after Roland's Jupiter-8/System-8 Parameter
+pub const SYNTHD_PATCH_BYTES: u16 = 36;
+/// The bytes of one synth53 program, which synth52 and synth51 share: the
+/// 24 bytes of its memory. Source: Prophet-5 Operation Manual, section
+/// 6-7.
+pub const SYNTH53_PATCH_BYTES: u16 = 24;
+/// The bytes of one synth8 patch, the layout of the engine's
+/// `synth8::Patch`. Source: Roland's Jupiter-8/System-8 Parameter
 /// Correspondence Table.
-pub const JUPITER8_PATCH_BYTES: u16 = 43;
-/// The bytes of one CS-80 patch: two tones of 26 controls and 33 controls
-/// of the panel outside them, the layout of the engine's `cs80::Patch`.
-pub const CS80_PATCH_BYTES: u16 = 85;
+pub const SYNTH8_PATCH_BYTES: u16 = 43;
+/// The bytes of one synth80 patch: two tones of 26 controls and 33
+/// controls of the panel outside them, the layout of the engine's
+/// `synth80::Patch`.
+pub const SYNTH80_PATCH_BYTES: u16 = 85;
 /// The most patches a bank of an analogue synthesizer holds: as many as a
-/// DX7 bank, so that a program change means the same in every instrument.
-pub const SYNTH_MOST_PATCHES: usize = DX7_MOST_PATCHES;
+/// synth7 bank, so that a program change means the same in every
+/// instrument.
+pub const SYNTH_MOST_PATCHES: usize = SYNTH7_MOST_PATCHES;
 /// The largest MIDI key: a data byte's seven bits (MIDI 1.0), the highest
-/// split point a Jupiter-8 sound may name.
+/// split point a synth8 sound may name.
 pub const LAST_MIDI_KEY: u8 = 0x7F;
 /// The sample rates of the audio profile (the engine's `audio.md`).
 pub const SAMPLE_RATES: [u32; 8] = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000];
@@ -1907,60 +1912,97 @@ pub enum Sound {
     Live(LiveSound),
     /// A live sound's next blocks of samples.
     Blocks(BlocksSound),
-    /// A stored SID sound: images of the chip's registers (DEC-6410).
-    Sid(SidSound),
-    /// A live SID sound's object.
-    SidLive(SidLiveSound),
-    /// A live SID sound's next blocks.
-    SidBlocks(SidBlocksSound),
-    /// A stored DX7 sound: timed MIDI messages for the instrument (DEC-6410).
-    Dx7(Dx7Sound),
-    /// A live DX7 sound's object.
-    Dx7Live(Dx7LiveSound),
-    /// A live DX7 sound's next blocks.
-    Dx7Blocks(Dx7BlocksSound),
-    /// A bank of DX7 patches, which DX7 sounds name.
-    Dx7Bank(Dx7BankSound),
-    /// A stored Juno sound: timed MIDI messages (DEC-6429).
-    Juno(JunoSound),
-    /// A live Juno sound's object.
-    JunoLive(JunoLiveSound),
-    /// A live Juno sound's next blocks.
-    JunoBlocks(SynthBlocksSound),
-    /// A bank of Juno patches, which Juno sounds name.
-    JunoBank(SynthBankSound),
-    /// A stored Minimoog sound: timed MIDI messages (DEC-6429).
-    Minimoog(SynthSound),
-    /// A live Minimoog sound's object.
-    MinimoogLive(SynthLiveSound),
-    /// A live Minimoog sound's next blocks.
-    MinimoogBlocks(SynthBlocksSound),
-    /// A bank of Minimoog patches, which Minimoog sounds name.
-    MinimoogBank(SynthBankSound),
-    /// A stored Prophet-5 sound: timed MIDI messages (DEC-6429).
-    Prophet5(Prophet5Sound),
-    /// A live Prophet-5 sound's object.
-    Prophet5Live(Prophet5LiveSound),
-    /// A live Prophet-5 sound's next blocks.
-    Prophet5Blocks(SynthBlocksSound),
-    /// A bank of Prophet-5 programs, which Prophet-5 sounds name.
-    Prophet5Bank(SynthBankSound),
-    /// A stored Jupiter-8 sound: timed MIDI messages (DEC-6429).
-    Jupiter8(Jupiter8Sound),
-    /// A live Jupiter-8 sound's object.
-    Jupiter8Live(Jupiter8LiveSound),
-    /// A live Jupiter-8 sound's next blocks.
-    Jupiter8Blocks(SynthBlocksSound),
-    /// A bank of Jupiter-8 patches, which Jupiter-8 sounds name.
-    Jupiter8Bank(SynthBankSound),
-    /// A stored CS-80 sound: timed MIDI messages (DEC-6429).
-    Cs80(SynthSound),
-    /// A live CS-80 sound's object.
-    Cs80Live(SynthLiveSound),
-    /// A live CS-80 sound's next blocks.
-    Cs80Blocks(SynthBlocksSound),
-    /// A bank of CS-80 patches, which CS-80 sounds name.
-    Cs80Bank(SynthBankSound),
+    /// A stored synth6581 sound: images of the chip's registers (DEC-6410,
+    /// DEC-6461).
+    Synth6581(Synth6581Sound),
+    /// A live synth6581 sound's object.
+    Synth6581Live(Synth6581LiveSound),
+    /// A live synth6581 sound's next blocks.
+    Synth6581Blocks(Synth6581BlocksSound),
+    /// A stored synth8580 sound: images of the chip's registers (DEC-6410,
+    /// DEC-6461).
+    Synth8580(Synth6581Sound),
+    /// A live synth8580 sound's object.
+    Synth8580Live(Synth6581LiveSound),
+    /// A live synth8580 sound's next blocks.
+    Synth8580Blocks(Synth6581BlocksSound),
+    /// A stored synth7 sound: timed MIDI messages for the instrument
+    /// (DEC-6410).
+    Synth7(Synth7Sound),
+    /// A live synth7 sound's object.
+    Synth7Live(Synth7LiveSound),
+    /// A live synth7 sound's next blocks.
+    Synth7Blocks(Synth7BlocksSound),
+    /// A bank of synth7 patches, which synth7 sounds name.
+    Synth7Bank(Synth7BankSound),
+    /// A stored synth106 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth106(SynthSound),
+    /// A live synth106 sound's object.
+    Synth106Live(SynthLiveSound),
+    /// A live synth106 sound's next blocks.
+    Synth106Blocks(SynthBlocksSound),
+    /// A bank of synth106 patches, which sounds of its family name.
+    Synth106Bank(SynthBankSound),
+    /// A stored synth60 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth60(SynthSound),
+    /// A live synth60 sound's object.
+    Synth60Live(SynthLiveSound),
+    /// A live synth60 sound's next blocks.
+    Synth60Blocks(SynthBlocksSound),
+    /// A bank of synth60 patches, which sounds of its family name.
+    Synth60Bank(SynthBankSound),
+    /// A stored synthD sound: timed MIDI messages (DEC-6429, DEC-6461).
+    #[serde(rename = "synthd")]
+    SynthD(SynthSound),
+    /// A live synthD sound's object.
+    #[serde(rename = "synthd_live")]
+    SynthDLive(SynthLiveSound),
+    /// A live synthD sound's next blocks.
+    #[serde(rename = "synthd_blocks")]
+    SynthDBlocks(SynthBlocksSound),
+    /// A bank of synthD patches, which sounds of its family name.
+    #[serde(rename = "synthd_bank")]
+    SynthDBank(SynthBankSound),
+    /// A stored synth53 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth53(SynthSound),
+    /// A live synth53 sound's object.
+    Synth53Live(SynthLiveSound),
+    /// A live synth53 sound's next blocks.
+    Synth53Blocks(SynthBlocksSound),
+    /// A bank of synth53 patches, which sounds of its family name.
+    Synth53Bank(SynthBankSound),
+    /// A stored synth52 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth52(SynthSound),
+    /// A live synth52 sound's object.
+    Synth52Live(SynthLiveSound),
+    /// A live synth52 sound's next blocks.
+    Synth52Blocks(SynthBlocksSound),
+    /// A bank of synth52 patches, which sounds of its family name.
+    Synth52Bank(SynthBankSound),
+    /// A stored synth51 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth51(SynthSound),
+    /// A live synth51 sound's object.
+    Synth51Live(SynthLiveSound),
+    /// A live synth51 sound's next blocks.
+    Synth51Blocks(SynthBlocksSound),
+    /// A bank of synth51 patches, which sounds of its family name.
+    Synth51Bank(SynthBankSound),
+    /// A stored synth8 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth8(Synth8Sound),
+    /// A live synth8 sound's object.
+    Synth8Live(Synth8LiveSound),
+    /// A live synth8 sound's next blocks.
+    Synth8Blocks(SynthBlocksSound),
+    /// A bank of synth8 patches, which sounds of its family name.
+    Synth8Bank(SynthBankSound),
+    /// A stored synth80 sound: timed MIDI messages (DEC-6429, DEC-6461).
+    Synth80(SynthSound),
+    /// A live synth80 sound's object.
+    Synth80Live(SynthLiveSound),
+    /// A live synth80 sound's next blocks.
+    Synth80Blocks(SynthBlocksSound),
+    /// A bank of synth80 patches, which sounds of its family name.
+    Synth80Bank(SynthBankSound),
     /// Play a sound on an audio channel.
     Play(PlaySound),
     /// Stop an audio channel.
@@ -2076,34 +2118,24 @@ pub struct BlocksSound {
     pub pcm: Base64,
 }
 
-/// The SID chip that plays a sound: the two differ in their filter and
-/// their combined waveforms.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-pub enum SidChip {
-    /// The MOS 6581.
-    #[serde(rename = "6581")]
-    Mos6581,
-    /// The MOS 8580.
-    #[serde(rename = "8580")]
-    Mos8580,
-}
-
-/// The clock a SID chip runs from, which sets the pitch of a frequency
-/// register's value.
+/// The clock the chip of synth6581 or synth8580 runs from, which sets the
+/// pitch of a frequency register's value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum SidClock {
-    /// A PAL Commodore 64's: 985,248 Hz.
+pub enum Synth6581Clock {
+    /// A PAL machine's: 985,248 Hz.
     Pal,
-    /// An NTSC Commodore 64's: 1,022,727 Hz.
+    /// An NTSC machine's: 1,022,727 Hz.
     Ntsc,
 }
 
-/// A stored SID sound: images of the chip's 25 writable registers, 1, 2 or
-/// 4 to a 20 ms block (the audio profile's codec 3, DEC-6410).
+/// A stored sound of synth6581 or synth8580, whichever its kind names:
+/// images of the chip's 25 writable registers, 1, 2 or 4 to a 20 ms block
+/// (the audio profile's codec 3, DEC-6410). The two differ in their filter
+/// and their combined waveforms.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SidSound {
+pub struct Synth6581Sound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2111,21 +2143,19 @@ pub struct SidSound {
     /// Its generation.
     pub generation: u16,
     /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
     pub images_per_block: u8,
-    /// The chip that plays it.
-    pub chip: SidChip,
     /// The clock the chip runs from.
-    pub clock: SidClock,
+    pub clock: Synth6581Clock,
     /// Its blocks back to back, each `images_per_block` images of 25
     /// bytes, exact base64: 1 to 6,000 blocks, two minutes.
     pub images: Base64,
 }
 
-/// A live SID sound's object.
+/// A live sound's object, of synth6581 or synth8580.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SidLiveSound {
+pub struct Synth6581LiveSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2133,18 +2163,16 @@ pub struct SidLiveSound {
     /// Its generation.
     pub generation: u16,
     /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
     pub images_per_block: u8,
-    /// The chip that plays it.
-    pub chip: SidChip,
     /// The clock the chip runs from.
-    pub clock: SidClock,
+    pub clock: Synth6581Clock,
 }
 
-/// A live SID sound's next blocks.
+/// A live sound's next blocks, of synth6581 or synth8580.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SidBlocksSound {
+pub struct Synth6581BlocksSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2152,7 +2180,7 @@ pub struct SidBlocksSound {
     /// Its generation.
     pub generation: u16,
     /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SID_IMAGES_PER_BLOCK))]
+    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
     pub images_per_block: u8,
     /// The first block's number, counting modulo 65,536.
     pub first: u16,
@@ -2160,15 +2188,15 @@ pub struct SidBlocksSound {
     pub images: Base64,
 }
 
-/// A stored DX7 sound: MIDI messages for the instrument, each timed within
-/// its 20 ms block (the audio profile's codec 4, DEC-6410). A slot is a
-/// time in tenths of a millisecond, 0 to 199, a status byte and two data
-/// bytes; four zero bytes are an empty slot. The messages taken are note
-/// off and note on, control changes 1, 7, 64, 120, 121 and 123, a program
-/// change to one of the bank's 32 patches, and pitch bend.
+/// A stored synth7 sound: MIDI messages for the instrument, each timed
+/// within its 20 ms block (the audio profile's codec 4, DEC-6410). A slot
+/// is a time in tenths of a millisecond, 0 to 199, a status byte and two
+/// data bytes; four zero bytes are an empty slot. The messages taken are
+/// note off and note on, control changes 1, 7, 64, 120, 121 and 123, a
+/// program change to one of the bank's 32 patches, and pitch bend.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Dx7Sound {
+pub struct Synth7Sound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2176,7 +2204,7 @@ pub struct Dx7Sound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
     /// The handle of the bank its program changes choose patches from.
     pub bank: u8,
@@ -2185,10 +2213,10 @@ pub struct Dx7Sound {
     pub blocks: Base64,
 }
 
-/// A live DX7 sound's object.
+/// A live synth7 sound's object.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Dx7LiveSound {
+pub struct Synth7LiveSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2196,16 +2224,16 @@ pub struct Dx7LiveSound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
     /// The handle of the bank its program changes choose patches from.
     pub bank: u8,
 }
 
-/// A live DX7 sound's next blocks.
+/// A live synth7 sound's next blocks.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Dx7BlocksSound {
+pub struct Synth7BlocksSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2213,7 +2241,7 @@ pub struct Dx7BlocksSound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
     /// The first block's number, counting modulo 65,536.
     pub first: u16,
@@ -2221,11 +2249,11 @@ pub struct Dx7BlocksSound {
     pub blocks: Base64,
 }
 
-/// A bank of DX7 patches (the audio profile's codec 5, DEC-6410), which a
-/// DX7 sound names by this handle.
+/// A bank of synth7 patches (the audio profile's codec 5, DEC-6410), which
+/// a synth7 sound names by this handle.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Dx7BankSound {
+pub struct Synth7BankSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2237,38 +2265,58 @@ pub struct Dx7BankSound {
     pub patches: Base64,
 }
 
-/// The analogue synthesizers a program's sound may be for (DEC-6429), each
-/// a codec of the audio profile whose block is the DX7's: 1 to 16 slots of
-/// a timed MIDI message. Not a message of its own: the kind of a sound
-/// names it.
+/// The analogue synthesizers a program's sound may be for (DEC-6429,
+/// DEC-6461), each name a kind of its own. Those of one family share a
+/// codec of the audio profile, whose block is synth7's: 1 to 16 slots of a
+/// timed MIDI message. Not a message of its own: the kind of a sound names
+/// it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Synth {
-    /// Roland's Juno-106 or Juno-60.
-    Juno,
-    /// Moog's Minimoog Model D.
-    Minimoog,
-    /// Sequential Circuits' Prophet-5.
-    Prophet5,
-    /// Roland's Jupiter-8.
-    Jupiter8,
-    /// Yamaha's CS-80.
-    Cs80,
+    /// synth106.
+    Synth106,
+    /// synth60, of synth106's family.
+    Synth60,
+    /// synthD.
+    SynthD,
+    /// synth53.
+    Synth53,
+    /// synth52, of synth53's family.
+    Synth52,
+    /// synth51, of synth53's family, and one model with synth52.
+    Synth51,
+    /// synth8.
+    Synth8,
+    /// synth80.
+    Synth80,
 }
 
 impl Synth {
     /// Every one, in the order of their codecs.
-    pub const ALL: [Self; 5] = [Self::Juno, Self::Minimoog, Self::Prophet5, Self::Jupiter8, Self::Cs80];
+    pub const ALL: [Self; 8] = [Self::Synth106, Self::Synth60, Self::SynthD, Self::Synth53, Self::Synth52, Self::Synth51, Self::Synth8, Self::Synth80];
 
     /// The audio profile's codec of its sounds, which is also the code that
     /// names its family in a patch bank (the engine's `TAG_BANK_FAMILY`).
     #[must_use]
     pub const fn codec(self) -> u8 {
         match self {
-            Self::Juno => 6,
-            Self::Minimoog => 7,
-            Self::Prophet5 => 8,
-            Self::Jupiter8 => 9,
-            Self::Cs80 => 10,
+            Self::Synth106 | Self::Synth60 => 6,
+            Self::SynthD => 7,
+            Self::Synth53 | Self::Synth52 | Self::Synth51 => 8,
+            Self::Synth8 => 9,
+            Self::Synth80 => 10,
+        }
+    }
+
+    /// The model of its family it is, as the engine's `TAG_MODEL` counts
+    /// it, where its family's sounds name one: synth106 and synth53 are
+    /// model 0, synth60 model 1, and synth52 and synth51 the one earlier
+    /// revision, model 1.
+    #[must_use]
+    pub const fn model(self) -> Option<u8> {
+        match self {
+            Self::Synth106 | Self::Synth53 => Some(0),
+            Self::Synth60 | Self::Synth52 | Self::Synth51 => Some(1),
+            Self::SynthD | Self::Synth8 | Self::Synth80 => None,
         }
     }
 
@@ -2276,11 +2324,11 @@ impl Synth {
     #[must_use]
     pub const fn patch_bytes(self) -> u16 {
         match self {
-            Self::Juno => JUNO_PATCH_BYTES,
-            Self::Minimoog => MINIMOOG_PATCH_BYTES,
-            Self::Prophet5 => PROPHET5_PATCH_BYTES,
-            Self::Jupiter8 => JUPITER8_PATCH_BYTES,
-            Self::Cs80 => CS80_PATCH_BYTES,
+            Self::Synth106 | Self::Synth60 => SYNTH106_PATCH_BYTES,
+            Self::SynthD => SYNTHD_PATCH_BYTES,
+            Self::Synth53 | Self::Synth52 | Self::Synth51 => SYNTH53_PATCH_BYTES,
+            Self::Synth8 => SYNTH8_PATCH_BYTES,
+            Self::Synth80 => SYNTH80_PATCH_BYTES,
         }
     }
 
@@ -2288,45 +2336,23 @@ impl Synth {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Juno => "juno",
-            Self::Minimoog => "minimoog",
-            Self::Prophet5 => "prophet5",
-            Self::Jupiter8 => "jupiter8",
-            Self::Cs80 => "cs80",
+            Self::Synth106 => "synth106",
+            Self::Synth60 => "synth60",
+            Self::SynthD => "synthd",
+            Self::Synth53 => "synth53",
+            Self::Synth52 => "synth52",
+            Self::Synth51 => "synth51",
+            Self::Synth8 => "synth8",
+            Self::Synth80 => "synth80",
         }
     }
 }
 
-/// The Juno a sound plays: the two share their sliders and differ in
-/// their voices.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-pub enum JunoModel {
-    /// The Juno-106: model 0 of the engine's `TAG_MODEL`.
-    #[serde(rename = "106")]
-    Juno106,
-    /// The Juno-60: model 1.
-    #[serde(rename = "60")]
-    Juno60,
-}
-
-/// The Prophet-5 a sound plays: its revisions differ in their filter and
-/// oscillator chips.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Prophet5Model {
-    /// Revision 3, with Curtis chips: model 0 of the engine's `TAG_MODEL`.
-    #[serde(rename = "revision_3")]
-    Revision3,
-    /// Revisions 1 and 2, with SSM chips: model 1.
-    #[serde(rename = "revisions_1_and_2")]
-    Revisions1And2,
-}
-
-/// How a Jupiter-8's keyboard plays its two patches, the upper chosen by
+/// How synth8's keyboard plays its two patches, the upper chosen by
 /// program changes on MIDI channel 1 and the lower on channel 2.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum Jupiter8KeyMode {
+pub enum Synth8KeyMode {
     /// Every key plays the upper patch, on eight voices.
     Whole,
     /// Every key plays both patches, four voices each.
@@ -2336,15 +2362,16 @@ pub enum Jupiter8KeyMode {
     Split,
 }
 
-/// A stored sound of the Minimoog or the CS-80: MIDI messages for the
-/// instrument, each timed within its 20 ms block (the audio profile's
-/// codecs 7 and 10, DEC-6429). A slot is a time in tenths of a millisecond,
-/// 0 to 199, a status byte and two data bytes; four zero bytes are an
-/// empty slot. Every instrument takes note off and note on, control
-/// changes 1, 7, 64, 120, 121 and 123, a program change to one of the
-/// bank's 32 patches, and pitch bend; the CS-80 also polyphonic key
-/// pressure and channel pressure, and the Jupiter-8 control changes 5, 8
-/// and 65, with program changes on MIDI channels 1 and 2 only.
+/// A stored sound of any analogue synthesizer but synth8, the one its kind
+/// names: MIDI messages for the instrument, each timed within its 20 ms
+/// block (the audio profile's codecs 6, 7, 8 and 10, DEC-6429). A slot is
+/// a time in tenths of a millisecond, 0 to 199, a status byte and two data
+/// bytes; four zero bytes are an empty slot. Every instrument takes note
+/// off and note on, control changes 1, 7, 64, 120, 121 and 123, a program
+/// change to one of the bank's 32 patches, and pitch bend; synth80 also
+/// polyphonic key pressure and channel pressure, synth106 and synth60
+/// control changes 124 to 127, and synth8 control changes 5, 8 and 65,
+/// with program changes on MIDI channels 1 and 2 only.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SynthSound {
@@ -2355,17 +2382,17 @@ pub struct SynthSound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
-    /// The handle of the bank of the instrument's patches its program
-    /// changes choose from.
+    /// The handle of the bank its program changes choose patches from: a
+    /// bank of any name of its family.
     pub bank: u8,
     /// Its blocks back to back, each `slots` slots of 4 bytes, exact
     /// base64: 1 to 6,000 blocks, two minutes.
     pub blocks: Base64,
 }
 
-/// A live sound's object, of the Minimoog or the CS-80.
+/// A live sound's object, of any analogue synthesizer but synth8.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SynthLiveSound {
@@ -2376,10 +2403,10 @@ pub struct SynthLiveSound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
-    /// The handle of the bank of the instrument's patches its program
-    /// changes choose from.
+    /// The handle of the bank its program changes choose patches from: a
+    /// bank of any name of its family.
     pub bank: u8,
 }
 
@@ -2394,7 +2421,7 @@ pub struct SynthBlocksSound {
     /// Its generation.
     pub generation: u16,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
     /// The first block's number, counting modulo 65,536.
     pub first: u16,
@@ -2403,11 +2430,11 @@ pub struct SynthBlocksSound {
 }
 
 /// A bank of patches of one of the analogue synthesizers, the one its kind
-/// names (the audio profile's codec 11, DEC-6429), which that
-/// instrument's sounds name by this handle. Each patch is the
-/// instrument's own layout: 18 bytes for the Juno, 36 for the Minimoog, 24
-/// for the Prophet-5, 43 for the Jupiter-8 and 85 for the CS-80, every
-/// byte within the range of the control it holds.
+/// names (the audio profile's codec 11, DEC-6429), which the sounds of
+/// that instrument's family name by this handle. Each patch is the
+/// instrument's own layout: 18 bytes for synth106 and synth60, 36 for
+/// synthD, 24 for synth53, synth52 and synth51, 43 for synth8 and 85 for
+/// synth80, every byte within the range of the control it holds.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SynthBankSound {
@@ -2421,99 +2448,11 @@ pub struct SynthBankSound {
     pub patches: Base64,
 }
 
-/// A stored Juno sound (the audio profile's codec 6): as [`SynthSound`],
-/// with the model that plays it.
+/// A stored synth8 sound (the audio profile's codec 9): as [`SynthSound`],
+/// with how its keyboard plays its two patches.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct JunoSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The model that plays it.
-    pub model: JunoModel,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of Juno patches its program changes choose
-    /// from.
-    pub bank: u8,
-    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
-    /// base64: 1 to 6,000 blocks, two minutes.
-    pub blocks: Base64,
-}
-
-/// A live Juno sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct JunoLiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The model that plays it.
-    pub model: JunoModel,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of Juno patches its program changes choose
-    /// from.
-    pub bank: u8,
-}
-
-/// A stored Prophet-5 sound (the audio profile's codec 8): as
-/// [`SynthSound`], with the revision that plays it.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Prophet5Sound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The revision that plays it.
-    pub model: Prophet5Model,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of Prophet-5 programs its program changes
-    /// choose from.
-    pub bank: u8,
-    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
-    /// base64: 1 to 6,000 blocks, two minutes.
-    pub blocks: Base64,
-}
-
-/// A live Prophet-5 sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Prophet5LiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The revision that plays it.
-    pub model: Prophet5Model,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of Prophet-5 programs its program changes
-    /// choose from.
-    pub bank: u8,
-}
-
-/// A stored Jupiter-8 sound (the audio profile's codec 9): as
-/// [`SynthSound`], with how its keyboard plays its two patches.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Jupiter8Sound {
+pub struct Synth8Sound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2521,15 +2460,15 @@ pub struct Jupiter8Sound {
     /// Its generation.
     pub generation: u16,
     /// How the keyboard plays the upper and lower patches.
-    pub key_mode: Jupiter8KeyMode,
+    pub key_mode: Synth8KeyMode,
     /// The lowest key of the upper patch in the split mode, a MIDI key of
     /// 0 to 127; sent, and unused, in the others.
     #[schemars(range(max = LAST_MIDI_KEY))]
     pub split_key: u8,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
-    /// The handle of the bank of Jupiter-8 patches its program changes
+    /// The handle of the bank of synth8 patches its program changes
     /// choose from.
     pub bank: u8,
     /// Its blocks back to back, each `slots` slots of 4 bytes, exact
@@ -2537,10 +2476,10 @@ pub struct Jupiter8Sound {
     pub blocks: Base64,
 }
 
-/// A live Jupiter-8 sound's object.
+/// A live synth8 sound's object.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Jupiter8LiveSound {
+pub struct Synth8LiveSound {
     /// Who it is for.
     pub connections: Connections,
     /// Its handle.
@@ -2548,15 +2487,15 @@ pub struct Jupiter8LiveSound {
     /// Its generation.
     pub generation: u16,
     /// How the keyboard plays the upper and lower patches.
-    pub key_mode: Jupiter8KeyMode,
+    pub key_mode: Synth8KeyMode,
     /// The lowest key of the upper patch in the split mode, a MIDI key of
     /// 0 to 127; sent, and unused, in the others.
     #[schemars(range(max = LAST_MIDI_KEY))]
     pub split_key: u8,
     /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
     pub slots: u8,
-    /// The handle of the bank of Jupiter-8 patches its program changes
+    /// The handle of the bank of synth8 patches its program changes
     /// choose from.
     pub bank: u8,
 }

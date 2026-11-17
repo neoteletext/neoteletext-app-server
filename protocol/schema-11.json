@@ -1163,41 +1163,6 @@
         }
       ]
     },
-    "JunoModel": {
-      "description": "The Juno a sound plays: the two share their sliders and differ in\ntheir voices.",
-      "oneOf": [
-        {
-          "const": "106",
-          "description": "The Juno-106: model 0 of the engine's `TAG_MODEL`.",
-          "type": "string"
-        },
-        {
-          "const": "60",
-          "description": "The Juno-60: model 1.",
-          "type": "string"
-        }
-      ]
-    },
-    "Jupiter8KeyMode": {
-      "description": "How a Jupiter-8's keyboard plays its two patches, the upper chosen by\nprogram changes on MIDI channel 1 and the lower on channel 2.",
-      "oneOf": [
-        {
-          "const": "whole",
-          "description": "Every key plays the upper patch, on eight voices.",
-          "type": "string"
-        },
-        {
-          "const": "dual",
-          "description": "Every key plays both patches, four voices each.",
-          "type": "string"
-        },
-        {
-          "const": "split",
-          "description": "Keys below `split_key` play the lower patch and the others the\nupper, four voices each.",
-          "type": "string"
-        }
-      ]
-    },
     "KeyAction": {
       "description": "What a key did.",
       "oneOf": [
@@ -2648,14 +2613,10 @@
               "type": "object"
             },
             {
-              "description": "A stored SID sound: images of the chip's registers (DEC-6410).",
+              "description": "A stored synth6581 sound: images of the chip's registers (DEC-6410,\nDEC-6461).",
               "properties": {
-                "chip": {
-                  "$ref": "#/$defs/SidChip",
-                  "description": "The chip that plays it."
-                },
                 "clock": {
-                  "$ref": "#/$defs/SidClock",
+                  "$ref": "#/$defs/Synth6581Clock",
                   "description": "The clock the chip runs from."
                 },
                 "connections": {
@@ -2693,7 +2654,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "sid",
+                  "const": "synth6581",
                   "type": "string"
                 }
               },
@@ -2703,21 +2664,16 @@
                 "handle",
                 "generation",
                 "images_per_block",
-                "chip",
                 "clock",
                 "images"
               ],
               "type": "object"
             },
             {
-              "description": "A live SID sound's object.",
+              "description": "A live synth6581 sound's object.",
               "properties": {
-                "chip": {
-                  "$ref": "#/$defs/SidChip",
-                  "description": "The chip that plays it."
-                },
                 "clock": {
-                  "$ref": "#/$defs/SidClock",
+                  "$ref": "#/$defs/Synth6581Clock",
                   "description": "The clock the chip runs from."
                 },
                 "connections": {
@@ -2751,7 +2707,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "sid_live",
+                  "const": "synth6581_live",
                   "type": "string"
                 }
               },
@@ -2761,13 +2717,12 @@
                 "handle",
                 "generation",
                 "images_per_block",
-                "chip",
                 "clock"
               ],
               "type": "object"
             },
             {
-              "description": "A live SID sound's next blocks.",
+              "description": "A live synth6581 sound's next blocks.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -2811,7 +2766,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "sid_blocks",
+                  "const": "synth6581_blocks",
                   "type": "string"
                 }
               },
@@ -2827,7 +2782,176 @@
               "type": "object"
             },
             {
-              "description": "A stored DX7 sound: timed MIDI messages for the instrument (DEC-6410).",
+              "description": "A stored synth8580 sound: images of the chip's registers (DEC-6410,\nDEC-6461).",
+              "properties": {
+                "clock": {
+                  "$ref": "#/$defs/Synth6581Clock",
+                  "description": "The clock the chip runs from."
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images": {
+                  "description": "Its blocks back to back, each `images_per_block` images of 25\nbytes, exact base64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth8580",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "clock",
+                "images"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth8580 sound's object.",
+              "properties": {
+                "clock": {
+                  "$ref": "#/$defs/Synth6581Clock",
+                  "description": "The clock the chip runs from."
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth8580_live",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "clock"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth8580 sound's next blocks.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "images": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "images_per_block": {
+                  "description": "The images of the chip's registers in each 20 ms block: 1, 2 or 4.",
+                  "enum": [
+                    1,
+                    2,
+                    4
+                  ],
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth8580_blocks",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "images_per_block",
+                "first",
+                "images"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored synth7 sound: timed MIDI messages for the instrument\n(DEC-6410).",
               "properties": {
                 "bank": {
                   "description": "The handle of the bank its program changes choose patches from.",
@@ -2859,7 +2983,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "dx7",
+                  "const": "synth7",
                   "type": "string"
                 },
                 "slots": {
@@ -2882,7 +3006,7 @@
               "type": "object"
             },
             {
-              "description": "A live DX7 sound's object.",
+              "description": "A live synth7 sound's object.",
               "properties": {
                 "bank": {
                   "description": "The handle of the bank its program changes choose patches from.",
@@ -2910,7 +3034,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "dx7_live",
+                  "const": "synth7_live",
                   "type": "string"
                 },
                 "slots": {
@@ -2932,7 +3056,7 @@
               "type": "object"
             },
             {
-              "description": "A live DX7 sound's next blocks.",
+              "description": "A live synth7 sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -2964,7 +3088,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "dx7_blocks",
+                  "const": "synth7_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -2987,7 +3111,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of DX7 patches, which DX7 sounds name.",
+              "description": "A bank of synth7 patches, which synth7 sounds name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -3008,7 +3132,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "dx7_bank",
+                  "const": "synth7_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -3026,10 +3150,10 @@
               "type": "object"
             },
             {
-              "description": "A stored Juno sound: timed MIDI messages (DEC-6429).",
+              "description": "A stored synth106 sound: timed MIDI messages (DEC-6429, DEC-6461).",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Juno patches its program changes choose\nfrom.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3058,12 +3182,8 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "juno",
+                  "const": "synth106",
                   "type": "string"
-                },
-                "model": {
-                  "$ref": "#/$defs/JunoModel",
-                  "description": "The model that plays it."
                 },
                 "slots": {
                   "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
@@ -3078,7 +3198,6 @@
                 "connections",
                 "handle",
                 "generation",
-                "model",
                 "slots",
                 "bank",
                 "blocks"
@@ -3086,10 +3205,10 @@
               "type": "object"
             },
             {
-              "description": "A live Juno sound's object.",
+              "description": "A live synth106 sound's object.",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Juno patches its program changes choose\nfrom.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3114,12 +3233,8 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "juno_live",
+                  "const": "synth106_live",
                   "type": "string"
-                },
-                "model": {
-                  "$ref": "#/$defs/JunoModel",
-                  "description": "The model that plays it."
                 },
                 "slots": {
                   "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
@@ -3134,14 +3249,13 @@
                 "connections",
                 "handle",
                 "generation",
-                "model",
                 "slots",
                 "bank"
               ],
               "type": "object"
             },
             {
-              "description": "A live Juno sound's next blocks.",
+              "description": "A live synth106 sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -3173,7 +3287,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "juno_blocks",
+                  "const": "synth106_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -3196,7 +3310,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of Juno patches, which Juno sounds name.",
+              "description": "A bank of synth106 patches, which sounds of its family name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -3217,7 +3331,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "juno_bank",
+                  "const": "synth106_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -3235,10 +3349,10 @@
               "type": "object"
             },
             {
-              "description": "A stored Minimoog sound: timed MIDI messages (DEC-6429).",
+              "description": "A stored synth60 sound: timed MIDI messages (DEC-6429, DEC-6461).",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3267,7 +3381,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "minimoog",
+                  "const": "synth60",
                   "type": "string"
                 },
                 "slots": {
@@ -3290,10 +3404,10 @@
               "type": "object"
             },
             {
-              "description": "A live Minimoog sound's object.",
+              "description": "A live synth60 sound's object.",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3318,7 +3432,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "minimoog_live",
+                  "const": "synth60_live",
                   "type": "string"
                 },
                 "slots": {
@@ -3340,7 +3454,7 @@
               "type": "object"
             },
             {
-              "description": "A live Minimoog sound's next blocks.",
+              "description": "A live synth60 sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -3372,7 +3486,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "minimoog_blocks",
+                  "const": "synth60_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -3395,7 +3509,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of Minimoog patches, which Minimoog sounds name.",
+              "description": "A bank of synth60 patches, which sounds of its family name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -3416,7 +3530,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "minimoog_bank",
+                  "const": "synth60_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -3434,10 +3548,10 @@
               "type": "object"
             },
             {
-              "description": "A stored Prophet-5 sound: timed MIDI messages (DEC-6429).",
+              "description": "A stored synthD sound: timed MIDI messages (DEC-6429, DEC-6461).",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Prophet-5 programs its program changes\nchoose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3466,12 +3580,8 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "prophet5",
+                  "const": "synthd",
                   "type": "string"
-                },
-                "model": {
-                  "$ref": "#/$defs/Prophet5Model",
-                  "description": "The revision that plays it."
                 },
                 "slots": {
                   "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
@@ -3486,7 +3596,6 @@
                 "connections",
                 "handle",
                 "generation",
-                "model",
                 "slots",
                 "bank",
                 "blocks"
@@ -3494,10 +3603,10 @@
               "type": "object"
             },
             {
-              "description": "A live Prophet-5 sound's object.",
+              "description": "A live synthD sound's object.",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Prophet-5 programs its program changes\nchoose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3522,12 +3631,8 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "prophet5_live",
+                  "const": "synthd_live",
                   "type": "string"
-                },
-                "model": {
-                  "$ref": "#/$defs/Prophet5Model",
-                  "description": "The revision that plays it."
                 },
                 "slots": {
                   "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
@@ -3542,14 +3647,13 @@
                 "connections",
                 "handle",
                 "generation",
-                "model",
                 "slots",
                 "bank"
               ],
               "type": "object"
             },
             {
-              "description": "A live Prophet-5 sound's next blocks.",
+              "description": "A live synthD sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -3581,7 +3685,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "prophet5_blocks",
+                  "const": "synthd_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -3604,7 +3708,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of Prophet-5 programs, which Prophet-5 sounds name.",
+              "description": "A bank of synthD patches, which sounds of its family name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -3625,7 +3729,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "prophet5_bank",
+                  "const": "synthd_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -3643,10 +3747,607 @@
               "type": "object"
             },
             {
-              "description": "A stored Jupiter-8 sound: timed MIDI messages (DEC-6429).",
+              "description": "A stored synth53 sound: timed MIDI messages (DEC-6429, DEC-6461).",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Jupiter-8 patches its program changes\nchoose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth53",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth53 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth53_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth53 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth53_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of synth53 patches, which sounds of its family name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth53_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored synth52 sound: timed MIDI messages (DEC-6429, DEC-6461).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth52",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth52 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth52_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth52 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth52_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of synth52 patches, which sounds of its family name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth52_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored synth51 sound: timed MIDI messages (DEC-6429, DEC-6461).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth51",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth51 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth51_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live synth51 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth51_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of synth51 patches, which sounds of its family name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth51_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored synth8 sound: timed MIDI messages (DEC-6429, DEC-6461).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of synth8 patches its program changes\nchoose from.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3675,11 +4376,11 @@
                   "type": "integer"
                 },
                 "key_mode": {
-                  "$ref": "#/$defs/Jupiter8KeyMode",
+                  "$ref": "#/$defs/Synth8KeyMode",
                   "description": "How the keyboard plays the upper and lower patches."
                 },
                 "kind": {
-                  "const": "jupiter8",
+                  "const": "synth8",
                   "type": "string"
                 },
                 "slots": {
@@ -3711,10 +4412,10 @@
               "type": "object"
             },
             {
-              "description": "A live Jupiter-8 sound's object.",
+              "description": "A live synth8 sound's object.",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of Jupiter-8 patches its program changes\nchoose from.",
+                  "description": "The handle of the bank of synth8 patches its program changes\nchoose from.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3739,11 +4440,11 @@
                   "type": "integer"
                 },
                 "key_mode": {
-                  "$ref": "#/$defs/Jupiter8KeyMode",
+                  "$ref": "#/$defs/Synth8KeyMode",
                   "description": "How the keyboard plays the upper and lower patches."
                 },
                 "kind": {
-                  "const": "jupiter8_live",
+                  "const": "synth8_live",
                   "type": "string"
                 },
                 "slots": {
@@ -3774,7 +4475,7 @@
               "type": "object"
             },
             {
-              "description": "A live Jupiter-8 sound's next blocks.",
+              "description": "A live synth8 sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -3806,7 +4507,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "jupiter8_blocks",
+                  "const": "synth8_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -3829,7 +4530,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of Jupiter-8 patches, which Jupiter-8 sounds name.",
+              "description": "A bank of synth8 patches, which sounds of its family name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -3850,7 +4551,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "jupiter8_bank",
+                  "const": "synth8_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -3868,10 +4569,10 @@
               "type": "object"
             },
             {
-              "description": "A stored CS-80 sound: timed MIDI messages (DEC-6429).",
+              "description": "A stored synth80 sound: timed MIDI messages (DEC-6429, DEC-6461).",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3900,7 +4601,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "cs80",
+                  "const": "synth80",
                   "type": "string"
                 },
                 "slots": {
@@ -3923,10 +4624,10 @@
               "type": "object"
             },
             {
-              "description": "A live CS-80 sound's object.",
+              "description": "A live synth80 sound's object.",
               "properties": {
                 "bank": {
-                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "description": "The handle of the bank its program changes choose patches from: a\nbank of any name of its family.",
                   "format": "uint8",
                   "maximum": 255,
                   "minimum": 0,
@@ -3951,7 +4652,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "cs80_live",
+                  "const": "synth80_live",
                   "type": "string"
                 },
                 "slots": {
@@ -3973,7 +4674,7 @@
               "type": "object"
             },
             {
-              "description": "A live CS-80 sound's next blocks.",
+              "description": "A live synth80 sound's next blocks.",
               "properties": {
                 "blocks": {
                   "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
@@ -4005,7 +4706,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "cs80_blocks",
+                  "const": "synth80_blocks",
                   "type": "string"
                 },
                 "slots": {
@@ -4028,7 +4729,7 @@
               "type": "object"
             },
             {
-              "description": "A bank of CS-80 patches, which CS-80 sounds name.",
+              "description": "A bank of synth80 patches, which sounds of its family name.",
               "properties": {
                 "connections": {
                   "$ref": "#/$defs/Connections",
@@ -4049,7 +4750,7 @@
                   "type": "integer"
                 },
                 "kind": {
-                  "const": "cs80_bank",
+                  "const": "synth80_bank",
                   "type": "string"
                 },
                 "patches": {
@@ -4693,21 +5394,6 @@
             "data"
           ],
           "type": "object"
-        }
-      ]
-    },
-    "Prophet5Model": {
-      "description": "The Prophet-5 a sound plays: its revisions differ in their filter and\noscillator chips.",
-      "oneOf": [
-        {
-          "const": "revision_3",
-          "description": "Revision 3, with Curtis chips: model 0 of the engine's `TAG_MODEL`.",
-          "type": "string"
-        },
-        {
-          "const": "revisions_1_and_2",
-          "description": "Revisions 1 and 2, with SSM chips: model 1.",
-          "type": "string"
         }
       ]
     },
@@ -5515,36 +6201,6 @@
       ],
       "type": "object"
     },
-    "SidChip": {
-      "description": "The SID chip that plays a sound: the two differ in their filter and\ntheir combined waveforms.",
-      "oneOf": [
-        {
-          "const": "6581",
-          "description": "The MOS 6581.",
-          "type": "string"
-        },
-        {
-          "const": "8580",
-          "description": "The MOS 8580.",
-          "type": "string"
-        }
-      ]
-    },
-    "SidClock": {
-      "description": "The clock a SID chip runs from, which sets the pitch of a frequency\nregister's value.",
-      "oneOf": [
-        {
-          "const": "pal",
-          "description": "A PAL Commodore 64's: 985,248 Hz.",
-          "type": "string"
-        },
-        {
-          "const": "ntsc",
-          "description": "An NTSC Commodore 64's: 1,022,727 Hz.",
-          "type": "string"
-        }
-      ]
-    },
     "Standard": {
       "additionalProperties": false,
       "description": "The standard's maxima (REQ-1031, `STANDARD-LIMITS.md` section 3).",
@@ -5643,6 +6299,41 @@
         "sub"
       ],
       "type": "object"
+    },
+    "Synth6581Clock": {
+      "description": "The clock the chip of synth6581 or synth8580 runs from, which sets the\npitch of a frequency register's value.",
+      "oneOf": [
+        {
+          "const": "pal",
+          "description": "A PAL machine's: 985,248 Hz.",
+          "type": "string"
+        },
+        {
+          "const": "ntsc",
+          "description": "An NTSC machine's: 1,022,727 Hz.",
+          "type": "string"
+        }
+      ]
+    },
+    "Synth8KeyMode": {
+      "description": "How synth8's keyboard plays its two patches, the upper chosen by\nprogram changes on MIDI channel 1 and the lower on channel 2.",
+      "oneOf": [
+        {
+          "const": "whole",
+          "description": "Every key plays the upper patch, on eight voices.",
+          "type": "string"
+        },
+        {
+          "const": "dual",
+          "description": "Every key plays both patches, four voices each.",
+          "type": "string"
+        },
+        {
+          "const": "split",
+          "description": "Keys below `split_key` play the lower patch and the others the\nupper, four voices each.",
+          "type": "string"
+        }
+      ]
     },
     "TextLevel": {
       "description": "The presentation level a page's text is written for (REQ-2151).",

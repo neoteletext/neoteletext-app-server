@@ -27,11 +27,8 @@ use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
 };
 use super::{
-    Dx7BankSound, Dx7BlocksSound, Dx7LiveSound, Dx7Sound, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_INSTRUMENT_BLOCKS, SidBlocksSound, SidLiveSound, SidSound,
-};
-use super::{
-    JunoLiveSound, JunoSound, Jupiter8LiveSound, Jupiter8Sound, Prophet5LiveSound, Prophet5Sound, Synth, SynthBankSound, SynthBlocksSound, SynthLiveSound,
-    SynthSound,
+    MOST_INSTRUMENT_BLOCKS, MOST_LIVE_INSTRUMENT_BLOCKS, Synth, Synth7BankSound, Synth7BlocksSound, Synth7LiveSound, Synth7Sound, Synth8LiveSound, Synth8Sound,
+    Synth6581BlocksSound, Synth6581LiveSound, Synth6581Sound, SynthBankSound, SynthBlocksSound, SynthLiveSound, SynthSound,
 };
 
 mod instrument;
@@ -645,53 +642,60 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             check_connections(&root.field("connections"), connections)?;
             check_rate(&root.field("rate"), *rate)
         }
-        Sound::Sid(SidSound { connections, images_per_block, images, .. }) => {
-            instrument::sid(root, connections, *images_per_block, Some((images, MOST_INSTRUMENT_BLOCKS)))
+        Sound::Synth6581(Synth6581Sound { connections, images_per_block, images, .. })
+        | Sound::Synth8580(Synth6581Sound { connections, images_per_block, images, .. }) => {
+            instrument::synth6581(root, connections, *images_per_block, Some((images, MOST_INSTRUMENT_BLOCKS)))
         }
-        Sound::SidLive(SidLiveSound { connections, images_per_block, .. }) => instrument::sid(root, connections, *images_per_block, None),
-        Sound::SidBlocks(SidBlocksSound { connections, images_per_block, images, .. }) => {
-            instrument::sid(root, connections, *images_per_block, Some((images, MOST_LIVE_INSTRUMENT_BLOCKS)))
+        Sound::Synth6581Live(Synth6581LiveSound { connections, images_per_block, .. })
+        | Sound::Synth8580Live(Synth6581LiveSound { connections, images_per_block, .. }) => instrument::synth6581(root, connections, *images_per_block, None),
+        Sound::Synth6581Blocks(Synth6581BlocksSound { connections, images_per_block, images, .. })
+        | Sound::Synth8580Blocks(Synth6581BlocksSound { connections, images_per_block, images, .. }) => {
+            instrument::synth6581(root, connections, *images_per_block, Some((images, MOST_LIVE_INSTRUMENT_BLOCKS)))
         }
-        Sound::Dx7(Dx7Sound { connections, slots, blocks, .. }) => instrument::dx7(root, connections, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS))),
-        Sound::Dx7Live(Dx7LiveSound { connections, slots, .. }) => instrument::dx7(root, connections, *slots, None),
-        Sound::Dx7Blocks(Dx7BlocksSound { connections, slots, blocks, .. }) => {
-            instrument::dx7(root, connections, *slots, Some((blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
+        Sound::Synth7(Synth7Sound { connections, slots, blocks, .. }) => instrument::synth7(root, connections, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS))),
+        Sound::Synth7Live(Synth7LiveSound { connections, slots, .. }) => instrument::synth7(root, connections, *slots, None),
+        Sound::Synth7Blocks(Synth7BlocksSound { connections, slots, blocks, .. }) => {
+            instrument::synth7(root, connections, *slots, Some((blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
         }
-        Sound::Dx7Bank(Dx7BankSound { connections, patches, .. }) => instrument::bank(root, connections, patches),
-        Sound::Juno(JunoSound { connections, slots, blocks, .. }) => {
-            instrument::synth(root, connections, Synth::Juno, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
-        }
-        Sound::JunoLive(JunoLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Juno, *slots, None),
-        Sound::Minimoog(SynthSound { connections, slots, blocks, .. }) => {
-            instrument::synth(root, connections, Synth::Minimoog, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
-        }
-        Sound::MinimoogLive(SynthLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Minimoog, *slots, None),
-        Sound::Prophet5(Prophet5Sound { connections, slots, blocks, .. }) => {
-            instrument::synth(root, connections, Synth::Prophet5, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
-        }
-        Sound::Prophet5Live(Prophet5LiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Prophet5, *slots, None),
-        Sound::Jupiter8(Jupiter8Sound { connections, slots, blocks, split_key, .. }) => {
-            instrument::synth(root, connections, Synth::Jupiter8, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))?;
+        Sound::Synth7Bank(Synth7BankSound { connections, patches, .. }) => instrument::bank(root, connections, patches),
+        Sound::Synth106(sound) => synth_stored(root, Synth::Synth106, sound),
+        Sound::Synth106Live(sound) => synth_live(root, Synth::Synth106, sound),
+        Sound::Synth60(sound) => synth_stored(root, Synth::Synth60, sound),
+        Sound::Synth60Live(sound) => synth_live(root, Synth::Synth60, sound),
+        Sound::SynthD(sound) => synth_stored(root, Synth::SynthD, sound),
+        Sound::SynthDLive(sound) => synth_live(root, Synth::SynthD, sound),
+        Sound::Synth53(sound) => synth_stored(root, Synth::Synth53, sound),
+        Sound::Synth53Live(sound) => synth_live(root, Synth::Synth53, sound),
+        Sound::Synth52(sound) => synth_stored(root, Synth::Synth52, sound),
+        Sound::Synth52Live(sound) => synth_live(root, Synth::Synth52, sound),
+        Sound::Synth51(sound) => synth_stored(root, Synth::Synth51, sound),
+        Sound::Synth51Live(sound) => synth_live(root, Synth::Synth51, sound),
+        Sound::Synth80(sound) => synth_stored(root, Synth::Synth80, sound),
+        Sound::Synth80Live(sound) => synth_live(root, Synth::Synth80, sound),
+        Sound::Synth8(Synth8Sound { connections, slots, blocks, split_key, .. }) => {
+            instrument::synth(root, connections, Synth::Synth8, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))?;
             instrument::split_key(root, *split_key)
         }
-        Sound::Jupiter8Live(Jupiter8LiveSound { connections, slots, split_key, .. }) => {
-            instrument::synth(root, connections, Synth::Jupiter8, *slots, None)?;
+        Sound::Synth8Live(Synth8LiveSound { connections, slots, split_key, .. }) => {
+            instrument::synth(root, connections, Synth::Synth8, *slots, None)?;
             instrument::split_key(root, *split_key)
         }
-        Sound::Cs80(SynthSound { connections, slots, blocks, .. }) => {
-            instrument::synth(root, connections, Synth::Cs80, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
-        }
-        Sound::Cs80Live(SynthLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Cs80, *slots, None),
-        Sound::JunoBlocks(blocks) => synth_blocks(root, Synth::Juno, blocks),
-        Sound::MinimoogBlocks(blocks) => synth_blocks(root, Synth::Minimoog, blocks),
-        Sound::Prophet5Blocks(blocks) => synth_blocks(root, Synth::Prophet5, blocks),
-        Sound::Jupiter8Blocks(blocks) => synth_blocks(root, Synth::Jupiter8, blocks),
-        Sound::Cs80Blocks(blocks) => synth_blocks(root, Synth::Cs80, blocks),
-        Sound::JunoBank(bank) => synth_bank(root, Synth::Juno, bank),
-        Sound::MinimoogBank(bank) => synth_bank(root, Synth::Minimoog, bank),
-        Sound::Prophet5Bank(bank) => synth_bank(root, Synth::Prophet5, bank),
-        Sound::Jupiter8Bank(bank) => synth_bank(root, Synth::Jupiter8, bank),
-        Sound::Cs80Bank(bank) => synth_bank(root, Synth::Cs80, bank),
+        Sound::Synth106Blocks(blocks) => synth_blocks(root, Synth::Synth106, blocks),
+        Sound::Synth60Blocks(blocks) => synth_blocks(root, Synth::Synth60, blocks),
+        Sound::SynthDBlocks(blocks) => synth_blocks(root, Synth::SynthD, blocks),
+        Sound::Synth53Blocks(blocks) => synth_blocks(root, Synth::Synth53, blocks),
+        Sound::Synth52Blocks(blocks) => synth_blocks(root, Synth::Synth52, blocks),
+        Sound::Synth51Blocks(blocks) => synth_blocks(root, Synth::Synth51, blocks),
+        Sound::Synth8Blocks(blocks) => synth_blocks(root, Synth::Synth8, blocks),
+        Sound::Synth80Blocks(blocks) => synth_blocks(root, Synth::Synth80, blocks),
+        Sound::Synth106Bank(bank) => synth_bank(root, Synth::Synth106, bank),
+        Sound::Synth60Bank(bank) => synth_bank(root, Synth::Synth60, bank),
+        Sound::SynthDBank(bank) => synth_bank(root, Synth::SynthD, bank),
+        Sound::Synth53Bank(bank) => synth_bank(root, Synth::Synth53, bank),
+        Sound::Synth52Bank(bank) => synth_bank(root, Synth::Synth52, bank),
+        Sound::Synth51Bank(bank) => synth_bank(root, Synth::Synth51, bank),
+        Sound::Synth8Bank(bank) => synth_bank(root, Synth::Synth8, bank),
+        Sound::Synth80Bank(bank) => synth_bank(root, Synth::Synth80, bank),
         Sound::Play(PlaySound { connections, channel, gain, duck, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;
@@ -975,6 +979,16 @@ pub(crate) fn bytes_of(text: &str) -> Vec<u8> {
     let length = base64::decode(text.as_bytes(), &mut bytes).unwrap_or(0);
     bytes.truncate(length);
     bytes
+}
+
+/// A stored sound of the analogue synthesizer its kind names.
+fn synth_stored(root: &Path<'_>, synth: Synth, sound: &SynthSound) -> Checked {
+    instrument::synth(root, &sound.connections, synth, sound.slots, Some((&sound.blocks, MOST_INSTRUMENT_BLOCKS)))
+}
+
+/// A live sound's object, of the analogue synthesizer its kind names.
+fn synth_live(root: &Path<'_>, synth: Synth, sound: &SynthLiveSound) -> Checked {
+    instrument::synth(root, &sound.connections, synth, sound.slots, None)
 }
 
 /// A live sound's next blocks, of the analogue synthesizer its kind names.

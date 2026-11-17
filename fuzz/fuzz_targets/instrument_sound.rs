@@ -1,5 +1,5 @@
-//! A program's instrument sounds (REQ-6413, DEC-6429): any bytes as a SID
-//! sound's images, the slots of a DX7 sound or of an analogue
+//! A program's instrument sounds (REQ-6413, DEC-6429): any bytes as a
+//! synth6581 sound's images, the slots of a synth7 sound or of an analogue
 //! synthesizer's, or a bank's patches, stored or live, with any images or
 //! slots to a block, through the server's check and the records it writes.
 //! No panic; a line is refused whole or sent.
@@ -8,18 +8,14 @@
 use libfuzzer_sys::fuzz_target;
 use teletext_runtime::{Channel, ChannelConfig, Effect, InitialPage};
 
-/// The kinds that carry data: the SID's and the DX7's five, then three for
-/// each analogue synthesizer.
+/// The kinds that carry data: five of synth6581 and synth7, then three
+/// for each analogue synthesizer of a family of its own; a family's other
+/// names differ only in the model byte their kind writes.
 const KINDS: u8 = 5 + 3 * 5;
 /// The analogue synthesizers' kinds, each with the fields its stored sound
-/// needs beyond the DX7's.
-const SYNTHS: [(&str, &str); 5] = [
-    ("juno", r#","model":"60""#),
-    ("minimoog", ""),
-    ("prophet5", r#","model":"revision_3""#),
-    ("jupiter8", r#","key_mode":"split","split_key":60"#),
-    ("cs80", ""),
-];
+/// needs beyond synth7's.
+const SYNTHS: [(&str, &str); 5] =
+    [("synth60", ""), ("synthd", ""), ("synth53", ""), ("synth8", r#","key_mode":"split","split_key":60"#), ("synth80", "")];
 /// The most slots to a block, and two more, so the refusals at both ends are
 /// reached.
 const SIZES: u8 = 18;
@@ -43,11 +39,11 @@ fuzz_target!(|data: &[u8]| {
             1 => format!(r#""kind":"{synth}_blocks","slots":{size},"first":65535,"blocks":"{text}""#),
             _ => format!(r#""kind":"{synth}_bank","patches":"{text}""#),
         },
-        0 => format!(r#""kind":"sid","images_per_block":{size},"chip":"6581","clock":"pal","images":"{text}""#),
-        1 => format!(r#""kind":"sid_blocks","images_per_block":{size},"first":65535,"images":"{text}""#),
-        2 => format!(r#""kind":"dx7","slots":{size},"bank":0,"blocks":"{text}""#),
-        3 => format!(r#""kind":"dx7_blocks","slots":{size},"first":65535,"blocks":"{text}""#),
-        _ => format!(r#""kind":"dx7_bank","patches":"{text}""#),
+        0 => format!(r#""kind":"synth6581","images_per_block":{size},"clock":"pal","images":"{text}""#),
+        1 => format!(r#""kind":"synth6581_blocks","images_per_block":{size},"first":65535,"images":"{text}""#),
+        2 => format!(r#""kind":"synth7","slots":{size},"bank":0,"blocks":"{text}""#),
+        3 => format!(r#""kind":"synth7_blocks","slots":{size},"first":65535,"blocks":"{text}""#),
+        _ => format!(r#""kind":"synth7_bank","patches":"{text}""#),
     };
     let line = format!(r#"{{"type":"sound","connections":[1],"handle":1,"generation":0,{fields}}}"#);
     channel.from_program(line.as_bytes(), 0);
