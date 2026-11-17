@@ -6,6 +6,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # chrono is unmaintained and no version fixes it; it reaches the server
+    # only through Cloudflare's worker crate, in the wasm-only, undeployed
+    # Cloudflare host. Reconsider when worker drops chrono (DEC-6441).
+    "RUSTSEC-2026-0543",
+]
 
 [licenses]
 version = 2
