@@ -51,8 +51,13 @@ pub use read::{read, read_reporting, request_of};
 /// text run as from outside the program (`outside`), whose characters no
 /// set of its language shows become a stand-in rather than a refusal, and
 /// bounds `measure`'s and `measured`'s request numbers above in the schema
-/// (DEC-2326, REQ-2150).
-pub const PROTOCOL: u32 = 11;
+/// (DEC-2326, REQ-2150). Version 11 types the server's figures, tells
+/// a program the pointer's going and a second finger (REQ-1355, REQ-1366)
+/// and adds two of the standard's limits. Version 12 names the
+/// synthesizers' kinds `synth6581` to `synth80`, each name a kind of its
+/// own with no `model` or `chip` field (DEC-6461): a program of version 11
+/// stops at `start` rather than have a kind it sends refused.
+pub const PROTOCOL: u32 = 12;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
