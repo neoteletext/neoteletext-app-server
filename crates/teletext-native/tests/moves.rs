@@ -76,6 +76,7 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
         name: "Moves".to_owned(),
         program: Program::Socket(path.clone()),
         initial_page: InitialPage::new(apps::DEFAULT_INITIAL_PAGE).unwrap(),
+        wheel: false,
     })
     .unwrap();
     let config = ChannelConfig {
@@ -84,6 +85,7 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let hub = hub::spawn(name, Channel::new(config), Instant::now(), Some(link), Arc::new(ServerStats::default()));
     let mut program = BufReader::new(UnixStream::connect(&path).await.unwrap());

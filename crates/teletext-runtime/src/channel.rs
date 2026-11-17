@@ -171,6 +171,11 @@ pub struct ChannelConfig {
     /// viewer to come back before its program is told it ended, in
     /// milliseconds; 0 ends it at once (requirement 5.5).
     pub session_grace_ms: u64,
+    /// The channel uses the mouse wheel over its pages: its `channel.ttx`
+    /// says so (`push.wheel`), and a receiver gives it the wheel there
+    /// rather than stepping a page's sub-pages with it (the browser's
+    /// DEC-6447).
+    pub wheel: bool,
 }
 
 /// How long a session waits for its viewer to come back: 5 minutes, long
@@ -574,6 +579,9 @@ impl Channel {
     pub fn descriptor(&self) -> Vec<u8> {
         let mut push = Writer::nested();
         push.boolean("input", true);
+        if self.config.wheel {
+            push.boolean("wheel", true);
+        }
         let mut descriptor = Writer::nested();
         descriptor.text("name", &self.config.name).text("initial_page", &self.config.initial_page.to_string()).object("push", push);
         let mut bytes = descriptor.line();

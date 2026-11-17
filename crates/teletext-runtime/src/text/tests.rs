@@ -221,6 +221,7 @@ fn channel() -> Channel {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let mut channel = Channel::new(config);
     channel.program_started(0);

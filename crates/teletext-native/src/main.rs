@@ -175,6 +175,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
             initial_page: spec.initial_page,
             epoch_at_start_ms,
             session_grace_ms: SESSION_GRACE_MS,
+            wheel: spec.wheel,
         };
         let link = apps::start(spec)?;
         let channel = Channel::new(config);

@@ -134,6 +134,9 @@ pub struct ChannelSpec {
     pub program: Program,
     /// The page its viewers start on.
     pub initial_page: InitialPage,
+    /// It uses the mouse wheel over its pages (`"wheel": true`), so its
+    /// `channel.ttx` says so (the browser's DEC-6447).
+    pub wheel: bool,
 }
 
 /// The page a channel's viewers start on when its entry names none: the
@@ -147,7 +150,7 @@ const PAGE_DIGITS: usize = 3;
 const HEXADECIMAL: u32 = 16;
 
 /// Reads the channels file: `{"channels":[{"folder","name","command":[…],
-/// "directory","initial_page"}]}`, or `"socket"` in place of `"command"` and
+/// "directory","initial_page","wheel"}]}`, or `"socket"` in place of `"command"` and
 /// `"directory"`, or, for a program that connects over a WebSocket,
 /// `"secret_variable"` or `"secret_file"`, the environment variable or file
 /// that holds the channel's secret, never the secret itself (REQ-1044). A
@@ -155,6 +158,8 @@ const HEXADECIMAL: u32 = 16;
 /// folder. `initial_page`, three decimal digits such as `"100"`, is the
 /// page the channel's viewers start on, [`DEFAULT_INITIAL_PAGE`] when left
 /// out (TODO-2135 item 11: `channel.ttx` reports it, so it can vary).
+/// `wheel`, true or false and false when left out, says the channel uses
+/// the mouse wheel over its pages (the browser's DEC-6447).
 ///
 /// # Errors
 /// A file that cannot be read or is not a valid channels file.
@@ -207,7 +212,11 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
             Some(digits) => Err(format!("{digits:?} is not three decimal digits")),
         }
         .map_err(|fault| format!("{}: {folder}'s initial_page: {fault}", path.display()))?;
-        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program, initial_page });
+        let wheel = match item.get("wheel") {
+            None => false,
+            Some(value) => value.boolean().ok_or_else(|| format!("{}: {folder}'s wheel is true or false", path.display()))?,
+        };
+        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program, initial_page, wheel });
     }
     Ok(specs)
 }

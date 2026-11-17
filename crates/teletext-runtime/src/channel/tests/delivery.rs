@@ -45,6 +45,7 @@ fn config(session_grace_ms: u64) -> ChannelConfig {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms,
+        wheel: false,
     }
 }
 

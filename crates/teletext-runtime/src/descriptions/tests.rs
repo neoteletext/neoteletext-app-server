@@ -24,8 +24,14 @@ const RESERVED: PageNumber = PageNumber(0x1FF);
 
 /// A channel whose program runs, and has been told nothing that matters.
 fn channel() -> Channel {
-    let config =
-        ChannelConfig { name: NAME.into(), address: ADDRESS.into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, session_grace_ms: 0 };
+    let config = ChannelConfig {
+        name: NAME.into(),
+        address: ADDRESS.into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: 0,
+        wheel: false,
+    };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     let _ = channel.take_effects();

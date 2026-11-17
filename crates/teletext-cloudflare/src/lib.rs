@@ -310,6 +310,7 @@ impl ChannelObject {
             initial_page: InitialPage::new(INITIAL_PAGE).map_err(failure)?,
             epoch_at_start_ms: started_ms,
             session_grace_ms: SESSION_GRACE_MS,
+            wheel: false,
         };
         let channel = Channel::new(config);
         let mut live = Live {

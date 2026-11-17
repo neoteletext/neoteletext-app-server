@@ -29,6 +29,7 @@ fn connected() -> DuplexStream {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let channel = Channel::new(config);
     let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()));

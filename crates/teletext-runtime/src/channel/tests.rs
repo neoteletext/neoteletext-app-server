@@ -57,6 +57,7 @@ fn held() -> Channel {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let mut channel = Channel::new(config);
     channel.program_started(0);
@@ -672,6 +673,26 @@ fn the_descriptor_names_no_push_address() {
     assert_eq!(descriptor["push"], json!({"input": true}));
 }
 
+/// The browser's DEC-6447: a channel configured to use the wheel says so
+/// in `channel.ttx`, beside its input; one that is not says nothing of it.
+#[test]
+fn a_channel_that_uses_the_wheel_says_so() {
+    let written = |wheel: bool| {
+        let config = ChannelConfig {
+            name: "Test".into(),
+            address: "http://127.0.0.1/test/".into(),
+            initial_page: InitialPage::new(0x100).unwrap(),
+            epoch_at_start_ms: 0,
+            session_grace_ms: 0,
+            wheel,
+        };
+        let descriptor: Value = serde_json::from_slice(&Channel::new(config).descriptor()).unwrap();
+        descriptor["push"].clone()
+    };
+    assert_eq!(written(true), json!({"input": true, "wheel": true}));
+    assert_eq!(written(false), json!({"input": true}));
+}
+
 /// The `connected` lines among `effects`.
 fn connecteds(effects: &[Effect]) -> Vec<Value> {
     told(effects).into_iter().filter(|line| line["type"] == "connected").collect()
@@ -729,6 +750,7 @@ fn connected_carries_the_cookies_the_connection_opened_with() {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let mut channel = Channel::new(config);
     channel.program_started(0);
@@ -900,6 +922,7 @@ fn a_selection_has_an_ending_with_no_program_too() {
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         session_grace_ms: 0,
+        wheel: false,
     };
     let mut none = Channel::new(config);
     none.opened(CONNECTION, 1, Vec::new(), 0);
@@ -1122,6 +1145,7 @@ fn a_channels_initial_page_is_three_decimal_digits() {
             initial_page: InitialPage::new(page).unwrap(),
             epoch_at_start_ms: 0,
             session_grace_ms: 0,
+            wheel: false,
         };
         let descriptor: Value = serde_json::from_slice(&Channel::new(config).descriptor()).unwrap();
         descriptor["initial_page"].clone()
