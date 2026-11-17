@@ -196,14 +196,14 @@ say "the channels file, the service, its socket and the container's Caddy"
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com"},
-  {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday"},
+  {"folder":"hackaday","name":"Hackaday","command":["node","--disable-warning=ExperimentalWarning","src/main.ts","--dataset","$dataset"],"directory":"current/neoteletext-server-channel-hackaday","wheel":true},
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite"},
-  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo"},
+  {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo","wheel":true},
   {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
-  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo"},
+  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo","wheel":true},
   {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo"},
-  {"folder":"audio","name":"SID and DX7 test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-audiodemo"}
+  {"folder":"audio","name":"Audio demo","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-audiodemo"}
 ]}
 EOF
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
