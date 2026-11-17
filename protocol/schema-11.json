@@ -1163,6 +1163,41 @@
         }
       ]
     },
+    "JunoModel": {
+      "description": "The Juno a sound plays: the two share their sliders and differ in\ntheir voices.",
+      "oneOf": [
+        {
+          "const": "106",
+          "description": "The Juno-106: model 0 of the engine's `TAG_MODEL`.",
+          "type": "string"
+        },
+        {
+          "const": "60",
+          "description": "The Juno-60: model 1.",
+          "type": "string"
+        }
+      ]
+    },
+    "Jupiter8KeyMode": {
+      "description": "How a Jupiter-8's keyboard plays its two patches, the upper chosen by\nprogram changes on MIDI channel 1 and the lower on channel 2.",
+      "oneOf": [
+        {
+          "const": "whole",
+          "description": "Every key plays the upper patch, on eight voices.",
+          "type": "string"
+        },
+        {
+          "const": "dual",
+          "description": "Every key plays both patches, four voices each.",
+          "type": "string"
+        },
+        {
+          "const": "split",
+          "description": "Keys below `split_key` play the lower patch and the others the\nupper, four voices each.",
+          "type": "string"
+        }
+      ]
+    },
     "KeyAction": {
       "description": "What a key did.",
       "oneOf": [
@@ -2991,6 +3026,1047 @@
               "type": "object"
             },
             {
+              "description": "A stored Juno sound: timed MIDI messages (DEC-6429).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Juno patches its program changes choose\nfrom.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "juno",
+                  "type": "string"
+                },
+                "model": {
+                  "$ref": "#/$defs/JunoModel",
+                  "description": "The model that plays it."
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "model",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Juno sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Juno patches its program changes choose\nfrom.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "juno_live",
+                  "type": "string"
+                },
+                "model": {
+                  "$ref": "#/$defs/JunoModel",
+                  "description": "The model that plays it."
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "model",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Juno sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "juno_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of Juno patches, which Juno sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "juno_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored Minimoog sound: timed MIDI messages (DEC-6429).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "minimoog",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Minimoog sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "minimoog_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Minimoog sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "minimoog_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of Minimoog patches, which Minimoog sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "minimoog_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored Prophet-5 sound: timed MIDI messages (DEC-6429).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Prophet-5 programs its program changes\nchoose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "prophet5",
+                  "type": "string"
+                },
+                "model": {
+                  "$ref": "#/$defs/Prophet5Model",
+                  "description": "The revision that plays it."
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "model",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Prophet-5 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Prophet-5 programs its program changes\nchoose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "prophet5_live",
+                  "type": "string"
+                },
+                "model": {
+                  "$ref": "#/$defs/Prophet5Model",
+                  "description": "The revision that plays it."
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "model",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Prophet-5 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "prophet5_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of Prophet-5 programs, which Prophet-5 sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "prophet5_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored Jupiter-8 sound: timed MIDI messages (DEC-6429).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Jupiter-8 patches its program changes\nchoose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "key_mode": {
+                  "$ref": "#/$defs/Jupiter8KeyMode",
+                  "description": "How the keyboard plays the upper and lower patches."
+                },
+                "kind": {
+                  "const": "jupiter8",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "split_key": {
+                  "description": "The lowest key of the upper patch in the split mode, a MIDI key of\n0 to 127; sent, and unused, in the others.",
+                  "format": "uint8",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "key_mode",
+                "split_key",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Jupiter-8 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of Jupiter-8 patches its program changes\nchoose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "key_mode": {
+                  "$ref": "#/$defs/Jupiter8KeyMode",
+                  "description": "How the keyboard plays the upper and lower patches."
+                },
+                "kind": {
+                  "const": "jupiter8_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "split_key": {
+                  "description": "The lowest key of the upper patch in the split mode, a MIDI key of\n0 to 127; sent, and unused, in the others.",
+                  "format": "uint8",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "key_mode",
+                "split_key",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live Jupiter-8 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "jupiter8_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of Jupiter-8 patches, which Jupiter-8 sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "jupiter8_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A stored CS-80 sound: timed MIDI messages (DEC-6429).",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "blocks": {
+                  "description": "Its blocks back to back, each `slots` slots of 4 bytes, exact\nbase64: 1 to 6,000 blocks, two minutes.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "cs80",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live CS-80 sound's object.",
+              "properties": {
+                "bank": {
+                  "description": "The handle of the bank of the instrument's patches its program\nchanges choose from.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "cs80_live",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "bank"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A live CS-80 sound's next blocks.",
+              "properties": {
+                "blocks": {
+                  "description": "The blocks back to back, exact base64: 1 to 100 blocks.",
+                  "type": "string"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "first": {
+                  "description": "The first block's number, counting modulo 65,536.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "cs80_blocks",
+                  "type": "string"
+                },
+                "slots": {
+                  "description": "The slots of each 20 ms block: 1 to 16, of 4 bytes each.",
+                  "format": "uint8",
+                  "maximum": 16,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "slots",
+                "first",
+                "blocks"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A bank of CS-80 patches, which CS-80 sounds name.",
+              "properties": {
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "cs80_bank",
+                  "type": "string"
+                },
+                "patches": {
+                  "description": "Its patches back to back, exact base64: 1 to 32 patches.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "patches"
+              ],
+              "type": "object"
+            },
+            {
               "description": "Play a sound on an audio channel.",
               "properties": {
                 "after": {
@@ -3617,6 +4693,21 @@
             "data"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "Prophet5Model": {
+      "description": "The Prophet-5 a sound plays: its revisions differ in their filter and\noscillator chips.",
+      "oneOf": [
+        {
+          "const": "revision_3",
+          "description": "Revision 3, with Curtis chips: model 0 of the engine's `TAG_MODEL`.",
+          "type": "string"
+        },
+        {
+          "const": "revisions_1_and_2",
+          "description": "Revisions 1 and 2, with SSM chips: model 1.",
+          "type": "string"
         }
       ]
     },

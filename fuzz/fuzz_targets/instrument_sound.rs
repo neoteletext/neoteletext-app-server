@@ -1,14 +1,25 @@
-//! A program's instrument sounds (REQ-6413): any bytes as a SID sound's
-//! images, a DX7 sound's slots or a bank's patches, stored or live, with
-//! any images or slots to a block, through the server's check and the
-//! records it writes. No panic; a line is refused whole or sent.
+//! A program's instrument sounds (REQ-6413, DEC-6429): any bytes as a SID
+//! sound's images, the slots of a DX7 sound or of an analogue
+//! synthesizer's, or a bank's patches, stored or live, with any images or
+//! slots to a block, through the server's check and the records it writes.
+//! No panic; a line is refused whole or sent.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use teletext_runtime::{Channel, ChannelConfig, Effect, InitialPage};
 
-/// The kinds that carry data.
-const KINDS: u8 = 5;
+/// The kinds that carry data: the SID's and the DX7's five, then three for
+/// each analogue synthesizer.
+const KINDS: u8 = 5 + 3 * 5;
+/// The analogue synthesizers' kinds, each with the fields its stored sound
+/// needs beyond the DX7's.
+const SYNTHS: [(&str, &str); 5] = [
+    ("juno", r#","model":"60""#),
+    ("minimoog", ""),
+    ("prophet5", r#","model":"revision_3""#),
+    ("jupiter8", r#","key_mode":"split","split_key":60"#),
+    ("cs80", ""),
+];
 /// The most slots to a block, and two more, so the refusals at both ends are
 /// reached.
 const SIZES: u8 = 18;
@@ -24,7 +35,14 @@ fuzz_target!(|data: &[u8]| {
     let Ok(written) = neoteletext_web::base64::encode(blocks, &mut encoded) else { return };
     let text = String::from_utf8_lossy(&encoded[..written]);
     let size = size % SIZES;
-    let fields = match kind % KINDS {
+    let kind = kind % KINDS;
+    let (synth, more) = SYNTHS[usize::from(kind.saturating_sub(5) / 3) % SYNTHS.len()];
+    let fields = match kind {
+        5.. => match (kind - 5) % 3 {
+            0 => format!(r#""kind":"{synth}","slots":{size},"bank":0{more},"blocks":"{text}""#),
+            1 => format!(r#""kind":"{synth}_blocks","slots":{size},"first":65535,"blocks":"{text}""#),
+            _ => format!(r#""kind":"{synth}_bank","patches":"{text}""#),
+        },
         0 => format!(r#""kind":"sid","images_per_block":{size},"chip":"6581","clock":"pal","images":"{text}""#),
         1 => format!(r#""kind":"sid_blocks","images_per_block":{size},"first":65535,"images":"{text}""#),
         2 => format!(r#""kind":"dx7","slots":{size},"bank":0,"blocks":"{text}""#),

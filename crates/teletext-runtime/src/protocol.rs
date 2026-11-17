@@ -122,6 +122,30 @@ pub const DX7_MOST_SLOTS: u8 = 16;
 pub const DX7_PATCH_BYTES: u16 = 128;
 /// The most patches a DX7 bank holds: the instrument's 32 voices.
 pub const DX7_MOST_PATCHES: usize = 32;
+/// The bytes of one Juno patch: the Juno-106's sixteen sliders and two
+/// bytes of switches (its owner's manual, MIDI Implementation 3.1), the
+/// layout of the engine's `juno::Patch` (DEC-6429).
+pub const JUNO_PATCH_BYTES: u16 = 18;
+/// The bytes of one Minimoog patch, the layout of the engine's
+/// `minimoog::Patch`: the panel's knobs and switches, the engine's own
+/// layout since the instrument has no patch memory.
+pub const MINIMOOG_PATCH_BYTES: u16 = 36;
+/// The bytes of one Prophet-5 program: the 24 bytes of its memory
+/// (Prophet-5 Operation Manual, section 6-7).
+pub const PROPHET5_PATCH_BYTES: u16 = 24;
+/// The bytes of one Jupiter-8 patch, the layout of the engine's
+/// `jupiter8::Patch`, after Roland's Jupiter-8/System-8 Parameter
+/// Correspondence Table.
+pub const JUPITER8_PATCH_BYTES: u16 = 43;
+/// The bytes of one CS-80 patch: two tones of 26 controls and 33 controls
+/// of the panel outside them, the layout of the engine's `cs80::Patch`.
+pub const CS80_PATCH_BYTES: u16 = 85;
+/// The most patches a bank of an analogue synthesizer holds: as many as a
+/// DX7 bank, so that a program change means the same in every instrument.
+pub const SYNTH_MOST_PATCHES: usize = DX7_MOST_PATCHES;
+/// The largest MIDI key: a data byte's seven bits (MIDI 1.0), the highest
+/// split point a Jupiter-8 sound may name.
+pub const LAST_MIDI_KEY: u8 = 0x7F;
 /// The sample rates of the audio profile (the engine's `audio.md`).
 pub const SAMPLE_RATES: [u32; 8] = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000];
 /// The highest duck step (`audio.md` section 4.4: 0 to 6).
@@ -1897,6 +1921,46 @@ pub enum Sound {
     Dx7Blocks(Dx7BlocksSound),
     /// A bank of DX7 patches, which DX7 sounds name.
     Dx7Bank(Dx7BankSound),
+    /// A stored Juno sound: timed MIDI messages (DEC-6429).
+    Juno(JunoSound),
+    /// A live Juno sound's object.
+    JunoLive(JunoLiveSound),
+    /// A live Juno sound's next blocks.
+    JunoBlocks(SynthBlocksSound),
+    /// A bank of Juno patches, which Juno sounds name.
+    JunoBank(SynthBankSound),
+    /// A stored Minimoog sound: timed MIDI messages (DEC-6429).
+    Minimoog(SynthSound),
+    /// A live Minimoog sound's object.
+    MinimoogLive(SynthLiveSound),
+    /// A live Minimoog sound's next blocks.
+    MinimoogBlocks(SynthBlocksSound),
+    /// A bank of Minimoog patches, which Minimoog sounds name.
+    MinimoogBank(SynthBankSound),
+    /// A stored Prophet-5 sound: timed MIDI messages (DEC-6429).
+    Prophet5(Prophet5Sound),
+    /// A live Prophet-5 sound's object.
+    Prophet5Live(Prophet5LiveSound),
+    /// A live Prophet-5 sound's next blocks.
+    Prophet5Blocks(SynthBlocksSound),
+    /// A bank of Prophet-5 programs, which Prophet-5 sounds name.
+    Prophet5Bank(SynthBankSound),
+    /// A stored Jupiter-8 sound: timed MIDI messages (DEC-6429).
+    Jupiter8(Jupiter8Sound),
+    /// A live Jupiter-8 sound's object.
+    Jupiter8Live(Jupiter8LiveSound),
+    /// A live Jupiter-8 sound's next blocks.
+    Jupiter8Blocks(SynthBlocksSound),
+    /// A bank of Jupiter-8 patches, which Jupiter-8 sounds name.
+    Jupiter8Bank(SynthBankSound),
+    /// A stored CS-80 sound: timed MIDI messages (DEC-6429).
+    Cs80(SynthSound),
+    /// A live CS-80 sound's object.
+    Cs80Live(SynthLiveSound),
+    /// A live CS-80 sound's next blocks.
+    Cs80Blocks(SynthBlocksSound),
+    /// A bank of CS-80 patches, which CS-80 sounds name.
+    Cs80Bank(SynthBankSound),
     /// Play a sound on an audio channel.
     Play(PlaySound),
     /// Stop an audio channel.
@@ -2171,6 +2235,330 @@ pub struct Dx7BankSound {
     /// Its patches back to back, each the instrument's 128 packed bytes,
     /// every byte at most 127, exact base64: 1 to 32 patches.
     pub patches: Base64,
+}
+
+/// The analogue synthesizers a program's sound may be for (DEC-6429), each
+/// a codec of the audio profile whose block is the DX7's: 1 to 16 slots of
+/// a timed MIDI message. Not a message of its own: the kind of a sound
+/// names it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Synth {
+    /// Roland's Juno-106 or Juno-60.
+    Juno,
+    /// Moog's Minimoog Model D.
+    Minimoog,
+    /// Sequential Circuits' Prophet-5.
+    Prophet5,
+    /// Roland's Jupiter-8.
+    Jupiter8,
+    /// Yamaha's CS-80.
+    Cs80,
+}
+
+impl Synth {
+    /// Every one, in the order of their codecs.
+    pub const ALL: [Self; 5] = [Self::Juno, Self::Minimoog, Self::Prophet5, Self::Jupiter8, Self::Cs80];
+
+    /// The audio profile's codec of its sounds, which is also the code that
+    /// names its family in a patch bank (the engine's `TAG_BANK_FAMILY`).
+    #[must_use]
+    pub const fn codec(self) -> u8 {
+        match self {
+            Self::Juno => 6,
+            Self::Minimoog => 7,
+            Self::Prophet5 => 8,
+            Self::Jupiter8 => 9,
+            Self::Cs80 => 10,
+        }
+    }
+
+    /// The bytes of one of its patches, in the instrument's own layout.
+    #[must_use]
+    pub const fn patch_bytes(self) -> u16 {
+        match self {
+            Self::Juno => JUNO_PATCH_BYTES,
+            Self::Minimoog => MINIMOOG_PATCH_BYTES,
+            Self::Prophet5 => PROPHET5_PATCH_BYTES,
+            Self::Jupiter8 => JUPITER8_PATCH_BYTES,
+            Self::Cs80 => CS80_PATCH_BYTES,
+        }
+    }
+
+    /// Its name, as a sound's kind begins with it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Juno => "juno",
+            Self::Minimoog => "minimoog",
+            Self::Prophet5 => "prophet5",
+            Self::Jupiter8 => "jupiter8",
+            Self::Cs80 => "cs80",
+        }
+    }
+}
+
+/// The Juno a sound plays: the two share their sliders and differ in
+/// their voices.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+pub enum JunoModel {
+    /// The Juno-106: model 0 of the engine's `TAG_MODEL`.
+    #[serde(rename = "106")]
+    Juno106,
+    /// The Juno-60: model 1.
+    #[serde(rename = "60")]
+    Juno60,
+}
+
+/// The Prophet-5 a sound plays: its revisions differ in their filter and
+/// oscillator chips.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Prophet5Model {
+    /// Revision 3, with Curtis chips: model 0 of the engine's `TAG_MODEL`.
+    #[serde(rename = "revision_3")]
+    Revision3,
+    /// Revisions 1 and 2, with SSM chips: model 1.
+    #[serde(rename = "revisions_1_and_2")]
+    Revisions1And2,
+}
+
+/// How a Jupiter-8's keyboard plays its two patches, the upper chosen by
+/// program changes on MIDI channel 1 and the lower on channel 2.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Jupiter8KeyMode {
+    /// Every key plays the upper patch, on eight voices.
+    Whole,
+    /// Every key plays both patches, four voices each.
+    Dual,
+    /// Keys below `split_key` play the lower patch and the others the
+    /// upper, four voices each.
+    Split,
+}
+
+/// A stored sound of the Minimoog or the CS-80: MIDI messages for the
+/// instrument, each timed within its 20 ms block (the audio profile's
+/// codecs 7 and 10, DEC-6429). A slot is a time in tenths of a millisecond,
+/// 0 to 199, a status byte and two data bytes; four zero bytes are an
+/// empty slot. Every instrument takes note off and note on, control
+/// changes 1, 7, 64, 120, 121 and 123, a program change to one of the
+/// bank's 32 patches, and pitch bend; the CS-80 also polyphonic key
+/// pressure and channel pressure, and the Jupiter-8 control changes 5, 8
+/// and 65, with program changes on MIDI channels 1 and 2 only.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SynthSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of the instrument's patches its program
+    /// changes choose from.
+    pub bank: u8,
+    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
+    /// base64: 1 to 6,000 blocks, two minutes.
+    pub blocks: Base64,
+}
+
+/// A live sound's object, of the Minimoog or the CS-80.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SynthLiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of the instrument's patches its program
+    /// changes choose from.
+    pub bank: u8,
+}
+
+/// A live sound's next blocks, of any of the analogue synthesizers.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SynthBlocksSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The first block's number, counting modulo 65,536.
+    pub first: u16,
+    /// The blocks back to back, exact base64: 1 to 100 blocks.
+    pub blocks: Base64,
+}
+
+/// A bank of patches of one of the analogue synthesizers, the one its kind
+/// names (the audio profile's codec 11, DEC-6429), which that
+/// instrument's sounds name by this handle. Each patch is the
+/// instrument's own layout: 18 bytes for the Juno, 36 for the Minimoog, 24
+/// for the Prophet-5, 43 for the Jupiter-8 and 85 for the CS-80, every
+/// byte within the range of the control it holds.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SynthBankSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// Its patches back to back, exact base64: 1 to 32 patches.
+    pub patches: Base64,
+}
+
+/// A stored Juno sound (the audio profile's codec 6): as [`SynthSound`],
+/// with the model that plays it.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JunoSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The model that plays it.
+    pub model: JunoModel,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Juno patches its program changes choose
+    /// from.
+    pub bank: u8,
+    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
+    /// base64: 1 to 6,000 blocks, two minutes.
+    pub blocks: Base64,
+}
+
+/// A live Juno sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JunoLiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The model that plays it.
+    pub model: JunoModel,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Juno patches its program changes choose
+    /// from.
+    pub bank: u8,
+}
+
+/// A stored Prophet-5 sound (the audio profile's codec 8): as
+/// [`SynthSound`], with the revision that plays it.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Prophet5Sound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The revision that plays it.
+    pub model: Prophet5Model,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Prophet-5 programs its program changes
+    /// choose from.
+    pub bank: u8,
+    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
+    /// base64: 1 to 6,000 blocks, two minutes.
+    pub blocks: Base64,
+}
+
+/// A live Prophet-5 sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Prophet5LiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// The revision that plays it.
+    pub model: Prophet5Model,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Prophet-5 programs its program changes
+    /// choose from.
+    pub bank: u8,
+}
+
+/// A stored Jupiter-8 sound (the audio profile's codec 9): as
+/// [`SynthSound`], with how its keyboard plays its two patches.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Jupiter8Sound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// How the keyboard plays the upper and lower patches.
+    pub key_mode: Jupiter8KeyMode,
+    /// The lowest key of the upper patch in the split mode, a MIDI key of
+    /// 0 to 127; sent, and unused, in the others.
+    #[schemars(range(max = LAST_MIDI_KEY))]
+    pub split_key: u8,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Jupiter-8 patches its program changes
+    /// choose from.
+    pub bank: u8,
+    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
+    /// base64: 1 to 6,000 blocks, two minutes.
+    pub blocks: Base64,
+}
+
+/// A live Jupiter-8 sound's object.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Jupiter8LiveSound {
+    /// Who it is for.
+    pub connections: Connections,
+    /// Its handle.
+    pub handle: u8,
+    /// Its generation.
+    pub generation: u16,
+    /// How the keyboard plays the upper and lower patches.
+    pub key_mode: Jupiter8KeyMode,
+    /// The lowest key of the upper patch in the split mode, a MIDI key of
+    /// 0 to 127; sent, and unused, in the others.
+    #[schemars(range(max = LAST_MIDI_KEY))]
+    pub split_key: u8,
+    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
+    #[schemars(range(min = 1, max = DX7_MOST_SLOTS))]
+    pub slots: u8,
+    /// The handle of the bank of Jupiter-8 patches its program changes
+    /// choose from.
+    pub bank: u8,
 }
 
 /// Play a sound on an audio channel.

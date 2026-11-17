@@ -29,6 +29,10 @@ use super::{
 use super::{
     Dx7BankSound, Dx7BlocksSound, Dx7LiveSound, Dx7Sound, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_INSTRUMENT_BLOCKS, SidBlocksSound, SidLiveSound, SidSound,
 };
+use super::{
+    JunoLiveSound, JunoSound, Jupiter8LiveSound, Jupiter8Sound, Prophet5LiveSound, Prophet5Sound, Synth, SynthBankSound, SynthBlocksSound, SynthLiveSound,
+    SynthSound,
+};
 
 mod instrument;
 
@@ -654,6 +658,40 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             instrument::dx7(root, connections, *slots, Some((blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
         }
         Sound::Dx7Bank(Dx7BankSound { connections, patches, .. }) => instrument::bank(root, connections, patches),
+        Sound::Juno(JunoSound { connections, slots, blocks, .. }) => {
+            instrument::synth(root, connections, Synth::Juno, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
+        }
+        Sound::JunoLive(JunoLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Juno, *slots, None),
+        Sound::Minimoog(SynthSound { connections, slots, blocks, .. }) => {
+            instrument::synth(root, connections, Synth::Minimoog, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
+        }
+        Sound::MinimoogLive(SynthLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Minimoog, *slots, None),
+        Sound::Prophet5(Prophet5Sound { connections, slots, blocks, .. }) => {
+            instrument::synth(root, connections, Synth::Prophet5, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
+        }
+        Sound::Prophet5Live(Prophet5LiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Prophet5, *slots, None),
+        Sound::Jupiter8(Jupiter8Sound { connections, slots, blocks, split_key, .. }) => {
+            instrument::synth(root, connections, Synth::Jupiter8, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))?;
+            instrument::split_key(root, *split_key)
+        }
+        Sound::Jupiter8Live(Jupiter8LiveSound { connections, slots, split_key, .. }) => {
+            instrument::synth(root, connections, Synth::Jupiter8, *slots, None)?;
+            instrument::split_key(root, *split_key)
+        }
+        Sound::Cs80(SynthSound { connections, slots, blocks, .. }) => {
+            instrument::synth(root, connections, Synth::Cs80, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))
+        }
+        Sound::Cs80Live(SynthLiveSound { connections, slots, .. }) => instrument::synth(root, connections, Synth::Cs80, *slots, None),
+        Sound::JunoBlocks(blocks) => synth_blocks(root, Synth::Juno, blocks),
+        Sound::MinimoogBlocks(blocks) => synth_blocks(root, Synth::Minimoog, blocks),
+        Sound::Prophet5Blocks(blocks) => synth_blocks(root, Synth::Prophet5, blocks),
+        Sound::Jupiter8Blocks(blocks) => synth_blocks(root, Synth::Jupiter8, blocks),
+        Sound::Cs80Blocks(blocks) => synth_blocks(root, Synth::Cs80, blocks),
+        Sound::JunoBank(bank) => synth_bank(root, Synth::Juno, bank),
+        Sound::MinimoogBank(bank) => synth_bank(root, Synth::Minimoog, bank),
+        Sound::Prophet5Bank(bank) => synth_bank(root, Synth::Prophet5, bank),
+        Sound::Jupiter8Bank(bank) => synth_bank(root, Synth::Jupiter8, bank),
+        Sound::Cs80Bank(bank) => synth_bank(root, Synth::Cs80, bank),
         Sound::Play(PlaySound { connections, channel, gain, duck, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;
@@ -937,4 +975,14 @@ pub(crate) fn bytes_of(text: &str) -> Vec<u8> {
     let length = base64::decode(text.as_bytes(), &mut bytes).unwrap_or(0);
     bytes.truncate(length);
     bytes
+}
+
+/// A live sound's next blocks, of the analogue synthesizer its kind names.
+fn synth_blocks(root: &Path<'_>, synth: Synth, sound: &SynthBlocksSound) -> Checked {
+    instrument::synth(root, &sound.connections, synth, sound.slots, Some((&sound.blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
+}
+
+/// A bank of the patches of the analogue synthesizer its kind names.
+fn synth_bank(root: &Path<'_>, synth: Synth, sound: &SynthBankSound) -> Checked {
+    instrument::synth_bank(root, &sound.connections, synth, &sound.patches)
 }

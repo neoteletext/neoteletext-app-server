@@ -19,8 +19,9 @@ use neoteletext_web::base64;
 
 use crate::protocol::{
     BlocksSound, Dx7BankSound, Dx7BlocksSound, Dx7LiveSound, Dx7Sound, GainSound, LiveSound, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound,
-    PlaySound, Rule, SidBlocksSound, SidLiveSound, SidSound, Sound, StopSound,
+    PlaySound, Rule, SidBlocksSound, SidLiveSound, SidSound, Sound, StopSound, SynthBankSound, SynthBlocksSound,
 };
+use crate::protocol::{JunoLiveSound, JunoSound, Jupiter8LiveSound, Jupiter8Sound, Prophet5LiveSound, Prophet5Sound, SynthLiveSound, SynthSound};
 
 mod instrument;
 
@@ -128,13 +129,6 @@ impl Sounds {
                 let sound = Encoded::live(*handle, *generation, Codec::ImaAdpcm, *rate, IMA_BLOCK_LARGE).map_err(encoding)?;
                 Ok(sound.live_records(*first, &samples(pcm)))
             }
-            Sound::Sid(sound) => instrument::sid(sound),
-            Sound::SidLive(sound) => instrument::sid_live(sound),
-            Sound::SidBlocks(sound) => Ok(instrument::sid_blocks(sound)),
-            Sound::Dx7(sound) => instrument::dx7(sound),
-            Sound::Dx7Live(sound) => instrument::dx7_live(sound),
-            Sound::Dx7Blocks(sound) => Ok(instrument::dx7_blocks(sound)),
-            Sound::Dx7Bank(sound) => instrument::dx7_bank(sound),
             Sound::Play(PlaySound { channel, handle, generation, gain, fade_ms, r#loop, after, duck, page, .. }) => {
                 let mut flags = 0;
                 if *r#loop {
@@ -187,6 +181,9 @@ impl Sounds {
                 };
                 Ok(alloc::vec![command.record()])
             }
+            // The instruments' sounds, which the pinned engine does not
+            // write: every other kind.
+            _ => instrument::records(sound),
         }
     }
 
@@ -214,6 +211,26 @@ pub(crate) const fn audience(sound: &Sound) -> &crate::protocol::Connections {
         | Sound::Dx7Live(Dx7LiveSound { connections, .. })
         | Sound::Dx7Blocks(Dx7BlocksSound { connections, .. })
         | Sound::Dx7Bank(Dx7BankSound { connections, .. })
+        | Sound::Juno(JunoSound { connections, .. })
+        | Sound::JunoLive(JunoLiveSound { connections, .. })
+        | Sound::Prophet5(Prophet5Sound { connections, .. })
+        | Sound::Prophet5Live(Prophet5LiveSound { connections, .. })
+        | Sound::Jupiter8(Jupiter8Sound { connections, .. })
+        | Sound::Jupiter8Live(Jupiter8LiveSound { connections, .. })
+        | Sound::Minimoog(SynthSound { connections, .. })
+        | Sound::Cs80(SynthSound { connections, .. })
+        | Sound::MinimoogLive(SynthLiveSound { connections, .. })
+        | Sound::Cs80Live(SynthLiveSound { connections, .. })
+        | Sound::JunoBlocks(SynthBlocksSound { connections, .. })
+        | Sound::MinimoogBlocks(SynthBlocksSound { connections, .. })
+        | Sound::Prophet5Blocks(SynthBlocksSound { connections, .. })
+        | Sound::Jupiter8Blocks(SynthBlocksSound { connections, .. })
+        | Sound::Cs80Blocks(SynthBlocksSound { connections, .. })
+        | Sound::JunoBank(SynthBankSound { connections, .. })
+        | Sound::MinimoogBank(SynthBankSound { connections, .. })
+        | Sound::Prophet5Bank(SynthBankSound { connections, .. })
+        | Sound::Jupiter8Bank(SynthBankSound { connections, .. })
+        | Sound::Cs80Bank(SynthBankSound { connections, .. })
         | Sound::Play(PlaySound { connections, .. })
         | Sound::Stop(StopSound { connections, .. })
         | Sound::Gain(GainSound { connections, .. }) => connections,
