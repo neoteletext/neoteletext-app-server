@@ -614,8 +614,8 @@ fn a_synthesizer_bank_out_of_its_bounds_is_refused() {
 }
 
 /// Each synthesizer takes the DX7's messages, and its own: the CS-80 key
-/// and channel pressure, the Jupiter-8 controllers 5, 8 and 65 and program
-/// changes on MIDI channels 1 and 2 only. What one takes another refuses,
+/// and channel pressure, the Juno controllers 124 to 127, the Jupiter-8
+/// controllers 5, 8 and 65 and program changes on MIDI channels 1 and 2 only. What one takes another refuses,
 /// naming the block and slot.
 #[test]
 fn each_synthesizer_takes_its_own_messages() {
@@ -632,6 +632,7 @@ fn each_synthesizer_takes_its_own_messages() {
     ];
     let cs80: [[u8; SLOT]; 3] = [[0, 0xA0, 60, 127], [0, 0xAF, 0, 0], [0, 0xD3, 127, 0]];
     let jupiter8: [[u8; SLOT]; 3] = [[0, 0xB0, 5, 127], [0, 0xB1, 8, 0], [0, 0xB0, 65, 127]];
+    let juno: [[u8; SLOT]; 4] = [[0, 0xB0, 124, 0], [0, 0xB0, 125, 0], [0, 0xB0, 126, 1], [0, 0xBF, 127, 0]];
     let only_jupiter8_refuses: [u8; SLOT] = [0, 0xC2, 0, 0];
     let stored = |kind: &str, slots: &[[u8; SLOT]]| {
         let more = synths().into_iter().find(|synth| synth.0 == kind).unwrap().2;
@@ -640,7 +641,7 @@ fn each_synthesizer_takes_its_own_messages() {
     for (kind, ..) in synths() {
         sent(&mut answered(), &stored(kind, &common));
         let live = |slots: &[[u8; SLOT]]| sound(&alloc::format!("{kind}_blocks"), json!({"slots": 1, "first": 0, "blocks": base64(slots.as_flattened())}));
-        for (own, extra) in [("cs80", &cs80), ("jupiter8", &jupiter8)] {
+        for (own, extra) in [("cs80", &cs80[..]), ("jupiter8", &jupiter8[..]), ("juno", &juno[..])] {
             for slot in extra {
                 if kind == own {
                     sent(&mut answered(), &live(&[*slot]));
@@ -663,6 +664,9 @@ fn each_synthesizer_takes_its_own_messages() {
     }
     refused(&stored("jupiter8", &[[0, 0xB0, 5, 128]]), "blocks", "outside_profile");
     refused(&stored("jupiter8", &[[0, 0xB0, 9, 0]]), "blocks", "outside_profile");
+    refused(&stored("juno", &[[0, 0xB0, 127, 128]]), "blocks", "outside_profile");
+    let detail = refused(&stored("juno", &[[0, 0xB0, 122, 0]]), "blocks", "outside_profile");
+    assert!(detail.ends_with("a Juno's control change is of controller 1, 7, 64, 120, 121 or 123 to 127"), "{detail}");
 }
 
 /// A synthesizer sound's fields out of their bounds are refused, naming the

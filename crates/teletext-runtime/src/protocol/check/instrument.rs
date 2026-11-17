@@ -50,6 +50,13 @@ const CONTROLLERS: [u8; 6] = [1, 7, 64, 120, 121, 123];
 /// portamento time (5), the balance of its two halves (8) and portamento
 /// on or off (65) (the engine's `receiver/instruments/analogue.rs`).
 const JUPITER8_CONTROLLERS: [u8; 3] = [5, 8, 65];
+/// The controllers the Juno's codec takes beyond [`CONTROLLERS`]: omni off
+/// (124), omni on (125), mono on (126) and poly on (127), each of which is to
+/// a Juno-106 an all notes off (the engine's
+/// `receiver/instruments/analogue.rs`, from Roland's Juno-106 owner's manual,
+/// MIDI Implementation 2.1: "Mode messages (123 - 127) are also recognized as
+/// ALL NOTES OFF").
+const JUNO_CONTROLLERS: [u8; 4] = [124, 125, 126, 127];
 /// The MIDI channels, counted from 0, whose program changes the Jupiter-8
 /// takes: channel 1 chooses the upper patch and channel 2 the lower.
 const JUPITER8_PROGRAM_CHANNELS: u8 = 2;
@@ -160,6 +167,12 @@ fn slot_fault([time, status, data1, data2]: [u8; DX7_SLOT_BYTES as usize], playe
         (Player::Synth(Synth::Cs80), CHANNEL_PRESSURE) if data1 > MIDI_DATA_MOST => return Some("a channel pressure is 0 to 127"),
         (Player::Synth(Synth::Cs80), CHANNEL_PRESSURE) if data2 != 0 => return Some("a channel pressure's second data byte is 0"),
         (Player::Synth(Synth::Cs80), CHANNEL_PRESSURE) => return None,
+        (Player::Synth(Synth::Juno), CONTROL_CHANGE) if JUNO_CONTROLLERS.contains(&data1) => {
+            return (data2 > MIDI_DATA_MOST).then_some("a controller's value is 0 to 127");
+        }
+        (Player::Synth(Synth::Juno), CONTROL_CHANGE) if !CONTROLLERS.contains(&data1) => {
+            return Some("a Juno's control change is of controller 1, 7, 64, 120, 121 or 123 to 127");
+        }
         (Player::Synth(Synth::Jupiter8), CONTROL_CHANGE) if JUPITER8_CONTROLLERS.contains(&data1) => {
             return (data2 > MIDI_DATA_MOST).then_some("a controller's value is 0 to 127");
         }
