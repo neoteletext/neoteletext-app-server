@@ -419,6 +419,15 @@ impl<const MOST: u16> TargetNumber<MOST> {
             Value::String(word) if word == "any" => Ok(Self::Any),
             Value::String(word) => Err(Fault::new(at, Rule::NotListed, format!("`{word}`: a number, \"any\", or a number from the row or the firing"))),
             Value::Object(mut object) => {
+                // RULE-106: a variable choosing which object is acted on
+                // would be a computed address (RULE-1).
+                if object.contains_key("variable") {
+                    return Err(Fault::new(
+                        &join(at, "variable"),
+                        Rule::InvalidGroup,
+                        "a variable never gives a target's number: a row's or the firing's does",
+                    ));
+                }
                 no_other(&object, &Self::KEYS).map_err(|fault| Fault::new(&join(at, &fault.path), fault.rule, fault.detail))?;
                 let plus: Offset = object.remove("plus").map_or(Ok(I32In(0)), |plus| typed_value(plus, &join(at, "plus")))?;
                 let source = match (object.remove("row"), object.remove("fired")) {

@@ -22,6 +22,7 @@ mod packets;
 mod page;
 mod redirect;
 mod reply;
+pub(crate) mod rules;
 mod schema;
 mod sound;
 mod subpages;

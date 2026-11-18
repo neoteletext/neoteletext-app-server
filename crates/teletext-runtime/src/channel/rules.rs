@@ -531,7 +531,7 @@ impl Channel {
                 .filter_map(|(number, sequence)| {
                     Some((
                         table.sequence_name(number)?,
-                        SequenceState { running: sequence.running, passes: sequence.passes, position: sequence.position, waiting: false },
+                        SequenceState { running: sequence.running, passes: sequence.passes, position: sequence.position, waiting: sequence.waiting },
                     ))
                 })
                 .collect();

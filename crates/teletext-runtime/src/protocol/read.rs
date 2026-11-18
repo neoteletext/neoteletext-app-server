@@ -233,6 +233,10 @@ fn rule_named(name: &str) -> Rule {
         "TooLong" => Rule::TooLong,
         "TooShort" => Rule::TooShort,
         "Reserved" => Rule::Reserved,
+        // The rule table's own refusals that its reader finds (RULE-39).
+        "InvalidRules" => Rule::InvalidRules,
+        "InvalidGroup" => Rule::InvalidGroup,
+        "InvalidCommand" => Rule::InvalidCommand,
         _ => Rule::WrongType,
     }
 }

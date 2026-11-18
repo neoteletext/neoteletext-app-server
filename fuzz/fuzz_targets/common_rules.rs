@@ -63,10 +63,12 @@ pub fn refused(effects: &[Effect]) -> bool {
 }
 
 /// Reads every record `effects` send with the engine's reader, which must
-/// take each: the server sends nothing a receiver refuses. Gives the body
-/// of each RULES record.
-pub fn records(effects: &[Effect]) -> Vec<Vec<u8>> {
+/// take each: the server sends nothing a receiver refuses. Gives each
+/// table image the RULES records complete, with its page and sub-code.
+pub fn records(effects: &[Effect]) -> Vec<(u16, u16, Vec<u8>)> {
+    use neoteletext_web::records::rules::{Assembled, Assembler};
     let mut reader = RecordReader::new();
+    let mut assembler = Box::new(Assembler::new());
     let mut tables = Vec::new();
     for effect in effects {
         let Effect::Send { bytes, .. } = effect else { continue };
@@ -74,7 +76,11 @@ pub fn records(effects: &[Effect]) -> Vec<Vec<u8>> {
             let packet = neoteletext_core::packet::Packet { bytes: packet.try_into().unwrap() };
             match reader.push(&packet) {
                 Read::Invalid(_) => panic!("the engine's reader refuses a record the server sent"),
-                Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => tables.push(record.body.to_vec()),
+                Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => {
+                    if let Assembled::Whole { page, subcode, image, .. } = assembler.push(&record) {
+                        tables.push((page.mpp(), subcode.value(), image.to_vec()));
+                    }
+                }
                 Read::Record(_) | Read::Nothing => {}
             }
         }

@@ -32,11 +32,11 @@ mod tracker;
 mod wire;
 
 /// A command's operations (the engine's `audio.md` section 4.4).
-const PLAY: u8 = 1;
+pub(crate) const PLAY: u8 = 1;
 /// Stop.
-const STOP: u8 = 2;
+pub(crate) const STOP: u8 = 2;
 /// Set the gain.
-const GAIN: u8 = 3;
+pub(crate) const GAIN: u8 = 3;
 /// The profile's channels, as a count of slots.
 const CHANNEL_SLOTS: usize = CHANNELS as usize;
 

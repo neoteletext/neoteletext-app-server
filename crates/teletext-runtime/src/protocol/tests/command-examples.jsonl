@@ -1,0 +1,13 @@
+{"type":"local_midi","connections":[7],"page":"101","sub":"0001","channel":0,"message":{"event":"note_on","channel":1,"key":60,"velocity":100}}
+{"type":"variable","connections":[7],"page":"101","sub":"0001","op":"set","variable":"v0","value":4}
+{"type":"variable","connections":[7],"page":"101","sub":"0001","op":"add","variable":"v0","value":{"plus":0,"variable":"v1"}}
+{"type":"variable","connections":[7],"page":"101","sub":"0001","op":"set","variable":"v2","value":{"read":{"of":"sound","channel":0,"property":"level"}}}
+{"type":"variable","connections":[7],"page":"101","sub":"0001","op":"wrap","variable":"v0","low":0,"high":3}
+{"type":"variable","connections":[7],"page":"101","sub":"0001","op":"clear","variable":"all"}
+{"type":"timer","connections":[7],"page":"101","sub":"0001","op":"start","timer":"t0"}
+{"type":"report","connections":[7],"page":"101","sub":"0001","value":{"of":"variable","variable":"v0"}}
+{"type":"run","connections":[7],"page":"101","sub":"0001","group":"flash"}
+{"type":"sequence","connections":[7],"page":"101","sub":"0001","op":"start","sequence":"pulse","at":null}
+{"type":"sequence","connections":[7],"page":"101","sub":"0001","op":"start","sequence":"flash_once","at":{"tick":5400}}
+{"type":"sequence","connections":[7],"page":"101","sub":"0001","op":"start","sequence":"pulse","at":{"beat":{"timer":"t0","ticks":30}}}
+{"type":"sequence","connections":[7],"page":"101","sub":"0001","op":"stop","sequence":null}

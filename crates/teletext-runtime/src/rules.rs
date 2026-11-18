@@ -23,6 +23,7 @@ use neoteletext_input::keys;
 use neoteletext_rules::table::{self, KeyKind, Table, Target, TargetKind, Value};
 use neoteletext_rules::{limits, names};
 use neoteletext_web::records::rules::{RulesRecord, encode as encode_rules, encode_image};
+use neoteletext_web::records::write_packets;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -31,6 +32,7 @@ use crate::protocol::{
     ButtonValue, FiredName, FiredValue, KeyName, KeyValue, LookName, NoFields, PageWord, PointerValue, RuleKey, RuleName, RuleTarget, RuleValue, SequenceValue,
     SoundValue, SynthFamily, SynthProperty, SynthValue, TargetNumber, TargetValue, TimerName, TimerRef, TimerValue, U8In, U16In, VariableName, VariableValue,
 };
+use crate::protocol::{CommandMessage, Refusal};
 
 /// The audio and input service the records go on (the reference channel's,
 /// DOC-1951).
@@ -202,6 +204,12 @@ impl Compiled {
         &self.image
     }
 
+    /// The names of its rules, groups, sequences and rectangles.
+    #[cfg(test)]
+    pub(crate) const fn names(&self) -> &Names {
+        &self.names
+    }
+
     /// The RULES records that give its page this table at `generation`
     /// (RULE-41): as many as the image needs.
     pub(crate) fn records(&self, generation: u16, record_id: &mut u8) -> Vec<u8> {
@@ -278,15 +286,19 @@ impl Compiled {
 }
 
 /// A command sent directly (RULE-114), as the record of its page for one
-/// connection whose table in force is `table`.
+/// connection whose table in force is `table`: a `run` or a `sequence`
+/// names a group or a sequence of that table.
 ///
 /// # Errors
-/// Every command, in this commit: the compiler of the second form follows
-/// it.
-pub(crate) fn direct(message: &crate::protocol::CommandMessage, _table: Option<&Compiled>, _record_id: &mut u8) -> Result<Vec<u8>, crate::protocol::Refusal> {
-    Err(crate::protocol::Refusal::whole(
-        Some(message.kind()),
-        crate::protocol::Rule::InvalidRules,
-        String::from("the second form's compiler is not in this build of the server"),
-    ))
+/// The first fault of the command; `unknown_name` for a name the table
+/// does not have, or for a `run` or a `sequence` with no table.
+pub(crate) fn direct(message: &CommandMessage, table: Option<&Compiled>, record_id: &mut u8) -> Result<Vec<u8>, Refusal> {
+    let none = Names::default();
+    let names = table.map_or(&none, |table| &table.names);
+    let built = crate::protocol::check::direct_record(message, names)?;
+    let mut bytes = Vec::new();
+    write_packets(built.kind, &built.body, SERVICE, *record_id, &mut |packet| bytes.extend_from_slice(&packet.bytes))
+        .ok_or_else(|| Refusal::whole(Some(message.kind()), crate::protocol::Rule::InvalidCommand, String::from("the record does not fit its frame")))?;
+    *record_id = record_id.wrapping_add(1);
+    Ok(bytes)
 }

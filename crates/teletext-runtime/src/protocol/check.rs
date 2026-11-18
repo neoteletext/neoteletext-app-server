@@ -857,6 +857,20 @@ pub(crate) fn compiled(message: &super::RulesMessage) -> Result<Option<crate::ru
     check_rules(&Path::Root, message).map_err(|fault| Refusal { message: Some(MessageType::Rules), path: fault.path, rule: fault.rule, detail: fault.detail })
 }
 
+/// A command sent directly, as its record's type and body for a connection
+/// whose table in force has `names` (RULE-114).
+///
+/// # Errors
+/// The first fault, `unknown_name` among them.
+pub(crate) fn direct_record(message: &super::CommandMessage, names: &crate::rules::Names) -> Result<rules::Built, Refusal> {
+    rules::direct_built(message, Some(names)).map_err(|fault| Refusal {
+        message: Some(message.kind()),
+        path: fault.path,
+        rule: fault.rule,
+        detail: fault.detail,
+    })
+}
+
 /// The operations of an `animate` message, as the engine holds them: what
 /// [`message`] checked.
 ///
