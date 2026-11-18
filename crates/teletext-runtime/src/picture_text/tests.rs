@@ -56,6 +56,30 @@ fn greek_arabic_hebrew_and_a_mark_are_the_engines_bytes() {
     assert_eq!(written("regis", "éa", None).unwrap(), b"T(A101)\"e\"T(A120)T(W(V))\"\x08\x42\"T(A101)\"a\"T(A0)");
 }
 
+/// Renderer parity PAR-44: each text part of the shared wire vectors,
+/// given as its meaning gives it to a message of the picture language its
+/// name begins with, is that row's bytes.
+#[test]
+fn the_shared_text_parts_are_the_wire_vectors() {
+    let mut names = Vec::new();
+    for vector in neoteletext_web::wire_vectors::vectors().filter(|vector| vector.kind == "picture_text") {
+        let (part, _) = vector.meaning.rsplit_once(" as ").unwrap();
+        let part: serde_json::Value = serde_json::from_str(part).unwrap();
+        let kind = vector.name.split('_').next().unwrap();
+        let message = json!({"type": kind, "connections": "kept", "page": "101", "sub": "0001", "parts": [part]});
+        let data = match read(&line(&message)).unwrap() {
+            ProgramMessage::Regis(message) => message.data,
+            ProgramMessage::Naplps(message) => message.data,
+            other => panic!("{other:?}"),
+        };
+        let (expected, length) = neoteletext_web::wire_vectors::bytes_of(vector.value).unwrap();
+        assert_eq!(crate::protocol::check::bytes_of(&data.unwrap()), expected[..length], "{}", vector.name);
+        names.push(vector.name);
+    }
+    // A Greek and an Arabic part, in each picture language.
+    assert_eq!(names, ["regis_greek", "regis_arabic", "naplps_greek", "naplps_arabic"]);
+}
+
 /// `outside`: a character the language cannot show becomes the stand-in,
 /// and is reported for the log; without it the part is refused at its path.
 #[test]

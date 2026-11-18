@@ -252,6 +252,40 @@ fn naplps_links_and_cursor_are_the_drawing_links_and_cursor_records() {
     assert_eq!(cursor.drawing, 7);
 }
 
+/// Renderer parity PAR-2, PAR-44: `naplps_links` and `naplps_cursor` for
+/// the shared wire vectors' NAPLPS sub-page (101/0001, object 301 leading
+/// to 302) are sent as the records of their `drawing_links` and
+/// `regis_cursor` rows, body for body (the record id is the connection's
+/// own, so the packets are compared by the records they carry).
+#[test]
+fn naplps_links_and_cursor_are_the_shared_wire_vectors() {
+    let vector = |name: &str| {
+        let row = neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "records" && row.name == name).unwrap();
+        let mut bytes = Vec::new();
+        for packet in row.value.split(' ') {
+            let (packet, length) = neoteletext_web::wire_vectors::bytes_of(packet).unwrap();
+            bytes.extend_from_slice(&packet[..length]);
+        }
+        records(&bytes)
+    };
+    // The viewer shows 101/0001, the vectors' sub-page, as `arrive` has one
+    // show 100/0001.
+    let mut channel = empty();
+    channel.opened(1, None, 0);
+    let hello = Item::Event(Event::Hello { version: VERSION, caps: BOTH, agent: None });
+    channel.received(1, &message(&channel, 1, &[hello, select(0x101, 1)]), 0);
+    let page = with(&with(&subpage(), "/page", json!("101")), "/sub", json!("0001"));
+    channel.from_program(&line(&json!({"type": "page", "connections": [1], "request": 1, "page": page})), 0);
+    let _ = channel.take_effects();
+    channel.from_program(
+        &line(&json!({"type": "naplps_links", "connections": [1], "page": "101", "sub": "0001", "links": [{"object": 301, "target": "302"}]})),
+        1,
+    );
+    channel.from_program(&line(&json!({"type": "naplps_cursor", "connections": [1], "page": "101", "sub": "0001", "object": 301})), 2);
+    let sent = records(&sent_to(&channel.take_effects(), 1));
+    assert_eq!(sent, [vector("drawing_links"), vector("regis_cursor")].concat());
+}
+
 /// The stream of `naplps`'s processing-limit test (the NAPLPS renderer's
 /// `tests/validator.rs`): sixteen macros, each calling the next sixty
 /// times, far past `MAX_PROCESSED_BYTES` (ANSI X3.110-1983 section 6.2:

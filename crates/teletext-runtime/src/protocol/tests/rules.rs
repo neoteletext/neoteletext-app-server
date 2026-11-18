@@ -544,6 +544,44 @@ fn a_groups_picture_links_and_cursor_are_the_records_sent_directly() {
     assert_eq!(record_bodies(&sent), expected[3]);
 }
 
+/// Renderer parity PAR-20, PAR-44 (REQ-6767): the shared wire vectors'
+/// table whose rule `open` runs a group of a NAPLPS picture's links and
+/// cursor is, written by the server from its JSON, the `rules` row
+/// `picture_links_group` byte for byte, and its RULES record the `records`
+/// row `rules_picture_links_group`; and a group of the four picture
+/// commands holds exactly the bodies of the `command` rows named for them.
+#[test]
+fn a_groups_picture_links_and_cursor_are_the_shared_wire_vectors() {
+    let row = |kind: &str, name: &str| neoteletext_web::wire_vectors::vectors().find(|row| row.kind == kind && row.name == name).unwrap().value;
+    let bytes = |value: &str| {
+        let (bytes, length) = neoteletext_web::wire_vectors::bytes_of(value).unwrap();
+        bytes[..length].to_vec()
+    };
+    let table = json!({
+        "groups": [{"name": "links", "commands": [
+            {"type": "naplps_links", "links": [{"object": 301, "target": "302"}]},
+            {"type": "naplps_cursor", "object": 301},
+        ]}],
+        "rules": [{"name": "open", "on": {"event": "open"}, "run": "links"}],
+    });
+    let table = compiled(&rules(&table)).unwrap_or_else(|refusal| panic!("{refusal}"));
+    assert_eq!(hex(table.image()), row("rules", "picture_links_group"));
+    let records = table.records(VECTOR_GENERATION, &mut 0);
+    let packets: Vec<String> = records.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().map(|packet| hex(packet)).collect();
+    assert_eq!(packets.join(" "), row("records", "rules_picture_links_group"));
+    let commands = json!([
+        {"type": "regis_links", "links": [{"drawing": 3, "target": "300"}]},
+        {"type": "naplps_links", "links": [{"object": 301, "target": "302"}]},
+        {"type": "regis_cursor", "drawing": 3},
+        {"type": "naplps_cursor", "object": 301},
+    ]);
+    let image = compiled(&one_rule(&commands)).unwrap_or_else(|refusal| panic!("{refusal}")).image().to_vec();
+    for name in ["drawing_links_of_regis", "drawing_links_of_naplps", "regis_cursor_of_regis", "regis_cursor_of_naplps"] {
+        let body = bytes(row("command", name));
+        assert!(image.windows(body.len()).any(|window| window == body.as_slice()), "the group holds {name}");
+    }
+}
+
 /// PAR-20: a group's picture links are checked as the message's are and
 /// refused as a group's command; links over the command limit are refused
 /// by the engine's check (`MAX_COMMAND_BYTES`, RULE-119), and any other

@@ -1200,6 +1200,12 @@ fn every_row_of_the_wire_vectors_holds() {
     let sent = sent_to(&channel.take_effects(), CONNECTION);
     assert_eq!(sent[..PACKET_BYTES], vector_bytes(row("welcome").value));
     assert_eq!(record_types(&sent[PACKET_BYTES..]), [neoteletext_web::records::state::TYPE_STATE_CHALLENGE]);
+    // Renderer parity PAR-1, PAR-44: a receiver that offers both picture
+    // languages is agreed both, byte for byte the shared WELCOME.
+    let mut channel = held();
+    channel.received(CONNECTION, &vector_bytes(row("hello_pictures").value), 0);
+    let sent = sent_to(&channel.take_effects(), CONNECTION);
+    assert_eq!(sent[..PACKET_BYTES], vector_bytes(row("welcome_pictures").value));
     let mut channel = held();
     channel.received(CONNECTION, &message(&channel, CONNECTION, &[hello()]), 0);
     channel.received(CONNECTION, &vector_bytes(row("select_sub_page").value), 0);
