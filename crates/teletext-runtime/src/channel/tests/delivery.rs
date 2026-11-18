@@ -13,16 +13,14 @@ use neoteletext_core::types::Magazine;
 use neoteletext_formats::item::{Item as FileItem, Reader as _};
 use neoteletext_formats::t42::{T42Reader, T42Variant};
 use neoteletext_input::cursor::TYPE_CURSOR;
-use neoteletext_web::records::{
-    ChannelRecord, Read, RecordReader, TYPE_DENIED, TYPE_INDEX, TYPE_LINKS, TYPE_LOG, TYPE_REDIRECT, TYPE_SET_COOKIE, TYPE_SUBPAGES,
-};
+use neoteletext_web::records::{ChannelRecord, Read, RecordReader, TYPE_DENIED, TYPE_INDEX, TYPE_LINKS, TYPE_LOG, TYPE_REDIRECT, TYPE_SUBPAGES};
 use serde_json::{Value, json};
 
 use super::{
     ACKNOWLEDGEMENT_WAIT_MS, ANY, Channel, ChannelConfig, Effect, String, Vec, answered, channel, connecteds, hello, inputs, line, message, record_types,
     select, selected, sends, sent_to, subpage, told, with,
 };
-use crate::channel::{InitialPage, SESSION_GRACE_MS};
+use crate::channel::InitialPage;
 use crate::protocol::tests::base64;
 
 /// The most sub-pages a page has (the engine's `MAX_SUBPAGES`).
@@ -32,30 +30,28 @@ const MOST_SUBPAGES: usize = neoteletext_core::limits::MAX_SUBPAGES;
 const UNUSED_SUB_CODE_BIT: u16 = 0x0080;
 /// The rows of a page's enhancement group, X/26 to X/28.
 const ENHANCEMENT_PACKETS: core::ops::RangeInclusive<u8> = 26..=28;
-/// A session of the tests.
-const SESSION: u64 = 9;
 /// An index record as read: its magazine, its name, and each page's number,
 /// sub-page count, title and section.
 type ReadIndex = (u8, String, Vec<(u16, u16, String, String)>);
 
-fn config(session_grace_ms: u64) -> ChannelConfig {
+fn config() -> ChannelConfig {
     ChannelConfig {
         name: "Test".into(),
         address: "http://127.0.0.1/test/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms,
+        other_addresses: Vec::new(),
         wheel: false,
     }
 }
 
 /// A channel with one connection for each `(connection, page, sub)`, each
-/// with its first selection, numbered 1, its session the connection's number.
+/// with its first selection, numbered 1.
 fn viewers(selections: &[(u64, u16, u16)]) -> Channel {
-    let mut channel = Channel::new(config(0));
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     for &(connection, page, sub) in selections {
-        channel.opened(connection, connection, Vec::new(), 0);
+        channel.opened(connection, None, 0);
         channel.received(connection, &message(&[hello(), select(page, sub)]), 0);
     }
     let _ = channel.take_effects();
@@ -161,7 +157,7 @@ fn a_connection_opened_later_is_sent_nothing_of_it() {
     let mut channel = viewers(&[(1, 0x100, 0)]);
     channel.from_program(&line(&json!({"type": "author_log", "connections": "all", "level": "W", "text": "slow", "page": null})), 1);
     let _ = channel.take_effects();
-    channel.opened(2, 2, Vec::new(), 2);
+    channel.opened(2, None, 2);
     channel.received(2, &message(&[hello(), select(0x100, 0)]), 2);
     let effects = channel.take_effects();
     assert!(!record_types(&sent_to(&effects, 2)).contains(&TYPE_LOG), "and its WELCOME is all it is sent");
@@ -321,13 +317,13 @@ fn a_page_of_the_most_sub_pages_costs_one_sub_page_and_its_list() {
 }
 
 /// REQ-1472 verification 7 and REQ-1032 verification 9: one tab's selection
-/// is nothing to another of the same session.
+/// is nothing to another of the same viewer.
 #[test]
 fn a_second_connection_hears_nothing_of_the_firsts_selection() {
-    let mut channel = Channel::new(config(0));
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     for connection in [1, 2] {
-        channel.opened(connection, SESSION, Vec::new(), 0);
+        channel.opened(connection, None, 0);
         channel.received(connection, &message(&[hello(), select(0x200, 0)]), 0);
     }
     let _ = channel.take_effects();
@@ -359,17 +355,13 @@ fn every_page_frame_holds_one_header_packet() {
 #[test]
 fn every_message_is_whole_valid_packets_of_its_kind() {
     let raw = encode::row(Magazine::from_bits(1), 1, &[b' '; COLUMNS]).bytes;
-    let kinds: [(Value, &[u8]); 7] = [
+    let kinds: [(Value, &[u8]); 6] = [
         (json!({"type": "index", "connections": [1], "magazines": news()}), &[TYPE_INDEX]),
         (
             json!({"type": "subpages", "connections": [1], "request": null, "page": "100", "version": 1, "subpages": [{"sub": "0000", "title": null}]}),
             &[TYPE_SUBPAGES],
         ),
         (json!({"type": "author_log", "connections": [1], "level": "W", "text": "slow", "page": "100"}), &[TYPE_LOG]),
-        (
-            json!({"type": "cookie", "connection": 1, "name": "theme", "value": "dark", "path": null, "max_age": null, "same_site": null, "secure": false, "http_only": false}),
-            &[TYPE_SET_COOKIE],
-        ),
         (json!({"type": "denied", "connection": 1, "request": 1, "status": 404}), &[TYPE_DENIED]),
         (json!({"type": "redirect", "connection": 1, "request": 1, "page": "200", "sub": "3F7F"}), &[TYPE_REDIRECT]),
         (json!({"type": "packets", "connections": [1], "packets": base64(&raw)}), &[]),
@@ -472,7 +464,7 @@ fn the_first_frame_after_a_selection_is_whole() {
     let _ = channel.take_effects();
     channel.from_program(&answer(1, 3, &subpage()), 4);
     assert_eq!(headers(&sent_to(&channel.take_effects(), 1)), [(0, true)], "the same sub-page, selected again");
-    channel.opened(2, 2, Vec::new(), 5);
+    channel.opened(2, None, 5);
     channel.received(2, &message(&[hello(), select(0x100, 0)]), 5);
     let _ = channel.take_effects();
     channel.from_program(&answer(2, 1, &subpage()), 6);
@@ -480,14 +472,14 @@ fn the_first_frame_after_a_selection_is_whole() {
 }
 
 /// REQ-1504 verification 8, REQ-1474 verification 4 and REQ-1032 verification
-/// 9: two tabs of one session each keep their own sub-page, and a change is
+/// 9: two tabs of one viewer each keep their own sub-page, and a change is
 /// taken against what that tab was last sent.
 #[test]
 fn two_tabs_keep_their_own_sub_page() {
-    let mut channel = Channel::new(config(0));
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     for connection in [1, 2] {
-        channel.opened(connection, SESSION, Vec::new(), 0);
+        channel.opened(connection, None, 0);
         channel.received(connection, &message(&[hello(), select(0x100, 0)]), 0);
     }
     let _ = channel.take_effects();
@@ -620,7 +612,7 @@ fn nothing_is_sent_for_the_clock() {
 fn start_tells_the_standards_maxima_and_the_budgets() {
     use crate::protocol as server;
     use neoteletext_core::limits;
-    let mut channel = Channel::new(config(0));
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     let lines = told(&channel.take_effects());
     let start = &lines[0];
@@ -658,79 +650,23 @@ fn a_restarted_program_is_told_of_its_viewers() {
     assert_eq!(numbers(&sent_to(&channel.take_effects(), 1)), [0, 5], "the viewer sees the change, as what changed");
 }
 
-/// REQ-1040: a session whose connection closes stays for its grace: its
-/// program is told `left` at once and `closed` only when the grace passes.
+/// VS-354: there is no session that outlives a connection. A connection
+/// that closes is told `left` and then `gone` at once, and the next
+/// connection of the same browser is a connection of its own.
 #[test]
-fn a_closed_session_waits_for_its_viewer() {
-    let mut channel = Channel::new(config(SESSION_GRACE_MS));
+fn a_closed_connection_is_gone_at_once() {
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
-    channel.opened(1, SESSION, Vec::new(), 0);
+    channel.opened(1, None, 0);
     channel.received(1, &message(&[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
     channel.closed(1, 10);
-    let lines = told(&channel.take_effects());
-    assert_eq!(lines.iter().map(|line| line["type"].as_str().unwrap()).collect::<Vec<_>>(), ["left"]);
-    assert_eq!(channel.next_wake(), Some(10 + SESSION_GRACE_MS));
-    channel.deadline(9 + SESSION_GRACE_MS);
-    assert_eq!(told(&channel.take_effects()), [] as [Value; 0]);
-    assert_eq!(channel.sessions(), 1);
-    channel.deadline(10 + SESSION_GRACE_MS);
-    let lines = told(&channel.take_effects());
-    assert_eq!((&lines[0]["type"], &lines[0]["session"]), (&json!("closed"), &json!(SESSION)));
-    assert_eq!(channel.sessions(), 0);
-}
-
-/// REQ-1040, TODO-1301: the sessions waiting for their viewer are bounded.
-/// A connection that opens and closes leaves a session waiting for the
-/// grace, so anyone connecting and leaving at a high rate would make the
-/// channel hold sessions without limit. At the bound the session waiting
-/// longest ends, its program told `closed` as when its grace passes, and
-/// a session that is connected again stops counting.
-#[test]
-fn the_sessions_waiting_for_their_viewer_are_bounded() {
-    let bound = u64::try_from(crate::channel::MOST_WAITING_SESSIONS).unwrap();
-    let mut channel = Channel::new(config(SESSION_GRACE_MS));
-    channel.program_started(0);
-    for session in 1..=bound {
-        channel.opened(session, session, Vec::new(), session);
-        channel.closed(session, session);
-    }
-    assert!(told(&channel.take_effects()).iter().all(|line| line["type"] != "closed"), "none ends before the bound");
-    assert_eq!(channel.sessions(), crate::channel::MOST_WAITING_SESSIONS);
-    // The first comes back, and is connected, not waiting, which leaves
-    // room for one more; the one after it ends the session waiting longest.
-    channel.opened(bound + 1, 1, Vec::new(), bound + 1);
-    for newest in [bound + 2, bound + 3] {
-        channel.opened(newest, newest, Vec::new(), newest);
-        channel.closed(newest, newest);
-    }
-    let closed: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "closed").collect();
-    assert_eq!(closed, [json!({"type": "closed", "session": 2})], "the session waiting longest, not the one connected again");
-    assert_eq!(channel.stats().sessions_waiting, bound);
-    assert_eq!(channel.sessions(), crate::channel::MOST_WAITING_SESSIONS + 1, "the bound and the connected one");
-    // The rest wait their grace from when each began.
-    channel.deadline(3 + SESSION_GRACE_MS);
-    let closed: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "closed").collect();
-    assert_eq!(closed, [json!({"type": "closed", "session": 3})]);
-    assert_eq!(channel.next_wake(), Some(4 + SESSION_GRACE_MS));
-}
-
-/// REQ-1040: a viewer who comes back within the grace continues their
-/// session, under its own number, and the session does not end.
-#[test]
-fn a_viewer_who_comes_back_continues_their_session() {
-    let mut channel = Channel::new(config(SESSION_GRACE_MS));
-    channel.program_started(0);
-    channel.opened(1, SESSION, Vec::new(), 0);
-    channel.closed(1, 10);
-    let _ = channel.take_effects();
-    channel.opened(2, SESSION, Vec::new(), 20);
+    assert_eq!(told(&channel.take_effects()), [json!({"type": "left", "connection": 1, "page": "100"}), json!({"type": "gone", "connection": 1})]);
+    assert_eq!(channel.next_wake(), None, "nothing waits for the viewer to come back");
+    channel.opened(2, None, 20);
     channel.received(2, &message(&[hello(), select(0x100, 0)]), 20);
     let lines = connecteds(&channel.take_effects());
-    assert_eq!(lines[0]["session"], json!(SESSION));
-    assert_eq!(channel.stats().sessions_resumed, 1);
-    channel.deadline(10 + SESSION_GRACE_MS);
-    assert_eq!(told(&channel.take_effects()).iter().filter(|line| line["type"] == "closed").count(), 0);
+    assert_eq!((&lines[0]["connection"], &lines[0]["viewer"]), (&json!(2), &Value::Null));
 }
 
 /// REQ-1643: a pointer's column past 39 is a protocol error, and 39 is not: no
@@ -880,8 +816,8 @@ fn a_long_run_of_frames_is_cut_into_messages_before_headers() {
 /// already open.
 #[test]
 fn start_is_the_first_line_a_started_program_hears() {
-    let mut channel = Channel::new(config(0));
-    channel.opened(1, 1, Vec::new(), 0);
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
+    channel.opened(1, None, 0);
     channel.received(1, &message(&[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
     channel.program_started(1);
@@ -955,9 +891,9 @@ fn rows_sent(bytes: &[u8], given: &[(u8, Vec<u8>)]) -> Vec<(u8, Vec<u8>)> {
 fn the_kits_fixture_channel_is_served_as_the_kit_means_it() {
     let lines: Vec<Value> = KIT_CHANNEL.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     assert_eq!(lines.len(), 7, "the kit's fixture as this test knows it");
-    let mut channel = Channel::new(config(0));
+    let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
-    channel.opened(1, 1, Vec::new(), 0);
+    channel.opened(1, None, 0);
     channel.received(1, &message(&[hello(), select(0, ANY)]), 0);
     let told_first = told(&channel.take_effects());
     assert_eq!((&told_first[0]["type"], &told_first[1]["type"], &told_first[1]["selection"]), (&json!("start"), &json!("connected"), &Value::Null));

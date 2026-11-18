@@ -19,8 +19,14 @@ members = ["."]
 libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
-# The engine's base64, to write the packets as a program does.
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
+# The engine's input writer, to write viewer state's messages as a
+# receiver does.
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
+# Ed25519 signing, to make proofs that verify (DEC-6471, approved by name).
+ring = { version = "=0.17.14", default-features = false }
+# The engine's base64, to write the packets as a program does; its records
+# reader, to find the challenges; its signed bytes.
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
 
 [profile.release]
 debug = 1
@@ -40,8 +46,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "session_cookie"
-path = "fuzz_targets/session_cookie.rs"
+name = "state_messages"
+path = "fuzz_targets/state_messages.rs"
 test = false
 doc = false
 bench = false

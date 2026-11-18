@@ -7,10 +7,9 @@ use alloc::vec::Vec;
 
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
-use neoteletext_input::event::{Event, Item};
 use serde_json::{Value, json};
 
-use super::{CONNECTION, Channel, Effect, ON, answered, inputs, line, message, record_types, sent_to, told};
+use super::{CONNECTION, Channel, Effect, ON, answered, inputs, line, record_types, sent_to, told};
 use crate::protocol::check::{TYPE_DRAWING_LINKS, TYPE_REGIS, TYPE_REGIS_CURSOR};
 use crate::protocol::tests::base64;
 use crate::records::REGIS_DATA;
@@ -141,7 +140,7 @@ fn pick_reaches_the_program() {
     let mut channel: Channel = answered();
     let on = payload(0);
     assert_eq!((ON.page, ON.sub), (0x100, 0));
-    channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x46, payload: &on })]), 5);
+    channel.received(CONNECTION, &extension(0x46, &on), 5);
     let effects = channel.take_effects();
     let picks = inputs(&effects);
     assert_eq!(picks.len(), 1);
@@ -149,8 +148,17 @@ fn pick_reaches_the_program() {
     assert_eq!(picks[0]["event"], json!({"kind": "pick", "drawing": 12, "x": 20, "y": -6, "picture_x": 412, "picture_y": 180, "commits": 7}));
     // Page 101 is not on screen.
     let elsewhere = payload(1);
-    channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x46, payload: &elsewhere })]), 6);
+    channel.received(CONNECTION, &extension(0x46, &elsewhere), 6);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
+}
+
+/// An extension event of `kind` carrying `payload` as the receiver writes
+/// it: `0xFF`, the type, the length and the payload (DEC-1444), so that a
+/// payload the engine's reader refuses can be sent.
+fn extension(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = alloc::vec![neoteletext_input::event::EVENT, kind, u8::try_from(payload.len()).unwrap()];
+    bytes.extend_from_slice(payload);
+    bytes
 }
 
 /// The records in `bytes`, each as its type and body, reassembled from
@@ -271,13 +279,13 @@ fn drawing_hover_reaches_the_program() {
     let mut channel: Channel = answered();
     for (flags, leave) in [(0, false), (1, true)] {
         let on = payload(0, flags, 12);
-        channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x47, payload: &on })]), 5);
+        channel.received(CONNECTION, &extension(0x47, &on), 5);
         let hovers = inputs(&channel.take_effects());
         assert_eq!(hovers.len(), 1);
         assert_eq!(hovers[0]["event"], json!({"kind": "drawing_hover", "drawing": 12, "leave": leave, "commits": 7}));
     }
     for bad in [payload(1, 0, 12), payload(0, 2, 12), payload(0, 0, 0)] {
-        channel.received(CONNECTION, &message(&[Item::Event(Event::Extension { kind: 0x47, payload: &bad })]), 6);
+        channel.received(CONNECTION, &extension(0x47, &bad), 6);
         assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "{bad:?}");
     }
 }

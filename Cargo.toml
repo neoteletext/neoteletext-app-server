@@ -24,16 +24,16 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false, features = ["tti", "alloc", "write-text"] }
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
-neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false, features = ["tti", "alloc", "write-text"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
 # A public page's picture (REQ-1728 item 4).
-neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
-neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "4ddd34be7ae63c2c4c081c118ecb58a4581d4a0d", default-features = false }
+neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
 # The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
 # a program's ReGIS is checked with the receiver's own code before it is
 # sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
@@ -57,6 +57,17 @@ serde_json = { version = "=1.0.154", default-features = false, features = ["allo
 # in normalisation form C. Default features off: no standard library.
 serde_path_to_error = { version = "=0.1.20", default-features = false }
 unicode-normalization = { version = "=0.1.26", default-features = false }
+
+# Viewer state's cryptography (DEC-6471, its open question Q7; VS-301,
+# VS-305): `ring`, approved by the owner by name with DEC-6471 and DEC-6478,
+# Apache-2.0 AND ISC (its BoringSSL-derived parts under ISC). Strict
+# Ed25519 verification of a viewer's proof and HMAC-SHA-256 for the
+# per-channel handle, both constant-time; the native host also draws its
+# random bytes from its `SystemRandom`. Default features off: no `alloc`,
+# no `/dev/urandom` fallback, so the runtime stays `no_std`. On the
+# Cloudflare host's `wasm32-unknown-unknown` its random source needs the
+# Web Crypto interface, which `wasm32_unknown_unknown_js` gives.
+ring = { version = "=0.17.14", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
 # (decision 5).

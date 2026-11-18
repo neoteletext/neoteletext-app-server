@@ -28,9 +28,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod check;
 mod read;
+pub mod viewer;
 
 pub use check::Refusal;
 pub use read::{read, read_reporting, request_of};
+pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefusal, StateRefused, ViewerBegan, ViewerLeft, ViewersReset};
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was the protocol before DEC-1482: declared pages, TTI and
@@ -56,8 +58,16 @@ pub use read::{read, read_reporting, request_of};
 /// and adds two of the standard's limits. Version 12 names the
 /// synthesizers' kinds `synth6581` to `synth80`, each name a kind of its
 /// own with no `model` or `chip` field (DEC-6461): a program of version 11
-/// stops at `start` rather than have a kind it sends refused.
-pub const PROTOCOL: u32 = 12;
+/// stops at `start` rather than have a kind it sends refused. Version 13
+/// replaces cookies and the server's sessions with viewer state (DEC-6471,
+/// VS-351 to VS-354): `connected` carries `viewer` and `remembered` in
+/// place of `session` and `cookies`; the server tells `viewer_began`,
+/// `viewer_left`, `state_refused`, `viewers_reset` and, in place of
+/// `closed`, `gone`; a program asks `request_state`, `end_state` and
+/// `offer_remember`, and `cookie` is gone. The synthesizers' sound
+/// messages of neoteletext-common's `audio/server.md` are in the same
+/// version (DEC-6477 answer 3).
+pub const PROTOCOL: u32 = 13;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -87,16 +97,10 @@ pub const MOST_NAMED_CONNECTIONS: usize = 4_096;
 pub const OPERATOR_LOG_CHARACTERS: usize = 1_000;
 /// The longest event name of an operator's log line.
 pub const EVENT_NAME_CHARACTERS: usize = 64;
-/// The longest cookie name and value, in bytes: RFC 6265 section 6.1's
-/// least a user agent must keep, 4,096 bytes for name, value and
-/// attributes together.
-pub const COOKIE_BYTES: usize = 4_096;
-/// The cookies a `connected` event carries at most: RFC 6265 section 6.1's
-/// least a user agent keeps for one domain.
-pub const MOST_COOKIES: usize = 50;
 /// The largest integer every language's JSON reader holds exactly, 2^53
-/// less one (IEEE 754 binary64): connections and sessions are at most it.
-pub const SAFE_INTEGER_LIMIT: u64 = crate::session_cookie::SESSION_LIMIT - 1;
+/// less one (IEEE 754 binary64; ECMA-262 section 21.1.2.6): connections
+/// are at most it.
+pub const SAFE_INTEGER_LIMIT: u64 = (1 << 53) - 1;
 /// The longest a sound may be: two minutes at 48 kHz, the browser's own
 /// limit for one sound.
 pub const MOST_SAMPLES: usize = 48_000 * 120;
@@ -201,8 +205,6 @@ pub const OPUS_MOST_PACKET_BYTES: u16 = 40;
 /// A connection, which the server numbers, from 1, and never reuses
 /// while it runs.
 pub type ConnectionId = u64;
-/// A session, which outlives its connections (requirement 5.5).
-pub type SessionId = u64;
 /// A selection's number on its connection, rising from 1 (DEC-1759 lesson
 /// 13). A program's answer carries it, so an answer that comes after the
 /// viewer moved on cannot replace the page on screen. The kits copy it.
@@ -411,8 +413,17 @@ pub enum ServerMessage {
     Input(InputMessage),
     /// A connection's selection left a page, or the connection closed.
     Left(Left),
-    /// A session ended, five minutes after its last connection closed.
-    Closed(Closed),
+    /// The connection closed and will not come back (VS-354).
+    Gone(Gone),
+    /// A connection that had no viewer now has one (VS-351 item 2).
+    ViewerBegan(ViewerBegan),
+    /// A connection no longer carries a viewer (VS-351 item 3).
+    ViewerLeft(ViewerLeft),
+    /// A state request or an offer to remember was not granted (VS-351
+    /// item 4).
+    StateRefused(StateRefused),
+    /// Every handle the program knows is void (VS-306).
+    ViewersReset(ViewersReset),
     /// The server's and the channel's figures, every ten seconds.
     Stats(Box<Stats>),
     /// A message the program sent was refused (REQ-1475).
@@ -432,14 +443,18 @@ impl ServerMessage {
             Self::Connected(Connected { connection, .. })
             | Self::Selected(Selected { connection, .. })
             | Self::Input(InputMessage { connection, .. })
-            | Self::Left(Left { connection, .. }) => Some(*connection),
-            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) => None,
+            | Self::Left(Left { connection, .. })
+            | Self::Gone(Gone { connection })
+            | Self::ViewerBegan(ViewerBegan { connection, .. })
+            | Self::ViewerLeft(ViewerLeft { connection })
+            | Self::StateRefused(StateRefused { connection, .. }) => Some(*connection),
+            Self::Start(_) | Self::ViewersReset(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) => None,
         }
     }
 }
 
 /// `describe`: the page number and nothing else. It carries no connection,
-/// session, cookie or query, so a description cannot hold one viewer's data
+/// viewer or query, so a description cannot hold one viewer's data
 /// (REQ-1728 item 7).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -567,16 +582,9 @@ pub struct Connected {
     /// The connection: the program addresses it by this while it is open.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub connection: ConnectionId,
-    /// The viewer's session, from its signed cookie (requirement 5.5).
-    #[schemars(range(max = SAFE_INTEGER_LIMIT))]
-    pub session: SessionId,
     /// The number of this selection: `reply` carries it back.
     #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
     pub request: RequestNumber,
-    /// The cookies the connection opened with, within [`MOST_COOKIES`],
-    /// without the server's own, whose names begin `_`.
-    #[schemars(length(max = MOST_COOKIES))]
-    pub cookies: Vec<CookiePair>,
     /// What the connection selected at its start, or none: the channel's
     /// initial page. A connection is one browser tab with one selection
     /// (DEC-1527).
@@ -587,18 +595,12 @@ pub struct Connected {
     /// with the selection (see [`Selected`]).
     #[schemars(length(min = 1, max = PARAMETERS_BYTES), regex(pattern = PARAMETERS_PATTERN))]
     pub query: Option<String>,
-}
-
-/// A cookie as a request carries it.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CookiePair {
-    /// Its name.
-    #[schemars(length(min = 1, max = COOKIE_BYTES))]
-    pub name: String,
-    /// Its value.
-    #[schemars(length(max = COOKIE_BYTES))]
-    pub value: String,
+    /// The viewer's handle on this channel, or none: the browser holds no
+    /// key for the channel, or answered without one (VS-351 item 1).
+    pub viewer: Option<Handle>,
+    /// The viewer chose, in the browser, to be remembered on this channel;
+    /// false when `viewer` is none.
+    pub remembered: bool,
 }
 
 /// A page and sub-code selected.
@@ -881,15 +883,6 @@ pub struct Left {
     pub page: PageNumber,
 }
 
-/// `closed`: the session ended; the program may forget it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Closed {
-    /// The session.
-    #[schemars(range(max = SAFE_INTEGER_LIMIT))]
-    pub session: SessionId,
-}
-
 /// `stats`: the figures of DOC-1968, every one named and unsigned
 /// (TODO-1525 item 1). Counts only: nothing that identifies a viewer.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, JsonSchema)]
@@ -989,10 +982,10 @@ pub struct ChannelCounts {
     pub lines_from_application: u64,
     /// Lines for it dropped because it fell behind.
     pub lines_dropped: u64,
-    /// Sessions waiting for their viewer to come back.
-    pub sessions_waiting: u64,
-    /// Sessions a viewer came back to.
-    pub sessions_resumed: u64,
+    /// Viewers' proofs that verified (VS-206, VS-209).
+    pub proofs_accepted: u64,
+    /// Viewers' proofs refused: not verified, or past a bound.
+    pub proofs_refused: u64,
     /// The pages opened most, the most opened first, at most ten.
     pub most_opened: Vec<PageOpens>,
     /// Its totals since the server's state was first kept.
@@ -1043,8 +1036,8 @@ pub struct ChannelTotals {
     pub lines_from_application: u64,
     /// Lines for it dropped.
     pub lines_dropped: u64,
-    /// Sessions a viewer came back to.
-    pub sessions_resumed: u64,
+    /// Viewers' proofs that verified.
+    pub proofs_accepted: u64,
     /// Each page's opens, by its number.
     pub pages_opened: BTreeMap<String, u64>,
 }
@@ -1131,7 +1124,6 @@ pub enum MessageType {
     Index,
     Redirect,
     Sound,
-    Cookie,
     AuthorLog,
     Log,
     Packets,
@@ -1142,6 +1134,9 @@ pub enum MessageType {
     RegisLinks,
     RegisCursor,
     Naplps,
+    RequestState,
+    EndState,
+    OfferRemember,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1229,6 +1224,14 @@ pub enum Rule {
     /// The page's own enhancement data holds objects, which text runs
     /// cannot be merged into.
     TextAndObjects,
+    /// `request_state` for a connection that already has a viewer
+    /// (VS-353).
+    HasViewer,
+    /// `request_state` with no input from the viewer within the last
+    /// 7,000 ms (VS-212).
+    NoGesture,
+    /// `end_state` for a handle the channel does not hold (VS-353).
+    UnknownViewer,
 }
 
 // ------------------------------------------------------- program to server
@@ -1251,8 +1254,6 @@ pub enum ProgramMessage {
     Redirect(Redirect),
     /// A sound, its data, or a command.
     Sound(Sound),
-    /// Sets or clears one of the program's cookies for a connection.
-    Cookie(Cookie),
     /// A line for the developer console of the viewer's browser (the
     /// engine's REQ-INP-026).
     AuthorLog(AuthorLog),
@@ -1279,6 +1280,12 @@ pub enum ProgramMessage {
     /// in place of the sub-page's teletext page (the NAPLPS renderer's
     /// REQ-6408 item 3).
     Naplps(Naplps),
+    /// Asks that the viewer on a connection be given state (VS-352 item 1).
+    RequestState(RequestState),
+    /// Ends a viewer's state (VS-352 item 2).
+    EndState(EndState),
+    /// Asks the browser to offer "remember me" (VS-352 item 3).
+    OfferRemember(OfferRemember),
 }
 
 impl ProgramMessage {
@@ -1292,7 +1299,6 @@ impl ProgramMessage {
             Self::Index(_) => MessageType::Index,
             Self::Redirect(_) => MessageType::Redirect,
             Self::Sound(_) => MessageType::Sound,
-            Self::Cookie(_) => MessageType::Cookie,
             Self::AuthorLog(_) => MessageType::AuthorLog,
             Self::Log(_) => MessageType::Log,
             Self::Packets(_) => MessageType::Packets,
@@ -1303,6 +1309,9 @@ impl ProgramMessage {
             Self::RegisLinks(_) => MessageType::RegisLinks,
             Self::RegisCursor(_) => MessageType::RegisCursor,
             Self::Naplps(_) => MessageType::Naplps,
+            Self::RequestState(_) => MessageType::RequestState,
+            Self::EndState(_) => MessageType::EndState,
+            Self::OfferRemember(_) => MessageType::OfferRemember,
         }
     }
 
@@ -2561,44 +2570,6 @@ pub struct GainSound {
     pub gain: u8,
     /// The fade, in milliseconds.
     pub fade_ms: u16,
-}
-
-/// `cookie`: sets or clears one of the program's cookies for a connection
-/// (DOC-1924), every attribute a field of its own; a raw
-/// `Set-Cookie` line is never taken.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Cookie {
-    /// The connection.
-    #[schemars(range(min = 1, max = SAFE_INTEGER_LIMIT))]
-    pub connection: ConnectionId,
-    /// Its name; names starting `_` are the server's.
-    #[schemars(length(min = 1, max = COOKIE_BYTES))]
-    pub name: String,
-    /// Its value.
-    #[schemars(length(max = COOKIE_BYTES))]
-    pub value: String,
-    /// `Path`, or none.
-    #[schemars(length(min = 1, max = COOKIE_BYTES))]
-    pub path: Option<String>,
-    /// `Max-Age` in seconds, 0 removing it, or none for a cookie that
-    /// lasts the browser's session.
-    pub max_age: Option<u32>,
-    /// `SameSite`, or none.
-    pub same_site: Option<SameSite>,
-    /// `Secure`.
-    pub secure: bool,
-    /// `HttpOnly`.
-    pub http_only: bool,
-}
-
-/// `SameSite` (RFC 6265bis section 4.1.2.7).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[allow(missing_docs, reason = "the attribute's three values")]
-pub enum SameSite {
-    Strict,
-    Lax,
-    None,
 }
 
 /// `author_log`.

@@ -4,14 +4,15 @@
 //! **The server relays; the program owns every page** (DEC-1482). A
 //! connection is one browser tab with one selection (DEC-1527). The
 //! channel keeps no content (REQ-1474): only what each open connection
-//! is, its session, its selection, and the one sub-page that selection
+//! is, the viewer it presents, its selection, and the one sub-page that selection
 //! shows as it was last sent, against which its changes are taken
 //! (DEC-1499). Each connection that opens is told to the program as
 //! `connected` (REQ-1471), each selection as `selected` (REQ-1472), and
 //! what the program sends goes to the connections it names, as it comes
 //! (REQ-1473), as checked teletext packets (REQ-1480, REQ-1462).
 
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -38,12 +39,15 @@ use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
-    self, ANY_SUBPAGE, Budgets, Closed, Connected, ConnectionId, Connections, CookiePair, Describe, Description, InputMessage, Left, OperatorLevel, PageNumber,
-    ProgramMessage, Refusal, Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
+    self, ANY_SUBPAGE, Budgets, Connected, ConnectionId, Connections, Describe, Description, Gone, InputMessage, Left, OperatorLevel, PageNumber,
+    ProgramMessage, Refusal, Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, Standard, Start,
 };
 use crate::records;
 use crate::sound::{Sounds, audience};
 use crate::stats::{ChannelStats, count};
+use crate::viewer::{HandleSecret, RandomSource};
+
+mod viewers;
 
 /// The service number audio and input records are sent on (the
 /// reference channel's, DOC-1951).
@@ -167,33 +171,15 @@ pub struct ChannelConfig {
     /// epoch, so programs can show the real time (the host's clock itself
     /// starts at 0).
     pub epoch_at_start_ms: u64,
-    /// How long a session whose last connection closed waits for its
-    /// viewer to come back before its program is told it ended, in
-    /// milliseconds; 0 ends it at once (requirement 5.5).
-    pub session_grace_ms: u64,
+    /// The channel's other public addresses, each ending in `/`, at most
+    /// three: a proof is verified under each as under `address` (VS-301).
+    pub other_addresses: Vec<String>,
     /// The channel uses the mouse wheel over its pages: its `channel.ttx`
     /// says so (`push.wheel`), and a receiver gives it the wheel there
     /// rather than stepping a page's sub-pages with it (the browser's
     /// DEC-6447).
     pub wheel: bool,
 }
-
-/// How long a session waits for its viewer to come back: 5 minutes, long
-/// enough for a phone that closed a background socket or a server that
-/// restarted (DOC-1924: "a grace period of minutes").
-pub const SESSION_GRACE_MS: u64 = 5 * 60 * 1_000;
-
-/// The sessions a channel keeps waiting for their viewer at once (REQ-1040,
-/// TODO-1301): 65,536, the open files the native host's unit allows it
-/// (`LimitNOFILE` in `deploy/ionos/deploy.sh`), so that every viewer the
-/// host can hold connected can lose their socket together, as a restart
-/// makes them, and still find their session. A waiting session holds no
-/// socket, so nothing else bounds them: without this, connections opened
-/// and closed at a high rate would grow the channel's memory, and its
-/// program's, by the rate times [`SESSION_GRACE_MS`]. At the bound the
-/// session waiting longest ends as though its grace had passed, the
-/// pattern of the descriptions' cache (DEC-2145).
-pub const MOST_WAITING_SESSIONS: usize = 65_536;
 
 /// How much a report matters to the server's operator, as a log ranks it
 /// (requirement 7.6).
@@ -309,11 +295,8 @@ impl Ending {
 
 /// One open connection: all the channel holds of a viewer (REQ-1474).
 struct Connection {
-    /// Its session; a session may have several connections, one a tab
-    /// (DEC-1527).
-    session: SessionId,
-    /// The cookies it opened with, for its program (REQ-1471).
-    cookies: Vec<CookiePair>,
+    /// The viewer it presents, and its challenges (DEC-6471).
+    viewer: viewers::Slot,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
     /// The capabilities WELCOME agreed, once HELLO has come.
@@ -332,7 +315,7 @@ struct Connection {
     /// Where the pointer last was, column and row: a lost button's place.
     pointer: (u8, u8),
     /// Its moves, each paced and the latest kept (REQ-1360). A slot a
-    /// connection and not a session: a session has a connection for each tab
+    /// connection and not a viewer: a viewer has a connection for each tab
     /// (DEC-1527), each with a pointer of its own.
     moves: Pacer,
     /// The next record number on the audio and input service.
@@ -396,10 +379,9 @@ struct RegisStream {
 }
 
 impl Connection {
-    fn new(session: SessionId, cookies: Vec<CookiePair>, now: u64) -> Self {
+    fn new(address: Option<core::net::IpAddr>, now: u64) -> Self {
         Self {
-            session,
-            cookies,
+            viewer: viewers::Slot::new(address),
             welcomed: false,
             agreed: None,
             focus_untold: None,
@@ -506,15 +488,6 @@ impl Connection {
     }
 }
 
-/// A session: it outlives its connections (requirement 5.5).
-struct Session {
-    /// Its connections open now.
-    open: usize,
-    /// When its last connection closed, while it waits for its viewer to
-    /// come back.
-    waiting_since: Option<u64>,
-}
-
 /// One channel's state.
 pub struct Channel {
     config: ChannelConfig,
@@ -526,11 +499,8 @@ pub struct Channel {
     /// it does, which no visitor need be waiting for.
     readiness_page: Option<u16>,
     connections: BTreeMap<ConnectionId, Connection>,
-    sessions: BTreeMap<SessionId, Session>,
-    /// The sessions waiting for their viewer, by when each began to wait:
-    /// the first is the next to end, by its grace or by
-    /// [`MOST_WAITING_SESSIONS`]. Each is a session with `waiting_since`.
-    waiting: BTreeSet<(u64, SessionId)>,
+    /// The viewers it knows (DEC-6471).
+    viewers: viewers::Viewers,
     sounds: Sounds,
     effects: Vec<Effect>,
     stats: ChannelStats,
@@ -544,19 +514,31 @@ pub struct Channel {
 
 impl Channel {
     /// A channel; its program is not running until
-    /// [`Channel::program_started`].
+    /// [`Channel::program_started`]. Its viewers' handles are derived under
+    /// `secret` (VS-305), and its challenges drawn from `random` (VS-205).
     #[must_use]
-    pub fn new(config: ChannelConfig) -> Self {
+    pub fn new(config: ChannelConfig, secret: &HandleSecret, random: Box<dyn RandomSource>) -> Self {
+        let (viewers, refused) = viewers::Viewers::new(&config.address, config.other_addresses.iter().map(String::as_str), secret, random);
+        let effects = refused
+            .into_iter()
+            .map(|address| Effect::Log {
+                level: Level::Error,
+                event: "channel_address",
+                text: format!(
+                    "{address} is not a channel identity, or is past the {} a channel may have: no proof is verified under it",
+                    crate::viewer::MOST_CHANNEL_ADDRESSES
+                ),
+            })
+            .collect();
         Self {
+            viewers,
             config,
             program: false,
             answered: false,
             readiness_page: None,
             connections: BTreeMap::new(),
-            sessions: BTreeMap::new(),
-            waiting: BTreeSet::new(),
             sounds: Sounds::default(),
-            effects: Vec::new(),
+            effects,
             stats: ChannelStats::default(),
             stale_unreported: 0,
             stale_reported_at: None,
@@ -635,10 +617,11 @@ impl Channel {
         &self.stats
     }
 
-    /// The number of sessions, connected or waiting for their viewer.
+    /// The number of viewers the channel knows, connected or idle
+    /// (VS-303).
     #[must_use]
-    pub fn sessions(&self) -> usize {
-        self.sessions.len()
+    pub fn viewers(&self) -> usize {
+        self.viewers.len()
     }
 
     /// What the host must do now.
@@ -726,6 +709,7 @@ impl Channel {
             languages: protocol::languages(),
         };
         self.tell(&ServerMessage::Start(start));
+        self.tell_untold_reset();
         let open: Vec<ConnectionId> = self.connections.keys().copied().collect();
         for connection in open {
             self.announce(connection, now);
@@ -823,21 +807,25 @@ impl Channel {
         if !self.program {
             return;
         }
-        let Some(state) = self.connections.get_mut(&connection) else { return };
-        if state.first_selection_due.is_some() {
+        let Some(state) = self.connections.get(&connection) else { return };
+        // `connected` waits for the first selection and for the answer to
+        // the opening challenge (VS-202).
+        if state.first_selection_due.is_some() || state.viewer.holds() {
             return;
         }
+        let (viewer, remembered) = self.viewer_of(state);
+        let Some(state) = self.connections.get_mut(&connection) else { return };
         state.announced = true;
         state.replied = false;
         state.ending = Ending::Due(now.saturating_add(PROGRAM_REPLY_LIMIT_MS));
         let message = Connected {
             connection,
-            session: state.session,
             request: state.request,
-            cookies: state.cookies.clone(),
             selection: state.selection,
             path: state.selection.map(Selection::path),
             query: state.parameters.clone(),
+            viewer,
+            remembered,
         };
         self.tell(&ServerMessage::Connected(message));
         self.tell_focus(connection);
@@ -854,68 +842,36 @@ impl Channel {
         self.tell(&ServerMessage::Input(InputMessage { connection, page: selection.page, sub: selection.sub, lost: false, event }));
     }
 
-    /// A connection the host numbered `connection` opened for `session`,
-    /// which it continues or starts (requirement 5.5), with the cookies its
-    /// upgrade carried for the program ([`crate::session_cookie::program_cookies`]).
-    /// The host never reuses a connection's number while the channel runs.
-    /// Its program is told when its first selection comes, or
-    /// [`FIRST_SELECTION_WAIT_MS`] passes.
-    pub fn opened(&mut self, connection: ConnectionId, session: SessionId, cookies: Vec<CookiePair>, now: u64) {
-        let state = self.sessions.entry(session).or_insert(Session { open: 0, waiting_since: None });
-        if let Some(since) = state.waiting_since.take() {
-            self.waiting.remove(&(since, session));
-            self.stats.resumed();
-        } else if state.open == 0 {
-            self.stats.joined();
-        }
-        state.open = state.open.saturating_add(1);
-        self.connections.insert(connection, Connection::new(session, cookies, now));
+    /// A connection the host numbered `connection` opened, from `address`
+    /// as the host sees it or as its trusted proxy states it (VS-304). The
+    /// host never reuses a connection's number while the channel runs. Its
+    /// program is told when its first selection comes, or
+    /// [`FIRST_SELECTION_WAIT_MS`] passes, and its opening challenge is
+    /// answered (VS-202).
+    pub fn opened(&mut self, connection: ConnectionId, address: Option<core::net::IpAddr>, now: u64) {
+        self.stats.joined();
+        self.connections.insert(connection, Connection::new(address, now));
     }
 
     /// A connection closed: the program is given the releases of whatever
-    /// it held, marked lost (REQ-207: the viewer cannot send them now, and
-    /// a connection that resumes starts with nothing held), and told its
-    /// selection left its page, and when it was its session's last, the
-    /// session waits for its viewer for the channel's grace (requirement
-    /// 5.5); the program is told it ended with `closed` only when the grace
-    /// passes.
+    /// it held, marked lost (REQ-207: the viewer cannot send them now),
+    /// told its selection left its page, and told `gone` (VS-354): there
+    /// is no session that outlives a connection, and a viewer's identity
+    /// across connections is their handle.
     pub fn closed(&mut self, connection: ConnectionId, now: u64) {
         self.flush_moves(connection, now);
         self.release_held(connection);
         let Some(state) = self.connections.remove(&connection) else { return };
+        self.stats.left();
         if state.announced
             && let Some(selection) = state.selection
         {
             self.tell(&ServerMessage::Left(Left { connection, page: selection.page }));
         }
-        let session = state.session;
-        let Some(open) = self.sessions.get_mut(&session) else { return };
-        open.open = open.open.saturating_sub(1);
-        if open.open > 0 {
-            return;
+        self.viewer_closed(connection, &state.viewer, now);
+        if state.announced {
+            self.tell(&ServerMessage::Gone(Gone { connection }));
         }
-        if self.config.session_grace_ms == 0 {
-            self.sessions.remove(&session);
-            self.stats.left();
-            self.tell(&ServerMessage::Closed(Closed { session }));
-            return;
-        }
-        open.waiting_since = Some(now);
-        self.stats.waiting();
-        if self.waiting.len() >= MOST_WAITING_SESSIONS
-            && let Some((_, oldest)) = self.waiting.pop_first()
-        {
-            self.end_waiting(oldest);
-        }
-        self.waiting.insert((now, session));
-    }
-
-    /// A waiting session ends, its viewer not back: its program is told
-    /// `closed` (requirement 5.5).
-    fn end_waiting(&mut self, session: SessionId) {
-        self.sessions.remove(&session);
-        self.stats.expired();
-        self.tell(&ServerMessage::Closed(Closed { session }));
     }
 
     /// A binary message from a connection: its input stream (DOC-1929).
@@ -946,16 +902,11 @@ impl Channel {
         }
     }
 
-    /// The time asked for has come: sessions whose grace passed end, and
-    /// answers the program did not give in time are given up (REQ-1481).
+    /// The time asked for has come: challenges and idle viewers past their
+    /// time end (VS-202, VS-303), and answers the program did not give in
+    /// time are given up (REQ-1481).
     pub fn deadline(&mut self, now: u64) {
-        let grace = self.config.session_grace_ms;
-        while let Some(&(since, session)) = self.waiting.first()
-            && since.saturating_add(grace) <= now
-        {
-            self.waiting.pop_first();
-            self.end_waiting(session);
-        }
+        self.viewer_deadline(now);
         let held: Vec<ConnectionId> =
             self.connections.iter().filter(|(_, state)| state.first_selection_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
         for connection in held {
@@ -1010,9 +961,11 @@ impl Channel {
     /// When the channel next needs [`Channel::deadline`].
     #[must_use]
     pub fn next_wake(&self) -> Option<u64> {
-        let grace = self.config.session_grace_ms;
-        let expiry = self.waiting.first().map(|&(since, _)| since.saturating_add(grace));
-        let dues = self.connections.values().flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due));
+        let expiry = self.viewers.next_due();
+        let dues = self
+            .connections
+            .values()
+            .flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due).chain(state.viewer.due()));
         // A move's time is in microseconds: this is the first millisecond at
         // or after it.
         let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
@@ -1043,7 +996,11 @@ impl Channel {
         }
         match *item {
             Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps, now),
-            Item::Event(Event::Select(select, parameters)) => self.selected(connection, select.page, select.sub, parameters, now),
+            Item::Event(Event::Select(select, parameters)) => {
+                self.selected_before_answer(connection, now);
+                self.selected(connection, select.page, select.sub, parameters, now);
+            }
+            Item::Event(ref event @ (Event::StateProof(_) | Event::StateNone(_) | Event::StateOffer)) => self.state_message(connection, event, now),
             _ => self.input(connection, item, now),
         }
         true
@@ -1123,6 +1080,9 @@ impl Channel {
         if matches!(input, Input::Key { action: Action::Press, .. } | Input::Text(_)) {
             count(&mut self.stats.keys);
         }
+        if input.is_gesture() {
+            self.gesture(connection, now);
+        }
         let lost = input::marked_lost(item);
         self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(page), sub: protocol::SubCode(sub), lost, event }));
     }
@@ -1167,15 +1127,18 @@ impl Channel {
             self.effects.push(Effect::Close { connection, code: CLOSE_WRONG_VERSION });
             return;
         }
-        if caps & SELECT_CAP == 0 {
-            self.end_hold(connection, now);
-        }
         let Some(state) = self.connections.get_mut(&connection) else { return };
         state.agreed = Some(caps & USED);
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
             self.send(connection, Arc::from(&packet.bytes[..]));
+            // Before `connected` can go, so that it waits for the answer
+            // (VS-202).
+            self.opening_challenge(connection, now);
+        }
+        if caps & SELECT_CAP == 0 {
+            self.end_hold(connection, now);
         }
     }
 
@@ -1415,12 +1378,9 @@ impl Channel {
                 let targets = self.targets(audience(&sound));
                 self.records(&targets, &records);
             }
-            ProgramMessage::Cookie(cookie) => {
-                if !self.connections.contains_key(&cookie.connection) {
-                    return Ok(());
-                }
-                self.send_records(&[cookie.connection], kind, |state| records::cookie(&cookie, &mut state.record_id))?;
-            }
+            ProgramMessage::RequestState(request) => self.request_state(request, now)?,
+            ProgramMessage::EndState(end) => self.end_state(end)?,
+            ProgramMessage::OfferRemember(offer) => self.offer_remember(offer)?,
             ProgramMessage::AuthorLog(line) => {
                 let targets = self.targets(&line.connections);
                 self.send_records(&targets, kind, |state| records::author_log(&line, &mut state.record_id))?;

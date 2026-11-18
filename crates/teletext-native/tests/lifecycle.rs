@@ -1,5 +1,5 @@
 //! The server binary through its life: its log at start, its probes and
-//! metrics, sessions that continue across connections, a clean stop, and
+//! metrics, a viewer known by their key across connections and restarts, a clean stop, and
 //! a restart that serves what it kept, and systemd's socket activation
 //! (requirements 5.1 to 5.6, 7.1, 7.2, 8.1 and 8.4). Unix only: the stop is
 //! a `SIGTERM`.
@@ -16,9 +16,12 @@ use neoteletext_core::consts::{LINK_SCHEME, PACKET_BYTES};
 use neoteletext_core::packet::Packet;
 use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::event::{Event, Item, Select, write as write_item};
+use neoteletext_input::state::{Algorithm, CHALLENGE_BYTES, Lifetime, NoneReason, StateProof};
 use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::consts::{CLOSE_RESTARTING, PUSH_SUBPROTOCOL};
 use neoteletext_web::records::{ChannelRecord, Read as RecordRead, RecordReader};
+use neoteletext_web::viewer_state::{self, ChannelIdentity, MAX_SIGNED_BYTES};
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use teletext_runtime::json::{self, Value};
 
 /// How long the server and its program have to start, or to stop.
@@ -233,26 +236,21 @@ fn upgrade_answer(address: &str, headers: &str) -> String {
     response_head(&mut stream)
 }
 
-/// A push connection, open, and its response's `Set-Cookie`, if any.
-fn push(address: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
-    push_to(address, "/ch/push", cookie)
+/// A push connection, open, and its response's `Set-Cookie`, if any, which
+/// there never is (VS-201, VS-354).
+fn push(address: &str) -> (TcpStream, Option<String>) {
+    push_to(address, "/ch/push")
 }
 
 /// A push connection to `target`, open, and its response's `Set-Cookie`.
-fn push_to(address: &str, target: &str, cookie: Option<&str>) -> (TcpStream, Option<String>) {
+fn push_to(address: &str, target: &str) -> (TcpStream, Option<String>) {
     let mut stream = TcpStream::connect(address).unwrap();
-    let cookie = cookie.map(|cookie| format!("Cookie: {cookie}\r\n")).unwrap_or_default();
-    write!(stream, "{}{cookie}\r\n", upgrade_request(address, target, &format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n"))).unwrap();
+    write!(stream, "{}\r\n", upgrade_request(address, target, &format!("Sec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n"))).unwrap();
     let head = response_head(&mut stream);
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
     assert_eq!(header(&head, "sec-websocket-protocol"), Some(PUSH_SUBPROTOCOL), "{head}");
     let set_cookie = head.lines().find_map(|line| line.strip_prefix("set-cookie: ").or_else(|| line.strip_prefix("Set-Cookie: "))).map(str::to_owned);
     (stream, set_cookie)
-}
-
-/// The session a `Set-Cookie` names: the number before its first dot.
-fn session_of(set_cookie: &str) -> u64 {
-    set_cookie.strip_prefix("_session=").unwrap().split('.').next().unwrap().parse().unwrap()
 }
 
 /// Reads the server's frames until a Close, and answers its status code.
@@ -293,7 +291,7 @@ fn a_restart_closes_viewers_as_a_restart() {
     let first_channels = channels(&folder, &publishing("Closed as a restart"));
     let mut first = serve(&["--channels", &first_channels.display().to_string(), "--state", &state_argument], &[], Stdio::null());
     until_status(&first.address, &settings("ch"), 200);
-    let (mut viewer, _) = push(&first.address, None);
+    let (mut viewer, _) = push(&first.address);
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), CLOSE_RESTARTING, "try again");
     let _ = std::fs::remove_dir_all(&folder);
@@ -315,7 +313,7 @@ fn connections_made_during_a_restart_wait_on_the_passed_socket() {
     let response = response_to(before_the_server);
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 
-    let (mut viewer, _) = push(&address, None);
+    let (mut viewer, _) = push(&address);
     assert!(first.terminate().success());
     assert_eq!(close_code(&mut viewer), CLOSE_RESTARTING, "try again");
 
@@ -372,17 +370,6 @@ fn the_socket_unit_is_installed_and_names_the_services_address() {
     assert!(deploy.contains(r#"/etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket""#));
     assert!(deploy.contains("Requires=neoteletext.socket"));
     assert!(deploy.contains("enable --now neoteletext.socket"));
-}
-
-/// REQ-1040, TODO-1301: a channel keeps as many sessions waiting for their
-/// viewer as the service may hold open files, so that every viewer it can
-/// hold connected can come back after a restart; the bound is derived from
-/// the unit's limit, and the two must agree.
-#[test]
-fn the_waiting_sessions_bound_is_the_units_open_files() {
-    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
-    let limit = deploy.lines().find_map(|line| line.strip_prefix("LimitNOFILE=")).unwrap();
-    assert_eq!(limit.parse::<usize>().unwrap(), teletext_runtime::channel::MOST_WAITING_SESSIONS);
 }
 
 /// DEC-1759 lesson 18: an upgrade that carries `Origin` is a web page's
@@ -475,54 +462,87 @@ fn server_frame(stream: &mut TcpStream) -> Vec<u8> {
     payload
 }
 
-/// The `Set-Cookie` value of the next `SET_COOKIE` record on `stream`.
-fn set_cookie_record(stream: &mut TcpStream) -> String {
+/// Reads `stream` until a LOG record comes, the program's line having
+/// reached the viewer.
+fn log_record(stream: &mut TcpStream) {
     let mut reader = RecordReader::new();
     loop {
         let message = server_frame(stream);
         for packet in message.as_chunks::<PACKET_BYTES>().0 {
-            if let RecordRead::Record(ChannelRecord::SetCookie(line)) = reader.push(&Packet { bytes: *packet }) {
-                return String::from_utf8(line.to_vec()).unwrap();
+            if let RecordRead::Record(ChannelRecord::Log(_)) = reader.push(&Packet { bytes: *packet }) {
+                return;
             }
         }
     }
 }
 
-/// REQ-1471 item 9: a program sets a cookie on one connection, and the same
-/// viewer's next connection's `connected` carries it, and not the session
-/// cookie: through a real socket, the cookie read back from the `SET_COOKIE`
-/// record as a receiver's jar would.
+/// The challenge of the next `STATE_CHALLENGE` record on `stream`.
+fn challenge_on(stream: &mut TcpStream) -> [u8; CHALLENGE_BYTES] {
+    let mut reader = RecordReader::new();
+    loop {
+        let message = server_frame(stream);
+        for packet in message.as_chunks::<PACKET_BYTES>().0 {
+            if let RecordRead::Record(ChannelRecord::StateChallenge(record)) = reader.push(&Packet { bytes: *packet }) {
+                return record.challenge;
+            }
+        }
+    }
+}
+
+/// A browser's proof of `seed` for `challenge` on the channel at `address`
+/// (VS-203), as the trusted core makes it.
+fn proof_of(seed: &[u8; 32], challenge: &[u8; CHALLENGE_BYTES], address: &str) -> ([u8; 32], [u8; 64]) {
+    let pair = Ed25519KeyPair::from_seed_unchecked(seed).unwrap();
+    let identity = ChannelIdentity::read(address).unwrap();
+    let mut signed = [0_u8; MAX_SIGNED_BYTES];
+    let length = viewer_state::signed_bytes(Algorithm::Ed25519, Lifetime::Visit, challenge, &identity, &mut signed).unwrap();
+    (pair.public_key().as_ref().try_into().unwrap(), pair.sign(&signed[..length]).as_ref().try_into().unwrap())
+}
+
+/// A viewer connected to the server at `address`, proving the key of `seed`
+/// and selecting page 100: what the program was told in `connected`.
+fn connect_as(address: &str, seed: &[u8; 32], heard: &Path, nth: usize) -> Value {
+    let (mut viewer, set_cookie) = push(address);
+    assert_eq!(set_cookie, None, "no cookie is ever set (VS-354)");
+    send_input(&mut viewer, &[Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None })]);
+    let challenge = challenge_on(&mut viewer);
+    let (public_key, signature) = proof_of(seed, &challenge, &format!("http://{address}/ch/"));
+    let proof = StateProof { algorithm: Algorithm::Ed25519, lifetime: Lifetime::Visit, public_key: &public_key, signature: &signature };
+    send_input(&mut viewer, &[Item::Event(Event::StateProof(proof)), Item::Event(Event::Select(Select::new(0x100, 0x3F7F).unwrap(), ""))]);
+    let told = until_heard(heard, |told| told.matches("\"connected\"").count() > nth);
+    let line = told.lines().filter(|line| line.contains("\"connected\"")).nth(nth).unwrap();
+    json::parse(line.as_bytes()).unwrap()
+}
+
+/// VS-207, VS-301, VS-305, VS-354: through real sockets, a viewer's key is
+/// one handle on two connections and after a restart of the server with
+/// its state directory, and no response sets a cookie; the session
+/// cookie's old key in the state directory is deleted (VS-603).
 #[test]
-fn a_cookie_a_program_sets_reaches_it_on_the_next_connection() {
-    let folder = scratch("cookies");
+fn a_viewer_is_known_by_their_key_across_connections_and_restarts() {
+    let folder = scratch("viewers");
     let heard = folder.join("heard");
-    let cookie =
-        r#"{"type":"cookie","connection":1,"name":"theme","value":"dark","path":null,"max_age":null,"same_site":null,"secure":false,"http_only":false}"#;
-    // The cookie goes out once the first connection is told of, whatever
-    // else the server sent first (its `describe`, DEC-2007, comes in no
-    // fixed place before it).
-    let script = format!(
-        "read -r _; set=; while read -r line; do printf '%s\\n' \"$line\" >> {heard:?}; case \"$line\" in *'\"connected\"'*) [ -n \"$set\" ] || {{ printf '%s\\n' '{cookie}'; set=1; }};; esac; done"
-    );
+    let script = format!(r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard:?}; done"#);
     let file = channels(&folder, &script);
-    let state = folder.join("state").display().to_string();
-    let server = serve(&["--channels", &file.display().to_string(), "--state", &state], &[], Stdio::null());
+    let state = folder.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("session.key"), [1_u8; 32]).unwrap();
+    let arguments = ["--channels", &file.display().to_string(), "--state", &state.display().to_string()];
+    let handle = |connected: &Value| connected.get("viewer").and_then(Value::text).map(str::to_owned);
+    let socket = TcpListener::bind(ANY_LOCAL_PORT).unwrap();
+    let first = {
+        let server = activated(&socket, 1, &arguments, &[], Stdio::null());
+        until_status(&server.address, &settings("ch"), 200);
+        let first = handle(&connect_as(&server.address, &[7; 32], &heard, 0));
+        assert_eq!(first.as_deref().map(str::len), Some(32), "{first:?}");
+        assert_eq!(handle(&connect_as(&server.address, &[7; 32], &heard, 1)), first, "another tab, the same viewer");
+        assert_ne!(handle(&connect_as(&server.address, &[8; 32], &heard, 2)), first, "another key, another viewer");
+        first
+    };
+    assert!(!state.join("session.key").exists(), "the session cookie's key is gone");
+    let server = activated(&socket, 1, &arguments, &[], Stdio::null());
     until_status(&server.address, &settings("ch"), 200);
-    let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: 0, agent: None });
-    let (mut viewer, session) = push(&server.address, None);
-    send_input(&mut viewer, &[hello]);
-    let set = set_cookie_record(&mut viewer);
-    assert!(set.starts_with("theme=dark"), "{set}");
-    let session = session.unwrap();
-    let session = session.split(';').next().unwrap();
-    let (mut again, _) = push(&server.address, Some(&format!("{session}; theme=dark")));
-    send_input(&mut again, &[hello]);
-    let told = second_connected_line(&heard);
-    let line = json::parse(told.as_bytes()).unwrap();
-    let cookies = line.get("cookies").unwrap().items().unwrap();
-    assert_eq!(cookies.len(), 1, "{told}");
-    assert_eq!(cookies[0].get("name").and_then(Value::text), Some("theme"), "{told}");
-    assert_eq!(cookies[0].get("value").and_then(Value::text), Some("dark"), "{told}");
+    assert_eq!(handle(&connect_as(&server.address, &[7; 32], &heard, 3)), first, "the same after a restart");
     let _ = std::fs::remove_dir_all(&folder);
 }
 
@@ -553,12 +573,6 @@ fn until_heard(heard: &Path, wanted: impl Fn(&str) -> bool) -> String {
     }
 }
 
-/// The `connected` line of the second connection the program heard of.
-fn second_connected_line(heard: &Path) -> String {
-    let told = until_heard(heard, |told| told.matches("\"connected\"").count() >= 2);
-    told.lines().filter(|line| line.contains("\"connected\"")).nth(1).unwrap().to_owned()
-}
-
 /// The first `connected` line the program has written to `heard`.
 fn connected_line(heard: &Path) -> String {
     let told = until_heard(heard, |told| told.contains("\"connected\""));
@@ -576,7 +590,7 @@ fn page_parameters_reach_the_program_in_selected() {
     let file = channels(&folder, &script);
     let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
     until_status(&server.address, &settings("ch"), 200);
-    let (mut viewer, _) = push(&server.address, None);
+    let (mut viewer, _) = push(&server.address);
     let parameters = format!("a={}", "x".repeat(neoteletext_input::MAX_PAGE_PARAMETERS - 2));
     let select = |page, parameters| Item::Event(Event::Select(Select::new(page, 0x3F7F).unwrap(), parameters));
     let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None });
@@ -772,38 +786,6 @@ fn a_long_request_target_is_answered() {
     assert_eq!(get(&server.address, &path(8_000)).map(|(status, _)| status), Some(404), "no such file, but answered");
     assert_eq!(get(&server.address, &path(65_000)).map(|(status, _)| status), Some(404));
     assert_eq!(get(&server.address, &path(66_000)).map(|(status, _)| status), Some(414));
-}
-
-/// A connection presenting its session's cookie continues that session,
-/// a second connection, another tab, while the first is open included
-/// (DEC-1527); a forged cookie is ignored (requirement 5.5).
-/// REQ-1040: the cookie, its attributes, and a forged one ignored.
-#[test]
-fn a_session_continues_with_its_cookie() {
-    let folder = scratch("cookie");
-    let file = channels(&folder, &publishing("Hello"));
-    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
-    until_status(&server.address, &settings("ch"), 200);
-    let (first, set_cookie) = push(&server.address, None);
-    let set_cookie = set_cookie.expect("a new session is given a cookie");
-    assert!(set_cookie.contains("; Path=/ch/; Max-Age=2592000; HttpOnly; SameSite=Strict"), "{set_cookie}");
-    assert!(!set_cookie.contains("Secure"), "not over http");
-    let session = session_of(&set_cookie);
-    let cookie = set_cookie.split(';').next().unwrap().to_owned();
-
-    let (_while_open, second_cookie) = push(&server.address, Some(&cookie));
-    assert_eq!(second_cookie.map(|cookie| session_of(&cookie)), Some(session), "another tab continues the session");
-
-    // A session number the server would never give next.
-    let claimed = session + 1_000;
-    let forged = format!("_session={claimed}.9999999999.{}", "0".repeat(64));
-    let (_forger, forged_cookie) = push(&server.address, Some(&forged));
-    assert_ne!(forged_cookie.map(|cookie| session_of(&cookie)), Some(claimed), "a forged cookie names nothing");
-
-    drop(first);
-    let (_again, renewed) = push(&server.address, Some(&cookie));
-    assert_eq!(renewed.map(|cookie| session_of(&cookie)), Some(session), "the session continues");
-    let _ = std::fs::remove_dir_all(&folder);
 }
 
 /// REQ-1052, REQ-1054: the administration listener answers `/healthz`,
@@ -1019,8 +1001,9 @@ fn a_program_connects_over_a_websocket_with_the_channels_secret() {
         let (head, _) = program_upgrade(&server.address, refused);
         assert_eq!(status_of(&head), "401", "{refused:?}: {head}");
     }
-    let (mut viewer, _) = push_to(&server.address, "/remote/push", None);
-    send_input(&mut viewer, &[Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: 0, agent: None })]);
+    let (mut viewer, _) = push_to(&server.address, "/remote/push");
+    let stateless = Item::Event(Event::StateNone(NoneReason::Stateless));
+    send_input(&mut viewer, &[Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: 0, agent: None }), stateless]);
     let authorised = format!("Authorization: Bearer {SECRET}\r\n");
     let (head, mut program) = program_upgrade(&server.address, &authorised);
     assert_eq!(status_of(&head), "101", "{head}");
@@ -1030,12 +1013,9 @@ fn a_program_connects_over_a_websocket_with_the_channels_secret() {
     let Some(Value::Integer(connection)) = connected.get("connection") else { panic!("{connected:?}") };
     let (head, _) = program_upgrade(&server.address, &authorised);
     assert_eq!(status_of(&head), "409", "one at a time: {head}");
-    let cookie = format!(
-        r#"{{"type":"cookie","connection":{connection},"name":"theme","value":"dark","path":null,"max_age":null,"same_site":null,"secure":false,"http_only":false}}"#
-    );
-    send_frame(&mut program, TEXT_FINAL, cookie.as_bytes());
-    let set = set_cookie_record(&mut viewer);
-    assert!(set.starts_with("theme=dark"), "the program's line reached the viewer: {set}");
+    let log = format!(r#"{{"type":"author_log","connections":[{connection}],"level":"W","text":"slow","page":"100"}}"#);
+    send_frame(&mut program, TEXT_FINAL, log.as_bytes());
+    log_record(&mut viewer);
     send_frame(&mut program, CLOSE_FINAL, &[]);
     loop {
         let (first, _) = frame_from(&mut program);

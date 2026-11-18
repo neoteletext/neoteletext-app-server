@@ -16,7 +16,6 @@ use super::{ProgramMessage, Refusal, Rule, read};
 mod applies_nothing;
 mod author_log;
 mod closed_set;
-mod cookie;
 mod index;
 mod log;
 mod packets;
@@ -26,6 +25,7 @@ mod reply;
 mod schema;
 mod sound;
 mod subpages;
+mod viewer;
 
 /// The line a program would send for `value`.
 pub(crate) fn line(value: &Value) -> Vec<u8> {

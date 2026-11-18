@@ -13,9 +13,10 @@ use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, MAX_MO
 use neoteletext_input::{MAX_MESSAGE, MAX_PASTE, MOVES_PER_SECOND};
 use teletext_native::apps::{self, ChannelSpec, Program};
 use teletext_native::hub::{self, Command, Hub};
+use teletext_native::state::SystemRandomSource;
 use teletext_native::stats::ServerStats;
 use teletext_runtime::json::{self, Value};
-use teletext_runtime::{Channel, ChannelConfig, ConnectionId, InitialPage};
+use teletext_runtime::{Channel, ChannelConfig, ConnectionId, HandleSecret, InitialPage};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -84,16 +85,22 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
         address: "http://127.0.0.1/moves/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let hub = hub::spawn(name, Channel::new(config), Instant::now(), Some(link), Arc::new(ServerStats::default()));
+    let hub = hub::spawn(
+        name,
+        Channel::new(config, &HandleSecret::new([0; 32]), Box::new(SystemRandomSource::new())),
+        Instant::now(),
+        Some(link),
+        Arc::new(ServerStats::default()),
+    );
     let mut program = BufReader::new(UnixStream::connect(&path).await.unwrap());
     // Lines for a program not yet started are dropped.
     let start = line_of(&mut program, Instant::now() + WITHIN).await.unwrap();
     assert_eq!(start.get("type").and_then(Value::text), Some("start"));
     let (outbox, viewer) = mpsc::channel(hub::OUTBOX);
-    hub.commands.send(Command::Opened { connection: CONNECTION, session: 1, cookies: Vec::new(), outbox }).await.unwrap();
+    hub.commands.send(Command::Opened { connection: CONNECTION, address: None, outbox }).await.unwrap();
     let hello = bytes_of(&Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP, agent: None }));
     let select = bytes_of(&Item::Event(Event::Select(Select::new(ON.page, ON.sub).unwrap(), "")));
     for bytes in [hello, select] {

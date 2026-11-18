@@ -48,11 +48,12 @@ pub struct ChannelStats {
     pub lines_to_application: u64,
     /// Lines from it.
     pub lines_from_application: u64,
-    /// Sessions whose connection closed, waiting for their viewer to come
-    /// back (requirement 5.5).
-    pub sessions_waiting: u64,
-    /// Sessions a viewer came back to.
-    pub sessions_resumed: u64,
+    /// Viewers' proofs that verified (VS-206): a count, nothing of the
+    /// proofs (VS-209).
+    pub proofs_accepted: u64,
+    /// Viewers' proofs refused: not verified, with no challenge, or past a
+    /// bound (VS-206, VS-304).
+    pub proofs_refused: u64,
 }
 
 impl ChannelStats {
@@ -63,28 +64,9 @@ impl ChannelStats {
         self.viewers_peak = self.viewers_peak.max(self.viewers);
     }
 
-    /// A viewer went, and their session with them.
+    /// A viewer's connection closed.
     pub(crate) fn left(&mut self) {
         self.viewers = self.viewers.saturating_sub(1);
-    }
-
-    /// A viewer went, and their session waits for them.
-    pub(crate) fn waiting(&mut self) {
-        self.left();
-        self.sessions_waiting = self.sessions_waiting.saturating_add(1);
-    }
-
-    /// A viewer came back to their waiting session.
-    pub(crate) fn resumed(&mut self) {
-        self.sessions_waiting = self.sessions_waiting.saturating_sub(1);
-        self.sessions_resumed = self.sessions_resumed.saturating_add(1);
-        self.viewers = self.viewers.saturating_add(1);
-        self.viewers_peak = self.viewers_peak.max(self.viewers);
-    }
-
-    /// A waiting session's grace passed.
-    pub(crate) fn expired(&mut self) {
-        self.sessions_waiting = self.sessions_waiting.saturating_sub(1);
     }
 
     /// A viewer opened `page`.

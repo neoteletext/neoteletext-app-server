@@ -32,6 +32,7 @@ mod moves;
 mod naplps;
 mod regis;
 mod sound;
+mod viewers;
 
 /// The connection and session of a test.
 const CONNECTION: u64 = 1;
@@ -56,12 +57,12 @@ fn held() -> Channel {
         address: "http://127.0.0.1/test/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let mut channel = Channel::new(config);
+    let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
-    channel.opened(CONNECTION, 1, Vec::new(), 0);
+    channel.opened(CONNECTION, None, 0);
     let _ = channel.take_effects();
     channel
 }
@@ -321,7 +322,10 @@ fn welcomed_caps(effects: &[Effect]) -> u32 {
 #[test]
 fn a_connection_with_no_capability_is_shown_the_initial_page_and_heard() {
     let mut channel = held();
-    channel.received(CONNECTION, &message(&[Item::Event(Event::Hello { version: VERSION, caps: 0, agent: None })]), 0);
+    // With the answer to the opening challenge, which `connected` waits for
+    // (VS-202).
+    let none = Item::Event(Event::StateNone(neoteletext_input::state::NoneReason::NoKey));
+    channel.received(CONNECTION, &message(&[Item::Event(Event::Hello { version: VERSION, caps: 0, agent: None }), none]), 0);
     let effects = channel.take_effects();
     assert_eq!(welcomed_caps(&effects), 0, "nothing was offered, so nothing is agreed");
     let lines = told(&effects);
@@ -452,7 +456,7 @@ fn a_lost_connection_releases_what_is_held() {
     let lines = told(&channel.take_effects());
     assert_eq!((&lines[0]["type"], &lines[0]["lost"], &lines[1]["type"], &lines[1]["lost"]), (&json!("input"), &json!(true), &json!("input"), &json!(true)));
     assert_eq!(lines[2]["type"], json!("left"));
-    channel.opened(2, 1, Vec::new(), 3);
+    channel.opened(2, None, 3);
     let _ = channel.take_effects();
     channel.closed(2, 4);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "the new connection held nothing");
@@ -683,10 +687,11 @@ fn a_channel_that_uses_the_wheel_says_so() {
             address: "http://127.0.0.1/test/".into(),
             initial_page: InitialPage::new(0x100).unwrap(),
             epoch_at_start_ms: 0,
-            session_grace_ms: 0,
+            other_addresses: Vec::new(),
             wheel,
         };
-        let descriptor: Value = serde_json::from_slice(&Channel::new(config).descriptor()).unwrap();
+        let descriptor: Value =
+            serde_json::from_slice(&Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random()).descriptor()).unwrap();
         descriptor["push"].clone()
     };
     assert_eq!(written(true), json!({"input": true, "wheel": true}));
@@ -736,33 +741,9 @@ fn the_wait_for_a_first_selection_is_bounded() {
 fn a_receiver_that_cannot_select_is_not_waited_for() {
     let mut channel = held();
     let hello = Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP, agent: None });
-    channel.received(CONNECTION, &message(&[hello]), 0);
+    let none = Item::Event(Event::StateNone(neoteletext_input::state::NoneReason::NoKey));
+    channel.received(CONNECTION, &message(&[hello, none]), 0);
     assert_eq!(connecteds(&channel.take_effects()).len(), 1);
-}
-
-/// REQ-1471: the cookies a connection opened with reach its program, however
-/// often it is told.
-#[test]
-fn connected_carries_the_cookies_the_connection_opened_with() {
-    let config = ChannelConfig {
-        name: "Test".into(),
-        address: "http://127.0.0.1/test/".into(),
-        initial_page: InitialPage::new(0x100).unwrap(),
-        epoch_at_start_ms: 0,
-        session_grace_ms: 0,
-        wheel: false,
-    };
-    let mut channel = Channel::new(config);
-    channel.program_started(0);
-    let mut cookies = Vec::new();
-    crate::session_cookie::program_cookies(b"_session=1.2.3; theme=dark; =nameless; broken; a=b=c", &mut cookies);
-    channel.opened(CONNECTION, 1, cookies, 0);
-    channel.received(CONNECTION, &message(&[hello(), select(0x100, ANY)]), 0);
-    let expected = json!([{"name": "theme", "value": "dark"}, {"name": "a", "value": "b=c"}]);
-    assert_eq!(connecteds(&channel.take_effects())[0]["cookies"], expected, "and never the session cookie");
-    channel.program_ended();
-    channel.program_started(1);
-    assert_eq!(connecteds(&channel.take_effects())[0]["cookies"], expected, "a program that starts again hears them too");
 }
 
 /// DEC-1759 lesson 13: each selection has the next number, and only the
@@ -921,11 +902,11 @@ fn a_selection_has_an_ending_with_no_program_too() {
         address: "http://127.0.0.1/test/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let mut none = Channel::new(config);
-    none.opened(CONNECTION, 1, Vec::new(), 0);
+    let mut none = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
+    none.opened(CONNECTION, None, 0);
     none.received(CONNECTION, &message(&[hello(), select(0x302, ANY)]), 10);
     let _ = none.take_effects();
     assert_eq!(none.next_wake(), Some(10), "at once");
@@ -1025,7 +1006,8 @@ fn an_unknown_capability_is_not_agreed() {
     channel.received(CONNECTION, &message(&[hello]), 0);
     let bytes = sent_to(&channel.take_effects(), CONNECTION);
     let mut buffer = [0; FRAGMENT_DATA];
-    let packet = Packet { bytes: bytes.as_slice().try_into().unwrap() };
+    // The first packet: the opening challenge follows (VS-202).
+    let packet = Packet { bytes: bytes[..PACKET_BYTES].try_into().unwrap() };
     assert_eq!(from_packet(&packet, &mut buffer), Some(Ok(Control::Welcome { version: VERSION, caps: SELECT_CAP, resume: None })));
 }
 
@@ -1099,7 +1081,11 @@ fn every_row_of_the_wire_vectors_holds() {
     // What the channel writes, on a connection with nothing else sent.
     let mut channel = held();
     channel.received(CONNECTION, &vector_bytes(row("hello").value), 0);
-    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), vector_bytes(row("welcome").value));
+    // WELCOME, then the opening STATE_CHALLENGE, a packet of its own
+    // (VS-202), whose challenge the table cannot hold.
+    let sent = sent_to(&channel.take_effects(), CONNECTION);
+    assert_eq!(sent[..PACKET_BYTES], vector_bytes(row("welcome").value));
+    assert_eq!(record_types(&sent[PACKET_BYTES..]), [neoteletext_web::records::state::TYPE_STATE_CHALLENGE]);
     let mut channel = held();
     channel.received(CONNECTION, &message(&[hello()]), 0);
     channel.received(CONNECTION, &vector_bytes(row("select_sub_page").value), 0);
@@ -1144,10 +1130,11 @@ fn a_channels_initial_page_is_three_decimal_digits() {
             address: "http://127.0.0.1/test/".into(),
             initial_page: InitialPage::new(page).unwrap(),
             epoch_at_start_ms: 0,
-            session_grace_ms: 0,
+            other_addresses: Vec::new(),
             wheel: false,
         };
-        let descriptor: Value = serde_json::from_slice(&Channel::new(config).descriptor()).unwrap();
+        let descriptor: Value =
+            serde_json::from_slice(&Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random()).descriptor()).unwrap();
         descriptor["initial_page"].clone()
     };
     assert_eq!((written(0x100), written(0x305), written(0x899)), (json!("100"), json!("305"), json!("899")));

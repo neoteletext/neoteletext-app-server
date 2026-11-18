@@ -62,19 +62,6 @@ impl Named {
     }
 }
 
-/// PICK's type among the input extension events (the engine's REQ-6337).
-const PICK: u8 = 0x46;
-/// The farthest a pick's place lies from its drawing's origin, either way.
-const MAX_PICK_OFFSET: i32 = 1 << 20;
-/// A pick's place in the picture is below this on each axis.
-const MAX_PICK_POSITION: u32 = 1 << 16;
-
-/// `DRAWING_HOVER`'s type among the input extension events (the engine's
-/// REQ-6369).
-const DRAWING_HOVER: u8 = 0x47;
-/// `DRAWING_HOVER`'s flag: the pointer left the drawing.
-const DRAWING_HOVER_LEAVE: u8 = 1;
-
 /// The pointer came onto a detectable numbered drawing of a page drawn in
 /// ReGIS, or went off it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -87,21 +74,6 @@ pub struct DrawingHover {
     pub leave: bool,
     /// The commits applied to the picture on screen.
     pub commits: u32,
-}
-
-impl DrawingHover {
-    /// Reads `DRAWING_HOVER`'s payload: the stamp, the flags, the drawing
-    /// and the commit count's four bytes. `None` for anything the engine's
-    /// reader refuses; it is read here for the reason [`Pick::read`] gives.
-    fn read(payload: &[u8]) -> Option<Self> {
-        let mut reader = neoteletext_input::wire::Reader::new(payload);
-        let on = Stamp::new(u16::try_from(reader.uv().ok()?).ok()?, u16::try_from(reader.uv().ok()?).ok()?)?;
-        let flags = reader.byte().ok()?;
-        let drawing = u16::try_from(reader.uv().ok()?).ok()?;
-        let commits: [u8; 4] = reader.take(4).ok()?.try_into().ok()?;
-        let good = flags & !DRAWING_HOVER_LEAVE == 0 && drawing != 0 && reader.used() == payload.len();
-        good.then_some(Self { on, drawing, leave: flags & DRAWING_HOVER_LEAVE != 0, commits: u32::from_be_bytes(commits) })
-    }
 }
 
 /// What lay under a pointer on a page drawn in ReGIS.
@@ -121,28 +93,6 @@ pub struct Pick {
     pub picture_y: u32,
     /// The commits applied to the picture on screen.
     pub commits: u32,
-}
-
-impl Pick {
-    /// Reads PICK's payload: the stamp, the drawing, the place within it,
-    /// the place in the picture and the commit count's four bytes. `None`
-    /// for anything the engine's reader refuses; the engine this server is
-    /// pinned to predates PICK and gives it as an extension it does not
-    /// know, so it is read here.
-    fn read(payload: &[u8]) -> Option<Self> {
-        let mut reader = neoteletext_input::wire::Reader::new(payload);
-        let on = Stamp::new(u16::try_from(reader.uv().ok()?).ok()?, u16::try_from(reader.uv().ok()?).ok()?)?;
-        let drawing = u16::try_from(reader.uv().ok()?).ok()?;
-        let (x, y) = (reader.sv().ok()?, reader.sv().ok()?);
-        let (picture_x, picture_y) = (reader.uv().ok()?, reader.uv().ok()?);
-        let commits: [u8; 4] = reader.take(4).ok()?.try_into().ok()?;
-        let within = x.checked_abs().is_some_and(|x| x <= MAX_PICK_OFFSET)
-            && y.checked_abs().is_some_and(|y| y <= MAX_PICK_OFFSET)
-            && picture_x < MAX_PICK_POSITION
-            && picture_y < MAX_PICK_POSITION;
-        let placed = drawing != 0 || (x, y) == (0, 0);
-        (within && placed && reader.used() == payload.len()).then_some(Self { on, drawing, x, y, picture_x, picture_y, commits: u32::from_be_bytes(commits) })
-    }
 }
 
 /// One thing the viewer did on the page.
@@ -260,10 +210,37 @@ impl<'a> Input<'a> {
             Item::Event(Event::Compose { cursor, text, .. }) => Some(Self::Compose { cursor, text }),
             Item::Event(Event::FocusIn) => Some(Self::FocusIn),
             Item::Event(Event::FocusOut) => Some(Self::FocusOut),
-            Item::Event(Event::Extension { kind: PICK, payload }) => Pick::read(payload).map(Self::Pick),
-            Item::Event(Event::Extension { kind: DRAWING_HOVER, payload }) => DrawingHover::read(payload).map(Self::DrawingHover),
+            // The engine reads PICK and DRAWING_HOVER, each checked against
+            // its bounds (its REQ-6337, REQ-6369).
+            Item::Event(Event::Pick(pick)) => Some(Self::Pick(Pick {
+                on: pick.on,
+                drawing: pick.drawing,
+                x: pick.x,
+                y: pick.y,
+                picture_x: pick.picture_x,
+                picture_y: pick.picture_y,
+                commits: pick.commits,
+            })),
+            Item::Event(Event::DrawingHover { on, leave, drawing, commits }) => Some(Self::DrawingHover(DrawingHover { on, drawing, leave, commits })),
             Item::Event(_) => None,
         }
+    }
+
+    /// Whether this is the viewer acting, which a state request needs
+    /// (VS-212, the design's term "gesture": a key, a click, typed text):
+    /// a key's press, text, a paste, a button's press or a finger's touch.
+    /// A move, the wheel, hover and focus are not: they happen without the
+    /// viewer meaning anything by them.
+    #[must_use]
+    pub const fn is_gesture(&self) -> bool {
+        matches!(
+            *self,
+            Self::Key { action: Action::Press, .. }
+                | Self::Text(_)
+                | Self::Paste(_)
+                | Self::Mouse { pressed: true, .. }
+                | Self::Touch { action: EventMouseAction::Press, .. }
+        )
     }
 
     /// Whether this is a press (or a repeat) of `key`.
@@ -301,9 +278,8 @@ pub(crate) fn stamp(item: &Item<'_>) -> Option<Stamp> {
         Event::Mouse(mouse) => Some(mouse.on),
         Event::Wheel(wheel) => Some(wheel.on),
         Event::Touch(touch) => Some(touch.on),
-        Event::Paste { on, .. } | Event::Compose { on, .. } | Event::Hover { on, .. } => Some(*on),
-        Event::Extension { kind: PICK, payload } => Pick::read(payload).map(|pick| pick.on),
-        Event::Extension { kind: DRAWING_HOVER, payload } => DrawingHover::read(payload).map(|hover| hover.on),
+        Event::Paste { on, .. } | Event::Compose { on, .. } | Event::Hover { on, .. } | Event::DrawingHover { on, .. } => Some(*on),
+        Event::Pick(pick) => Some(pick.on),
         _ => None,
     }
 }

@@ -15,12 +15,12 @@ fn a_refused_line_applies_nothing() {
         address: "http://127.0.0.1/test/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let mut channel = Channel::new(config);
+    let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
-    channel.opened(1, 1, Vec::new(), 0);
+    channel.opened(1, None, 0);
     let _ = channel.take_effects();
     let page = json!({"type": "page", "connections": "all", "page": subpage()});
     let bad: Vec<Vec<u8>> = [
