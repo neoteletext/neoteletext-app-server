@@ -198,7 +198,10 @@ pub(crate) fn lift(family: Family, timed: &mut Vec<Timed>, live: bool) -> Result
                         format!("MIDI-58, MIDI-51: a bank dump at tick {} comes after the first note on, or in a live sound", event.tick),
                     ));
                 }
-                match groups.iter_mut().find(|(kept, _)| *kept == group) {
+                // SRV-63: the synth53 family's program dumps of one group make
+                // one bank; every other family's dump is a bank of its own.
+                let joined = if family == Family::Synth53 { groups.iter_mut().find(|(kept, _)| *kept == group) } else { None };
+                match joined {
                     Some((_, dumps)) => dumps.push(bytes.clone()),
                     None => groups.push((group, alloc::vec![bytes.clone()])),
                 }

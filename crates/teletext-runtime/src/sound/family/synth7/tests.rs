@@ -111,3 +111,16 @@ fn a_bank_of_one_voice_is_a_whole_dump() {
     assert_eq!(part_of(after), None);
     assert!(check_bank(&image[..4_103]).is_err());
 }
+
+/// SRV-63: two 32-voice dumps before the first note are lifted as two
+/// banks, each a bank of its own, not joined into one image.
+#[test]
+fn each_lifted_dump_is_a_bank_of_its_own() {
+    let bank: Synth7Bank = serde_json::from_value(json!({"form": "patches", "patches": [voice()]})).unwrap();
+    let image = Synth7Family::bank_image(synth(), &bank).unwrap();
+    let dump = |tick| crate::sound::synth::Timed { tick, wire: Wire::Sysex(image[1..].to_vec()), path: String::new(), hint: None };
+    let mut timed = alloc::vec![dump(0), dump(1)];
+    let banks = crate::sound::synth::lift(crate::sound::family::Family::Synth7, &mut timed, false).unwrap();
+    assert_eq!(banks, [alloc::vec![image[1..].to_vec()], alloc::vec![image[1..].to_vec()]]);
+    assert!(timed.is_empty());
+}
