@@ -151,11 +151,7 @@ pub(crate) fn place_synth6581(events: &[Synth6581Event], at: &str, out: &mut Vec
 /// block 0 (SRV-25).
 pub(crate) fn check_opening(events: &[Synth6581Event], at: &str) -> Result<(), Refused> {
     let first = events.first().ok_or_else(|| refuse(at, Rule::NoOpeningUpdate, "S6581-45: the sound opens with a full register update at tick 0"))?;
-    let update = match first {
-        Synth6581Event::RegisterUpdate(update) => Some(update),
-        Synth6581Event::Asid(_) => None,
-    };
-    if tick_of(first.time_us()) != 0 || !super::family::synth6581::is_full_update(update) {
+    if tick_of(first.time_us()) != 0 || !super::family::synth6581::is_full_update(first) {
         return Err(refuse(format!("{at}[0]"), Rule::NoOpeningUpdate, "S6581-45, S6581-50: the first event is a full register update (IDs 0 to 24) at tick 0"));
     }
     Ok(())

@@ -388,13 +388,7 @@ impl Sounds {
                 let mut timed = Vec::new();
                 synth::place_synth6581(&events.events, "events", &mut timed)?;
                 let first = events.events.first();
-                let opening = first.map(|first| {
-                    let update = match first {
-                        Synth6581Event::RegisterUpdate(update) => Some(update),
-                        Synth6581Event::Asid(_) => None,
-                    };
-                    synth::tick_of(first.time_us()) == 0 && family::synth6581::is_full_update(update)
-                });
+                let opening = first.map(|first| synth::tick_of(first.time_us()) == 0 && family::synth6581::is_full_update(first));
                 let firsts = (first.map(Synth6581Event::time_us), opening);
                 self.synths.events(live_kind_of(kind), events.handle, events.generation, events.until_us.get(), timed, firsts, targets, now)
             }
