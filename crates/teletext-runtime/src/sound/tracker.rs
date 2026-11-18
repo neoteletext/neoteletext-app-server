@@ -18,7 +18,6 @@ use super::wire::Wire;
 /// alone would leave the state right but restate it otherwise (SRV-68).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TrackHint {
-    #[expect(dead_code, reason = "written by synth80's call site, which a following commit gives the engine's interface")]
     /// The message ends a synth80 inline patch of this patch: restated as
     /// the patch, not as 85 controllers moved (S80-40, S80-46).
     Synth80Patch(Box<synth80::interface::Patch>),
