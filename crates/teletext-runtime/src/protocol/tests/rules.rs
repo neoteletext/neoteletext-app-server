@@ -357,7 +357,7 @@ fn a_groups_sprites_and_objects_are_the_records_sent_directly() {
 const ROW_SETS: &str = r#"{"type":"rules","connections":"all","page":"101","sub":"0001","table":{"rows":{"zeta":[60,62,64],"alpha":[1,2],"mid":[{"physical":"a"},{"physical":"s"}]},"groups":[{"name":"g","commands":[{"type":"report"}]}],"rules":[{"name":"z","rows":"zeta","on":{"event":"press","target":{"object":{"plus":10,"row":"p"}}},"run":"g"},{"name":"a","rows":"alpha","on":{"event":"press","target":{"object":{"plus":20,"row":"p"}}},"do":[{"type":"report"}]},{"name":"m","rows":"mid","on":{"event":"key","keys":[{"char":"q"},{"char":"w"}],"by_row":true},"run":"g"}]}}"#;
 /// Its image as the engine's own reader of the program protocol's JSON,
 /// `neottx rules-run`'s (`crates/neoteletext-cli/src/rules_json.rs` at the
-/// pinned engine commit 33d90896), writes it: the rows of `alpha`, then of
+/// engine commits 33d90896 and 24b6a96a), writes it: the rows of `alpha`, then of
 /// `mid`, then of `zeta` (TODO-6649 step 4).
 const ROW_SETS_BY_THE_ENGINE: &str = "020000070302000000240000000000010000000200000061000000730000003c0000003e0000004001000403010382000aff00010100020103820014ff00010002020101020000020100000071010000007700011f00000d01010001000000000000000000011f00000d01010001000000000000000000";
 
