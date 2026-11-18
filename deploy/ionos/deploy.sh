@@ -220,7 +220,7 @@ User=ubuntu
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # What survives a restart (teletext-server requirement 5.2), in /var/lib/neoteletext.
 StateDirectory=neoteletext
-ExecStart=$app/bin/teletext-server --listen 127.0.0.1:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464
+ExecStart=$app/bin/teletext-server --listen 127.0.0.1:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 127.0.0.1
 Restart=on-failure
 # The server stops within 10 s of SIGTERM (requirement 5.1).
 TimeoutStopSec=15

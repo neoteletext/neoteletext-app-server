@@ -48,7 +48,13 @@ http://neottx.com:8080, http://neoteletext.com:8080, http://www.neoteletext.com:
 # The NeoTeletext server, its origin app.neottx.com: its channels' files and
 # their push WebSockets, which must be on the channel's own origin.
 http://app.neottx.com:8080 {
-	reverse_proxy 127.0.0.1:8090
+	# The server keys its per-address limits on the viewer's address, which
+	# it takes from this header only from its trusted proxy, this Caddy.
+	# {client_ip} is the address the front proxy vouches for
+	# (trusted_proxies above), never one a client wrote itself.
+	reverse_proxy 127.0.0.1:8090 {
+		header_up X-Forwarded-For {client_ip}
+	}
 }
 
 # The server's first name goes to its origin.
