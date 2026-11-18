@@ -24,27 +24,27 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false, features = ["tti", "alloc", "write-text"] }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false, features = ["tti", "alloc", "write-text"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
 # The instruments' interfaces, which the server checks every block, patch
 # and bank with, so that the encoder and the receiver's checks are one
 # implementation (server.md SRV-87, SRV-88; MIDI-21). Only the feature
 # `interface`, every family's messages, patch packer and check, bank image
 # and restatement tracker, with no synthesis code: the server never plays
 # a sound.
-neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false, features = ["interface"] }
+neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false, features = ["interface"] }
 # A public page's picture (REQ-1728 item 4).
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
 # The page rule table's codec and checks (page-rules.md RULE-56, RULE-59):
 # the server encodes each table with the crate every receiver decodes it
 # with, and checks what it encoded with that crate's decoder.
-neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
-neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "b3edee3f940d35ea5690ad4dc73798f6af252740", default-features = false }
+neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
+neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33d9089610d1ee2d920dd26d42fb22388c97e709", default-features = false }
 # The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
 # a program's ReGIS is checked with the receiver's own code before it is
 # sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
