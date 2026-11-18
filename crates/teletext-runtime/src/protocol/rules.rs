@@ -2195,6 +2195,46 @@ pub struct NaplpsObjectsCommand {
     pub one: bool,
 }
 
+/// `regis_links` in a group (renderer parity PAR-20, RULE-119): replaces
+/// the links of the page's ReGIS picture, as the message does, in one
+/// whole `DRAWING_LINKS` record held to `MAX_COMMAND_BYTES`.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisLinksCommand {
+    /// The links, each drawing named once.
+    #[schemars(length(max = super::MOST_DRAWING_LINKS))]
+    pub links: Vec<super::DrawingLink>,
+}
+
+/// `regis_cursor` in a group (PAR-20, RULE-119): the drawing that is the
+/// page's cursor, or 0 for none, as the message gives it.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisCursorCommand {
+    /// The drawing, or 0 for no cursor.
+    pub drawing: u16,
+}
+
+/// `naplps_links` in a group (PAR-20, RULE-119): replaces the links of the
+/// page's NAPLPS picture, as the message does, in one whole
+/// `DRAWING_LINKS` record held to `MAX_COMMAND_BYTES`.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NaplpsLinksCommand {
+    /// The links, each object named once.
+    #[schemars(length(max = super::MOST_DRAWING_LINKS))]
+    pub links: Vec<super::ObjectLink>,
+}
+
+/// `naplps_cursor` in a group (PAR-20, RULE-119): the object that is the
+/// page's cursor, or 0 for none, as the message gives it.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NaplpsCursorCommand {
+    /// The object, or 0 for no cursor.
+    pub object: u16,
+}
+
 /// A command of a group (RULE-35, RULE-118, RULE-119), by `type`: a
 /// program message without its `connections`, `page` and `sub`, which the
 /// table supplies.
@@ -2212,6 +2252,14 @@ pub enum RuleCommand {
     Sprites(SpritesCommand),
     /// The page's NAPLPS objects.
     NaplpsObjects(NaplpsObjectsCommand),
+    /// The links of the page's ReGIS picture (PAR-20).
+    RegisLinks(RegisLinksCommand),
+    /// The cursor of the page's ReGIS picture (PAR-20).
+    RegisCursor(RegisCursorCommand),
+    /// The links of the page's NAPLPS picture (PAR-20).
+    NaplpsLinks(NaplpsLinksCommand),
+    /// The cursor of the page's NAPLPS picture (PAR-20).
+    NaplpsCursor(NaplpsCursorCommand),
     /// A variable changed.
     Variable(VariableCommand),
     /// A timer started or stopped.
@@ -2226,7 +2274,22 @@ pub enum RuleCommand {
 
 /// The message types a group may hold (RULE-119); any other is
 /// `invalid_group`.
-const COMMAND_TYPES: [&str; 10] = ["sound", "local_midi", "animate", "sprites", "naplps_objects", "variable", "timer", "report", "run", "sequence"];
+const COMMAND_TYPES: [&str; 14] = [
+    "sound",
+    "local_midi",
+    "animate",
+    "sprites",
+    "naplps_objects",
+    "regis_links",
+    "regis_cursor",
+    "naplps_links",
+    "naplps_cursor",
+    "variable",
+    "timer",
+    "report",
+    "run",
+    "sequence",
+];
 
 impl<'de> Deserialize<'de> for RuleCommand {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -2237,6 +2300,10 @@ impl<'de> Deserialize<'de> for RuleCommand {
                 "animate" => Self::Animate(typed(object, "")?),
                 "sprites" => Self::Sprites(typed(object, "")?),
                 "naplps_objects" => Self::NaplpsObjects(typed(object, "")?),
+                "regis_links" => Self::RegisLinks(typed(object, "")?),
+                "regis_cursor" => Self::RegisCursor(typed(object, "")?),
+                "naplps_links" => Self::NaplpsLinks(typed(object, "")?),
+                "naplps_cursor" => Self::NaplpsCursor(typed(object, "")?),
                 "variable" => Self::Variable(typed(object, "")?),
                 "timer" => Self::Timer(typed(object, "")?),
                 "report" => Self::Report(typed(object, "")?),

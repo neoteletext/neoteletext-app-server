@@ -784,6 +784,20 @@ impl Scope<'_> {
                     fault(&path.field(field), Rule::InvalidGroup, detail)
                 })?,
             ),
+            // A picture's links and cursor (PAR-20, RULE-119): the body the
+            // message sends directly, its links one whole sending, part 0
+            // of 1; the table's check reads it with the record's reader and
+            // holds it to MAX_COMMAND_BYTES.
+            RuleCommand::RegisLinks(links) => {
+                let numbered: Vec<(u16, &str)> = links.links.iter().map(|link| (link.drawing, link.target.as_str())).collect();
+                (command::TYPE_DRAWING_LINKS, self.links_body(path, &numbered, "drawing")?)
+            }
+            RuleCommand::NaplpsLinks(links) => {
+                let numbered: Vec<(u16, &str)> = links.links.iter().map(|link| (link.object, link.target.as_str())).collect();
+                (command::TYPE_DRAWING_LINKS, self.links_body(path, &numbered, "object")?)
+            }
+            RuleCommand::RegisCursor(cursor) => (command::TYPE_REGIS_CURSOR, crate::records::regis_cursor_body(self.page, self.sub, cursor.drawing)),
+            RuleCommand::NaplpsCursor(cursor) => (command::TYPE_REGIS_CURSOR, crate::records::regis_cursor_body(self.page, self.sub, cursor.object)),
             RuleCommand::Variable(variable) => (command::TYPE_VARIABLE, self.encoded(path, &self.variable(path, variable, place)?)?),
             RuleCommand::Timer(timer) => {
                 (command::TYPE_TIMER, self.encoded(path, &Command::Timer { start: timer.op == StartStop::Start, timer: timer.timer.0 })?)
@@ -804,6 +818,16 @@ impl Scope<'_> {
         };
         command::check_bindings(kind, &body, &binder.bindings).map_err(|refused| engine_fault(path, refused))?;
         Ok(Built { kind, body, bindings: binder.bindings })
+    }
+
+    /// A group's `regis_links` or `naplps_links` (PAR-20) as one whole
+    /// `DRAWING_LINKS` body, its links checked as the message's are and
+    /// refused as a group's command (`invalid_group`).
+    fn links_body(&self, path: &Path<'_>, links: &[(u16, &str)], field: &'static str) -> Result<Vec<u8>, Fault> {
+        super::check_picture_links(&path.field("links"), links, field, Rule::InvalidGroup)?;
+        let links: Vec<crate::protocol::DrawingLink> =
+            links.iter().map(|&(drawing, target)| crate::protocol::DrawingLink { drawing, target: String::from(target) }).collect();
+        crate::records::drawing_links_body(self.page, self.sub, 0, 1, &links).map_err(|detail| fault(&path.field("links"), Rule::InvalidGroup, detail))
     }
 
     /// A list of a group's commands.

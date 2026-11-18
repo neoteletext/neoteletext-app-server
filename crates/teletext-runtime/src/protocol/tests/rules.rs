@@ -475,3 +475,87 @@ fn a_groups_naplps_objects_take_labels_a_title_and_one() {
     let titled = json!({"type":"naplps_objects","objects":[vector_object(100, None)],"one":true,"title":"Jukebox"});
     refused(&one_rule(&json!([titled])), "table.rules[0].do[0].title", Rule::InvalidGroup);
 }
+
+/// The bodies of the records in `packets`, reassembled from their
+/// fragments, each with its type.
+fn record_bodies(packets: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut record: Vec<u8> = Vec::new();
+    for bytes in packets.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0 {
+        let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&neoteletext_core::packet::Packet { bytes: *bytes }) else { continue };
+        if fragment.index == 0 {
+            record.clear();
+        }
+        record.extend_from_slice(&fragment.data);
+        if fragment.last {
+            let length = neoteletext_audio::record::framed_length(&record).unwrap();
+            let (kind, body) = neoteletext_audio::record::split(&record[..length]).unwrap();
+            found.push((kind, body.to_vec()));
+        }
+    }
+    found
+}
+
+/// Renderer parity PAR-20, RULE-119, RULE-35 (REQ-6767, TODO-6795): a
+/// group's `regis_links`, `regis_cursor`, `naplps_links` and
+/// `naplps_cursor` are the bodies the engine's own writers give the
+/// `DRAWING_LINKS` and `REGIS_CURSOR` records sent directly, with the
+/// table's page and sub-code, the links one whole sending; the table is
+/// accepted by the engine's check of every receiver.
+#[test]
+fn a_groups_picture_links_and_cursor_are_the_records_sent_directly() {
+    use neoteletext_web::records::{drawing_links, regis_cursor};
+    let page = neoteletext_core::types::PageAddress::from_mpp(0x101).unwrap();
+    let subcode = neoteletext_core::types::SubCode::new(1);
+    let commands = json!([
+        {"type":"regis_links","links":[{"drawing":3,"target":"300"},{"drawing":4,"target":"web:https://example.com/"}]},
+        {"type":"regis_cursor","drawing":3},
+        {"type":"naplps_links","links":[{"object":7,"target":"200"}]},
+        {"type":"naplps_cursor","object":7},
+    ]);
+    let table = compiled(&one_rule(&commands)).unwrap_or_else(|refusal| panic!("{refusal}"));
+    let image = table.image();
+    let engine_links = |links: &[(u16, &str)]| {
+        let links: Vec<drawing_links::DrawingLink<'_>> =
+            links.iter().map(|&(drawing, target)| drawing_links::DrawingLink { drawing, target: target.as_bytes() }).collect();
+        let mut packets = Vec::new();
+        drawing_links::encode(page, subcode, &links, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        record_bodies(&packets)
+    };
+    let engine_cursor = |drawing: u16| {
+        let mut packets = Vec::new();
+        regis_cursor::encode(regis_cursor::RegisCursorRecord { page, subcode, drawing }, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        record_bodies(&packets)
+    };
+    let expected = [engine_links(&[(3, "300"), (4, "web:https://example.com/")]), engine_cursor(3), engine_links(&[(7, "200")]), engine_cursor(7)];
+    for bodies in &expected {
+        assert_eq!(bodies.len(), 1, "one whole sending");
+        let (_, body) = &bodies[0];
+        assert!(image.windows(body.len()).any(|window| window == body.as_slice()), "the group holds the body {body:02x?}");
+    }
+    let read = drawing_links::read(&expected[2][0].1).unwrap();
+    assert_eq!((read.part, read.parts), (0, 1));
+    assert_eq!(read.links().map(|link| (link.drawing, link.target)).collect::<Vec<_>>(), [(7, b"200".as_slice())]);
+    // The message sent directly writes the same bodies.
+    let ProgramMessage::NaplpsCursor(direct) = accepted(&json!({"type":"naplps_cursor","connections":"all","page":"101","sub":"0001","object":7})) else {
+        panic!("not naplps_cursor")
+    };
+    let sent = crate::records::regis_cursor(direct.page.0, direct.sub.0, direct.object, &mut 0).unwrap();
+    assert_eq!(record_bodies(&sent), expected[3]);
+}
+
+/// PAR-20: a group's picture links are checked as the message's are and
+/// refused as a group's command; links over the command limit are refused
+/// by the engine's check (`MAX_COMMAND_BYTES`, RULE-119), and any other
+/// command type is still no command a group may hold.
+#[test]
+fn a_groups_picture_links_are_refused_as_the_message_refuses_them() {
+    let refused_at = |command: Value, path: &str| refused(&one_rule(&json!([command])), path, Rule::InvalidGroup);
+    refused_at(json!({"type":"naplps_links","links":[{"object":0,"target":"200"}]}), "table.rules[0].do[0].links[0].object");
+    refused_at(json!({"type":"regis_links","links":[{"drawing":2,"target":"200"},{"drawing":2,"target":"201"}]}), "table.rules[0].do[0].links[1].drawing");
+    refused_at(json!({"type":"naplps_links","links":[{"object":1,"target":"not a target"}]}), "table.rules[0].do[0].links[0].target");
+    let many: Vec<Value> = (1..=20).map(|object| json!({"object":object,"target":"web:https://example.com/a/long/address"})).collect();
+    let over = read(&line(&one_rule(&json!([{"type":"naplps_links","links":many}])))).map(|_| ()).unwrap_err();
+    assert!(over.detail.contains("MAX_COMMAND_BYTES"), "{over}");
+    refused_at(json!({"type":"regis","data":"AA=="}), "table.rules[0].do[0].type");
+}

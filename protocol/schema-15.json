@@ -10164,6 +10164,96 @@
         },
         {
           "additionalProperties": false,
+          "description": "The links of the page's ReGIS picture (PAR-20).",
+          "properties": {
+            "links": {
+              "description": "The links, each drawing named once.",
+              "items": {
+                "$ref": "#/$defs/DrawingLink"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "type": {
+              "const": "regis_links",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "links"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The cursor of the page's ReGIS picture (PAR-20).",
+          "properties": {
+            "drawing": {
+              "description": "The drawing, or 0 for no cursor.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "regis_cursor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "drawing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The links of the page's NAPLPS picture (PAR-20).",
+          "properties": {
+            "links": {
+              "description": "The links, each object named once.",
+              "items": {
+                "$ref": "#/$defs/ObjectLink"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "type": {
+              "const": "naplps_links",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "links"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The cursor of the page's NAPLPS picture (PAR-20).",
+          "properties": {
+            "object": {
+              "description": "The object, or 0 for no cursor.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "naplps_cursor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "object"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A variable changed.",
           "properties": {
             "high": {

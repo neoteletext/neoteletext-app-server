@@ -156,15 +156,7 @@ pub(crate) fn drawing_links(page: u16, sub: u16, links: &[crate::protocol::Drawi
     let count = u8::try_from(parts.len()).map_err(|_| String::from("more DRAWING_LINKS records than a sub-page may have"))?;
     let mut bytes = Vec::new();
     for (part, now) in (0_u8..).zip(parts) {
-        let mut body = Vec::new();
-        body.extend_from_slice(&page.to_be_bytes());
-        body.extend_from_slice(&sub.to_be_bytes());
-        body.extend_from_slice(&[part, count, u8::try_from(now.len()).map_err(|_| String::new())?]);
-        for link in now {
-            body.extend_from_slice(&link.drawing.to_be_bytes());
-            body.extend_from_slice(&u16::try_from(link.target.len()).map_err(|_| String::new())?.to_be_bytes());
-            body.extend_from_slice(link.target.as_bytes());
-        }
+        let body = drawing_links_body(page, sub, part, count, now)?;
         let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_DRAWING_LINKS, &body, SERVICE, *record_id, &mut |packet| {
             bytes.extend_from_slice(&packet.bytes);
         });
@@ -174,14 +166,38 @@ pub(crate) fn drawing_links(page: u16, sub: u16, links: &[crate::protocol::Drawi
     Ok(bytes)
 }
 
+/// The body of one `DRAWING_LINKS` record (the engine's REQ-6370): page,
+/// sub-code, part, parts, the count of links, then each link's drawing or
+/// object, its target's length and its target. A rule table's group holds
+/// part 0 of 1 (RULE-119, renderer parity PAR-20).
+pub(crate) fn drawing_links_body(page: u16, sub: u16, part: u8, parts: u8, links: &[crate::protocol::DrawingLink]) -> Result<Vec<u8>, Refused> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&page.to_be_bytes());
+    body.extend_from_slice(&sub.to_be_bytes());
+    body.extend_from_slice(&[part, parts, u8::try_from(links.len()).map_err(|_| String::from("more drawing links than a record counts"))?]);
+    for link in links {
+        body.extend_from_slice(&link.drawing.to_be_bytes());
+        body.extend_from_slice(&u16::try_from(link.target.len()).map_err(|_| String::from("a link target over 65,535 bytes"))?.to_be_bytes());
+        body.extend_from_slice(link.target.as_bytes());
+    }
+    Ok(body)
+}
+
+/// The body of a `REGIS_CURSOR` record (the engine's REQ-6371): page,
+/// sub-code and the drawing or object, 0 for none.
+pub(crate) fn regis_cursor_body(page: u16, sub: u16, drawing: u16) -> Vec<u8> {
+    let mut body = Vec::with_capacity(neoteletext_web::records::regis_cursor::BYTES);
+    body.extend_from_slice(&page.to_be_bytes());
+    body.extend_from_slice(&sub.to_be_bytes());
+    body.extend_from_slice(&drawing.to_be_bytes());
+    body
+}
+
 /// A sub-page's cursor drawing as a `REGIS_CURSOR` record (the engine's
 /// REQ-6371): page, sub-code and drawing, written here for the reason
 /// [`drawing_links`] gives.
 pub(crate) fn regis_cursor(page: u16, sub: u16, drawing: u16, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&page.to_be_bytes());
-    body.extend_from_slice(&sub.to_be_bytes());
-    body.extend_from_slice(&drawing.to_be_bytes());
+    let body = regis_cursor_body(page, sub, drawing);
     let mut bytes = Vec::new();
     let written = neoteletext_web::records::write_packets(crate::protocol::check::TYPE_REGIS_CURSOR, &body, SERVICE, *record_id, &mut |packet| {
         bytes.extend_from_slice(&packet.bytes);

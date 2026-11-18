@@ -1068,20 +1068,28 @@ fn check_picture_bytes(root: &Path<'_>, data: Option<&super::Base64>, parts: Opt
 fn check_naplps_links(root: &Path<'_>, links: &super::NaplpsLinks) -> Checked {
     check_audience(&root.field("connections"), &links.connections)?;
     check_shown_subpage(root, links.sub)?;
-    let path = root.field("links");
-    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidNaplpsLinks, detail));
-    if links.links.len() > super::MOST_DRAWING_LINKS {
-        return refuse(&path, format!("{} links, at most {}", links.links.len(), super::MOST_DRAWING_LINKS));
+    let numbered: Vec<(u16, &str)> = links.links.iter().map(|link| (link.object, link.target.as_str())).collect();
+    check_picture_links(&root.field("links"), &numbered, "object", Rule::InvalidNaplpsLinks)
+}
+
+/// A picture's links (REQ-6370, PAR-20), each `(number, target)`: at most
+/// `MOST_DRAWING_LINKS`, each number 1 to 65,535 named once, each target
+/// one the TTI reader's parser takes. `field` names the number's field,
+/// `drawing` or `object`; a fault is refused with `rule`.
+pub(super) fn check_picture_links(path: &Path<'_>, links: &[(u16, &str)], field: &'static str, rule: Rule) -> Checked {
+    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, rule, detail));
+    if links.len() > super::MOST_DRAWING_LINKS {
+        return refuse(path, format!("{} links, at most {}", links.len(), super::MOST_DRAWING_LINKS));
     }
-    for (index, link) in links.links.iter().enumerate() {
+    for (index, &(number, target)) in links.iter().enumerate() {
         let item = path.item(index);
-        if link.object == 0 {
-            return refuse(&item.field("object"), "object numbers are 1 to 65,535".to_string());
+        if number == 0 {
+            return refuse(&item.field(field), format!("{field} numbers are 1 to 65,535"));
         }
-        if links.links.iter().take(index).any(|earlier| earlier.object == link.object) {
-            return refuse(&item.field("object"), format!("object {} is named twice", link.object));
+        if links.iter().take(index).any(|&(earlier, _)| earlier == number) {
+            return refuse(&item.field(field), format!("{field} {number} is named twice"));
         }
-        if !is_drawing_link_target(&link.target) {
+        if !is_drawing_link_target(target) {
             return refuse(&item.field("target"), "not a link target: a page, a page of another service, an address or web: and a web address".to_string());
         }
     }
@@ -1134,24 +1142,8 @@ fn is_drawing_link_target(target: &str) -> bool {
 fn check_regis_links(root: &Path<'_>, links: &super::RegisLinks) -> Checked {
     check_audience(&root.field("connections"), &links.connections)?;
     check_shown_subpage(root, links.sub)?;
-    let path = root.field("links");
-    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidDrawingLinks, detail));
-    if links.links.len() > super::MOST_DRAWING_LINKS {
-        return refuse(&path, format!("{} links, at most {}", links.links.len(), super::MOST_DRAWING_LINKS));
-    }
-    for (index, link) in links.links.iter().enumerate() {
-        let item = path.item(index);
-        if link.drawing == 0 {
-            return refuse(&item.field("drawing"), "drawing numbers are 1 to 65,535".to_string());
-        }
-        if links.links.iter().take(index).any(|earlier| earlier.drawing == link.drawing) {
-            return refuse(&item.field("drawing"), format!("drawing {} is named twice", link.drawing));
-        }
-        if !is_drawing_link_target(&link.target) {
-            return refuse(&item.field("target"), "not a link target: a page, a page of another service, an address or web: and a web address".to_string());
-        }
-    }
-    Ok(())
+    let numbered: Vec<(u16, &str)> = links.links.iter().map(|link| (link.drawing, link.target.as_str())).collect();
+    check_picture_links(&root.field("links"), &numbered, "drawing", Rule::InvalidDrawingLinks)
 }
 
 /// The record type of a sub-page's ReGIS (the engine's REQ-6336), which
