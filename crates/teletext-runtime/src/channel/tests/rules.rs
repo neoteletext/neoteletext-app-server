@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_core::consts::PACKET_BYTES;
-use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Point, Stamp};
+use neoteletext_input::event::{Action, Device, Event, Item, Mouse, MouseAction, Point, Stamp};
 use neoteletext_input::rules::{FaultCode, PageStateEvent, RuleBody, RuleEvent, RulesFault};
 use neoteletext_rules::limits::NO_RULE;
 use neoteletext_rules::table::Target;
@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 
 use super::super::rules::{STATE_ANSWER_LIMIT_MS, STATE_QUERY_INTERVAL_MS};
 use super::{
-    ACKNOWLEDGEMENT_WAIT_MS, ANY, CONNECTION, Channel, ChannelConfig, DEFAULT_RULE_NAMES, DefaultRules, Effect, InitialPage, ON, all_sent_to, bare, channel,
-    hello, inputs, line, message, record_types, rules_sent, select, selected, sent_to, subpage, told, with,
+    ACKNOWLEDGEMENT_WAIT_MS, ANY, CONNECTION, Channel, ChannelConfig, DEFAULT_RULE_NAMES, DefaultRules, Effect, FIRST_SELECTION_WAIT_MS, InitialPage, ON,
+    all_sent_to, bare, channel, hello, inputs, key, line, message, record_types, rules_sent, select, selected, sent_to, subpage, told, with,
 };
 
 /// The default table of `page` and `sub` as the engine builds it, with the
@@ -195,6 +195,16 @@ const VECTORS: Stamp = Stamp { page: 0x101, sub: 1 };
 /// A channel of `default_rules`, with the connection welcomed and told to
 /// its program, and nothing selected.
 fn channel_of(default_rules: DefaultRules) -> Channel {
+    let mut channel = channel_of_opened(default_rules);
+    channel.received(CONNECTION, &bare(&[hello(), select(0, ANY)]), 0);
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
+    let _ = channel.take_effects();
+    channel
+}
+
+/// A channel of `default_rules` with its program running and the
+/// connection just opened.
+fn channel_of_opened(default_rules: DefaultRules) -> Channel {
     let config = ChannelConfig {
         name: "Test".into(),
         address: "http://127.0.0.1/test/".into(),
@@ -207,8 +217,6 @@ fn channel_of(default_rules: DefaultRules) -> Channel {
     let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     channel.opened(CONNECTION, None, 0);
-    channel.received(CONNECTION, &bare(&[hello(), select(0, ANY)]), 0);
-    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
     let _ = channel.take_effects();
     channel
 }
@@ -635,4 +643,89 @@ fn a_page_the_reply_selects_has_its_record_first() {
     let first_rules = sent.chunks(PACKET_BYTES).position(is_rules).expect("the page's record");
     let first_row = sent.chunks(PACKET_BYTES).position(is_page).expect("the page");
     assert!(first_rules < first_row, "the record at packet {first_rules}, the page's first packet at {first_row}");
+}
+
+/// A channel of `default_rules` whose connection said HELLO, answered the
+/// opening challenge with no key and sent no SELECT, as `neottx view` at a
+/// channel's bare address does: once the wait for a first selection is
+/// over, its program is told `connected` with no selection, meaning the
+/// channel's initial page (REQ-1471).
+fn connected_with_no_selection(default_rules: DefaultRules) -> Channel {
+    let mut channel = channel_of_opened(default_rules);
+    let none = Item::Event(Event::StateNone(neoteletext_input::state::NoneReason::NoKey));
+    channel.received(CONNECTION, &bare(&[hello(), none]), 0);
+    channel.deadline(FIRST_SELECTION_WAIT_MS);
+    let connected: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "connected").collect();
+    assert_eq!(connected.len(), 1, "{connected:?}");
+    assert_eq!(connected[0]["selection"], Value::Null);
+    channel
+}
+
+/// The reply to `connected` that gives the connection page 100, sub-code
+/// 0000, the channel's initial page.
+fn initial_reply() -> Vec<u8> {
+    let magazines = json!([{"magazine": 1, "name": "Test", "pages": [{"page": "100", "subpages": 1, "title": "Home", "section": null}]}]);
+    line(&json!({"type": "reply", "connection": CONNECTION, "request": 1, "magazines": magazines, "selected": subpage()}))
+}
+
+/// RULE-40, RULE-112, REQ-1471 (REQ-6532, TODO-6710): a connection that
+/// selected nothing is placed on the channel's initial page, so the table
+/// its program sends for that page and sub-code from its answer to
+/// `connected`, before its `reply`, reaches it, at generation 1 and before
+/// the page; the page then brings no other record, and a key the table's
+/// rule reports reaches the program by that rule's name. Whatever the
+/// channel's default: with `send_all` the program's table, not the
+/// default, is in force.
+#[test]
+fn a_table_before_the_reply_reaches_a_connection_that_selected_nothing() {
+    for default_rules in [DefaultRules::None, DefaultRules::SendAll] {
+        let mut channel = connected_with_no_selection(default_rules);
+        channel.from_program(&flash_table("100", "0000"), 1);
+        channel.from_program(&initial_reply(), 1);
+        let effects = channel.take_effects();
+        assert_eq!(refusals(&effects), [] as [Value; 0], "{default_rules:?}");
+        let sent = rules_sent(&effects, CONNECTION);
+        assert_eq!(sent.len(), 1, "{default_rules:?}: one record, the program's: {sent:?}");
+        assert_eq!((sent[0].0, sent[0].1, sent[0].2), (0x100, 0, 1), "{default_rules:?}");
+        let default = crate::rules::Compiled::send_all(false, 0x100, 0).unwrap().image().to_vec();
+        assert!(sent[0].3.as_ref().is_some_and(|image| *image != default), "{default_rules:?}: the program's table, not none and not the default");
+        let bytes = all_sent_to(&effects, CONNECTION);
+        let is_rules = |packet: &[u8]| record_types(packet) == [neoteletext_web::records::TYPE_RULES];
+        let is_page = |packet: &[u8]| {
+            let packet = neoteletext_core::packet::Packet { bytes: packet.try_into().unwrap() };
+            neoteletext_audio::idl::fragment(&packet).is_none()
+        };
+        let first_rules = bytes.chunks(PACKET_BYTES).position(is_rules).expect("the table");
+        let first_row = bytes.chunks(PACKET_BYTES).position(is_page).expect("the page");
+        assert!(first_rules < first_row, "{default_rules:?}: the table at packet {first_rules}, the page at {first_row}");
+        channel.received(CONNECTION, &message(&channel, CONNECTION, &[key(ON, Action::Press, false)]), 2);
+        let lines = inputs(&channel.take_effects());
+        assert_eq!(lines.iter().map(|line| line["rule"].clone()).collect::<Vec<_>>(), [json!("typed")], "{default_rules:?}: {lines:?}");
+    }
+}
+
+/// RULE-40, RULE-53 (REQ-6532, TODO-6710): a connection that selected
+/// nothing and whose program sends no table is given, with the reply's
+/// page and before it, the channel's default table on a `send_all`
+/// channel, and the record that says the page has none otherwise, keyed on
+/// the page and sub-code the reply placed it on.
+#[test]
+fn a_connection_that_selected_nothing_is_sent_the_initial_pages_default() {
+    for (default_rules, has_table) in [(DefaultRules::SendAll, true), (DefaultRules::None, false)] {
+        let mut channel = connected_with_no_selection(default_rules);
+        channel.from_program(&initial_reply(), 1);
+        let sent = rules_sent(&channel.take_effects(), CONNECTION);
+        let default = has_table.then(|| crate::rules::Compiled::send_all(false, 0x100, 0).unwrap().image().to_vec());
+        assert_eq!(sent, [(0x100, 0, 1, default)], "{default_rules:?}");
+    }
+}
+
+/// RULE-112 (REQ-6532, TODO-6710): a connection that selected nothing is
+/// placed on the initial page alone: a table the program sends before its
+/// reply for another page is not sent to it.
+#[test]
+fn a_connection_that_selected_nothing_is_sent_no_other_pages_table() {
+    let mut channel = connected_with_no_selection(DefaultRules::None);
+    channel.from_program(&flash_table("200", "0000"), 1);
+    assert_eq!(rules_sent(&channel.take_effects(), CONNECTION), []);
 }

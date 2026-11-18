@@ -513,6 +513,13 @@ impl Connection {
     fn shows(&self, page: u16, sub: u16) -> bool {
         self.selection.is_some_and(|selection| selection.page.0 == page && (selection.sub.0 == sub || selection.sub == ANY_SUBPAGE))
     }
+
+    /// Whether, having selected nothing, it awaits the program's reply to
+    /// `connected`: a page selection of the channel's initial page
+    /// (REQ-1471), which the reply's sub-page will make its selection.
+    const fn awaits_initial_page(&self) -> bool {
+        self.announced && !self.replied && self.selection.is_none()
+    }
 }
 
 /// One channel's state.
@@ -1522,8 +1529,21 @@ impl Channel {
 
     /// The connections named whose selection shows a sub-page: who what a
     /// program says of that sub-page's picture goes to.
+    ///
+    /// A connection that selected nothing and awaits the reply to
+    /// `connected` shows the channel's initial page with 3F7F (REQ-1471), so
+    /// that what the program sends of that page before its `reply`, its
+    /// rule table above all, reaches it: the table goes before the page
+    /// (RULE-40), keyed on the page and sub-code the program names
+    /// (RULE-112), and the reply's sub-page then finds it in place.
     fn showing(&self, connections: &Connections, page: u16, sub: u16) -> Vec<ConnectionId> {
-        self.targets(connections).into_iter().filter(|connection| self.connections.get(connection).is_some_and(|state| state.shows(page, sub))).collect()
+        let initial = self.config.initial_page.page().0;
+        self.targets(connections)
+            .into_iter()
+            .filter(|connection| {
+                self.connections.get(connection).is_some_and(|state| state.shows(page, sub) || (state.awaits_initial_page() && page == initial))
+            })
+            .collect()
     }
 
     /// `naplps`: bytes of a sub-page's NAPLPS, to the connections named
