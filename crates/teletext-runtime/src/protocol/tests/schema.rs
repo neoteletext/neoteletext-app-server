@@ -45,3 +45,90 @@ fn bytes_are_marked_base64() {
     let text = serde_json::to_string(&schema).unwrap();
     assert_eq!(text.matches("\"contentEncoding\":").count(), 1);
 }
+
+/// The names of definition `name`: a message's `type` for the two message
+/// unions, the value itself for a closed list.
+fn names(schema: &serde_json::Value, name: &str) -> alloc::vec::Vec<alloc::string::String> {
+    let definition = &schema["$defs"][name];
+    if let Some(values) = definition["enum"].as_array() {
+        return values.iter().map(|value| value.as_str().unwrap().into()).collect();
+    }
+    definition["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| variant["properties"]["type"]["const"].as_str().or_else(|| variant["const"].as_str()).unwrap().into())
+        .collect()
+}
+
+/// SRV-2: one protocol 13 holds viewer state's messages (VS-351 to VS-353)
+/// and the synthesizers' (SRV-47, SRV-48, SRV-51), no name twice in any of
+/// the program's and the server's messages, the kinds and the rules, and
+/// none of the synthesizers' names among viewer state's.
+#[test]
+fn viewer_state_and_the_synthesizers_share_one_protocol() {
+    let schema = schema();
+    for list in ["ProgramMessage", "ServerMessage", "SoundKind", "Rule", "MessageType"] {
+        let all = names(&schema, list);
+        let once: alloc::collections::BTreeSet<&str> = all.iter().map(alloc::string::String::as_str).collect();
+        assert_eq!(once.len(), all.len(), "{list} names one twice: {all:?}");
+    }
+    let viewer_state: [(&str, &[&str]); 3] = [
+        ("ServerMessage", &["gone", "viewer_began", "viewer_left", "state_refused", "viewers_reset"]),
+        ("ProgramMessage", &["request_state", "end_state", "offer_remember"]),
+        ("Rule", &["has_viewer", "no_gesture", "unknown_viewer"]),
+    ];
+    let synthesizers: [(&str, &[&str]); 2] = [
+        ("ServerMessage", &["sound_built"]),
+        (
+            "Rule",
+            &[
+                "not_taken",
+                "never_carried",
+                "malformed_midi",
+                "running_status",
+                "system_exclusive_too_long",
+                "block_full",
+                "no_room_to_restate",
+                "beyond_length",
+                "late_event",
+                "not_before_until",
+                "until_moved_back",
+                "advance_too_far",
+                "unknown_live_sound",
+                "live_sound_changed",
+                "no_opening_update",
+                "invalid_patch",
+                "invalid_bank",
+                "unknown_bank",
+                "wrong_family",
+                "too_many_banks",
+                "bank_dump_after_note",
+                "bank_not_named",
+                "midi_file_unsupported",
+                "midi_file_malformed",
+                "midi_file_too_large",
+            ],
+        ),
+    ];
+    for (list, expected) in viewer_state.iter().chain(&synthesizers) {
+        let all = names(&schema, list);
+        for name in *expected {
+            assert!(all.iter().any(|held| held == name), "{list} lacks {name}");
+        }
+    }
+    for (list, ours) in &synthesizers {
+        for (theirs_list, theirs) in &viewer_state {
+            if list == theirs_list {
+                assert!(ours.iter().all(|name| !theirs.contains(name)), "{list}: a synthesizer name is viewer state's");
+            }
+        }
+    }
+    // SRV-48: `refused` names the sound it concerns; it is not a viewer
+    // state field.
+    let server = &schema["$defs"]["ServerMessage"]["oneOf"];
+    let refused = server.as_array().unwrap().iter().find(|variant| variant["properties"]["type"]["const"] == "refused").unwrap();
+    assert!(refused["properties"].get("sound").is_some(), "refused carries sound");
+    // SRV-2: 2^53 - 1, the largest integer every JSON reader holds exactly.
+    assert_eq!(super::super::SAFE_INTEGER_LIMIT, 9_007_199_254_740_991);
+}
