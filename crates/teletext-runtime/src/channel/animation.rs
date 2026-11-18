@@ -279,7 +279,7 @@ impl Channel {
                 self.timeline_stop(&stop);
                 Ok(())
             }
-            _ => Ok(()),
+            other => self.act_on_picture(&other),
         }
     }
 
@@ -368,7 +368,10 @@ impl Channel {
     /// connection has of the page.
     fn naplps_objects(&mut self, message: &NaplpsObjects) -> Result<(), Refusal> {
         let (page, sub) = (message.page.0, message.sub.0);
-        for connection in self.showing(&message.connections, page, sub) {
+        let Some(connections) = message.connections.connections() else { return self.kept_naplps_objects(message) };
+        let targets = self.agreeing(connections, crate::kept::PictureLanguage::Naplps, page, sub);
+        self.undefined_macro_notes(&targets, message);
+        for connection in targets {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
             let generation = state.naplps_generation_for(page, sub);
             let bytes = animation::naplps_objects_record(page, sub, generation, message.into(), &mut state.record_id)

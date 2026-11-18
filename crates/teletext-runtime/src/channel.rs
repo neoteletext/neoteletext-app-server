@@ -24,7 +24,7 @@ use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
 use neoteletext_input::MAX_PER_SECOND;
-use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, Place};
 use neoteletext_input::event::{Action, Device, Event, Item, MouseAction, Stamp, read_message, units};
@@ -48,6 +48,7 @@ use crate::stats::{ChannelStats, count};
 use crate::viewer::{HandleSecret, RandomSource};
 
 mod animation;
+mod pictures;
 mod rules;
 mod viewers;
 
@@ -59,9 +60,11 @@ pub(crate) const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
 /// (DOC-1922): the cursor record, SELECT, the tab's selection
-/// (REQ-INT-140), and TOUCH, contacts after the first (REQ-1366). There are no modes to agree: every event is
+/// (REQ-INT-140), TOUCH, contacts after the first (REQ-1366), and the two
+/// picture languages, whose records go only to a receiver that agreed them
+/// (renderer parity PAR-1, PAR-24). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (DOC-1922).
-const USED: u32 = CURSOR_CAP | SELECT_CAP | TOUCH_CAP;
+const USED: u32 = CURSOR_CAP | SELECT_CAP | TOUCH_CAP | REGIS_CAP | NAPLPS_CAP;
 /// The move slot of the mouse, or of the first finger, which goes as MOUSE;
 /// a later contact's slot is its number, 1 and up (DEC-2137).
 const MOUSE_CONTACT: u8 = 0;
@@ -363,36 +366,13 @@ struct Connection {
     /// The sub-page list it holds of its selected page, and its version.
     list_held: Option<(u16, u16)>,
     /// The ReGIS it has been sent for the sub-page it shows (DEC-6335).
-    regis: Option<RegisStream>,
+    regis: Option<pictures::PictureStream>,
     /// The number of its last ReGIS stream: a new one takes the next.
     regis_generation: u16,
     /// Its stream of NAPLPS for the sub-page it shows, once one is begun
     /// (the NAPLPS renderer's REQ-6408 item 3), and its last one's number.
-    naplps: Option<NaplpsStream>,
+    naplps: Option<pictures::PictureStream>,
     naplps_generation: u16,
-}
-
-/// One connection's stream of NAPLPS for the sub-page it shows.
-struct NaplpsStream {
-    page: u16,
-    sub: u16,
-    generation: u16,
-    /// The bytes sent of it.
-    offset: u32,
-}
-
-/// One connection's stream of ReGIS for the sub-page it shows: what it has
-/// been sent, read by the receiver's own renderer, so that a commit it
-/// would refuse is refused here first (the ReGIS renderer's REQ-6332).
-struct RegisStream {
-    page: u16,
-    sub: u16,
-    generation: u16,
-    /// The bytes sent of it.
-    offset: u32,
-    validator: regis::Validator,
-    /// The bytes of the message being acted on were read and are to be sent.
-    pending: bool,
 }
 
 impl Connection {
@@ -428,65 +408,6 @@ impl Connection {
             naplps: None,
             naplps_generation: 0,
         }
-    }
-
-    /// Reads a `regis` message's bytes as its receiver will, starting the
-    /// sub-page's stream again when asked. A connection with no stream of
-    /// the sub-page is passed over until one is started.
-    ///
-    /// # Errors
-    /// What the receiver would refuse: a commit that fails, with its code.
-    fn read_regis(&mut self, page: u16, sub: u16, restart: bool, bytes: &[u8]) -> Result<(), String> {
-        if restart {
-            self.regis_generation = self.regis_generation.wrapping_add(1);
-            let generation = self.regis_generation;
-            // The page's sheet is fed to its renderer before the page's own
-            // stream (ANIM-17; a sheet is one page's, DEC-6599): it was
-            // read when it was given, so what it reports is not this
-            // message's.
-            let mut validator = regis::Validator::new();
-            let _ = validator.feed_regis(self.animation.regis_sheet(page, sub));
-            self.regis = Some(RegisStream { page, sub, generation, offset: 0, validator, pending: false });
-        }
-        let Some(stream) = self.regis.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(()) };
-        let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-        if stream.offset.checked_add(length).is_none() {
-            return Err(String::from("the sub-page's ReGIS passed 4,294,967,295 bytes; start it again"));
-        }
-        for event in stream.validator.feed_regis(bytes) {
-            if let regis::Event::CommitFailed { error, drawing } = event {
-                return Err(format!("a commit fails with code {} ({error:?}), drawing {drawing}", error.code()));
-            }
-        }
-        stream.pending = true;
-        Ok(())
-    }
-
-    /// The NAPLPS records of `bytes` for this connection: of a new stream
-    /// when `restart` begins one, else of the stream it has for the
-    /// sub-page, and nothing when it has none.
-    fn naplps_records(&mut self, page: u16, sub: u16, restart: bool, bytes: &[u8]) -> Result<Vec<u8>, records::Refused> {
-        if restart {
-            self.naplps_generation = self.naplps_generation.wrapping_add(1);
-            self.naplps = Some(NaplpsStream { page, sub, generation: self.naplps_generation, offset: 0 });
-        }
-        let Some(stream) = self.naplps.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(Vec::new()) };
-        let sent = records::naplps(stream.page, stream.sub, stream.generation, stream.offset, bytes, &mut self.record_id)?;
-        stream.offset = stream
-            .offset
-            .checked_add(u32::try_from(bytes.len()).unwrap_or(u32::MAX))
-            .ok_or_else(|| String::from("the sub-page's NAPLPS passed 4,294,967,295 bytes; start it again"))?;
-        Ok(sent)
-    }
-
-    /// The REGIS records of the bytes [`Connection::read_regis`] just read,
-    /// or nothing for a connection it passed over.
-    fn regis_records(&mut self, bytes: &[u8]) -> Result<Vec<u8>, records::Refused> {
-        let Some(stream) = self.regis.as_mut().filter(|stream| stream.pending) else { return Ok(Vec::new()) };
-        stream.pending = false;
-        let sent = records::regis(stream.page, stream.sub, stream.generation, stream.offset, bytes, &mut self.record_id)?;
-        stream.offset = stream.offset.saturating_add(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
-        Ok(sent)
     }
 
     /// The next record number, advanced.
@@ -551,6 +472,11 @@ pub struct Channel {
     default_wheel: Option<bool>,
     /// The timelines the server is playing (ANIM-21).
     timelines: animation::Timelines,
+    /// The pictures kept for their pages (PAR-16).
+    kept: crate::kept::KeptPictures,
+    /// The length of the program's line being acted on: a kept
+    /// companion's cost (PAR-17).
+    line_bytes: usize,
 }
 
 impl Channel {
@@ -590,6 +516,8 @@ impl Channel {
             stale_unreported: 0,
             stale_reported_at: None,
             descriptions: Descriptions::default(),
+            kept: crate::kept::KeptPictures::default(),
+            line_bytes: 0,
         }
     }
 
@@ -775,6 +703,9 @@ impl Channel {
         // drops the program's table; nothing is held for its return.
         self.timelines.clear();
         self.tables_dropped();
+        // PAR-17: kept pictures are dropped when the program ends; it
+        // sends them again when it starts.
+        self.kept.clear();
         self.program = false;
         self.answered = false;
         self.readiness_page = None;
@@ -1360,6 +1291,7 @@ impl Channel {
     /// (REQ-1475).
     pub fn from_program(&mut self, line: &[u8], now: u64) {
         count(&mut self.stats.lines_from_application);
+        self.line_bytes = line.len();
         let acted = protocol::read_reporting(line).and_then(|(message, replaced)| {
             for Replaced { page, character, stand_in, language } in replaced {
                 // REQ-2150 item 2: each replacement reported, once a page message and character.
@@ -1512,10 +1444,6 @@ impl Channel {
                 self.send_records(&targets, kind, None, |state| records::author_log(&line, &mut state.record_id))?;
             }
             ProgramMessage::Log(line) => self.log(operator_level(line.level), "program_log", format!("{}: {}", line.event, line.text)),
-            ProgramMessage::Regis(message) => self.regis(&message)?,
-            ProgramMessage::RegisLinks(message) => self.regis_links(&message)?,
-            ProgramMessage::RegisCursor(message) => self.regis_cursor(&message)?,
-            ProgramMessage::Naplps(message) => self.naplps(&message)?,
             ProgramMessage::Packets(packets) => {
                 let bytes: Arc<[u8]> = Arc::from(protocol::check::bytes_of(&packets.packets));
                 for connection in self.targets(&packets.connections) {
@@ -1544,59 +1472,6 @@ impl Channel {
                 self.connections.get(connection).is_some_and(|state| state.shows(page, sub) || (state.awaits_initial_page() && page == initial))
             })
             .collect()
-    }
-
-    /// `naplps`: bytes of a sub-page's NAPLPS, to the connections named
-    /// that show it (the NAPLPS renderer's REQ-6408 item 3).
-    fn naplps(&mut self, message: &protocol::Naplps) -> Result<(), Refusal> {
-        let bytes = protocol::check::bytes_of(&message.data);
-        let (page, sub, restart) = (message.page.0, message.sub.0, message.restart);
-        let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::Naplps, Some(page), |state| state.naplps_records(page, sub, restart, &bytes))
-    }
-
-    /// `regis_links`: a sub-page's drawing links, to the connections named
-    /// that show it (REQ-6372).
-    fn regis_links(&mut self, message: &protocol::RegisLinks) -> Result<(), Refusal> {
-        let (page, sub) = (message.page.0, message.sub.0);
-        let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::RegisLinks, Some(page), |state| {
-            records::drawing_links(page, sub, &message.links, &mut state.record_id)
-        })
-    }
-
-    /// `regis_cursor`: a sub-page's cursor drawing, to the connections
-    /// named that show it (REQ-6372).
-    fn regis_cursor(&mut self, message: &protocol::RegisCursor) -> Result<(), Refusal> {
-        let (page, sub) = (message.page.0, message.sub.0);
-        let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::RegisCursor, Some(page), |state| {
-            records::regis_cursor(page, sub, message.drawing, &mut state.record_id)
-        })
-    }
-
-    /// `regis`: more of a sub-page's ReGIS, to the connections named that
-    /// show it (DEC-6335). It is read for every one of them before any is
-    /// sent; one that would refuse a commit refuses the message, and the
-    /// streams of all its targets, which read it, are started again.
-    fn regis(&mut self, message: &protocol::Regis) -> Result<(), Refusal> {
-        let kind = protocol::MessageType::Regis;
-        let bytes = protocol::check::bytes_of(&message.data);
-        let (page, sub) = (message.page.0, message.sub.0);
-        let targets = self.showing(&message.connections, page, sub);
-        let read = targets.iter().try_for_each(|connection| match self.connections.get_mut(connection) {
-            Some(state) => state.read_regis(page, sub, message.restart, &bytes),
-            None => Ok(()),
-        });
-        if let Err(detail) = read {
-            for connection in &targets {
-                if let Some(state) = self.connections.get_mut(connection) {
-                    state.regis = None;
-                }
-            }
-            return Err(Refusal { message: Some(kind), path: "data".to_string(), rule: Rule::InvalidRegis, detail });
-        }
-        self.send_records(&targets, kind, Some(page), |state| state.regis_records(&bytes))
     }
 
     /// `reply`, the answer to `connected` (REQ-1471).
@@ -1703,6 +1578,7 @@ impl Channel {
         let (number, sub) = (page.page.0, page.sub.0);
         let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
         let mut faults: Vec<String> = Vec::new();
+        let mut pending_kept: Vec<ConnectionId> = Vec::new();
         for &connection in targets {
             let answers = request.is_none_or(|request| self.is_current(connection, request));
             let Some(state) = self.connections.get_mut(&connection) else { continue };
@@ -1741,7 +1617,12 @@ impl Channel {
                     sends.push((connection, bytes));
                     continue;
                 }
-                Change::Whole => bytes.extend_from_slice(&encoded.packets.concat()),
+                Change::Whole => {
+                    bytes.extend_from_slice(&encoded.packets.concat());
+                    // PAR-18: a kept picture of the sub-page right after the
+                    // frame that shows it.
+                    pending_kept.push(connection);
+                }
                 Change::Rows(rows) => bytes.extend_from_slice(&rows),
             }
             count(&mut self.stats.pages_sent);
@@ -1760,7 +1641,10 @@ impl Channel {
         for fault in faults {
             self.log(Level::Error, "links_refused", format!("{number:03X}/{sub:04X}: the engine refused its links: {fault}"));
         }
-        for (connection, bytes) in sends {
+        for (connection, mut bytes) in sends {
+            if pending_kept.contains(&connection) {
+                bytes.extend_from_slice(&self.kept_opening(connection, number, sub));
+            }
             self.send_for_page(connection, number, bytes);
         }
     }

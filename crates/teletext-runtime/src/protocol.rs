@@ -28,6 +28,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 mod animation;
 pub mod check;
+mod picture;
 mod read;
 mod rules;
 mod sound;
@@ -35,6 +36,7 @@ pub mod viewer;
 
 pub use animation::*;
 pub use check::Refusal;
+pub use picture::*;
 pub use read::{read, read_reporting, request_of};
 pub use rules::*;
 pub use sound::*;
@@ -84,6 +86,15 @@ pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefus
 /// (REQ-6523); `sound` gains the local sounds, `synth7_local` to
 /// `synth80_local`; and a program sends `frame`, `animate`, `sprites`,
 /// `naplps_objects`, `sprite_sheet`, `timeline` and `timeline_stop`.
+/// Version 15 gained, without a raise, renderer parity's additions
+/// (neoteletext-common `docs/renderer-parity.md` sections 7 to 10,
+/// DEC-6760 item 3): the audience `"kept"` on the seven picture messages,
+/// `naplps_links`, `naplps_cursor`, `forget_picture`,
+/// `measure_picture_text`, `parts` on `regis` and `naplps`, and
+/// `description.picture`. Each is something a program sends, and the
+/// server's one new message, `measured_picture_text`, and the new refusal
+/// rules answer only those, so a program written for version 15 before
+/// them never meets anything new.
 pub const PROTOCOL: u32 = 15;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
@@ -404,6 +415,8 @@ pub enum ServerMessage {
     Measured(Measured),
     /// A stored synthesizer sound was built and sent (server.md SRV-47).
     SoundBuilt(SoundBuilt),
+    /// The answer to `measure_picture_text` (PAR-22).
+    MeasuredPictureText(MeasuredPictureText),
 }
 
 impl ServerMessage {
@@ -422,7 +435,14 @@ impl ServerMessage {
             | Self::ViewerLeft(ViewerLeft { connection })
             | Self::StateRefused(StateRefused { connection, .. }) => Some(*connection),
             Self::PageState(state) => Some(state.connection),
-            Self::Start(_) | Self::ViewersReset(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) | Self::SoundBuilt(_) => None,
+            Self::Start(_)
+            | Self::ViewersReset(_)
+            | Self::Stats(_)
+            | Self::Refused(_)
+            | Self::Describe(_)
+            | Self::Measured(_)
+            | Self::SoundBuilt(_)
+            | Self::MeasuredPictureText(_) => None,
         }
     }
 }
@@ -1141,6 +1161,10 @@ pub enum MessageType {
     Run,
     Sequence,
     ObjectPage,
+    NaplpsLinks,
+    NaplpsCursor,
+    ForgetPicture,
+    MeasurePictureText,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1349,6 +1373,22 @@ pub enum Rule {
     SheetTooLarge,
     /// A seventeenth timeline playing for a page.
     TooManyTimelines,
+    /// A kept picture over a bound of what is kept (PAR-17), whose detail
+    /// names the constant and its value.
+    KeptOverLimit,
+    /// A kept picture of one language given bytes of the other without
+    /// `restart` (PAR-16).
+    WrongPictureLanguage,
+    /// `forget_picture`, or a description's picture, naming a page and
+    /// sub-code with nothing kept (PAR-19, PAR-26).
+    NotKept,
+    /// NAPLPS that a receiver's reader would refuse (PAR-23), whose detail
+    /// names the refusal and its offset.
+    InvalidNaplps,
+    /// NAPLPS links a receiver would refuse (PAR-20).
+    InvalidNaplpsLinks,
+    /// A `parts` list outside its bounds (PAR-21).
+    InvalidPictureParts,
 }
 
 // ------------------------------------------------------- program to server
@@ -1436,6 +1476,14 @@ pub enum ProgramMessage {
     Sequence(SequenceMessage),
     /// A teletext object page a page's sprites use (ANIM-17).
     ObjectPage(Box<ObjectPage>),
+    /// The objects of a sub-page's NAPLPS picture that are links (PAR-20).
+    NaplpsLinks(NaplpsLinks),
+    /// The object that is a NAPLPS sub-page's cursor (PAR-20).
+    NaplpsCursor(NaplpsCursor),
+    /// Drops a kept picture (PAR-19).
+    ForgetPicture(ForgetPicture),
+    /// Asks what a text part costs, sending it to no viewer (PAR-22).
+    MeasurePictureText(MeasurePictureText),
 }
 
 impl ProgramMessage {
@@ -1478,6 +1526,10 @@ impl ProgramMessage {
             Self::Run(_) => MessageType::Run,
             Self::Sequence(_) => MessageType::Sequence,
             Self::ObjectPage(_) => MessageType::ObjectPage,
+            Self::NaplpsLinks(_) => MessageType::NaplpsLinks,
+            Self::NaplpsCursor(_) => MessageType::NaplpsCursor,
+            Self::ForgetPicture(_) => MessageType::ForgetPicture,
+            Self::MeasurePictureText(_) => MessageType::MeasurePictureText,
         }
     }
 
@@ -1690,6 +1742,10 @@ pub struct Description {
     /// The sub-page its picture shows, for a public page.
     #[serde(default)]
     pub content: Option<Box<Page>>,
+    /// A ReGIS or NAPLPS picture shown in place of `content`'s, for a
+    /// public page (PAR-26): the kept picture of a sub-code, or bytes.
+    #[serde(default)]
+    pub picture: Option<DescriptionPicture>,
 }
 
 /// What DENIED carries (DOC-1961).
@@ -2134,11 +2190,16 @@ pub enum OperatorLevel {
 /// to it, and is not sent to a connection that has no stream yet. The
 /// server reads the bytes with the receiver's own renderer first, and
 /// refuses the message if a commit in them would fail at the receiver.
+///
+/// Its bytes are `data`, or `parts` (exactly one of them, PAR-21), and
+/// `"kept"` keeps them for every connection that shows the sub-page now or
+/// later (PAR-16).
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = picture::data_or_parts)]
 pub struct Regis {
-    /// Who it is for.
-    pub connections: Connections,
+    /// Who it is for: connections, or `"kept"`.
+    pub connections: PictureAudience,
     /// The page.
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.
@@ -2149,7 +2210,12 @@ pub struct Regis {
     pub restart: bool,
     /// The bytes, exact base64: ReGIS commands as a terminal would receive
     /// them inside a device control string, without the string's framing.
-    pub data: Base64,
+    #[serde(default)]
+    pub data: Option<Base64>,
+    /// The bytes as parts, in place of `data` (PAR-21).
+    #[serde(default)]
+    #[schemars(with = "Option<picture::Parts>")]
+    pub parts: Option<Vec<PicturePart>>,
 }
 
 /// `naplps`: bytes of a sub-page's NAPLPS (ANSI X3.110-1983), the picture
@@ -2159,13 +2225,18 @@ pub struct Regis {
 /// one stream of NAPLPS for the sub-page it shows: `restart` begins it
 /// again, and a message without `restart` adds to it, drawing on over what
 /// is there, and is not sent to a connection that has no stream yet. The
-/// server does not read the bytes: the receiver's renderer bounds what
-/// they can cost.
+/// server reads the bytes with the receiver's own reader, `naplps::Validator`,
+/// and refuses a message that would make it refuse anything (PAR-23).
+///
+/// Its bytes are `data`, or `parts` (exactly one of them, PAR-21), and
+/// `"kept"` keeps them for every connection that shows the sub-page now or
+/// later (PAR-16).
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = picture::data_or_parts)]
 pub struct Naplps {
-    /// Who it is for.
-    pub connections: Connections,
+    /// Who it is for: connections, or `"kept"`.
+    pub connections: PictureAudience,
     /// The page.
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.
@@ -2175,7 +2246,12 @@ pub struct Naplps {
     #[serde(default)]
     pub restart: bool,
     /// The bytes, exact base64: NAPLPS as a terminal would receive it.
-    pub data: Base64,
+    #[serde(default)]
+    pub data: Option<Base64>,
+    /// The bytes as parts, in place of `data` (PAR-21).
+    #[serde(default)]
+    #[schemars(with = "Option<picture::Parts>")]
+    pub parts: Option<Vec<PicturePart>>,
 }
 
 /// The most drawing links a sub-page has (the engine's REQ-6370,
@@ -2190,8 +2266,8 @@ pub const MOST_DRAWING_LINKS: usize = 64;
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisLinks {
-    /// Who it is for.
-    pub connections: Connections,
+    /// Who it is for: connections, or `"kept"` (PAR-16).
+    pub connections: PictureAudience,
     /// The page.
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.
@@ -2222,8 +2298,8 @@ pub struct DrawingLink {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisCursor {
-    /// Who it is for.
-    pub connections: Connections,
+    /// Who it is for: connections, or `"kept"` (PAR-16).
+    pub connections: PictureAudience,
     /// The page.
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.
@@ -2291,7 +2367,9 @@ pub(crate) fn close_nested_branches(schema: &mut Schema) {
         let Some(branches) = message.get_mut("oneOf").and_then(serde_json::Value::as_array_mut) else {
             continue;
         };
-        for branch in branches.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+        // A branch of a union has properties; one that only says which
+        // field is required (`regis`'s `data` or `parts`) is no union's.
+        for branch in branches.iter_mut().filter_map(serde_json::Value::as_object_mut).filter(|branch| branch.contains_key("properties")) {
             if let Some(properties) = branch.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
                 let fields = core::mem::take(properties);
                 properties.extend(own.clone());

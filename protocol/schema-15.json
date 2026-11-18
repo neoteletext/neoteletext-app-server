@@ -1129,6 +1129,33 @@
       ],
       "type": "object"
     },
+    "DataPart": {
+      "additionalProperties": false,
+      "description": "A part of bytes.",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Base64",
+          "description": "The bytes, exact base64, as `data` takes them."
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "DescriptionPicture": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KeptPictureName",
+          "description": "The kept picture of the described page with this sub-code."
+        },
+        {
+          "$ref": "#/$defs/PictureBytes",
+          "description": "These bytes."
+        }
+      ],
+      "description": "`description.picture` (PAR-26): the public page's picture, drawn by\nthe server as the browser draws it."
+    },
     "Direction": {
       "description": "Which way a language is written.",
       "oneOf": [
@@ -1889,6 +1916,30 @@
           "type": "object"
         }
       ]
+    },
+    "Kept": {
+      "description": "`\"kept\"`.",
+      "oneOf": [
+        {
+          "const": "kept",
+          "description": "Kept for the page and sub-code, for every connection that shows it.",
+          "type": "string"
+        }
+      ]
+    },
+    "KeptPictureName": {
+      "additionalProperties": false,
+      "description": "`{\"kept\": \"0001\"}`.",
+      "properties": {
+        "kept": {
+          "$ref": "#/$defs/SubCode",
+          "description": "The sub-code of the described page whose kept picture is drawn."
+        }
+      },
+      "required": [
+        "kept"
+      ],
+      "type": "object"
     },
     "KeyAction": {
       "description": "What a key did.",
@@ -3025,7 +3076,11 @@
         "report",
         "run",
         "sequence",
-        "object_page"
+        "object_page",
+        "naplps_links",
+        "naplps_cursor",
+        "forget_picture",
+        "measure_picture_text"
       ],
       "type": "string"
     },
@@ -3320,6 +3375,30 @@
         "kind",
         "index",
         "triplets"
+      ],
+      "type": "object"
+    },
+    "ObjectLink": {
+      "additionalProperties": false,
+      "description": "One link of `naplps_links`.",
+      "properties": {
+        "object": {
+          "description": "The NAPLPS object that is the link (ANIM-11), 1 to 65,535.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "target": {
+          "description": "Where it leads, in any form a text link's target takes, as\n`regis_links`'s.",
+          "maxLength": 8004,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "object",
+        "target"
       ],
       "type": "object"
     },
@@ -3839,6 +3918,86 @@
           "type": "string"
         }
       ]
+    },
+    "PictureAudience": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Kept",
+          "description": "`\"kept\"`."
+        },
+        {
+          "$ref": "#/$defs/Connections",
+          "description": "The connections, as every other message names them."
+        }
+      ],
+      "description": "Who a picture message is for (PAR-16): what [`Connections`] takes, or\n`\"kept\"`, which keeps it for the page and sub-code named and sends it\nto every connection showing that page now or later, for as long as it\nis kept."
+    },
+    "PictureBytes": {
+      "additionalProperties": false,
+      "description": "A picture's bytes for a public page.",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Base64",
+          "description": "Its bytes, exact base64, at most 262,144 decoded."
+        },
+        "language": {
+          "$ref": "#/$defs/PictureLanguageName",
+          "description": "Its language."
+        },
+        "objects": {
+          "description": "For NAPLPS, its objects, of which the shown ones are composed; null\nfor none.",
+          "items": {
+            "$ref": "#/$defs/NaplpsObject"
+          },
+          "maxItems": 64,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "language",
+        "data"
+      ],
+      "type": "object"
+    },
+    "PictureLanguageName": {
+      "description": "A picture language (PAR-26).",
+      "oneOf": [
+        {
+          "const": "regis",
+          "description": "ReGIS, 800 by 480.",
+          "type": "string"
+        },
+        {
+          "const": "naplps",
+          "description": "NAPLPS on the 480 by 500 teletext raster.",
+          "type": "string"
+        }
+      ]
+    },
+    "PicturePart": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DataPart",
+          "description": "Bytes."
+        },
+        {
+          "$ref": "#/$defs/TextPart",
+          "description": "Text."
+        }
+      ],
+      "description": "One part of a `regis` or `naplps` message's bytes (PAR-21): bytes as\n`data` takes them, or Unicode text the server writes in the provided\ncharacter sets with the engine's encoder."
+    },
+    "PictureParts": {
+      "description": "The message's bytes as parts joined in order: bytes, or text the server writes in the provided character sets (renderer parity PAR-21).",
+      "items": {
+        "$ref": "#/$defs/PicturePart"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "type": "array"
     },
     "PointerProperty": {
       "description": "What `pointer` reads.",
@@ -7764,6 +7923,17 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page `describe` named."
             },
+            "picture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DescriptionPicture"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A ReGIS or NAPLPS picture shown in place of `content`'s, for a\npublic page (PAR-26): the kept picture of a sub-code, or bytes."
+            },
             "public": {
               "description": "Whether the page may be shown to anyone on the web.",
               "type": "boolean"
@@ -7830,18 +8000,49 @@
         {
           "additionalProperties": false,
           "description": "Bytes of a sub-page's ReGIS, drawn by a receiver's ReGIS renderer in\nplace of the sub-page's teletext page (DEC-6335).",
+          "oneOf": [
+            {
+              "required": [
+                "data"
+              ]
+            },
+            {
+              "required": [
+                "parts"
+              ]
+            }
+          ],
           "properties": {
             "connections": {
-              "$ref": "#/$defs/Connections",
-              "description": "Who it is for."
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for: connections, or `\"kept\"`."
             },
             "data": {
-              "$ref": "#/$defs/Base64",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Base64"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
               "description": "The bytes, exact base64: ReGIS commands as a terminal would receive\nthem inside a device control string, without the string's framing."
             },
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
+            },
+            "parts": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PictureParts"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The bytes as parts, in place of `data` (PAR-21)."
             },
             "restart": {
               "default": false,
@@ -7861,8 +8062,7 @@
             "type",
             "connections",
             "page",
-            "sub",
-            "data"
+            "sub"
           ],
           "type": "object"
         },
@@ -7871,8 +8071,8 @@
           "description": "The numbered drawings of a sub-page's ReGIS picture that are links\n(REQ-6372).",
           "properties": {
             "connections": {
-              "$ref": "#/$defs/Connections",
-              "description": "Who it is for."
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for: connections, or `\"kept\"` (PAR-16)."
             },
             "links": {
               "description": "The links, each drawing named once.",
@@ -7909,8 +8109,8 @@
           "description": "The numbered drawing that is a ReGIS sub-page's cursor (REQ-6372).",
           "properties": {
             "connections": {
-              "$ref": "#/$defs/Connections",
-              "description": "Who it is for."
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for: connections, or `\"kept\"` (PAR-16)."
             },
             "drawing": {
               "description": "The drawing, or 0 for no cursor.",
@@ -7944,18 +8144,49 @@
         {
           "additionalProperties": false,
           "description": "Bytes of a sub-page's NAPLPS, drawn by a receiver's NAPLPS renderer\nin place of the sub-page's teletext page (the NAPLPS renderer's\nREQ-6408 item 3).",
+          "oneOf": [
+            {
+              "required": [
+                "data"
+              ]
+            },
+            {
+              "required": [
+                "parts"
+              ]
+            }
+          ],
           "properties": {
             "connections": {
-              "$ref": "#/$defs/Connections",
-              "description": "Who it is for."
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for: connections, or `\"kept\"`."
             },
             "data": {
-              "$ref": "#/$defs/Base64",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Base64"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
               "description": "The bytes, exact base64: NAPLPS as a terminal would receive it."
             },
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
+            },
+            "parts": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PictureParts"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The bytes as parts, in place of `data` (PAR-21)."
             },
             "restart": {
               "default": false,
@@ -7975,8 +8206,7 @@
             "type",
             "connections",
             "page",
-            "sub",
-            "data"
+            "sub"
           ],
           "type": "object"
         },
@@ -8240,8 +8470,8 @@
           "description": "A sub-page's NAPLPS objects (ANIM-11).",
           "properties": {
             "connections": {
-              "$ref": "#/$defs/Connections",
-              "description": "Who it is for."
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for: connections, or `\"kept\"`, which keeps them with the\nsub-page's kept NAPLPS picture (renderer parity PAR-16)."
             },
             "objects": {
               "description": "The objects: exactly one with `one`.",
@@ -8746,6 +8976,151 @@
             "object"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The objects of a sub-page's NAPLPS picture that are links (PAR-20).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for."
+            },
+            "links": {
+              "description": "The links, each object named once.",
+              "items": {
+                "$ref": "#/$defs/ObjectLink"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "naplps_links",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "links"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The object that is a NAPLPS sub-page's cursor (PAR-20).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/PictureAudience",
+              "description": "Who it is for."
+            },
+            "object": {
+              "description": "The object, or 0 for no cursor.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "naplps_cursor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "object"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Drops a kept picture (PAR-19).",
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "forget_picture",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "page",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks what a text part costs, sending it to no viewer (PAR-22).",
+          "properties": {
+            "language": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LanguageTag"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Its language, a tag of `start.languages`; none for Latin English."
+            },
+            "outside": {
+              "default": false,
+              "description": "As a text part's `outside`.",
+              "type": "boolean"
+            },
+            "request": {
+              "description": "A number the program chooses, which the answer carries back.",
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "description": "The text, as a text part's.",
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "measure_picture_text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request",
+            "text"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -9240,6 +9615,36 @@
         {
           "const": "too_many_timelines",
           "description": "A seventeenth timeline playing for a page.",
+          "type": "string"
+        },
+        {
+          "const": "kept_over_limit",
+          "description": "A kept picture over a bound of what is kept (PAR-17), whose detail\nnames the constant and its value.",
+          "type": "string"
+        },
+        {
+          "const": "wrong_picture_language",
+          "description": "A kept picture of one language given bytes of the other without\n`restart` (PAR-16).",
+          "type": "string"
+        },
+        {
+          "const": "not_kept",
+          "description": "`forget_picture`, or a description's picture, naming a page and\nsub-code with nothing kept (PAR-19, PAR-26).",
+          "type": "string"
+        },
+        {
+          "const": "invalid_naplps",
+          "description": "NAPLPS that a receiver's reader would refuse (PAR-23), whose detail\nnames the refusal and its offset.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_naplps_links",
+          "description": "NAPLPS links a receiver would refuse (PAR-20).",
+          "type": "string"
+        },
+        {
+          "const": "invalid_picture_parts",
+          "description": "A `parts` list outside its bounds (PAR-21).",
           "type": "string"
         }
       ]
@@ -12247,6 +12652,64 @@
             "longest_block",
             "banks_lifted",
             "dropped"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The answer to `measure_picture_text` (PAR-22).",
+          "properties": {
+            "cells": {
+              "description": "The character cells the text advances; a mark takes none. Its width\nis this many times the character cell the picture sets.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "naplps_bytes": {
+              "description": "The bytes of its NAPLPS (PAR-5).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "regis_bytes": {
+              "description": "The bytes of its ReGIS (PAR-4).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request": {
+              "description": "`measure_picture_text`'s request number.",
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sets": {
+              "description": "The provided sets it uses, by the engine's names\n(`FONT_SETS`), in order of first use.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "stand_ins": {
+              "description": "The characters that became stand-ins.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "measured_picture_text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request",
+            "cells",
+            "regis_bytes",
+            "naplps_bytes",
+            "sets",
+            "stand_ins"
           ],
           "type": "object"
         }
@@ -29116,6 +29579,39 @@
         "column",
         "length",
         "target"
+      ],
+      "type": "object"
+    },
+    "TextPart": {
+      "additionalProperties": false,
+      "description": "A part of text (PAR-21): written in visual order in the language's own\nprovided sets and Latin English (PAR-3), as ReGIS alphabets 100 to 154\n(PAR-4) or NAPLPS designations of the provided sets (PAR-5).",
+      "properties": {
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageTag"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its language, a tag of `start.languages`; none for Latin English."
+        },
+        "outside": {
+          "default": false,
+          "description": "Whether the text came from outside the program: a character its\nlanguage cannot show becomes the language's stand-in rather than\nrefusing the message (DEC-2326). False when absent.",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "1 to 1,000 characters in Unicode normalisation form C, with no\ncontrol or bidirectional formatting character.",
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
       ],
       "type": "object"
     },

@@ -361,8 +361,9 @@ pub struct NaplpsObject {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NaplpsObjects {
-    /// Who it is for.
-    pub connections: Connections,
+    /// Who it is for: connections, or `"kept"`, which keeps them with the
+    /// sub-page's kept NAPLPS picture (renderer parity PAR-16).
+    pub connections: super::PictureAudience,
     /// The page.
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.

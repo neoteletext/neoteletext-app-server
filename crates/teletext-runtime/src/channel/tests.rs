@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
 use neoteletext_input::VERSION;
-use neoteletext_input::caps::{AGENT, ALL_CAPS, CURSOR_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{AGENT, ALL_CAPS, CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::cursor::TYPE_CURSOR;
 use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, Select, Stamp, write};
@@ -169,7 +169,9 @@ fn message(channel: &Channel, connection: u64, items: &[Item<'_>]) -> Vec<u8> {
 }
 
 fn hello() -> Item<'static> {
-    Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP, agent: None })
+    // A receiver that draws both picture languages (PAR-1), as the
+    // browser is; PAR-24's tests offer less.
+    Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP | REGIS_CAP | NAPLPS_CAP, agent: None })
 }
 
 fn select(page: u16, sub: u16) -> Item<'static> {

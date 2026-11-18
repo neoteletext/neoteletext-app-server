@@ -140,8 +140,14 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Naplps(naplps) => check_naplps(&root, naplps),
         ProgramMessage::RegisLinks(links) => check_regis_links(&root, links),
         ProgramMessage::RegisCursor(cursor) => {
-            check_connections(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
+            check_audience(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
         }
+        ProgramMessage::NaplpsLinks(links) => check_naplps_links(&root, links),
+        ProgramMessage::NaplpsCursor(cursor) => {
+            check_audience(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
+        }
+        ProgramMessage::ForgetPicture(forget) => check_shown_subpage(&root, forget.sub),
+        ProgramMessage::MeasurePictureText(measure) => check_text(&root.field("text"), &measure.text, 1, super::MOST_PART_CHARACTERS),
         // VS-352: a connection's number; a handle was read whole by its
         // type, and whether the channel holds it is the channel's to say.
         ProgramMessage::RequestState(super::RequestState { connection }) | ProgramMessage::OfferRemember(super::OfferRemember { connection }) => {
@@ -791,7 +797,13 @@ fn check_denied(root: &Path<'_>, denied: &Denied) -> Checked {
 /// named; a page that is not public gives nothing, so that nothing of it can
 /// be kept (REQ-1728 items 3 and 6).
 fn check_description(root: &Path<'_>, description: &Description) -> Checked {
-    let Description { page, public, title, text, content } = description;
+    let Description { page, public, title, text, content, picture } = description;
+    if !*public && picture.is_some() {
+        return Err(fault(&root.field("picture"), Rule::UnknownField, "a page that is not public gives nothing".to_string()));
+    }
+    if let Some(picture) = picture {
+        check_description_picture(&root.field("picture"), *page, picture)?;
+    }
     let present = [("title", title.is_some()), ("text", text.is_some()), ("content", content.is_some())];
     if !*public {
         return present
@@ -964,7 +976,7 @@ fn check_sprites(root: &Path<'_>, sprites: &super::Sprites) -> Checked {
 /// object's number once, a macro object's frames and a region's none, and
 /// a record the engine's reader takes (animation.md ANIM-11, ANIM-21).
 fn check_naplps_objects(root: &Path<'_>, objects: &super::NaplpsObjects) -> Checked {
-    check_connections(&root.field("connections"), &objects.connections)?;
+    check_audience(&root.field("connections"), &objects.connections)?;
     check_shown_subpage(root, objects.sub)?;
     let path = root.field("objects");
     let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidNaplpsObjects, detail));
@@ -994,7 +1006,7 @@ fn check_naplps_objects(root: &Path<'_>, objects: &super::NaplpsObjects) -> Chec
 
 /// The most ReGIS one message may carry: a megabyte, a quarter of all the
 /// contents a receiver's numbered drawings may hold.
-const MOST_REGIS_BYTES: usize = 1024 * 1024;
+pub(crate) const MOST_REGIS_BYTES: usize = 1024 * 1024;
 
 /// A message about one sub-page's picture names that sub-page.
 fn check_shown_subpage(root: &Path<'_>, sub: super::SubCode) -> Checked {
@@ -1005,17 +1017,109 @@ fn check_shown_subpage(root: &Path<'_>, sub: super::SubCode) -> Checked {
 }
 
 fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
-    check_connections(&root.field("connections"), &regis.connections)?;
+    check_audience(&root.field("connections"), &regis.connections)?;
     check_shown_subpage(root, regis.sub)?;
-    check_base64(&root.field("data"), &regis.data, MOST_REGIS_BYTES).map(|_| ())
+    check_picture_bytes(root, regis.data.as_ref(), regis.parts.as_deref())
 }
 
 /// `naplps`: who it is for, a sub-page that can be shown, and at most as
 /// many bytes as a `regis` message may carry.
 fn check_naplps(root: &Path<'_>, naplps: &super::Naplps) -> Checked {
-    check_connections(&root.field("connections"), &naplps.connections)?;
+    check_audience(&root.field("connections"), &naplps.connections)?;
     check_shown_subpage(root, naplps.sub)?;
-    check_base64(&root.field("data"), &naplps.data, MOST_REGIS_BYTES).map(|_| ())
+    check_picture_bytes(root, naplps.data.as_ref(), naplps.parts.as_deref())
+}
+
+/// A picture message's audience (PAR-16): `"kept"`, or connections as
+/// every message names them.
+fn check_audience(path: &Path<'_>, audience: &super::PictureAudience) -> Checked {
+    audience.connections().map_or(Ok(()), |connections| check_connections(path, connections))
+}
+
+/// A picture message's bytes (PAR-21): exactly one of `data` and `parts`;
+/// `parts` 1 to `MOST_PICTURE_PARTS` long, each part's bytes as `data`'s
+/// and each text 1 to `MOST_PART_CHARACTERS` characters in normalisation
+/// form C with no control or bidirectional formatting character. What a
+/// text part's language shows is the encoder's to say (`text.rs`).
+fn check_picture_bytes(root: &Path<'_>, data: Option<&super::Base64>, parts: Option<&[super::PicturePart]>) -> Checked {
+    match (data, parts) {
+        (None, None) => Err(fault(&root.field("data"), Rule::MissingField, "a picture message gives `data` or `parts`".to_string())),
+        (Some(_), Some(_)) => Err(fault(&root.field("parts"), Rule::DuplicateField, "a picture message gives `data` or `parts`, not both".to_string())),
+        (Some(data), None) => check_base64(&root.field("data"), data, MOST_REGIS_BYTES).map(|_| ()),
+        (None, Some(parts)) => {
+            let path = root.field("parts");
+            if parts.is_empty() || parts.len() > super::MOST_PICTURE_PARTS {
+                return Err(fault(&path, Rule::InvalidPictureParts, format!("{} parts, 1 to MOST_PICTURE_PARTS ({})", parts.len(), super::MOST_PICTURE_PARTS)));
+            }
+            for (index, part) in parts.iter().enumerate() {
+                let at = path.item(index);
+                match part {
+                    super::PicturePart::Data(part) => check_base64(&at.field("data"), &part.data, MOST_REGIS_BYTES).map(|_| ())?,
+                    super::PicturePart::Text(part) => check_text(&at.field("text"), &part.text, 1, super::MOST_PART_CHARACTERS)?,
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `naplps_links` (PAR-20): as `regis_links`, of objects, refused with
+/// `invalid_naplps_links`.
+fn check_naplps_links(root: &Path<'_>, links: &super::NaplpsLinks) -> Checked {
+    check_audience(&root.field("connections"), &links.connections)?;
+    check_shown_subpage(root, links.sub)?;
+    let path = root.field("links");
+    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidNaplpsLinks, detail));
+    if links.links.len() > super::MOST_DRAWING_LINKS {
+        return refuse(&path, format!("{} links, at most {}", links.links.len(), super::MOST_DRAWING_LINKS));
+    }
+    for (index, link) in links.links.iter().enumerate() {
+        let item = path.item(index);
+        if link.object == 0 {
+            return refuse(&item.field("object"), "object numbers are 1 to 65,535".to_string());
+        }
+        if links.links.iter().take(index).any(|earlier| earlier.object == link.object) {
+            return refuse(&item.field("object"), format!("object {} is named twice", link.object));
+        }
+        if !is_drawing_link_target(&link.target) {
+            return refuse(&item.field("target"), "not a link target: a page, a page of another service, an address or web: and a web address".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// A description's picture (PAR-26): a sub-code that names a sub-page, or
+/// at most `MOST_DESCRIPTION_PICTURE_BYTES` of bytes with, for NAPLPS
+/// only, objects that `naplps_objects` would take.
+fn check_description_picture(path: &Path<'_>, page: super::PageNumber, picture: &super::DescriptionPicture) -> Checked {
+    match picture {
+        super::DescriptionPicture::Kept(kept) => {
+            if kept.kept == super::ANY_SUBPAGE {
+                return Err(fault(&path.field("kept"), Rule::OutOfRange, "3F7F names no sub-page".to_string()));
+            }
+            Ok(())
+        }
+        super::DescriptionPicture::Bytes(bytes) => {
+            let decoded = check_base64(&path.field("data"), &bytes.data, super::MOST_DESCRIPTION_PICTURE_BYTES)?;
+            if decoded.len() > super::MOST_DESCRIPTION_PICTURE_BYTES {
+                let detail = format!("{} bytes, at most MOST_DESCRIPTION_PICTURE_BYTES ({})", decoded.len(), super::MOST_DESCRIPTION_PICTURE_BYTES);
+                return Err(fault(&path.field("data"), Rule::TooLong, detail));
+            }
+            let Some(objects) = &bytes.objects else { return Ok(()) };
+            if bytes.language == super::PictureLanguageName::Regis {
+                return Err(fault(&path.field("objects"), Rule::UnknownField, "objects are NAPLPS's: a ReGIS picture gives none".to_string()));
+            }
+            let message = super::NaplpsObjects {
+                connections: super::PictureAudience::Kept(super::Kept::Kept),
+                page,
+                sub: super::SubCode(0),
+                objects: objects.clone(),
+                title: None,
+                one: false,
+            };
+            check_naplps_objects(path, &message)
+        }
+    }
 }
 
 /// Whether a drawing link's target is one a receiver reads (the engine's
@@ -1028,7 +1132,7 @@ fn is_drawing_link_target(target: &str) -> bool {
 }
 
 fn check_regis_links(root: &Path<'_>, links: &super::RegisLinks) -> Checked {
-    check_connections(&root.field("connections"), &links.connections)?;
+    check_audience(&root.field("connections"), &links.connections)?;
     check_shown_subpage(root, links.sub)?;
     let path = root.field("links");
     let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidDrawingLinks, detail));

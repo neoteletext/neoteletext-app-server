@@ -448,6 +448,11 @@ version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=27000408468141b3e7e708f5da130f4e6e52c926#27000408468141b3e7e708f5da130f4e6e52c926"
 
 [[package]]
+name = "naplps-fonts"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=27000408468141b3e7e708f5da130f4e6e52c926#27000408468141b3e7e708f5da130f4e6e52c926"
+
+[[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
@@ -471,7 +476,9 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
 dependencies = [
+ "naplps",
  "neoteletext-core",
+ "regis",
  "unicode-bidi",
 ]
 
@@ -497,6 +504,15 @@ dependencies = [
 name = "neoteletext-opus"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+
+[[package]]
+name = "neoteletext-picture"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+dependencies = [
+ "neoteletext-core",
+ "neoteletext-formats",
+]
 
 [[package]]
 name = "neoteletext-rules"
@@ -618,6 +634,11 @@ dependencies = [
 
 [[package]]
 name = "regis"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2#9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2"
+
+[[package]]
+name = "regis-fonts"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2#9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2"
 
@@ -900,6 +921,7 @@ name = "teletext-runtime"
 version = "0.1.0"
 dependencies = [
  "naplps",
+ "naplps-fonts",
  "neoteletext-audio",
  "neoteletext-audio-instruments",
  "neoteletext-core",
@@ -907,9 +929,11 @@ dependencies = [
  "neoteletext-image",
  "neoteletext-input",
  "neoteletext-opus",
+ "neoteletext-picture",
  "neoteletext-rules",
  "neoteletext-web",
  "regis",
+ "regis-fonts",
  "ring",
  "schemars",
  "serde",

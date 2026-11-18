@@ -21,6 +21,7 @@ mod limits;
 mod log;
 mod packets;
 mod page;
+mod picture;
 mod redirect;
 mod reply;
 pub(crate) mod rules;

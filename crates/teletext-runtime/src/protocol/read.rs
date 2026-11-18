@@ -78,7 +78,8 @@ pub fn read_reporting(line: &[u8]) -> Result<(ProgramMessage, Vec<Replaced>), Re
     let kind: MessageType = tag(&mut object, "type", "").map_err(|fault| fault.refusal(None))?;
     let mut message = body(kind, object).map_err(|fault| fault.refusal(Some(kind)))?;
     check::message(&message)?;
-    let replaced = crate::text::encode_message(&mut message)?;
+    let mut replaced = crate::text::encode_message(&mut message)?;
+    replaced.extend(crate::picture_text::encode_parts(&mut message)?);
     Ok((message, replaced))
 }
 
@@ -129,6 +130,10 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::Run => ProgramMessage::Run(typed(object, "")?),
         MessageType::Sequence => ProgramMessage::Sequence(typed(object, "")?),
         MessageType::ObjectPage => ProgramMessage::ObjectPage(typed(object, "")?),
+        MessageType::NaplpsLinks => ProgramMessage::NaplpsLinks(typed(object, "")?),
+        MessageType::NaplpsCursor => ProgramMessage::NaplpsCursor(typed(object, "")?),
+        MessageType::ForgetPicture => ProgramMessage::ForgetPicture(typed(object, "")?),
+        MessageType::MeasurePictureText => ProgramMessage::MeasurePictureText(typed(object, "")?),
     })
 }
 
@@ -166,6 +171,30 @@ impl<'de> Deserialize<'de> for PackedLine {
             return Err(de::Error::invalid_type(de::Unexpected::Other("not an object"), &"a packed line, an object with `packet`"));
         };
         packed_line(object).map_err(|fault| de::Error::custom(format!("{INNER_PATH}{}{INNER_PATH}{:?}{INNER_PATH}{}", fault.path, fault.rule, fault.detail)))
+    }
+}
+
+/// A picture part (PAR-21): text when it holds `text`, else bytes, read
+/// as [`PackedLine`] is so that a fault inside keeps its path.
+impl<'de> Deserialize<'de> for super::PicturePart {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let Value::Object(object) = Value::deserialize(deserializer)? else {
+            return Err(de::Error::invalid_type(de::Unexpected::Other("not an object"), &"a part, an object with `data` or `text`"));
+        };
+        let part = if object.contains_key("text") { typed(object, "").map(Self::Text) } else { typed(object, "").map(Self::Data) };
+        part.map_err(|fault| de::Error::custom(format!("{INNER_PATH}{}{INNER_PATH}{:?}{INNER_PATH}{}", fault.path, fault.rule, fault.detail)))
+    }
+}
+
+/// A description's picture (PAR-26): a kept one's sub-code when it holds
+/// `kept`, else bytes.
+impl<'de> Deserialize<'de> for super::DescriptionPicture {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let Value::Object(object) = Value::deserialize(deserializer)? else {
+            return Err(de::Error::invalid_type(de::Unexpected::Other("not an object"), &"a picture, an object with `kept` or `language`"));
+        };
+        let picture = if object.contains_key("kept") { typed(object, "").map(Self::Kept) } else { typed(object, "").map(Self::Bytes) };
+        picture.map_err(|fault| de::Error::custom(format!("{INNER_PATH}{}{INNER_PATH}{:?}{INNER_PATH}{}", fault.path, fault.rule, fault.detail)))
     }
 }
 
