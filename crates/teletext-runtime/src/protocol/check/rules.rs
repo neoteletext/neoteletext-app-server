@@ -28,6 +28,7 @@ use neoteletext_rules::table::{
 use neoteletext_rules::{limits, names};
 
 use super::{Checked, Fault, Path, fault};
+use crate::animation;
 use crate::protocol::{
     Amount, AmountSource, AnimationOp, ButtonChoice, CommandMessage, CompareOp, CompareValue, CueChoice, DataAmount, FiredName, GroupSound, KeySet,
     LocalMidiEvent, LookChoice, Mods, PAGE_NAME, PageRule, Rule, RuleCommand, RuleCondition, RuleKey, RuleName, RuleRow, RuleTable, RuleTarget, RuleTrigger,
@@ -98,6 +99,10 @@ struct Scope<'a> {
     /// Whether names are resolved: false for a command checked before the
     /// table it names is known, whose names resolve to 0.
     resolve: bool,
+    /// The generation a `naplps_objects` command is written for: that of
+    /// the NAPLPS stream the connection has of the page when the table is
+    /// sent (ANIM-21; DEC-6654 item 11).
+    naplps_generation: u16,
 }
 
 /// The place of `name` in `list`, or its refusal: the table has no such
@@ -765,13 +770,18 @@ impl Scope<'_> {
                 (command::TYPE_LOCAL_MIDI, self.encoded(path, &Self::local_midi(path, midi.channel.get(), &midi.message, &mut binder)?)?)
             }
             RuleCommand::Animate(animate) => (command::TYPE_ANIMATE, self.animate(&path.field("ops"), &animate.ops, &mut binder)?.1),
-            RuleCommand::Sprites(_) | RuleCommand::NaplpsObjects(_) => {
-                return Err(fault(
-                    &path.field("type"),
-                    Rule::InvalidGroup,
-                    "this server does not yet write a group's `sprites` and `naplps_objects`: send them directly".to_string(),
-                ));
-            }
+            // The body a SPRITES or NAPLPS_OBJECTS record sent directly
+            // carries, written by the engine's writer (RULE-114, RULE-119);
+            // the table's check reads it with the record's own reader.
+            RuleCommand::Sprites(sprites) => (
+                command::TYPE_SPRITES,
+                animation::sprites_body(self.page, self.sub, &sprites.sprites).map_err(|detail| fault(&path.field("sprites"), Rule::InvalidGroup, detail))?,
+            ),
+            RuleCommand::NaplpsObjects(objects) => (
+                command::TYPE_NAPLPS_OBJECTS,
+                animation::naplps_objects_body(self.page, self.sub, self.naplps_generation, &objects.objects)
+                    .map_err(|detail| fault(&path.field("objects"), Rule::InvalidGroup, detail))?,
+            ),
             RuleCommand::Variable(variable) => (command::TYPE_VARIABLE, self.encoded(path, &self.variable(path, variable, place)?)?),
             RuleCommand::Timer(timer) => {
                 (command::TYPE_TIMER, self.encoded(path, &Command::Timer { start: timer.op == StartStop::Start, timer: timer.timer.0 })?)
@@ -916,7 +926,7 @@ fn rows_of(path: &Path<'_>, given: &RuleTable, table: &mut Table) -> Result<Vec<
 ///
 /// # Errors
 /// The first fault of RULE-39, with its path under `path`.
-pub(super) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16)) -> Result<Compiled, Fault> {
+pub(crate) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16), naplps_generation: u16) -> Result<Compiled, Fault> {
     let mut table = Box::new(Table::new(page, sub));
     let at_field = |field: &'static str| path.field(field);
     let rect_names = declared(&at_field("rects"), given.rects.iter().map(|rect| &rect.name), "rectangle", true)?;
@@ -936,7 +946,7 @@ pub(super) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16
     if given.rules.len() > limits::MAX_RULES {
         return Err(engine_fault(&at_field("rules"), EngineFault::Limit("MAX_RULES")));
     }
-    let scope = Scope { page, sub, names: &names, rows: &rows, resolve: true };
+    let scope = Scope { page, sub, names: &names, rows: &rows, resolve: true, naplps_generation };
     // The named groups first, numbered in the order written; then the
     // unnamed groups the rules' `do` and `echo` make, equal ones shared
     // (RULE-35, RULE-36).
@@ -1002,7 +1012,18 @@ pub(super) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16
     }
     // The whole table, as every receiver checks it (RULE-59, RULE-70).
     table.check(neoteletext_web::records::body_check).map_err(|refused| engine_fault(path, refused))?;
-    Compiled::of(&table, names).map_err(|refused| engine_fault(path, refused))
+    let compiled = Compiled::of(&table, names).map_err(|refused| engine_fault(path, refused))?;
+    // A table whose groups place NAPLPS objects is written again for each
+    // connection's stream generation when it is sent.
+    Ok(if holds_naplps_objects(given) { compiled.recompiled_from(alloc::sync::Arc::new(given.clone())) } else { compiled })
+}
+
+/// Whether a group of `given`, named or a rule's own, holds a
+/// `naplps_objects` command.
+fn holds_naplps_objects(given: &RuleTable) -> bool {
+    let is_objects = |command: &RuleCommand| matches!(command, RuleCommand::NaplpsObjects(_));
+    given.groups.iter().any(|group| group.commands.iter().any(is_objects))
+        || given.rules.iter().any(|rule| rule.r#do.as_ref().is_some_and(|commands| commands.iter().any(is_objects)))
 }
 
 /// A command sent directly, as its record for one connection: its names
@@ -1015,7 +1036,7 @@ pub(super) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16
 pub(crate) fn direct_built(message: &CommandMessage, names: Option<&Names>) -> Result<Built, Fault> {
     let none = Names::default();
     let (page, sub) = message.page();
-    let scope = Scope { page, sub, names: names.unwrap_or(&none), rows: &[], resolve: names.is_some() };
+    let scope = Scope { page, sub, names: names.unwrap_or(&none), rows: &[], resolve: names.is_some(), naplps_generation: 0 };
     scope.command(&Path::Root, &message.command(), Place::Direct)
 }
 
@@ -1039,7 +1060,7 @@ pub(super) fn operations(path: &Path<'_>, ops: &[AnimationOp]) -> Result<Vec<Ope
     let none = Names::default();
     // The page does not matter to the operations themselves: the record
     // written here is only their check.
-    let scope = Scope { page: limits::FIRST_PAGE, sub: 0, names: &none, rows: &[], resolve: false };
+    let scope = Scope { page: limits::FIRST_PAGE, sub: 0, names: &none, rows: &[], resolve: false, naplps_generation: 0 };
     let mut binder = Binder::new(Place::Direct);
     scope.animate(path, ops, &mut binder).map(|(operations, _)| operations)
 }

@@ -79,8 +79,10 @@ pub(crate) fn animate_records(page: u16, sub: u16, operations: &[Operation], rec
     Ok(bytes)
 }
 
-/// A SPRITES record (ANIM-7): all of a sub-page's teletext sprites.
-pub(crate) fn sprites_record(page: u16, sub: u16, given: &[Sprite], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+/// `given` as the engine's sprites, handed to `use_list`: the one
+/// conversion of the protocol's sprites, for a record sent directly and for
+/// a group's command alike (RULE-114).
+fn with_sprites<R>(given: &[Sprite], use_list: impl FnOnce(&[EngineSprite<'_>]) -> R) -> R {
     let references: Vec<Vec<u8>> = given
         .iter()
         .map(|sprite| {
@@ -119,12 +121,28 @@ pub(crate) fn sprites_record(page: u16, sub: u16, given: &[Sprite], record_id: &
             )
         })
         .collect();
-    record(record_id, |id, out| sprites::encode(address(page), EngineSubCode::new(sub), &list, SERVICE, id, out))
+    use_list(&list)
 }
 
-/// A `NAPLPS_OBJECTS` record (ANIM-11): all of a sub-page's objects, for
-/// the NAPLPS stream of `generation`.
-pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, given: &[NaplpsObject], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+/// A SPRITES record (ANIM-7): all of a sub-page's teletext sprites.
+pub(crate) fn sprites_record(page: u16, sub: u16, given: &[Sprite], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    with_sprites(given, |list| record(record_id, |id, out| sprites::encode(address(page), EngineSubCode::new(sub), list, SERVICE, id, out)))
+}
+
+/// The body of a SPRITES record alone, as a group's command holds it
+/// (RULE-35, RULE-119): the bytes [`sprites_record`] frames.
+pub(crate) fn sprites_body(page: u16, sub: u16, given: &[Sprite]) -> Result<Vec<u8>, Refused> {
+    with_sprites(given, |list| {
+        let mut body = alloc::vec![0_u8; sprites::MAX_BYTES];
+        let length = sprites::write_body(address(page), EngineSubCode::new(sub), list, &mut body).map_err(|fault| format!("{fault:?}"))?;
+        body.truncate(length);
+        Ok(body)
+    })
+}
+
+/// `given` as the engine's NAPLPS objects, handed to `use_list`: the one
+/// conversion, for a record sent directly and for a group's command alike.
+fn with_objects<R>(given: &[NaplpsObject], use_list: impl FnOnce(&[EngineObject<'_>]) -> R) -> R {
     let frames: Vec<Vec<u8>> = given.iter().map(|object| object.frames.iter().map(|code| code.get()).collect()).collect();
     let code = |look: Option<crate::protocol::MacroCode>| look.map_or(0, crate::protocol::MacroCode::get);
     let list: Vec<EngineObject<'_>> = given
@@ -150,7 +168,26 @@ pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, given:
             frames,
         })
         .collect();
-    record(record_id, |id, out| naplps_objects::encode((address(page), EngineSubCode::new(sub), generation), &list, SERVICE, id, out))
+    use_list(&list)
+}
+
+/// A `NAPLPS_OBJECTS` record (ANIM-11): all of a sub-page's objects, for
+/// the NAPLPS stream of `generation`.
+pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, given: &[NaplpsObject], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    with_objects(given, |list| {
+        record(record_id, |id, out| naplps_objects::encode((address(page), EngineSubCode::new(sub), generation), list, SERVICE, id, out))
+    })
+}
+
+/// The body of a `NAPLPS_OBJECTS` record alone, as a group's command holds
+/// it (RULE-35, RULE-119): the bytes [`naplps_objects_record`] frames.
+pub(crate) fn naplps_objects_body(page: u16, sub: u16, generation: u16, given: &[NaplpsObject]) -> Result<Vec<u8>, Refused> {
+    with_objects(given, |list| {
+        let mut body = alloc::vec![0_u8; naplps_objects::MAX_BYTES];
+        let length = naplps_objects::write_body((address(page), EngineSubCode::new(sub), generation), list, &mut body).map_err(|fault| format!("{fault:?}"))?;
+        body.truncate(length);
+        Ok(body)
+    })
 }
 
 /// SHEET records (ANIM-17) of `data`, bytes of one page's (number and

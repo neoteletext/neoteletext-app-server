@@ -171,7 +171,7 @@ impl Connection {
     /// The generation of the NAPLPS stream a page's objects belong to
     /// (ANIM-11): the stream it has for the page, or the one its next
     /// `naplps` message with `restart` begins.
-    fn naplps_generation_for(&self, page: u16, sub: u16) -> u16 {
+    pub(super) fn naplps_generation_for(&self, page: u16, sub: u16) -> u16 {
         self.naplps
             .as_ref()
             .filter(|stream| stream.page == page && stream.sub == sub)

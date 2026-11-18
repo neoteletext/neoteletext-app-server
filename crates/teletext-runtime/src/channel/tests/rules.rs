@@ -146,3 +146,43 @@ fn an_animate_for_3f7f_is_refused() {
     channel.from_program(&animate, 1);
     assert_eq!(refusals(&channel.take_effects()), [json!("out_of_range")]);
 }
+
+/// A table whose one rule places NAPLPS objects on page 100, sub-code
+/// 0000, and the body of its command for a stream of `generation`.
+fn objects_table() -> (Vec<u8>, impl Fn(u16) -> Vec<u8>) {
+    let objects = json!([{"number":1,"kind":"region","shown":true,"detectable":true,"layer":1,"order":0,"x":0,"y":440,"width":640,"height":40,
+        "origin_x":0,"origin_y":0,"frames":[],"cover":0,"hover":null,"pressed":null,"alternative":null}]);
+    let table = line(&json!({"type":"rules","connections":"all","page":"100","sub":"0000","table":{
+        "rules":[{"name":"r","on":{"event":"key","keys":"any"},"do":[{"type":"naplps_objects","objects":objects}]}]}}));
+    let crate::protocol::ProgramMessage::NaplpsObjects(direct) =
+        crate::protocol::read(&line(&json!({"type":"naplps_objects","connections":"all","page":"100","sub":"0000","objects":objects}))).unwrap()
+    else {
+        panic!("not naplps_objects")
+    };
+    (table, move |generation| crate::animation::naplps_objects_body(0x100, 0, generation, &direct.objects).unwrap())
+}
+
+/// ANIM-11, ANIM-21, RULE-119 (REQ-6532, REQ-6533; DEC-6654 item 11): a
+/// group's `naplps_objects` is written, for each connection, for the
+/// generation of the NAPLPS stream that connection has of the page; with
+/// none, for the one its next restart begins.
+#[test]
+fn a_groups_naplps_objects_are_for_the_connections_stream() {
+    let (table, body) = objects_table();
+    let holds = |sent: &[(u16, u16, u16, Option<Vec<u8>>)], generation: u16| {
+        let image = sent[0].3.clone().unwrap();
+        let wanted = body(generation);
+        image.windows(wanted.len()).any(|window| window == wanted.as_slice())
+    };
+    let mut channel = selected();
+    channel.from_program(&table, 1);
+    let sent = rules_sent(&channel.take_effects(), CONNECTION);
+    assert!(holds(&sent, 1), "no stream yet: the generation its first restart begins");
+    let restart = |data: &str| line(&json!({"type":"naplps","connections":[CONNECTION],"page":"100","sub":"0000","restart":true,"data":data}));
+    channel.from_program(&restart("QQ=="), 2);
+    channel.from_program(&restart("QQ=="), 3);
+    let _ = channel.take_effects();
+    channel.from_program(&table, 4);
+    let sent = rules_sent(&channel.take_effects(), CONNECTION);
+    assert!(holds(&sent, 2) && !holds(&sent, 1), "the stream's second generation");
+}

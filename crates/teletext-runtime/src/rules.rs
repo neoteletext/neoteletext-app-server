@@ -70,6 +70,11 @@ pub(crate) struct Compiled {
     image: Vec<u8>,
     /// The names, by number.
     names: Names,
+    /// The table as its program gave it, kept only while its groups place
+    /// NAPLPS objects, whose records name the generation of the stream
+    /// each connection has (ANIM-11, ANIM-21; DEC-6654 item 11): the table
+    /// is written again for that generation when it is sent.
+    source: Option<alloc::sync::Arc<crate::protocol::RuleTable>>,
 }
 
 /// A synthesizer by its name in the protocol, and its family's codec code
@@ -183,7 +188,7 @@ impl Compiled {
         let length = neoteletext_rules::encode(table, neoteletext_web::records::body_check, &mut image)?;
         image.truncate(length);
         neoteletext_rules::check(&image, table.page, table.sub, neoteletext_web::records::body_check)?;
-        Ok(Self { page: table.page, sub: table.sub, image, names })
+        Ok(Self { page: table.page, sub: table.sub, image, names, source: None })
     }
 
     /// The default table of a channel whose configuration says
@@ -196,6 +201,22 @@ impl Compiled {
         let rules = DEFAULT_RULES.iter().take(table.rules.len()).map(ToString::to_string).collect();
         let names = Names { rules, groups: alloc::vec![DEFAULT_GROUP.to_string()], ..Names::default() };
         Self::of(&table, names).ok()
+    }
+
+    /// This table, noted as written from `source`, to be written again for
+    /// each connection's NAPLPS stream generation.
+    pub(crate) fn recompiled_from(self, source: alloc::sync::Arc<crate::protocol::RuleTable>) -> Self {
+        Self { source: Some(source), ..self }
+    }
+
+    /// This table as it is sent to a connection whose NAPLPS stream of the
+    /// page has `generation` (ANIM-21): itself, or, when its groups place
+    /// NAPLPS objects, written again for that generation. The program's
+    /// table compiled once already, so it compiles again; were it not to,
+    /// this table is sent as it is.
+    pub(crate) fn for_naplps_generation(self: &alloc::sync::Arc<Self>, generation: u16) -> alloc::sync::Arc<Self> {
+        let Some(source) = &self.source else { return alloc::sync::Arc::clone(self) };
+        crate::protocol::check::recompiled(source, (self.page, self.sub), generation).map_or_else(|| alloc::sync::Arc::clone(self), alloc::sync::Arc::new)
     }
 
     /// The image, as the RULES records carry it.

@@ -323,3 +323,63 @@ fn equal_do_lists_share_a_group() {
     .unwrap();
     assert_eq!(table.image()[5], 1, "one group for two equal lists");
 }
+
+/// The sprites and NAPLPS objects of animation.md's examples (ANIM-21),
+/// as the commands of a group: the message without its `connections`,
+/// `page` and `sub` (RULE-35).
+fn animation_command(kind: &str) -> Value {
+    let mut command: Value = ANIMATION_EXAMPLES.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|line| line["type"] == kind).unwrap();
+    for field in ["connections", "page", "sub"] {
+        command.as_object_mut().unwrap().remove(field);
+    }
+    command
+}
+
+/// RULE-114, RULE-119 (REQ-6532, DEC-6654 item 2 withdrawn): a group's
+/// `sprites` and `naplps_objects` are the bodies the same records sent
+/// directly carry, written by the engine's writer and read back by its
+/// reader, with the table's page and sub-code.
+#[test]
+fn a_groups_sprites_and_objects_are_the_records_sent_directly() {
+    let sprites = animation_command("sprites");
+    let objects = animation_command("naplps_objects");
+    let table = compiled(&one_rule(&json!([sprites, objects]))).unwrap_or_else(|refusal| panic!("{refusal}"));
+    let image = table.image();
+    let ProgramMessage::Sprites(direct_sprites) =
+        accepted(&json!({"type":"sprites","connections":"all","page":"101","sub":"0001","sprites":sprites["sprites"]}))
+    else {
+        panic!("not sprites")
+    };
+    let ProgramMessage::NaplpsObjects(direct_objects) =
+        accepted(&json!({"type":"naplps_objects","connections":"all","page":"101","sub":"0001","objects":objects["objects"]}))
+    else {
+        panic!("not naplps_objects")
+    };
+    let sprites_body = crate::animation::sprites_body(0x101, 1, &direct_sprites.sprites).unwrap();
+    let objects_body = crate::animation::naplps_objects_body(0x101, 1, 1, &direct_objects.objects).unwrap();
+    for body in [&sprites_body, &objects_body] {
+        assert!(image.windows(body.len()).any(|window| window == body.as_slice()), "the group holds the body");
+    }
+    let read = neoteletext_web::records::sprites::read(&sprites_body).unwrap();
+    assert_eq!((read.page.mpp(), read.subcode.value(), read.count), (0x101, 1, 1));
+    let read = neoteletext_web::records::naplps_objects::read(&objects_body).unwrap();
+    assert_eq!((read.page.mpp(), read.subcode.value(), read.generation, read.count), (0x101, 1, 1, 2));
+}
+
+/// RULE-119, RULE-57 (REQ-6608): a group's sprites are held to the command
+/// limit like any other command: so many that the body passes
+/// `MAX_COMMAND_BYTES` is refused by that name.
+#[test]
+fn a_groups_sprites_are_held_to_the_command_limit() {
+    let mut sprites = animation_command("sprites");
+    let one = sprites["sprites"][0].clone();
+    let many: Vec<Value> = (1..=32)
+        .map(|number| {
+            let mut sprite = one.clone();
+            sprite["number"] = json!(number);
+            sprite
+        })
+        .collect();
+    sprites["sprites"] = json!(many);
+    over(&one_rule(&json!([sprites])), "MAX_COMMAND_BYTES");
+}

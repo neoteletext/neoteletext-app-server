@@ -295,7 +295,9 @@ impl Channel {
         let table = table.or_else(|| self.default_table(page, sub));
         for connection in self.showing(&message.connections, page, sub) {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            let bytes = state.rules.record((page, sub), table.clone(), &mut state.record_id);
+            // Its NAPLPS objects for the stream this connection has (ANIM-21).
+            let table = table.as_ref().map(|table| table.for_naplps_generation(state.naplps_generation_for(page, sub)));
+            let bytes = state.rules.record((page, sub), table, &mut state.record_id);
             // Inside a frame open for the page, it waits for the frame's
             // end with the rest (ANIM-2).
             self.send_for_page(connection, page, bytes);

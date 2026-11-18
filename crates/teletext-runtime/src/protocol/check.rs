@@ -834,7 +834,20 @@ fn check_log(root: &Path<'_>, log: &Log) -> Checked {
 fn check_rules(root: &Path<'_>, message: &super::RulesMessage) -> Result<Option<crate::rules::Compiled>, Fault> {
     check_connections(&root.field("connections"), &message.connections)?;
     check_shown_subpage(root, message.sub)?;
-    message.table.0.as_deref().map(|table| rules::compile(&root.field("table"), table, (message.page.0, message.sub.0))).transpose()
+    message.table.0.as_deref().map(|table| rules::compile(&root.field("table"), table, (message.page.0, message.sub.0), CHECKED_NAPLPS_GENERATION)).transpose()
+}
+
+/// The NAPLPS stream generation a table is checked with when its message
+/// arrives: the first a stream has. Each connection is sent the table
+/// written for its own stream's generation (ANIM-21), which changes no
+/// fault, since the record's reader accepts every generation.
+const CHECKED_NAPLPS_GENERATION: u16 = 1;
+
+/// `table` for `page` and `sub` written again for a connection whose
+/// NAPLPS stream of the page has `generation` (ANIM-21), or none should it
+/// now be refused.
+pub(crate) fn recompiled(table: &super::RuleTable, (page, sub): (u16, u16), generation: u16) -> Option<crate::rules::Compiled> {
+    rules::compile(&Path::Root, table, (page, sub), generation).ok()
 }
 
 /// A command sent directly (RULE-114): who it is for, a page that can be
