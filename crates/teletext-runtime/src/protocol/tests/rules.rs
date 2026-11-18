@@ -7,7 +7,7 @@
 extern crate std;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_rules::limits;
@@ -223,83 +223,6 @@ fn each_fault_of_a_table_is_refused() {
     refused(&field, "table.rules[0].when.read.field", Rule::UnknownParameter);
 }
 
-/// The refusal `value` gets, which must be `rules_over_limit` naming the
-/// limit `name` and its value (REQ-6608).
-#[track_caller]
-fn over(value: &Value, name: &str) {
-    let refusal = compiled(value).err().unwrap_or_else(|| panic!("accepted one over {name}"));
-    let figure = limits::value_of(name).unwrap();
-    assert_eq!(refusal.rule, Rule::RulesOverLimit, "{name}: {refusal}");
-    assert!(refusal.detail.contains(name) && refusal.detail.contains(&figure.to_string()), "{name}: {refusal}");
-}
-
-/// A group that runs the group named `next`, or reports.
-fn chain_group(name: &str, next: Option<&str>) -> Value {
-    match next {
-        Some(next) => json!({"name":name,"commands":[{"type":"run","group":next}]}),
-        None => json!({"name":name,"commands":[{"type":"report"}]}),
-    }
-}
-
-/// RULE-57, RULE-120 (REQ-6608): each limit the schema cannot state, at
-/// its bound accepted and one over refused, naming the limit's constant and
-/// its value.
-#[test]
-fn each_limit_at_its_bound_and_one_over() {
-    let count = |name: &str| usize::try_from(limits::value_of(name).unwrap()).unwrap();
-    // MAX_GROUP_DEPTH: a chain of groups each running the next.
-    let chain = |depth: usize| {
-        let groups: Vec<Value> =
-            (0..depth).map(|level| chain_group(&format!("g{level}"), (level + 1 < depth).then(|| format!("g{}", level + 1)).as_deref())).collect();
-        rules(&json!({"groups":groups,"rules":[{"name":"r","on":{"event":"open"},"run":"g0"}]}))
-    };
-    let depth = count("MAX_GROUP_DEPTH");
-    compiled(&chain(depth)).unwrap();
-    over(&chain(depth + 1), "MAX_GROUP_DEPTH");
-    // MAX_ROWS: rows of the table in all.
-    let rows = |rows: usize| rules(&json!({"rows":{"a":(0..rows).map(|row| json!(row)).collect::<Vec<_>>()},"rules":[]}));
-    compiled(&rows(count("MAX_ROWS"))).unwrap();
-    over(&rows(count("MAX_ROWS") + 1), "MAX_ROWS");
-    // MAX_GROUPS, the unnamed groups `do` makes among them.
-    let groups = |groups: usize| {
-        let rules: Vec<Value> = (0..groups)
-            .map(|index| json!({"name":format!("r{index}"),"on":{"event":"open"},"do":[{"type":"variable","op":"set","variable":"v0","value":index}]}))
-            .collect();
-        rules_of(&rules)
-    };
-    compiled(&groups(count("MAX_GROUPS"))).unwrap();
-    // One over MAX_GROUPS is also one over MAX_RULES, which is refused by
-    // its own name.
-    over(&groups(count("MAX_GROUPS") + 1), "MAX_RULES");
-    // MAX_CONDITION_TERMS: an `and` of terms.
-    let terms = |terms: usize| {
-        let term = json!({"read":{"of":"variable","variable":"v0"},"op":"==","value":0});
-        let children: Vec<Value> = (0..terms).map(|_| term.clone()).collect();
-        let when = if terms == 1 { term.clone() } else { json!({"and":children}) };
-        rules(&json!({"rules":[{"name":"r","on":{"event":"becomes"},"when":when,"do":[{"type":"report"}]}]}))
-    };
-    compiled(&terms(count("MAX_CONDITION_TERMS"))).unwrap();
-    // One over is refused by the schema's bound on an `and`'s children
-    // when they are as many, or by the term count: either way, whole.
-    assert!(compiled(&terms(count("MAX_CONDITION_TERMS") + 1)).is_err());
-    // MAX_RUN_COMMANDS: a group whose run, with the groups it runs,
-    // applies one command over.
-    let commands = count("MAX_GROUP_COMMANDS");
-    // Each run of `full` counts itself and the group's commands: a group
-    // of one fewer than the most a group holds, run so many times that the
-    // runs together are exactly the most a run applies.
-    let runs = count("MAX_RUN_COMMANDS") / commands;
-    assert_eq!(runs * commands, count("MAX_RUN_COMMANDS"));
-    let run_size = |extra: usize| {
-        let report: Vec<Value> = (1..commands).map(|_| json!({"type":"report","value":{"of":"variable","variable":"v0"}})).collect();
-        let mut top: Vec<Value> = (0..runs).map(|_| json!({"type":"run","group":"full"})).collect();
-        top.extend((0..extra).map(|_| json!({"type":"report","value":{"of":"variable","variable":"v1"}})));
-        rules(&json!({"groups":[{"name":"full","commands":report},{"name":"top","commands":top}],"rules":[{"name":"r","on":{"event":"open"},"run":"top"}]}))
-    };
-    compiled(&run_size(0)).unwrap();
-    over(&run_size(1), "MAX_RUN_COMMANDS");
-}
-
 /// A `rules` message of `list`.
 fn rules_of(list: &[Value]) -> Value {
     rules(&json!({ "rules": list }))
@@ -364,22 +287,4 @@ fn a_groups_sprites_and_objects_are_the_records_sent_directly() {
     assert_eq!((read.page.mpp(), read.subcode.value(), read.count), (0x101, 1, 1));
     let read = neoteletext_web::records::naplps_objects::read(&objects_body).unwrap();
     assert_eq!((read.page.mpp(), read.subcode.value(), read.generation, read.count), (0x101, 1, 1, 2));
-}
-
-/// RULE-119, RULE-57 (REQ-6608): a group's sprites are held to the command
-/// limit like any other command: so many that the body passes
-/// `MAX_COMMAND_BYTES` is refused by that name.
-#[test]
-fn a_groups_sprites_are_held_to_the_command_limit() {
-    let mut sprites = animation_command("sprites");
-    let one = sprites["sprites"][0].clone();
-    let many: Vec<Value> = (1..=32)
-        .map(|number| {
-            let mut sprite = one.clone();
-            sprite["number"] = json!(number);
-            sprite
-        })
-        .collect();
-    sprites["sprites"] = json!(many);
-    over(&one_rule(&json!([sprites])), "MAX_COMMAND_BYTES");
 }

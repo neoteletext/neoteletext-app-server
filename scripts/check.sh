@@ -103,8 +103,23 @@ check_no_agent_text() {
     fi
 }
 
+# REQ-6608: every limit of a page's rule table is a constant of the
+# engine's neoteletext_rules::limits, used by name; no file here states its
+# figure beside its name. The limits are read from the pinned engine's own
+# limits.rs; the check is tested first on a repository made for it.
+check_limit_figures() {
+    step "no figure of REQ-6608 beside a limit's name"
+    need_tool jq "install jq (the system package), which reads cargo metadata here"
+    scripts/test-limit-figures.sh >/dev/null
+    local manifest
+    manifest="$(cargo metadata --quiet --locked --format-version 1 | jq -r '.packages[] | select(.name == "neoteletext-rules") | .manifest_path')"
+    [[ -n "$manifest" && "$manifest" != null ]] || fail "the engine's neoteletext-rules is not among the workspace's packages"
+    scripts/limit-figures.sh "${manifest%Cargo.toml}src/limits.rs" . || fail "a limit's figure is written beside its name: use the constant (REQ-6608)"
+}
+
 check_workspace() {
     check_engine_pin
+    check_limit_figures
     check_kit_fixture
     check_no_agent_text
     step "lockfiles up to date"

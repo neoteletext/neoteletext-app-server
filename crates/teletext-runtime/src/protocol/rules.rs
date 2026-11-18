@@ -75,17 +75,123 @@ pub type OrderInLayer = I32In<{ i8::MIN as i32 }, { i8::MAX as i32 }>;
 /// A layer.
 pub type Layer = U8In<0, MAX_LAYER>;
 /// A frame number.
-pub type FrameNumber = U8In<0, { limits::MAX_FRAME }>;
+pub type FrameNumber = Limited<U8In<0, { limits::MAX_FRAME }>, MaxFrame>;
 /// A cycle's period, in ticks.
-pub type CyclePeriod = U16In<1, { limits::MAX_CYCLE_PERIOD }>;
+pub type CyclePeriod = Limited<U16In<1, { limits::MAX_CYCLE_PERIOD }>, MaxCyclePeriod>;
 /// The ticks of `every` and `after`, and a beat's period.
-pub type TimerTicks = U64In<1, { MAX_TIMER_TICKS as u64 }>;
+pub type TimerTicks = Limited<U64In<1, { MAX_TIMER_TICKS as u64 }>, MaxTimerTicks>;
 /// A pointer button: 0 left, 1 middle, 2 right.
 pub type Button = U8In<0, { limits::MAX_BUTTON }>;
 /// A part of a synthesizer sound: its MIDI channel, 1 to 16.
 pub type Part = U8In<1, { limits::MAX_PART + 1 }>;
 /// A cue's number (RULE-109).
-pub type CueNumber = U8In<0, MAX_CUE>;
+pub type CueNumber = Limited<U8In<0, MAX_CUE>, MaxCue>;
+/// A tick of a sequence: a step's offset, or its length (RULE-103).
+pub type SequenceTicks<const LEAST: u64> = Limited<U64In<LEAST, { MAX_SEQUENCE_TICKS as u64 }>, MaxSequenceTicks>;
+/// A sequence's stated repeats, or 0 for until stopped (RULE-103).
+pub type SequenceRepeat = Limited<U8In<0, MAX_SEQUENCE_REPEAT>, MaxSequenceRepeat>;
+
+// ---------------------------------------------------------- limits
+
+/// A limit of RULE-57 that bounds a value's range, by its constant's name
+/// in `neoteletext_rules::limits` (REQ-6608).
+pub trait LimitName {
+    /// The constant's name, or none for a range no limit of RULE-57 sets.
+    const NAME: Option<&'static str>;
+}
+
+/// Declares the marker of one limit of RULE-57.
+macro_rules! limit_name {
+    ($($(#[$meta:meta])* $marker:ident = $name:literal;)*) => {$(
+        $(#[$meta])*
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+        pub enum $marker {}
+
+        impl LimitName for $marker {
+            const NAME: Option<&'static str> = Some($name);
+        }
+    )*};
+}
+
+limit_name! {
+    /// `MAX_FRAME`.
+    MaxFrame = "MAX_FRAME";
+    /// `MAX_CYCLE_PERIOD`.
+    MaxCyclePeriod = "MAX_CYCLE_PERIOD";
+    /// `MAX_TIMER_TICKS`.
+    MaxTimerTicks = "MAX_TIMER_TICKS";
+    /// `MAX_CUE`.
+    MaxCue = "MAX_CUE";
+    /// `MAX_SEQUENCE_TICKS`.
+    MaxSequenceTicks = "MAX_SEQUENCE_TICKS";
+    /// `MAX_SEQUENCE_REPEAT`.
+    MaxSequenceRepeat = "MAX_SEQUENCE_REPEAT";
+}
+
+/// No limit of RULE-57: a range of the record's own.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum NoLimit {}
+
+impl LimitName for NoLimit {
+    const NAME: Option<&'static str> = None;
+}
+
+/// `fault` naming the limit `L` when it is a refusal of a value's range
+/// (REQ-6608: a refusal of a limit names its constant and its value).
+fn naming<L: LimitName>(mut fault: Fault) -> Fault {
+    if let (Rule::OutOfRange, Some(name)) = (fault.rule, L::NAME) {
+        let value = limits::value_of(name).unwrap_or_default();
+        fault.detail = format!("{}; {name}: at most {value}", fault.detail);
+    }
+    fault
+}
+
+/// A value of `R` whose range a limit of RULE-57 bounds (REQ-6608): read
+/// and written in the schema as `R`, a refusal of its range naming the
+/// limit's constant and its value.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct Limited<R, L>(pub R, core::marker::PhantomData<L>);
+
+impl<R, L> Limited<R, L> {
+    /// `value`, held.
+    pub const fn new(value: R) -> Self {
+        Self(value, core::marker::PhantomData)
+    }
+}
+
+impl<R, L> core::ops::Deref for Limited<R, L> {
+    type Target = R;
+
+    fn deref(&self) -> &R {
+        &self.0
+    }
+}
+
+impl<'de, R: serde::de::DeserializeOwned, L: LimitName> Deserialize<'de> for Limited<R, L> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        read_with(deserializer, |value| typed_value::<R>(value, "").map(Self::new).map_err(naming::<L>))
+    }
+}
+
+impl<R: Serialize, L> Serialize for Limited<R, L> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<R: JsonSchema, L> JsonSchema for Limited<R, L> {
+    fn inline_schema() -> bool {
+        R::inline_schema()
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        R::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        R::json_schema(generator)
+    }
+}
 /// A page tick.
 pub type PageTick = U64In<0, { u32::MAX as u64 }>;
 /// The highest control number (RULE-12).
@@ -120,14 +226,23 @@ fn no_other(object: &Map<String, Value>, known: &[&str]) -> Result<(), Fault> {
 }
 
 /// A list of `least` to `most` items, each read by `item` at its place
-/// under `at`.
-fn list<T>(value: Value, at: &str, least: usize, most: usize, item: impl Fn(Value, &str) -> Result<T, Fault>) -> Result<Vec<T>, Fault> {
+/// under `at`. When `most` is a limit of RULE-57, `limit` names its
+/// constant, which the refusal of a longer list names with its value
+/// (REQ-6608).
+fn list<T>(
+    value: Value,
+    at: &str,
+    least: usize,
+    (most, limit): (usize, Option<&'static str>),
+    item: impl Fn(Value, &str) -> Result<T, Fault>,
+) -> Result<Vec<T>, Fault> {
     let Value::Array(items) = value else { return Err(Fault::new(at, Rule::WrongType, format!("`{at}` is a list"))) };
     if items.len() < least {
         return Err(Fault::new(at, Rule::TooShort, format!("{} items, at least {least}", items.len())));
     }
     if items.len() > most {
-        return Err(Fault::new(at, Rule::TooLong, format!("{} items, at most {most}", items.len())));
+        let named = limit.map(|name| format!("; {name}: at most {}", limits::value_of(name).unwrap_or_default())).unwrap_or_default();
+        return Err(Fault::new(at, Rule::TooLong, format!("{} items, at most {most}{named}", items.len())));
     }
     items.into_iter().enumerate().map(|(index, value)| item(value, &join(at, &format!("[{index}]")))).collect()
 }
@@ -191,6 +306,14 @@ fn word_of(text: &str, words: &[&str]) -> Result<u8, Fault> {
         .ok_or_else(|| Fault::new("", Rule::NotListed, format!("`{text}`, expected one of {words:?}")))
 }
 
+/// `fault`, of a designator that is none of a page's fixed `name`
+/// (`VARIABLES` or `TIMERS`, RULE-14, RULE-15), naming that limit and its
+/// value (REQ-6608).
+fn fixed_count(mut fault: Fault, name: &'static str) -> Fault {
+    fault.detail = format!("{}; {name}: {}", fault.detail, limits::value_of(name).unwrap_or_default());
+    fault
+}
+
 /// A variable, `"v0"` to `"v15"` (RULE-14): its number. Every page has the
 /// same sixteen, and no table declares or names one otherwise.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -199,7 +322,7 @@ pub struct VariableName(pub u8);
 impl<'de> Deserialize<'de> for VariableName {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
-        word_of(&text, &names::VARIABLE_NAMES).map(Self).map_err(|fault| carried(&fault))
+        word_of(&text, &names::VARIABLE_NAMES).map(Self).map_err(|fault| carried(&fixed_count(fault, "VARIABLES")))
     }
 }
 
@@ -238,7 +361,7 @@ impl<'de> Deserialize<'de> for VariableOrAll {
         if text == ALL_NAME {
             return Ok(Self::All);
         }
-        word_of(&text, &names::VARIABLE_NAMES).map(|number| Self::One(VariableName(number))).map_err(|fault| carried(&fault))
+        word_of(&text, &names::VARIABLE_NAMES).map(|number| Self::One(VariableName(number))).map_err(|fault| carried(&fixed_count(fault, "VARIABLES")))
     }
 }
 
@@ -260,7 +383,7 @@ pub struct TimerName(pub u8);
 impl<'de> Deserialize<'de> for TimerName {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
-        word_of(&text, &names::TIMER_NAMES).map(Self).map_err(|fault| carried(&fault))
+        word_of(&text, &names::TIMER_NAMES).map(Self).map_err(|fault| carried(&fixed_count(fault, "TIMERS")))
     }
 }
 
@@ -636,7 +759,7 @@ impl<'de> Deserialize<'de> for KeySet {
             Value::String(word) if word == "any" => Ok(Self::Any(AnyWord::Any)),
             Value::String(word) => Err(Fault::new("", Rule::NotListed, format!("`{word}`: \"any\", or a list of keys"))),
             Value::Array(keys) if keys.is_empty() => Err(Fault::new("", Rule::TooShort, "no key; \"any\" names every one".to_string())),
-            keys @ Value::Array(_) => list(keys, "", 1, MAX_KEYS_PER_TRIGGER, typed_value).map(Self::Keys),
+            keys @ Value::Array(_) => list(keys, "", 1, (MAX_KEYS_PER_TRIGGER, Some("MAX_KEYS_PER_TRIGGER")), typed_value).map(Self::Keys),
             _ => Err(Fault::new("", Rule::WrongType, "a key set is \"any\", or a list of keys".to_string())),
         })
     }
@@ -902,7 +1025,7 @@ pub struct Triggers(pub Vec<RuleTrigger>);
 impl<'de> Deserialize<'de> for Triggers {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         read_with(deserializer, |value| match value {
-            many @ Value::Array(_) => list(many, "", 1, MAX_TRIGGERS_PER_RULE, typed_value).map(Self),
+            many @ Value::Array(_) => list(many, "", 1, (MAX_TRIGGERS_PER_RULE, Some("MAX_TRIGGERS_PER_RULE")), typed_value).map(Self),
             one => typed_value(one, "").map(|trigger| Self(alloc::vec![trigger])),
         })
     }
@@ -1344,7 +1467,7 @@ impl RuleCondition {
 
     /// Exactly two of what `item` reads.
     fn pair<T>(value: Value, at: &str, item: impl Fn(Value, &str) -> Result<T, Fault>) -> Result<[T; 2], Fault> {
-        let mut items = list(value, at, 2, 2, item)?.into_iter();
+        let mut items = list(value, at, 2, (2, None), item)?.into_iter();
         match (items.next(), items.next()) {
             (Some(first), Some(second)) => Ok([first, second]),
             _ => Err(Fault::new(at, Rule::TooShort, "two items".to_string())),
@@ -1366,8 +1489,8 @@ impl RuleCondition {
         let value = object.remove(key).unwrap_or(Value::Null);
         let mut take = |name: &str| object.remove(name);
         let condition = match key {
-            "and" => Self::And { and: list(value, "and", MIN_AND_OR_CHILDREN, MAX_AND_OR_CHILDREN, Self::at)? },
-            "or" => Self::Or { or: list(value, "or", MIN_AND_OR_CHILDREN, MAX_AND_OR_CHILDREN, Self::at)? },
+            "and" => Self::And { and: list(value, "and", MIN_AND_OR_CHILDREN, (MAX_AND_OR_CHILDREN, Some("MAX_AND_OR_CHILDREN")), Self::at)? },
+            "or" => Self::Or { or: list(value, "or", MIN_AND_OR_CHILDREN, (MAX_AND_OR_CHILDREN, Some("MAX_AND_OR_CHILDREN")), Self::at)? },
             "not" => Self::Not { not: Box::new(Self::at(value, "not")?) },
             "overlaps" => Self::Overlaps { overlaps: Self::pair(value, "overlaps", typed_value)? },
             "inside" => Self::Inside { inside: Self::pair(value, "inside", typed_value)? },
@@ -1380,7 +1503,7 @@ impl RuleCondition {
                 } else if let Some(range) = take("in_range") {
                     Self::InRange { read, in_range: Self::pair(range, "in_range", typed_value)? }
                 } else if let Some(set) = take("in_set") {
-                    Self::InSet { read, in_set: list(set, "in_set", 1, MAX_SET_MEMBERS, typed_value)? }
+                    Self::InSet { read, in_set: list(set, "in_set", 1, (MAX_SET_MEMBERS, Some("MAX_SET_MEMBERS")), typed_value)? }
                 } else {
                     return Err(Fault::new("", Rule::MissingField, "a term that reads a value has `op` and `value`, `in_range` or `in_set`"));
                 }
@@ -1522,9 +1645,9 @@ pub type OffsetAmount = Amount<{ i16::MIN as i32 }, { i16::MAX as i32 }>;
 /// An order within a layer as an amount.
 pub type OrderAmount = Amount<{ i8::MIN as i32 }, { i8::MAX as i32 }>;
 /// A frame as an amount.
-pub type FrameAmount = Amount<0, { limits::MAX_FRAME as i32 }>;
+pub type FrameAmount = Limited<Amount<0, { limits::MAX_FRAME as i32 }>, MaxFrame>;
 /// A cycle's period as an amount.
-pub type PeriodAmount = Amount<1, { limits::MAX_CYCLE_PERIOD as i32 }>;
+pub type PeriodAmount = Limited<Amount<1, { limits::MAX_CYCLE_PERIOD as i32 }>, MaxCyclePeriod>;
 /// A look's number as an amount.
 pub type LookAmount = Amount<0, { MAX_LOOK as i32 }>;
 
@@ -2264,7 +2387,7 @@ pub struct GroupDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct SequenceStep {
     /// The offset in ticks within a pass, below the length.
-    pub tick: U64In<0, { MAX_SEQUENCE_TICKS as u64 }>,
+    pub tick: SequenceTicks<0>,
     /// The group's name.
     pub run: RuleName,
 }
@@ -2276,9 +2399,9 @@ pub struct SequenceDeclaration {
     /// Its name.
     pub name: RuleName,
     /// A pass's length in ticks.
-    pub length: U64In<1, { MAX_SEQUENCE_TICKS as u64 }>,
+    pub length: SequenceTicks<1>,
     /// How many passes it plays, or 0 until stopped.
-    pub repeat: U8In<0, MAX_SEQUENCE_REPEAT>,
+    pub repeat: SequenceRepeat,
     /// Its steps, in ascending `tick`.
     #[schemars(length(min = 1, max = MAX_SEQUENCE_STEPS))]
     pub steps: Vec<SequenceStep>,

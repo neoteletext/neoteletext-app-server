@@ -553,14 +553,14 @@ impl Scope<'_> {
                 }
                 AnimationOp::Frame(op) => {
                     let target = Self::operation_target(&at, &op.target, true, item, binder)?;
-                    (target, OperationKind::Frame(narrow(binder.amount(&at.field("frame"), op.frame, item, field::FRAME)?)))
+                    (target, OperationKind::Frame(narrow(binder.amount(&at.field("frame"), *op.frame, item, field::FRAME)?)))
                 }
                 AnimationOp::Cycle(op) => {
                     if op.first.get() > op.last.get() {
                         return Err(fault(&at.field("first"), Rule::InvalidAnimation, format!("first {} is above last {}", op.first.get(), op.last.get())));
                     }
                     let target = Self::operation_target(&at, &op.target, true, item, binder)?;
-                    let period = binder.amount(&at.field("period"), op.period, item, field::PERIOD)?;
+                    let period = binder.amount(&at.field("period"), *op.period, item, field::PERIOD)?;
                     (target, OperationKind::Cycle { first: op.first.get(), last: op.last.get(), period: narrow(period), once: op.once })
                 }
             };

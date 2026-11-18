@@ -17,6 +17,7 @@ mod applies_nothing;
 mod author_log;
 mod closed_set;
 mod index;
+mod limits;
 mod log;
 mod packets;
 mod page;

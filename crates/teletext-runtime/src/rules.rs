@@ -276,7 +276,7 @@ impl Compiled {
                 let property = named(&names::TIMER_PROPERTIES, value.b)?;
                 // A phase's period is in `c` (high) and `d` (low).
                 let period = (u32::from(value.c) << u16::BITS) | u32::from(value.d);
-                let period = (period != 0).then_some(crate::protocol::U64In(u64::from(period)));
+                let period = (period != 0).then_some(crate::protocol::Limited::new(crate::protocol::U64In(u64::from(period))));
                 RuleValue::Timer(TimerValue { timer, property, period })
             }
             table::SPACE_TARGET => {
