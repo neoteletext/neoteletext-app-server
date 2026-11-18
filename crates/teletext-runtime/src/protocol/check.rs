@@ -19,7 +19,7 @@ use neoteletext_web::records::redirect::{MAX_ADDRESS, RedirectRecord, encode};
 use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
 use super::{
-    AuthorLog, COLUMNS, Connections, Cookie, DENIED_STATUSES, DESCRIPTION_TEXT_CHARACTERS, Denied, Description, Index, Log, Magazine, MessageType,
+    AuthorLog, COLUMNS, Connections, DENIED_STATUSES, DESCRIPTION_TEXT_CHARACTERS, Denied, Description, Index, Log, Magazine, MessageType,
     OPUS_MOST_PACKET_BYTES, PackedLine, Packets, Page, PageMessage, ProgramMessage, Redirect, Refused, Reply, RequestNumber, Rule, SAFE_INTEGER_LIMIT,
     SAMPLE_RATES, Sound, SubPages, TITLE_CHARACTERS,
 };
@@ -134,7 +134,6 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Description(description) => check_description(&root, description),
         ProgramMessage::Measure(measure) => check_page(&root.field("page"), &measure.page),
         ProgramMessage::Sound(sound) => check_sound(&root, sound),
-        ProgramMessage::Cookie(cookie) => check_cookie(&root, cookie),
         ProgramMessage::AuthorLog(log) => check_author_log(&root, log),
         ProgramMessage::Log(log) => check_log(&root, log),
         ProgramMessage::Packets(Packets { connections, packets }) => {
@@ -146,6 +145,12 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::RegisCursor(cursor) => {
             check_connections(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
         }
+        // VS-352: a connection's number; a handle was read whole by its
+        // type, and whether the channel holds it is the channel's to say.
+        ProgramMessage::RequestState(super::RequestState { connection }) | ProgramMessage::OfferRemember(super::OfferRemember { connection }) => {
+            check_connection(&root.field("connection"), *connection)
+        }
+        ProgramMessage::EndState(_) => Ok(()),
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }
@@ -727,29 +732,6 @@ fn check_channel(path: &Path<'_>, channel: u8) -> Checked {
 fn check_gain(path: &Path<'_>, gain: u8) -> Checked {
     if gain > neoteletext_audio::MAX_GAIN {
         return Err(fault(path, Rule::OutOfRange, format!("{gain}: 0 to {}", neoteletext_audio::MAX_GAIN)));
-    }
-    Ok(())
-}
-
-fn check_cookie(root: &Path<'_>, cookie: &Cookie) -> Checked {
-    check_connection(&root.field("connection"), cookie.connection)?;
-    // A cookie's bound is in bytes (RFC 6265 section 6.1), its characters
-    // checked as every text's.
-    let field = |name: &'static str, text: &str, least: usize| -> Checked {
-        let at = root.field(name);
-        check_text(&at, text, least, super::COOKIE_BYTES)?;
-        if text.len() > super::COOKIE_BYTES {
-            return Err(fault(&at, Rule::TooLong, format!("{} bytes, at most {}", text.len(), super::COOKIE_BYTES)));
-        }
-        Ok(())
-    };
-    field("name", &cookie.name, 1)?;
-    if cookie.name.starts_with('_') {
-        return Err(fault(&root.field("name"), Rule::Reserved, "names starting _ are the server's".to_string()));
-    }
-    field("value", &cookie.value, 0)?;
-    if let Some(path) = &cookie.path {
-        field("path", path, 1)?;
     }
     Ok(())
 }

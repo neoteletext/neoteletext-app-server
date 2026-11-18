@@ -6,13 +6,14 @@
 //! The task times itself over every event (requirement 8.2).
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use neoteletext_web::consts::CLOSE_RESTARTING;
 use teletext_runtime::descriptions::{Answer, VisitorId};
-use teletext_runtime::protocol::{CookiePair, PageNumber};
-use teletext_runtime::{Channel, ConnectionId, Effect, SessionId};
+use teletext_runtime::protocol::PageNumber;
+use teletext_runtime::{Channel, ConnectionId, Effect};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
@@ -41,11 +42,9 @@ pub enum Command {
         /// The connection, numbered by the server, never reused while it
         /// runs.
         connection: ConnectionId,
-        /// Its session, which it continues or starts (requirement 5.5);
-        /// a session may have several connections, one a tab (DEC-1527).
-        session: SessionId,
-        /// The cookies its upgrade carried for the program (REQ-1471).
-        cookies: Vec<CookiePair>,
+        /// The viewer's network address, as the server sees it or as its
+        /// trusted proxy states it, for the bound on new viewers (VS-304).
+        address: Option<IpAddr>,
         /// Its queue.
         outbox: mpsc::Sender<Outbound>,
     },
@@ -231,9 +230,9 @@ impl Task {
     fn handle(&mut self, event: Event, channel: &mut Channel) -> bool {
         let now = self.now();
         match event {
-            Event::Command(Command::Opened { connection, session, cookies, outbox }) => {
+            Event::Command(Command::Opened { connection, address, outbox }) => {
                 self.outboxes.insert(connection, outbox);
-                channel.opened(connection, session, cookies, now);
+                channel.opened(connection, address, now);
             }
             Event::Command(Command::Received { connection, bytes }) => channel.received(connection, &bytes, now),
             Event::Command(Command::Closed { connection }) => {

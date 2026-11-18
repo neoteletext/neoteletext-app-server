@@ -10,7 +10,8 @@
 //!   DOC-1964 (DEC-1482), one line a message; the object is
 //!   the server of that WebSocket too, and opens no connection itself.
 //! - **Nothing of the channel's content is kept** (REQ-1474): the object's
-//!   SQLite storage holds only its folder and its session key.
+//!   SQLite storage holds only its folder and its viewer-handle secret
+//!   (VS-305), and no viewer's state (VS-303).
 //! - **Time** is the object's single alarm: the runtime's next deadline.
 //!   Nothing is sent for the time's sake (requirement 11.2), so a channel
 //!   whose pages do not change lets its object hibernate, watched or not.
@@ -37,12 +38,13 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
 use teletext_runtime::landing::{self, Route, route};
-use teletext_runtime::session_cookie::{self, KEY_BYTES, Key, first_session};
-use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, InitialPage, Level, SESSION_GRACE_MS, SessionId};
+use teletext_runtime::viewer::{HANDLE_SECRET_BYTES, HandleSecret, RandomSource, RandomUnavailable};
+use teletext_runtime::{Channel, ChannelConfig, ConnectionId, Effect, InitialPage, Level};
 use worker::{
     Date, Env, Error, Headers, Method, Request, Response, Result, SqlStorage, SqlStorageValue, State, WebSocket, WebSocketIncomingMessage, WebSocketPair,
     durable_object, event,
@@ -64,20 +66,34 @@ const PROGRAM_TAG: &str = "program";
 const INITIAL_PAGE: u16 = 0x100;
 /// The object's tables, a migration a version (the numbered migrations of
 /// the owner's SQLite rule): the object's own names (its folder, its
-/// session key, the schema's version); migration 2 drops the pages kept
-/// before DEC-1482.
-const MIGRATIONS: [&str; 2] = [
+/// viewer-handle secret, the schema's version); migration 2 drops the pages
+/// kept before DEC-1482; migration 3 the session cookie's key, which viewer
+/// state replaced (VS-603).
+const MIGRATIONS: [&str; 3] = [
     "CREATE TABLE kept (key TEXT PRIMARY KEY, record BLOB NOT NULL) STRICT; \
      CREATE TABLE meta (name TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT;",
     "DROP TABLE kept;",
+    "DELETE FROM meta WHERE name = 'session_key';",
 ];
 /// The meta row naming the schema's version.
 const SCHEMA: &str = "schema";
 /// The meta row naming the channel's folder, so an object woken by a
 /// WebSocket's message knows which channel it is.
 const FOLDER: &str = "folder";
-/// The meta row holding the session cookie's key.
-const SESSION_KEY: &str = "session_key";
+/// The meta row holding the viewer-handle secret (VS-305).
+const HANDLE_SECRET: &str = "viewer_handle_key";
+/// The header in which Cloudflare names the viewer's address, which it
+/// sets itself, for the bound on new viewers (VS-304).
+const CONNECTING_ADDRESS: &str = "cf-connecting-ip";
+
+/// The Web Crypto interface's random bytes, through `getrandom` (VS-205).
+struct WebCrypto;
+
+impl RandomSource for WebCrypto {
+    fn fill(&mut self, bytes: &mut [u8]) -> std::result::Result<(), RandomUnavailable> {
+        getrandom::fill(bytes).map_err(|_| RandomUnavailable)
+    }
+}
 
 /// A runtime failure, as the Worker's error.
 fn failure(text: impl Into<String>) -> Error {
@@ -158,10 +174,6 @@ struct Live {
     /// The next connection's number: never reused while the object runs.
     next_connection: ConnectionId,
     program: Option<WebSocket>,
-    next_session: SessionId,
-    key: Key,
-    /// Whether viewers reach the Worker over `https`.
-    secure: bool,
     /// The alarm last set, in milliseconds since the Unix epoch.
     alarm: Option<u64>,
 }
@@ -204,13 +216,6 @@ impl Live {
     /// Unix epoch: the runtime's next deadline.
     fn next_alarm(&self) -> Option<u64> {
         self.channel.next_wake().map(|at| self.started_ms.saturating_add(at))
-    }
-
-    /// A session number never given before.
-    fn new_session(&mut self) -> SessionId {
-        let session = self.next_session;
-        self.next_session = self.next_session.saturating_add(1);
-        session
     }
 }
 
@@ -293,13 +298,13 @@ impl ChannelObject {
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .ok_or_else(|| failure("the object does not know its channel"))?,
         };
-        let key = if let Some(key) = Self::meta(&sql, SESSION_KEY)?.and_then(|bytes| Key::try_from(bytes.as_slice()).ok()) {
-            key
+        let secret = if let Some(bytes) = Self::meta(&sql, HANDLE_SECRET)?.and_then(|bytes| <[u8; HANDLE_SECRET_BYTES]>::try_from(bytes.as_slice()).ok()) {
+            HandleSecret::new(bytes)
         } else {
-            let mut key = [0_u8; KEY_BYTES];
-            getrandom::fill(&mut key).map_err(|error| failure(format!("no random bytes: {error}")))?;
-            Self::set_meta(&sql, SESSION_KEY, key.to_vec())?;
-            key
+            let mut bytes = [0_u8; HANDLE_SECRET_BYTES];
+            getrandom::fill(&mut bytes).map_err(|error| failure(format!("no random bytes: {error}")))?;
+            Self::set_meta(&sql, HANDLE_SECRET, bytes.to_vec())?;
+            HandleSecret::new(bytes)
         };
         let name = channels(&self.env)?.into_iter().find(|(served, _)| *served == folder).map_or_else(|| folder.clone(), |(_, name)| name);
         let origin = self.env.var(ORIGIN_VARIABLE)?.to_string();
@@ -309,10 +314,10 @@ impl ChannelObject {
             address: format!("{origin}/{folder}/"),
             initial_page: InitialPage::new(INITIAL_PAGE).map_err(failure)?,
             epoch_at_start_ms: started_ms,
-            session_grace_ms: SESSION_GRACE_MS,
+            other_addresses: Vec::new(),
             wheel: false,
         };
-        let channel = Channel::new(config);
+        let channel = Channel::new(config, &secret, Box::new(WebCrypto));
         let mut live = Live {
             folder,
             channel,
@@ -320,17 +325,14 @@ impl ChannelObject {
             viewers: BTreeMap::new(),
             next_connection: 1,
             program: self.state.get_websockets_with_tag(PROGRAM_TAG).into_iter().next(),
-            next_session: first_session(started_ms),
-            key,
-            secure: origin.starts_with("https://"),
             alarm: None,
         };
         // Viewers still connected after an eviction each start afresh, and a
         // program still connected is started again, told of each.
         for socket in self.state.get_websockets_with_tag(VIEWER_TAG) {
-            let Ok(Some((connection, session))) = socket.deserialize_attachment::<(ConnectionId, SessionId)>() else { continue };
+            let Ok(Some((connection, address))) = socket.deserialize_attachment::<(ConnectionId, Option<IpAddr>)>() else { continue };
             live.next_connection = live.next_connection.max(connection.saturating_add(1));
-            Self::welcome(&mut live, connection, session, socket);
+            Self::welcome(&mut live, connection, address, socket);
         }
         if live.program.is_some() {
             let now = live.now();
@@ -341,12 +343,11 @@ impl ChannelObject {
         Ok(())
     }
 
-    /// A viewer's connection for `session` opened: its program is told.
-    fn welcome(live: &mut Live, connection: ConnectionId, session: SessionId, socket: WebSocket) {
+    /// A viewer's connection from `address` opened: its program is told.
+    fn welcome(live: &mut Live, connection: ConnectionId, address: Option<IpAddr>, socket: WebSocket) {
         live.viewers.insert(connection, socket);
         let now = live.now();
-        // This host does not yet pass a program its cookies (REQ-1471).
-        live.channel.opened(connection, session, Vec::new(), now);
+        live.channel.opened(connection, address, now);
     }
 
     /// Sets the object's alarm to when it is next needed, if that changed.
@@ -379,25 +380,20 @@ impl ChannelObject {
         Ok(answer)
     }
 
-    /// A viewer's push WebSocket (requirement 5.5 for its session).
+    /// A viewer's push WebSocket. No `Cookie` is read and no `Set-Cookie`
+    /// sent (VS-201, VS-354).
     fn accept_viewer(&self, request: &Request) -> Result<Response> {
         let pair = WebSocketPair::new()?;
-        let cookie = request.headers().get("cookie")?;
-        // Several tabs may share a session (DEC-1527).
-        let (connection, session, set_cookie) = self.with_live(|live| {
-            let now_s = epoch_ms() / 1_000;
-            let named = cookie.as_deref().and_then(|header| session_cookie::session_of(header.as_bytes(), &live.folder, now_s, &[&live.key]));
-            let session = named.unwrap_or_else(|| live.new_session());
+        let address = request.headers().get(CONNECTING_ADDRESS)?.and_then(|text| text.trim().parse::<IpAddr>().ok());
+        let connection = self.with_live(|live| {
             let connection = live.next_connection;
             live.next_connection = live.next_connection.saturating_add(1);
-            (connection, session, session_cookie::set_cookie(&live.key, &live.folder, session, now_s, live.secure))
+            connection
         })?;
         self.state.accept_websocket_with_tags(&pair.server, &[VIEWER_TAG]);
-        pair.server.serialize_attachment((connection, session))?;
-        self.with_live(|live| Self::welcome(live, connection, session, pair.server))?;
-        let headers = Headers::new();
-        headers.set("set-cookie", &set_cookie)?;
-        Ok(Response::from_websocket(pair.client)?.with_headers(headers))
+        pair.server.serialize_attachment((connection, address))?;
+        self.with_live(|live| Self::welcome(live, connection, address, pair.server))?;
+        Response::from_websocket(pair.client)
     }
 
     /// The program's WebSocket: one at a time.
@@ -500,7 +496,7 @@ impl worker::DurableObject for ChannelObject {
                     }
                 }
                 WebSocketIncomingMessage::Binary(bytes) if !program => {
-                    if let Ok(Some((connection, _))) = socket.deserialize_attachment::<(ConnectionId, SessionId)>() {
+                    if let Ok(Some((connection, _))) = socket.deserialize_attachment::<(ConnectionId, Option<IpAddr>)>() {
                         live.channel.received(connection, &bytes, now);
                     }
                 }
@@ -520,13 +516,13 @@ impl worker::DurableObject for ChannelObject {
 }
 
 impl ChannelObject {
-    /// A WebSocket closed: a viewer's session waits for its viewer; the
+    /// A WebSocket closed: a viewer's connection is `gone`; the
     /// program's lines are dropped until it connects again, and its
     /// channel is unavailable meanwhile.
     async fn gone(&self, socket: &WebSocket) -> Result<()> {
         self.wake(None)?;
         let program = self.is_program(socket);
-        let connection = socket.deserialize_attachment::<(ConnectionId, SessionId)>().ok().flatten().map(|(connection, _)| connection);
+        let connection = socket.deserialize_attachment::<(ConnectionId, Option<IpAddr>)>().ok().flatten().map(|(connection, _)| connection);
         self.with_live(|live| {
             if program {
                 live.program = None;

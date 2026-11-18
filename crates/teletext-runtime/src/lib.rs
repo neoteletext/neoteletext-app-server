@@ -38,15 +38,16 @@ pub mod landing;
 mod page;
 pub mod protocol;
 mod records;
-pub mod session_cookie;
 mod sound;
 pub mod stats;
 mod text;
+pub mod viewer;
 
-pub use channel::{Channel, ChannelConfig, Effect, InitialPage, Level, PROGRAM_REPLY_LIMIT_MS, SESSION_GRACE_MS};
+pub use channel::{Channel, ChannelConfig, Effect, InitialPage, Level, PROGRAM_REPLY_LIMIT_MS};
 pub use input::{Input, Named};
-pub use protocol::{ConnectionId, SessionId};
+pub use protocol::{ConnectionId, Handle};
 pub use stats::ChannelStats;
+pub use viewer::{HandleSecret, RandomSource, RandomUnavailable};
 
 /// The engine's packet, 42 bytes on the wire (EN 300 706 clause 7.1).
 pub use neoteletext_core::packet::Packet;

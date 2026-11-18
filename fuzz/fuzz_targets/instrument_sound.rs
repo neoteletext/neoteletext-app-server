@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use teletext_runtime::{Channel, ChannelConfig, Effect, InitialPage};
+use teletext_runtime::{Channel, ChannelConfig, Effect, HandleSecret, InitialPage, RandomSource, RandomUnavailable};
 
 /// The kinds that carry data: five of synth6581 and synth7, then three
 /// for each analogue synthesizer of a family of its own; a family's other
@@ -20,12 +20,25 @@ const SYNTHS: [(&str, &str); 5] =
 /// reached.
 const SIZES: u8 = 18;
 
+/// Random bytes that count, so that a run repeats.
+struct Counting(u8);
+
+impl RandomSource for Counting {
+    fn fill(&mut self, bytes: &mut [u8]) -> Result<(), RandomUnavailable> {
+        for byte in bytes {
+            self.0 = self.0.wrapping_add(1);
+            *byte = self.0;
+        }
+        Ok(())
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
     let [kind, size, blocks @ ..] = data else { return };
-    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, session_grace_ms: 0 };
-    let mut channel = Channel::new(config);
+    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, other_addresses: Vec::new(), wheel: false };
+    let mut channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(Counting(0)));
     channel.program_started(0);
-    channel.opened(1, 1, Vec::new(), 0);
+    channel.opened(1, None, 0);
     let _ = channel.take_effects();
     let mut encoded = vec![0_u8; neoteletext_web::base64::encoded_len(blocks.len())];
     let Ok(written) = neoteletext_web::base64::encode(blocks, &mut encoded) else { return };

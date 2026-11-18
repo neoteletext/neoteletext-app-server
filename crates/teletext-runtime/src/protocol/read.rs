@@ -103,7 +103,6 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::Description => ProgramMessage::Description(typed(object, "")?),
         MessageType::Measure => ProgramMessage::Measure(Box::new(typed(object, "")?)),
         MessageType::Sound => ProgramMessage::Sound(sound(object)?),
-        MessageType::Cookie => ProgramMessage::Cookie(typed(object, "")?),
         MessageType::AuthorLog => ProgramMessage::AuthorLog(typed(object, "")?),
         MessageType::Log => ProgramMessage::Log(typed(object, "")?),
         MessageType::Packets => ProgramMessage::Packets(typed(object, "")?),
@@ -111,6 +110,9 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::RegisLinks => ProgramMessage::RegisLinks(typed(object, "")?),
         MessageType::RegisCursor => ProgramMessage::RegisCursor(typed(object, "")?),
         MessageType::Naplps => ProgramMessage::Naplps(typed(object, "")?),
+        MessageType::RequestState => ProgramMessage::RequestState(typed(object, "")?),
+        MessageType::EndState => ProgramMessage::EndState(typed(object, "")?),
+        MessageType::OfferRemember => ProgramMessage::OfferRemember(typed(object, "")?),
     })
 }
 

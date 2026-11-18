@@ -172,6 +172,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "proofs_accepted": {
+          "description": "Viewers' proofs that verified (VS-206, VS-209).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "proofs_refused": {
+          "description": "Viewers' proofs refused: not verified, or past a bound.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "redirects": {
           "description": "Viewers the program redirected.",
           "format": "uint64",
@@ -180,18 +192,6 @@
         },
         "refused": {
           "description": "Lines from the program refused.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sessions_resumed": {
-          "description": "Sessions a viewer came back to.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sessions_waiting": {
-          "description": "Sessions waiting for their viewer to come back.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -257,8 +257,8 @@
         "lines_to_application",
         "lines_from_application",
         "lines_dropped",
-        "sessions_waiting",
-        "sessions_resumed",
+        "proofs_accepted",
+        "proofs_refused",
         "most_opened",
         "all_time"
       ],
@@ -319,6 +319,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "proofs_accepted": {
+          "description": "Viewers' proofs that verified.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "redirects": {
           "description": "Viewers the program redirected.",
           "format": "uint64",
@@ -327,12 +333,6 @@
         },
         "refused": {
           "description": "Lines from the program refused.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sessions_resumed": {
-          "description": "Sessions a viewer came back to.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -390,7 +390,7 @@
         "lines_to_application",
         "lines_from_application",
         "lines_dropped",
-        "sessions_resumed",
+        "proofs_accepted",
         "pages_opened"
       ],
       "type": "object"
@@ -489,28 +489,6 @@
         "interrupted_sequence",
         "inhibit_display",
         "magazine_serial"
-      ],
-      "type": "object"
-    },
-    "CookiePair": {
-      "additionalProperties": false,
-      "description": "A cookie as a request carries it.",
-      "properties": {
-        "name": {
-          "description": "Its name.",
-          "maxLength": 4096,
-          "minLength": 1,
-          "type": "string"
-        },
-        "value": {
-          "description": "Its value.",
-          "maxLength": 4096,
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "value"
       ],
       "type": "object"
     },
@@ -619,6 +597,11 @@
           "type": "string"
         }
       ]
+    },
+    "Handle": {
+      "description": "A viewer's handle on this channel (VS-305): 32 lower-case hexadecimal digits, meaningless outside the channel.",
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
     },
     "HoverAction": {
       "description": "The pointer came onto a control or went off it.",
@@ -1648,7 +1631,6 @@
         "index",
         "redirect",
         "sound",
-        "cookie",
         "author_log",
         "log",
         "packets",
@@ -1658,7 +1640,10 @@
         "regis",
         "regis_links",
         "regis_cursor",
-        "naplps"
+        "naplps",
+        "request_state",
+        "end_state",
+        "offer_remember"
       ],
       "type": "string"
     },
@@ -4944,80 +4929,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "Sets or clears one of the program's cookies for a connection.",
-          "properties": {
-            "connection": {
-              "description": "The connection.",
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "http_only": {
-              "description": "`HttpOnly`.",
-              "type": "boolean"
-            },
-            "max_age": {
-              "description": "`Max-Age` in seconds, 0 removing it, or none for a cookie that\nlasts the browser's session.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "name": {
-              "description": "Its name; names starting `_` are the server's.",
-              "maxLength": 4096,
-              "minLength": 1,
-              "type": "string"
-            },
-            "path": {
-              "description": "`Path`, or none.",
-              "maxLength": 4096,
-              "minLength": 1,
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "same_site": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SameSite"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "`SameSite`, or none."
-            },
-            "secure": {
-              "description": "`Secure`.",
-              "type": "boolean"
-            },
-            "type": {
-              "const": "cookie",
-              "type": "string"
-            },
-            "value": {
-              "description": "Its value.",
-              "maxLength": 4096,
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "connection",
-            "name",
-            "value",
-            "secure",
-            "http_only"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "description": "A line for the developer console of the viewer's browser (the\nengine's REQ-INP-026).",
           "properties": {
             "connections": {
@@ -5394,6 +5305,69 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks that the viewer on a connection be given state (VS-352 item 1).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "request_state",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Ends a viewer's state (VS-352 item 2).",
+          "properties": {
+            "type": {
+              "const": "end_state",
+              "type": "string"
+            },
+            "viewer": {
+              "$ref": "#/$defs/Handle",
+              "description": "The viewer's handle."
+            }
+          },
+          "required": [
+            "type",
+            "viewer"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks the browser to offer \"remember me\" (VS-352 item 3).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "offer_remember",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -5579,6 +5553,21 @@
           "const": "text_and_objects",
           "description": "The page's own enhancement data holds objects, which text runs\ncannot be merged into.",
           "type": "string"
+        },
+        {
+          "const": "has_viewer",
+          "description": "`request_state` for a connection that already has a viewer\n(VS-353).",
+          "type": "string"
+        },
+        {
+          "const": "no_gesture",
+          "description": "`request_state` with no input from the viewer within the last\n7,000 ms (VS-212).",
+          "type": "string"
+        },
+        {
+          "const": "unknown_viewer",
+          "description": "`end_state` for a handle the channel does not hold (VS-353).",
+          "type": "string"
         }
       ]
     },
@@ -5606,15 +5595,6 @@
         "triplets"
       ],
       "type": "object"
-    },
-    "SameSite": {
-      "description": "`SameSite` (RFC 6265bis section 4.1.2.7).",
-      "enum": [
-        "Strict",
-        "Lax",
-        "None"
-      ],
-      "type": "string"
     },
     "Selection": {
       "additionalProperties": false,
@@ -5756,7 +5736,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 12,
+              "const": 13,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -5792,14 +5772,6 @@
               "minimum": 1,
               "type": "integer"
             },
-            "cookies": {
-              "description": "The cookies the connection opened with, within [`MOST_COOKIES`],\nwithout the server's own, whose names begin `_`.",
-              "items": {
-                "$ref": "#/$defs/CookiePair"
-              },
-              "maxItems": 50,
-              "type": "array"
-            },
             "path": {
               "description": "`selection`'s place, as an address names it: `302` or `302/0002`.",
               "type": [
@@ -5816,6 +5788,10 @@
                 "string",
                 "null"
               ]
+            },
+            "remembered": {
+              "description": "The viewer chose, in the browser, to be remembered on this channel;\nfalse when `viewer` is none.",
+              "type": "boolean"
             },
             "request": {
               "description": "The number of this selection: `reply` carries it back.",
@@ -5835,24 +5811,27 @@
               ],
               "description": "What the connection selected at its start, or none: the channel's\ninitial page. A connection is one browser tab with one selection\n(DEC-1527)."
             },
-            "session": {
-              "description": "The viewer's session, from its signed cookie (requirement 5.5).",
-              "format": "uint64",
-              "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
-            },
             "type": {
               "const": "connected",
               "type": "string"
+            },
+            "viewer": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Handle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The viewer's handle on this channel, or none: the browser holds no\nkey for the channel, or answered without one (VS-351 item 1)."
             }
           },
           "required": [
             "type",
             "connection",
-            "session",
             "request",
-            "cookies"
+            "remembered"
           ],
           "type": "object"
         },
@@ -5982,23 +5961,118 @@
         },
         {
           "additionalProperties": false,
-          "description": "A session ended, five minutes after its last connection closed.",
+          "description": "The connection closed and will not come back (VS-354).",
           "properties": {
-            "session": {
-              "description": "The session.",
+            "connection": {
+              "description": "The connection.",
               "format": "uint64",
               "maximum": 9007199254740991,
-              "minimum": 0,
+              "minimum": 1,
               "type": "integer"
             },
             "type": {
-              "const": "closed",
+              "const": "gone",
               "type": "string"
             }
           },
           "required": [
             "type",
-            "session"
+            "connection"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A connection that had no viewer now has one (VS-351 item 2).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "remembered": {
+              "description": "The viewer chose, in the browser, to be remembered on this channel.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "viewer_began",
+              "type": "string"
+            },
+            "viewer": {
+              "$ref": "#/$defs/Handle",
+              "description": "The viewer's handle."
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "viewer",
+            "remembered"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A connection no longer carries a viewer (VS-351 item 3).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "viewer_left",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A state request or an offer to remember was not granted (VS-351\nitem 4).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "reason": {
+              "$ref": "#/$defs/StateRefusal",
+              "description": "Why."
+            },
+            "type": {
+              "const": "state_refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Every handle the program knows is void (VS-306).",
+          "properties": {
+            "type": {
+              "const": "viewers_reset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         },
@@ -6273,6 +6347,51 @@
       ],
       "type": "object"
     },
+    "StateRefusal": {
+      "description": "Why a state request or a `STATE_KEEP_OFFER` was not granted (VS-351\nitem 4).",
+      "oneOf": [
+        {
+          "const": "declined",
+          "description": "The viewer blocked the channel or refused state, or already chose\nto be remembered.",
+          "type": "string"
+        },
+        {
+          "const": "stateless",
+          "description": "The client never keeps state.",
+          "type": "string"
+        },
+        {
+          "const": "no_gesture",
+          "description": "No input from the viewer was recent enough (VS-212).",
+          "type": "string"
+        },
+        {
+          "const": "no_key",
+          "description": "The connection has no key and none was made.",
+          "type": "string"
+        },
+        {
+          "const": "invalid",
+          "description": "The proof did not verify (VS-206).",
+          "type": "string"
+        },
+        {
+          "const": "rate",
+          "description": "A bound on challenges or on new viewers was reached (VS-205,\nVS-304), or the offer was already made on the connection.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "No answer came within the server's bound (VS-202).",
+          "type": "string"
+        },
+        {
+          "const": "private",
+          "description": "The connection is a private window's.",
+          "type": "string"
+        }
+      ]
+    },
     "SubCode": {
       "description": "A sub-code: four hexadecimal digits in capitals, 0000 to 3F7F, no bit outside the thirteen (EN 300 706 clause 9.3.1.2); 3F7F means any sub-page.",
       "pattern": "^[0-3][0-9A-F][0-7][0-9A-F]$",
@@ -6483,5 +6602,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 12"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 13"
 }

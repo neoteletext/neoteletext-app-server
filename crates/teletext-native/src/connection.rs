@@ -9,12 +9,12 @@
 //! 5.5.2 and 5.5.3), which a receiver never displays.
 
 use std::io::IoSlice;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use teletext_runtime::ConnectionId;
 use teletext_runtime::frame;
-use teletext_runtime::protocol::CookiePair;
-use teletext_runtime::{ConnectionId, SessionId};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -38,10 +38,11 @@ pub const PING_AFTER: Duration = Duration::from_micros(PUSH_PING_AFTER_US.satura
 pub const DEAD_AFTER_PING: Duration = Duration::from_micros(PUSH_PONG_WITHIN_US);
 
 /// Serves one connection until it closes: `stream` is the socket hyper
-/// upgraded, and `early` what hyper had read past the upgrade.
-pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, session: SessionId, cookies: Vec<CookiePair>) {
+/// upgraded, `early` what hyper had read past the upgrade, and `address`
+/// the viewer's network address, for the bound on new viewers (VS-304).
+pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: ConnectionId, address: Option<IpAddr>) {
     let (reading, writing) = stream.into_split();
-    serve_halves(reading, writing, early, hub, connection, session, cookies).await;
+    serve_halves(reading, writing, early, hub, connection, address).await;
 }
 
 /// `serve` on the connection's two halves. The tests serve an in-memory
@@ -54,16 +55,15 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     early: &[u8],
     hub: Hub,
     connection: ConnectionId,
-    session: SessionId,
-    cookies: Vec<CookiePair>,
+    address: Option<IpAddr>,
 ) {
     let (outbox, mut own_queue) = mpsc::channel(OUTBOX);
-    if hub.commands.send(Command::Opened { connection, session, cookies, outbox }).await.is_err() {
+    if hub.commands.send(Command::Opened { connection, address, outbox }).await.is_err() {
         return;
     }
     let stats = Arc::clone(&hub.stats);
     stats.connected();
-    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "opened");
+    tracing::debug!(target: "connection", channel = hub.folder, connection, "opened");
     let mut reader = Reader::new();
     reader.feed(early);
     let mut buffer = vec![0_u8; READ_BYTES];
@@ -90,7 +90,7 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 Some(Outbound::Close(code)) => {
                     // RFC 6455 section 5.5.1: the status code first, two bytes.
                     let _ = write(&mut writing, Opcode::Close, &code.to_be_bytes(), &stats).await;
-                    tracing::debug!(target: "connection", channel = hub.folder, connection, session, code, "closed by the server");
+                    tracing::debug!(target: "connection", channel = hub.folder, connection, code, "closed by the server");
                     open = false;
                 }
                 None => open = false,
@@ -99,7 +99,7 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 if pinged.is_some() {
                     // RFC 6455 section 7.1.7: a peer that answers nothing
                     // is not sent a Close; the connection is dropped.
-                    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "dropped: no answer to a ping");
+                    tracing::debug!(target: "connection", channel = hub.folder, connection, "dropped: no answer to a ping");
                     open = false;
                 } else {
                     pinged = Some(Instant::now());
@@ -111,7 +111,7 @@ async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     let _ = writing.shutdown().await;
     stats.disconnected();
     let _ = hub.commands.send(Command::Closed { connection }).await;
-    tracing::debug!(target: "connection", channel = hub.folder, connection, session, "closed");
+    tracing::debug!(target: "connection", channel = hub.folder, connection, "closed");
 }
 
 /// Handles the client's whole messages; returns whether the connection

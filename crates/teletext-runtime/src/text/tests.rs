@@ -220,10 +220,10 @@ fn channel() -> Channel {
         address: "http://127.0.0.1/test/".into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let mut channel = Channel::new(config);
+    let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     channel
 }
@@ -259,7 +259,7 @@ fn start_lists_every_language() {
 #[test]
 fn measure_answers_with_the_encoders_figures_and_sends_nothing() {
     let mut channel = channel();
-    channel.opened(1, 1, Vec::new(), 0);
+    channel.opened(1, None, 0);
     let _ = channel.take_effects();
     let text = json!([{"row": 2, "column": 0, "text": "Привет", "language": "ru"}, {"row": 3, "column": 0, "text": "café"}]);
     let measure = json!({"type": "measure", "request": 7, "page": page_value("en", &text)});
@@ -297,8 +297,8 @@ fn the_same_page_encodes_to_the_same_bytes() {
 
 /// DEC-2326, REQ-2150 item 2: a run from outside the program shows a
 /// stand-in for each character its language cannot show, where the same
-/// run of the program's own is refused (above): the question mark, or the
-/// Arabic script's own where its sets lack ASCII's.
+/// run of the program's own is refused (above): the question mark, which
+/// the engine shows through Latin English inside the run (its DEC-2473).
 #[test]
 fn a_run_from_outside_shows_a_stand_in_for_what_its_language_cannot() {
     let run = |row: u8, text: &str, language: &str| json!({"row": row, "column": 0, "text": text, "language": language, "outside": true});
@@ -306,7 +306,9 @@ fn a_run_from_outside_shows_a_stand_in_for_what_its_language_cannot() {
     let rows = shown(&page);
     assert_eq!(rows[2], "Tea ?? ok");
     assert_eq!(rows[3], "Привет ?");
-    assert!(rows[4].contains('\u{061F}') && !rows[4].contains('中'), "Arabic's own question mark: {:?}", rows[4]);
+    // The engine's DEC-2473: what a run's language lacks is shown through
+    // Latin English inside the run, so as ASCII's question mark.
+    assert!(rows[4].contains('?') && !rows[4].contains('中'), "the question mark: {:?}", rows[4]);
     // Marked false, or not marked, the program's own text is refused.
     let own = json!([{"row": 2, "column": 0, "text": "中", "outside": false}]);
     let refusal = read(&line(&page_message(&page_value("en", &own)))).unwrap_err();
@@ -318,7 +320,7 @@ fn a_run_from_outside_shows_a_stand_in_for_what_its_language_cannot() {
 #[test]
 fn each_stand_in_is_logged_once_a_page_and_character() {
     let mut channel = channel();
-    channel.opened(1, 1, Vec::new(), 0);
+    channel.opened(1, None, 0);
     let _ = channel.take_effects();
     let text = json!([{"row": 2, "column": 0, "text": "中中文", "outside": true}, {"row": 3, "column": 0, "text": "文", "outside": true}]);
     channel.from_program(&line(&page_message(&page_value("en", &text))), 1);

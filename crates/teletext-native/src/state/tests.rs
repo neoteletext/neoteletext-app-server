@@ -6,28 +6,45 @@ fn scratch(name: &str) -> PathBuf {
     folder
 }
 
-/// The session key is made once, kept for its owner alone, and the same
-/// at the next start; a previous key is read when there is one
-/// (requirement 5.5).
-/// REQ-1040.
+/// VS-305, VS-603: the viewer-handle secret is made once, kept for its
+/// owner alone, and the same at the next start; the session cookie's old
+/// keys are deleted; a secret of the wrong length is refused.
 #[test]
-#[cfg_attr(not(unix), ignore = "no session key is made where /dev/urandom is not, so on Windows (TODO-2055)")]
-fn the_session_key_is_made_once_and_kept() {
-    let root = scratch("keys");
+fn the_handle_secret_is_made_once_and_kept() {
+    let root = scratch("secret");
     let state = StateDirectory::open(&root).unwrap();
-    let (key, previous) = state.session_keys().unwrap();
-    assert_eq!(previous, None);
-    assert_eq!(StateDirectory::open(&root).unwrap().session_keys().unwrap().0, key);
+    for retired in RETIRED_FILES {
+        fs::write(root.join(retired), [3_u8; 32]).unwrap();
+    }
+    let (secret, rotated) = state.handle_secret().unwrap();
+    assert!(!rotated);
+    for retired in RETIRED_FILES {
+        assert!(!root.join(retired).exists(), "{retired} is deleted");
+    }
+    assert_eq!(StateDirectory::open(&root).unwrap().handle_secret().unwrap().0.bytes(), secret.bytes());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(root.join(KEY_FILE)).unwrap().permissions().mode() & 0o777, OWNER_ONLY_FILE);
+        assert_eq!(fs::metadata(root.join(HANDLE_SECRET_FILE)).unwrap().permissions().mode() & 0o777, OWNER_ONLY_FILE);
         assert_eq!(fs::metadata(&root).unwrap().permissions().mode() & 0o777, OWNER_ONLY_FOLDER);
     }
-    fs::write(root.join(PREVIOUS_KEY_FILE), [3_u8; KEY_BYTES]).unwrap();
-    assert_eq!(state.session_keys().unwrap(), (key, Some([3; KEY_BYTES])));
-    fs::write(root.join(PREVIOUS_KEY_FILE), b"short").unwrap();
-    assert!(state.session_keys().is_err(), "a key of the wrong length is refused");
+    fs::write(root.join(HANDLE_SECRET_FILE), b"short").unwrap();
+    assert!(state.handle_secret().is_err(), "a secret of the wrong length is refused");
+}
+
+/// VS-306: rotation makes a new secret and marks it, until every program
+/// was told.
+#[test]
+fn rotation_makes_a_new_secret_and_marks_it() {
+    let root = scratch("rotation");
+    let state = StateDirectory::open(&root).unwrap();
+    let (before, _) = state.handle_secret().unwrap();
+    state.rotate_handle_secret().unwrap();
+    let (after, rotated) = state.handle_secret().unwrap();
+    assert!(rotated);
+    assert_ne!(after.bytes(), before.bytes());
+    state.rotation_told().unwrap();
+    assert!(!state.handle_secret().unwrap().1);
 }
 
 /// REQ-1054: figures are kept and read back; a file that does not read is

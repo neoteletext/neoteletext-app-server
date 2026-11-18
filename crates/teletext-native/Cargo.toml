@@ -27,6 +27,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync"
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 listenfd.workspace = true
+# The handle secret's and the challenges' random bytes (DEC-6471).
+ring.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

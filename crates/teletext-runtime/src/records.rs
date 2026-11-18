@@ -1,6 +1,6 @@
 //! What a program sends that is not page content, as the engine's records
 //! on data channel 12 (REQ-1480; DOC-1951): the index, a
-//! page's SUBPAGES list, the author's LOG lines, typed `SET_COOKIE`, a
+//! page's SUBPAGES list, the author's LOG lines, a
 //! sub-page's LINKS and a REDIRECT. Each is written by the engine's encoder, which checks
 //! what it writes with its reader, never by hand here; this module only
 //! turns the protocol's types into the encoder's.
@@ -17,8 +17,6 @@ use neoteletext_formats::log::LogLevel;
 use neoteletext_formats::page::{LinkKey as EngineLinkKey, LinkLine, LinkText, NumberLink as EngineNumberLink, TextLink as EngineTextLink};
 use neoteletext_formats::text::Text;
 use neoteletext_formats::tti::link_destination;
-use neoteletext_web::cookie::SameSite as EngineSameSite;
-use neoteletext_web::records::cookie::SetCookie;
 use neoteletext_web::records::index::{IndexMagazine, IndexPage};
 use neoteletext_web::records::links::SubPageLinks;
 use neoteletext_web::records::redirect::RedirectRecord;
@@ -26,7 +24,7 @@ use neoteletext_web::records::subpages::SubPageEntry;
 use neoteletext_web::records::{index, links, log, redirect as redirect_record, subpages};
 
 use crate::page::address;
-use crate::protocol::{AuthorLevel, AuthorLog, Cookie, LinkKey, Magazine, Page, Redirect, SameSite, SubPages};
+use crate::protocol::{AuthorLevel, AuthorLog, LinkKey, Magazine, Page, Redirect, SubPages};
 
 /// The audio and input service the records go on (the reference channel's,
 /// DOC-1951).
@@ -219,30 +217,6 @@ pub(crate) fn redirect(redirect: &Redirect, record_id: &mut u8) -> Result<Vec<u8
     };
     let mut written = None;
     let bytes = collect(|out| written = Some(redirect_record::encode(record, SERVICE, *record_id, out)));
-    written.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;
-    *record_id = record_id.wrapping_add(1);
-    Ok(bytes)
-}
-
-/// A cookie, typed, as its `SET_COOKIE` record (DOC-1957).
-pub(crate) fn cookie(cookie: &Cookie, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
-    let same_site = match cookie.same_site {
-        Some(SameSite::Strict) => EngineSameSite::Strict,
-        Some(SameSite::Lax) => EngineSameSite::Lax,
-        Some(SameSite::None) => EngineSameSite::None,
-        None => EngineSameSite::Default,
-    };
-    let typed = SetCookie {
-        name: &cookie.name,
-        value: &cookie.value,
-        path: cookie.path.as_deref(),
-        max_age: cookie.max_age,
-        same_site,
-        secure: cookie.secure,
-        http_only: cookie.http_only,
-    };
-    let mut written = None;
-    let bytes = collect(|out| written = Some(typed.encode(SERVICE, *record_id, out)));
     written.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;
     *record_id = record_id.wrapping_add(1);
     Ok(bytes)

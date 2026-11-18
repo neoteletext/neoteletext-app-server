@@ -8,15 +8,14 @@
 //! ```
 //!
 //! Every connection says HELLO and SELECTs a page (DOC-1921, DOC-1753),
-//! as a receiver does, from a new session each time, since it keeps no
-//! cookie.
+//! as a receiver does, answering the server's viewer-state challenge as
+//! a client that keeps no state (VS-501).
 //! - **hold** (decision 7): opens many connections and holds them; each
 //!   frame of `--page` is grouped with the same frame at the other
 //!   connections, and the spread between its first and last arrival is the
 //!   fan-out time.
-//! - **churn** (TODO-1301): opens `--rate` connections a second, each a new
-//!   session that takes its first answer and closes, so the server keeps a
-//!   session waiting for its viewer for each (REQ-1040).
+//! - **churn** (TODO-1301): opens `--rate` connections a second, each of
+//!   which takes its first answer and closes.
 //! - **answers** (TODO-1521, REQ-1481): each connection selects `--pages`
 //!   in turn, `--selections` times, and times each selection from the
 //!   SELECT sent to its answer arrived, a frame of the page or a DENIED
@@ -51,6 +50,7 @@ use neoteletext_input::MAX_MESSAGE;
 use neoteletext_input::VERSION;
 use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
 use neoteletext_input::event::{Event, Item, Select, write};
+use neoteletext_input::state::NoneReason;
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -360,6 +360,9 @@ impl Connection {
         let mut items = Vec::new();
         if hello {
             items.push(Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP, agent: None }));
+            // The answer to the challenge that follows WELCOME, given before
+            // it comes, as a client that keeps no state may (VS-202, VS-501).
+            items.push(Item::Event(Event::StateNone(NoneReason::Stateless)));
         }
         items.push(Item::Event(Event::Select(selection, "")));
         let mut payload = Vec::new();

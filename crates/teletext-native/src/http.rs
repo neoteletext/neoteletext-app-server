@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,8 +13,8 @@ use std::task::{Context, Poll};
 
 use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY,
-    SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, SET_COOKIE, UPGRADE, X_CONTENT_TYPE_OPTIONS,
+    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderValue, LOCATION, ORIGIN, REFERRER_POLICY, SEC_WEBSOCKET_PROTOCOL,
+    SEC_WEBSOCKET_VERSION, UPGRADE, X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::{Method, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioIo;
@@ -21,10 +22,8 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
-use teletext_runtime::SessionId;
 use teletext_runtime::landing::{self, PushRefusal, Route, push_upgrade, route};
-use teletext_runtime::protocol::{CookiePair, PageNumber};
-use teletext_runtime::session_cookie::{self, Key};
+use teletext_runtime::protocol::PageNumber;
 
 use crate::connection;
 use crate::hub::{Command, Hub};
@@ -60,45 +59,41 @@ impl Body for Whole {
     }
 }
 
-/// The server's channels by folder, and the next session's and
-/// connection's numbers.
+/// The server's channels by folder, and the next connection's number.
 #[derive(Debug)]
 pub struct Routes {
     /// The channels.
     pub hubs: BTreeMap<String, Hub>,
-    /// Sessions are numbered from here, never reused, across restarts too
-    /// (requirement 5.4: `session_cookie::first_session`).
-    pub sessions: AtomicU64,
     /// Connections are numbered from 1, never reused while the server
     /// runs.
     pub connections: AtomicU64,
     /// The server's figures.
     pub stats: Arc<ServerStats>,
-    /// How sessions continue across connections, where they can.
-    pub cookies: Option<Cookies>,
+    /// The proxy in front of the server, whose `X-Forwarded-For` names the
+    /// viewer's address (VS-304); none trusted when there is none.
+    pub trusted_proxy: Option<IpAddr>,
 }
 
-/// The session cookie's keys and attributes (requirement 5.5).
-#[derive(Debug)]
-pub struct Cookies {
-    /// The key cookies are signed with.
-    pub key: Key,
-    /// The key before it, still accepted.
-    pub previous: Option<Key>,
-    /// Whether viewers reach the server over `https`: the cookie is then
-    /// `Secure`.
-    pub secure: bool,
-}
+/// The header a reverse proxy names the client's address in, appending it
+/// to what it received (the de facto form RFC 7239 section 1 describes).
+const FORWARDED_FOR: &str = "x-forwarded-for";
 
-/// Seconds since the Unix epoch.
-fn now_s() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
+/// The viewer's network address (VS-304): the peer's, or, when the peer is
+/// the trusted proxy, the last address its `X-Forwarded-For` names, the
+/// one it appended itself. The rest of the header is the viewer's own
+/// word, and is never read.
+fn viewer_address(routes: &Routes, peer: Option<IpAddr>, request: &Request<Incoming>) -> Option<IpAddr> {
+    if peer.is_none() || peer != routes.trusted_proxy {
+        return peer;
+    }
+    let forwarded = request.headers().get_all(FORWARDED_FOR).iter().next_back()?.to_str().ok()?;
+    forwarded.rsplit(',').next()?.trim().parse().ok()
 }
 
 /// Answers one request on the viewers' address (REQ-1693 item 7), and 404
 /// for everything else, `/` included. The server serves no channel's files:
 /// every page comes over the connection.
-pub async fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Whole> {
+pub async fn answer(routes: &Routes, request: Request<Incoming>, peer: Option<IpAddr>) -> Response<Whole> {
     let (folder, asked) = route(request.uri().path());
     count(&routes.stats.requests);
     let Some(hub) = routes.hubs.get(folder).cloned() else { return status(StatusCode::NOT_FOUND) };
@@ -114,7 +109,10 @@ pub async fn answer(routes: &Routes, request: Request<Incoming>) -> Response<Who
             response.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             response
         }
-        Route::Push => upgrade(routes, hub, request),
+        Route::Push => {
+            let address = viewer_address(routes, peer, &request);
+            upgrade(routes, hub, request, address)
+        }
         Route::Program => program_upgrade(hub, request),
         Route::Page | Route::Described(_) | Route::ToFolder | Route::ToPlace | Route::Missing => status(StatusCode::NOT_FOUND),
     }
@@ -258,8 +256,9 @@ fn program_upgrade(hub: Hub, mut request: Request<Incoming>) -> Response<Whole> 
     switching(&key)
 }
 
-/// The push WebSocket: answers 101 and serves the upgraded socket.
-fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Response<Whole> {
+/// The push WebSocket: answers 101 and serves the upgraded socket. No
+/// `Cookie` is read and no `Set-Cookie` sent (VS-201, VS-354).
+fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>, address: Option<IpAddr>) -> Response<Whole> {
     let key = match handshake(&request) {
         Ok(key) => key,
         Err(response) => return *response,
@@ -268,40 +267,17 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>) -> Respons
     if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
         return refused_upgrade(refusal);
     }
-    let (session, set_cookie) = session_for(routes, &hub, &request);
-    let mut cookies: Vec<CookiePair> = Vec::new();
-    for header in request.headers().get_all(COOKIE) {
-        session_cookie::program_cookies(header.as_bytes(), &mut cookies);
-    }
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let pending = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
         let Ok(upgraded) = pending.await else { return };
         // The raw socket: no HTTP buffers stay with the connection.
         let Ok(parts) = upgraded.downcast::<TokioIo<TcpStream>>() else { return };
-        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, session, cookies).await;
+        connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, address).await;
     });
     let mut response = switching(&key);
-    let headers = response.headers_mut();
-    if let Some(value) = set_cookie.and_then(|cookie| HeaderValue::from_str(&cookie).ok()) {
-        headers.insert(SET_COOKIE, value);
-    }
-    headers.insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
+    response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
     response
-}
-
-/// The session a push connection continues or starts, and the cookie to
-/// set (requirement 5.5): the session its cookie names, else a new one.
-/// Several connections, one a tab, may share a session, as a web server's
-/// tabs of one site do (DEC-1527).
-fn session_for(routes: &Routes, hub: &Hub, request: &Request<Incoming>) -> (SessionId, Option<String>) {
-    let new = || routes.sessions.fetch_add(1, Ordering::Relaxed);
-    let Some(cookies) = routes.cookies.as_ref() else { return (new(), None) };
-    let now = now_s();
-    let keys: Vec<&Key> = std::iter::once(&cookies.key).chain(cookies.previous.as_ref()).collect();
-    let named = request.headers().get_all(COOKIE).iter().find_map(|header| session_cookie::session_of(header.as_bytes(), &hub.folder, now, &keys));
-    let session = named.unwrap_or_else(new);
-    (session, Some(session_cookie::set_cookie(&cookies.key, &hub.folder, session, now, cookies.secure)))
 }
 
 fn status(code: StatusCode) -> Response<Whole> {

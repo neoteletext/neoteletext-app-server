@@ -29,10 +29,10 @@ fn channel() -> Channel {
         address: ADDRESS.into(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
-        session_grace_ms: 0,
+        other_addresses: Vec::new(),
         wheel: false,
     };
-    let mut channel = Channel::new(config);
+    let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     let _ = channel.take_effects();
     channel

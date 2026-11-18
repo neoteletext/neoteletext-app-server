@@ -64,7 +64,7 @@ const CHANNEL_TOTALS: [(&str, Kind); 16] = [
     ("lines_to_application", Kind::Counter),
     ("lines_from_application", Kind::Counter),
     ("lines_dropped", Kind::Counter),
-    ("sessions_resumed", Kind::Counter),
+    ("proofs_accepted", Kind::Counter),
 ];
 
 /// How long a channel's task takes over one event and its effects.
@@ -412,8 +412,8 @@ impl ServerStats {
             lines_to_application: stats.lines_to_application,
             lines_from_application: stats.lines_from_application,
             lines_dropped: figures.lines_dropped,
-            sessions_waiting: stats.sessions_waiting,
-            sessions_resumed: stats.sessions_resumed,
+            proofs_accepted: stats.proofs_accepted,
+            proofs_refused: stats.proofs_refused,
             most_opened: stats.most_opened().into_iter().map(|(page, opens)| PageOpens { page: PageNumber(page), opens }).collect(),
             all_time: ChannelTotals {
                 viewers_total: all_time.get("viewers_total"),
@@ -431,7 +431,7 @@ impl ServerStats {
                 lines_to_application: all_time.get("lines_to_application"),
                 lines_from_application: all_time.get("lines_from_application"),
                 lines_dropped: all_time.get("lines_dropped"),
-                sessions_resumed: all_time.get("sessions_resumed"),
+                proofs_accepted: all_time.get("proofs_accepted"),
                 pages_opened: all_time.opens.iter().map(|(&page, &opens)| (format!("{page:03X}"), opens)).collect(),
             },
         }
@@ -489,18 +489,18 @@ impl ServerStats {
         let each = |value: fn(&ChannelFigures) -> u64| -> Vec<(String, f64)> {
             channels.iter().map(|(folder, figures)| (format!("{{channel=\"{}\"}}", label(folder)), as_float(value(figures)))).collect()
         };
-        let gauges: [Figure; 4] = [
+        let gauges: [Figure; 3] = [
             ("teletext_channel_viewers", "Viewers connected now.", |figures| figures.stats.viewers),
             ("teletext_channel_viewers_peak", "The most viewers connected at once.", |figures| figures.stats.viewers_peak),
-            ("teletext_channel_sessions_waiting", "Sessions waiting for their viewer to come back.", |figures| figures.stats.sessions_waiting),
             ("teletext_channel_ready", "Whether the channel's program has answered since it started.", |figures| u64::from(figures.ready)),
         ];
         for (name, help, value) in gauges {
             family(name, "gauge", help, &each(value));
         }
-        let counters: [Figure; 16] = [
+        let counters: [Figure; 17] = [
             ("teletext_channel_viewers_total", "Viewers that connected.", |figures| figures.stats.viewers_total),
-            ("teletext_channel_sessions_resumed_total", "Sessions a viewer came back to.", |figures| figures.stats.sessions_resumed),
+            ("teletext_channel_proofs_accepted_total", "Viewers' proofs of viewer state that verified.", |figures| figures.stats.proofs_accepted),
+            ("teletext_channel_proofs_refused_total", "Viewers' proofs of viewer state refused.", |figures| figures.stats.proofs_refused),
             ("teletext_channel_page_opens_total", "Pages opened.", |figures| figures.stats.total_opens()),
             ("teletext_channel_inputs_total", "Input events from viewers.", |figures| figures.stats.inputs),
             ("teletext_channel_keys_total", "Key presses from viewers.", |figures| figures.stats.keys),
@@ -582,7 +582,7 @@ fn channel_now(figures: &ChannelFigures) -> Totals {
         ("lines_to_application", stats.lines_to_application),
         ("lines_from_application", stats.lines_from_application),
         ("lines_dropped", figures.lines_dropped),
-        ("sessions_resumed", stats.sessions_resumed),
+        ("proofs_accepted", stats.proofs_accepted),
     ];
     Totals { counts: counts.into_iter().map(|(name, value)| (name.to_owned(), value)).collect(), opens: stats.opens.clone() }
 }

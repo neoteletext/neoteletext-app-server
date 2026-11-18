@@ -167,13 +167,13 @@ fn a_move_on_another_page_is_dropped() {
     assert_eq!(channel.next_wake(), NOTHING_MOVING);
 }
 
-/// A connection of the session and not the session: two tabs have a pointer
+/// A connection's and not its viewer's: two tabs have a pointer
 /// each, and one's moves take nothing of the other's pace.
 #[test]
 fn each_connection_has_a_pace_of_its_own() {
     const SECOND: u64 = CONNECTION + 1;
     let mut channel = selected();
-    channel.opened(SECOND, 1, Vec::new(), 0);
+    channel.opened(SECOND, None, 0);
     channel.received(SECOND, &message(&[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
     channel.received(CONNECTION, &message(&[moved_to(1)]), 1);

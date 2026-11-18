@@ -3,6 +3,8 @@
 //! ```text
 //! teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE]
 //!                 [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text]
+//!                 [--trusted-proxy ADDRESS]
+//! teletext-server rotate-viewer-secret [--state DIRECTORY]
 //! ```
 //!
 //! `--listen` is where it accepts connections (`0.0.0.0:8090` by
@@ -11,11 +13,21 @@
 //! it at, which each channel's push WebSocket is named on (the engine
 //! requires the push address on the channel's own origin); `--channels` is
 //! the file of the channels it serves, each a program of its own, in any language
-//! (DOC-1964); `--state` is where it keeps the session
-//! cookie's keys and the accumulated figures across a restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
-//! without either); `--admin-listen` is where `/metrics`, `/healthz` and
+//! (DOC-1964); `--state` is where it keeps the viewer-handle
+//! secret and the accumulated figures across a restart (`$STATE_DIRECTORY`, as systemd sets it, by default; none
+//! without either, when the secret lasts one run); `--admin-listen` is where `/metrics`, `/healthz` and
 //! `/readyz` are served (none unless given); `--log-format` is how events
-//! are written, and `RUST_LOG` chooses which.
+//! are written, and `RUST_LOG` chooses which; `--trusted-proxy` is the
+//! address of the reverse proxy in front of the server, whose
+//! `X-Forwarded-For` then names each viewer's address for the bound on new
+//! viewers (VS-304).
+//!
+//! `rotate-viewer-secret` makes a new viewer-handle secret in the state
+//! directory, for the server's next start (VS-306). **Every channel then
+//! forgets every viewer**: each viewer is given a new handle no program can
+//! relate to the old, and each program is told `viewers_reset` when it
+//! starts. Do it only after a breach of a program's data or of the state
+//! directory.
 
 #![forbid(unsafe_code)]
 // No panicking constructs: everything here reads what clients send
@@ -34,6 +46,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -44,13 +57,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use listenfd::ListenFd;
-use teletext_native::http::{Cookies, Routes, answer};
+use teletext_native::http::{Routes, answer};
 use teletext_native::logging::{self, Format};
-use teletext_native::state::{StateDirectory, random_key};
+use teletext_native::state::{StateDirectory, SystemRandomSource, random_secret};
 use teletext_native::stats::ServerStats;
 use teletext_native::{admin, apps, hub};
-use teletext_runtime::session_cookie::first_session;
-use teletext_runtime::{Channel, ChannelConfig, SESSION_GRACE_MS};
+use teletext_runtime::{Channel, ChannelConfig, HandleSecret};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -76,13 +88,31 @@ struct Arguments {
     state: Option<PathBuf>,
     admin: Option<String>,
     log_format: Format,
+    trusted_proxy: Option<IpAddr>,
+    /// `rotate-viewer-secret`: rotate, and serve nothing.
+    rotate: bool,
 }
+
+/// How the server is run.
+const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
 
 fn arguments() -> Result<Arguments, String> {
     // systemd separates several state directories with colons; the first is ours.
     let state = std::env::var(STATE_VARIABLE).ok().and_then(|value| value.split(':').next().filter(|first| !first.is_empty()).map(PathBuf::from));
-    let mut parsed = Arguments { listen: LISTEN.to_owned(), origin: ORIGIN.to_owned(), channels: None, state, admin: None, log_format: Format::Automatic };
-    let mut list = std::env::args().skip(1);
+    let mut parsed = Arguments {
+        listen: LISTEN.to_owned(),
+        origin: ORIGIN.to_owned(),
+        channels: None,
+        state,
+        admin: None,
+        log_format: Format::Automatic,
+        trusted_proxy: None,
+        rotate: false,
+    };
+    let mut list = std::env::args().skip(1).peekable();
+    if list.next_if(|first| first == "rotate-viewer-secret").is_some() {
+        parsed.rotate = true;
+    }
     while let Some(argument) = list.next() {
         let mut value = || list.next().ok_or_else(|| format!("{argument} needs a value"));
         match argument.as_str() {
@@ -92,11 +122,11 @@ fn arguments() -> Result<Arguments, String> {
             "--state" => parsed.state = Some(PathBuf::from(value()?)),
             "--admin-listen" => parsed.admin = Some(value()?),
             "--log-format" => parsed.log_format = value()?.parse()?,
-            other => {
-                return Err(format!(
-                    "unknown argument {other}; usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text]"
-                ));
+            "--trusted-proxy" => {
+                let text = value()?;
+                parsed.trusted_proxy = Some(text.parse().map_err(|error| format!("--trusted-proxy {text}: {error}"))?);
             }
+            other => return Err(format!("unknown argument {other}; {USAGE}")),
         }
     }
     Ok(parsed)
@@ -128,6 +158,9 @@ fn main() -> ExitCode {
         }
     };
     logging::start(arguments.log_format);
+    if arguments.rotate {
+        return rotate(arguments.state.as_deref());
+    }
     let passed = match passed_socket() {
         Ok(passed) => passed,
         Err(error) => {
@@ -150,6 +183,25 @@ fn main() -> ExitCode {
     }
 }
 
+/// `rotate-viewer-secret` (VS-306).
+fn rotate(state: Option<&std::path::Path>) -> ExitCode {
+    let rotated = state.ok_or_else(|| format!("a state directory is needed: --state DIRECTORY or ${STATE_VARIABLE}")).and_then(|root| {
+        let kept = StateDirectory::open(root)?;
+        kept.rotate_handle_secret()?;
+        Ok(kept)
+    });
+    match rotated {
+        Ok(kept) => {
+            tracing::warn!(state = %kept.root().display(), "the viewer-handle secret was rotated: at the next start every channel forgets every viewer");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            tracing::error!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> Result<(), String> {
     let start = tokio::time::Instant::now();
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
@@ -162,7 +214,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
             Err(error) => tracing::warn!(target: "state", %error, "the accumulated figures start again from zero"),
         }
     }
-    let cookies = session_keys(kept.as_ref()).map(|(key, previous)| Cookies { key, previous, secure: arguments.origin.starts_with("https://") });
+    let (secret, rotated) = handle_secret(kept.as_ref())?;
     let mut hubs = BTreeMap::new();
     for spec in arguments.channels.as_deref().map(apps::read_channels).transpose()?.unwrap_or_default() {
         if hubs.contains_key(&spec.folder) {
@@ -174,12 +226,20 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
             address: format!("{}/{folder}/", arguments.origin),
             initial_page: spec.initial_page,
             epoch_at_start_ms,
-            session_grace_ms: SESSION_GRACE_MS,
+            other_addresses: Vec::new(),
             wheel: spec.wheel,
         };
         let link = apps::start(spec)?;
-        let channel = Channel::new(config);
+        let mut channel = Channel::new(config, &secret, Box::new(SystemRandomSource::default()));
+        if rotated {
+            // Before its program starts: it is told `viewers_reset` after
+            // `start` (VS-306).
+            channel.rotate_viewers(&secret, 0);
+        }
         hubs.insert(folder.clone(), hub::spawn(&folder, channel, start, Some(link), Arc::clone(&stats)));
+    }
+    if rotated && let Some(kept) = &kept {
+        kept.rotation_told()?;
     }
     let listener = match passed {
         Some(passed) => adopt(passed).map_err(|error| format!("cannot serve on the socket systemd passed: {error}"))?,
@@ -201,26 +261,20 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         admin = administering,
         "serving"
     );
-    let routes = Arc::new(Routes {
-        hubs,
-        sessions: AtomicU64::new(first_session(epoch_at_start_ms)),
-        connections: AtomicU64::new(1),
-        stats: Arc::clone(&stats),
-        cookies,
-    });
+    let routes = Arc::new(Routes { hubs, connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: arguments.trusted_proxy });
     tokio::spawn(figures(Arc::clone(&stats), kept.clone()));
     let stopped = stop_signal();
     tokio::pin!(stopped);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
+                let Ok((stream, peer)) = accepted else { continue };
                 let _ = stream.set_nodelay(true);
                 let routes = Arc::clone(&routes);
                 tokio::spawn(async move {
                     let service = service_fn(move |request| {
                         let routes = Arc::clone(&routes);
-                        async move { Ok::<_, Infallible>(answer(&routes, request).await) }
+                        async move { Ok::<_, Infallible>(answer(&routes, request, Some(peer.ip())).await) }
                     });
                     let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
                 });
@@ -240,20 +294,19 @@ fn adopt(passed: std::net::TcpListener) -> std::io::Result<TcpListener> {
     TcpListener::from_std(passed)
 }
 
-/// The session cookie's keys: kept in the state directory, or made for
-/// this run alone; none where there is no source of random bytes.
-fn session_keys(kept: Option<&StateDirectory>) -> Option<(teletext_runtime::session_cookie::Key, Option<teletext_runtime::session_cookie::Key>)> {
-    let keys = match kept {
-        Some(kept) => kept.session_keys(),
-        None => random_key().map(|key| (key, None)),
-    };
-    match keys {
-        Ok(keys) => Some(keys),
-        Err(error) => {
-            tracing::warn!(target: "state", %error, "sessions will not continue across connections");
-            None
-        }
+/// The viewer-handle secret (VS-305), kept in the state directory, or
+/// made for this run alone, so that viewers' handles last the run (the
+/// `serving` line names no state directory then); and whether it was
+/// rotated since the last start.
+///
+/// # Errors
+/// A secret that cannot be read, made or kept: the server does not start
+/// rather than give every viewer a handle that a restart would change.
+fn handle_secret(kept: Option<&StateDirectory>) -> Result<(HandleSecret, bool), String> {
+    if let Some(kept) = kept {
+        return kept.handle_secret();
     }
+    random_secret().map(|secret| (secret, false))
 }
 
 /// Serves the administration listener.
