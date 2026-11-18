@@ -27,22 +27,22 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
 use super::check::{self, Refusal};
-use super::{LONGEST_LINE, M29Line, MessageType, PackedLine, ProgramMessage, Replaced, Rule, Sound, X27Line, X27NibblesLine, X28Line};
+use super::{LONGEST_LINE, M29Line, MessageType, PackedLine, ProgramMessage, Replaced, Rule, Sound, SoundKind, X27Line, X27NibblesLine, X28Line};
 
 /// Marks the path of a fault inside a packed line, which serde's error for
 /// it can carry only as text: the path, then the message (see
 /// [`PackedLine`]'s reading below).
-const INNER_PATH: char = '\u{1}';
+pub(super) const INNER_PATH: char = '\u{1}';
 
 /// A fault the reader found: where, which rule, and in words.
-struct Fault {
-    path: String,
-    rule: Rule,
-    detail: String,
+pub(super) struct Fault {
+    pub(super) path: String,
+    pub(super) rule: Rule,
+    pub(super) detail: String,
 }
 
 impl Fault {
-    fn new(path: &str, rule: Rule, detail: impl Into<String>) -> Self {
+    pub(super) fn new(path: &str, rule: Rule, detail: impl Into<String>) -> Self {
         Self { path: path.to_owned(), rule, detail: detail.into() }
     }
 
@@ -114,122 +114,9 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
     })
 }
 
-/// The kinds of sound, as `kind` names them.
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SoundKind {
-    Opus,
-    OpusLive,
-    OpusPackets,
-    Object,
-    Live,
-    Blocks,
-    Synth6581,
-    Synth6581Live,
-    Synth6581Blocks,
-    Synth8580,
-    Synth8580Live,
-    Synth8580Blocks,
-    Synth7,
-    Synth7Live,
-    Synth7Blocks,
-    Synth7Bank,
-    Synth106,
-    Synth106Live,
-    Synth106Blocks,
-    Synth106Bank,
-    Synth60,
-    Synth60Live,
-    Synth60Blocks,
-    Synth60Bank,
-    #[serde(rename = "synthd")]
-    SynthD,
-    #[serde(rename = "synthd_live")]
-    SynthDLive,
-    #[serde(rename = "synthd_blocks")]
-    SynthDBlocks,
-    #[serde(rename = "synthd_bank")]
-    SynthDBank,
-    Synth53,
-    Synth53Live,
-    Synth53Blocks,
-    Synth53Bank,
-    Synth52,
-    Synth52Live,
-    Synth52Blocks,
-    Synth52Bank,
-    Synth51,
-    Synth51Live,
-    Synth51Blocks,
-    Synth51Bank,
-    Synth8,
-    Synth8Live,
-    Synth8Blocks,
-    Synth8Bank,
-    Synth80,
-    Synth80Live,
-    Synth80Blocks,
-    Synth80Bank,
-    Play,
-    Stop,
-    Gain,
-}
-
 fn sound(mut object: Map<String, Value>) -> Result<Sound, Fault> {
     let kind: SoundKind = tag(&mut object, "kind", "")?;
-    Ok(match kind {
-        SoundKind::Opus => Sound::Opus(typed(object, "")?),
-        SoundKind::OpusLive => Sound::OpusLive(typed(object, "")?),
-        SoundKind::OpusPackets => Sound::OpusPackets(typed(object, "")?),
-        SoundKind::Object => Sound::Object(typed(object, "")?),
-        SoundKind::Live => Sound::Live(typed(object, "")?),
-        SoundKind::Blocks => Sound::Blocks(typed(object, "")?),
-        SoundKind::Synth6581 => Sound::Synth6581(typed(object, "")?),
-        SoundKind::Synth6581Live => Sound::Synth6581Live(typed(object, "")?),
-        SoundKind::Synth6581Blocks => Sound::Synth6581Blocks(typed(object, "")?),
-        SoundKind::Synth8580 => Sound::Synth8580(typed(object, "")?),
-        SoundKind::Synth8580Live => Sound::Synth8580Live(typed(object, "")?),
-        SoundKind::Synth8580Blocks => Sound::Synth8580Blocks(typed(object, "")?),
-        SoundKind::Synth7 => Sound::Synth7(typed(object, "")?),
-        SoundKind::Synth7Live => Sound::Synth7Live(typed(object, "")?),
-        SoundKind::Synth7Blocks => Sound::Synth7Blocks(typed(object, "")?),
-        SoundKind::Synth7Bank => Sound::Synth7Bank(typed(object, "")?),
-        SoundKind::Synth106 => Sound::Synth106(typed(object, "")?),
-        SoundKind::Synth106Live => Sound::Synth106Live(typed(object, "")?),
-        SoundKind::Synth106Blocks => Sound::Synth106Blocks(typed(object, "")?),
-        SoundKind::Synth106Bank => Sound::Synth106Bank(typed(object, "")?),
-        SoundKind::Synth60 => Sound::Synth60(typed(object, "")?),
-        SoundKind::Synth60Live => Sound::Synth60Live(typed(object, "")?),
-        SoundKind::Synth60Blocks => Sound::Synth60Blocks(typed(object, "")?),
-        SoundKind::Synth60Bank => Sound::Synth60Bank(typed(object, "")?),
-        SoundKind::SynthD => Sound::SynthD(typed(object, "")?),
-        SoundKind::SynthDLive => Sound::SynthDLive(typed(object, "")?),
-        SoundKind::SynthDBlocks => Sound::SynthDBlocks(typed(object, "")?),
-        SoundKind::SynthDBank => Sound::SynthDBank(typed(object, "")?),
-        SoundKind::Synth53 => Sound::Synth53(typed(object, "")?),
-        SoundKind::Synth53Live => Sound::Synth53Live(typed(object, "")?),
-        SoundKind::Synth53Blocks => Sound::Synth53Blocks(typed(object, "")?),
-        SoundKind::Synth53Bank => Sound::Synth53Bank(typed(object, "")?),
-        SoundKind::Synth52 => Sound::Synth52(typed(object, "")?),
-        SoundKind::Synth52Live => Sound::Synth52Live(typed(object, "")?),
-        SoundKind::Synth52Blocks => Sound::Synth52Blocks(typed(object, "")?),
-        SoundKind::Synth52Bank => Sound::Synth52Bank(typed(object, "")?),
-        SoundKind::Synth51 => Sound::Synth51(typed(object, "")?),
-        SoundKind::Synth51Live => Sound::Synth51Live(typed(object, "")?),
-        SoundKind::Synth51Blocks => Sound::Synth51Blocks(typed(object, "")?),
-        SoundKind::Synth51Bank => Sound::Synth51Bank(typed(object, "")?),
-        SoundKind::Synth8 => Sound::Synth8(typed(object, "")?),
-        SoundKind::Synth8Live => Sound::Synth8Live(typed(object, "")?),
-        SoundKind::Synth8Blocks => Sound::Synth8Blocks(typed(object, "")?),
-        SoundKind::Synth8Bank => Sound::Synth8Bank(typed(object, "")?),
-        SoundKind::Synth80 => Sound::Synth80(typed(object, "")?),
-        SoundKind::Synth80Live => Sound::Synth80Live(typed(object, "")?),
-        SoundKind::Synth80Blocks => Sound::Synth80Blocks(typed(object, "")?),
-        SoundKind::Synth80Bank => Sound::Synth80Bank(typed(object, "")?),
-        SoundKind::Play => Sound::Play(typed(object, "")?),
-        SoundKind::Stop => Sound::Stop(typed(object, "")?),
-        SoundKind::Gain => Sound::Gain(typed(object, "")?),
-    })
+    super::sound::read_sound(kind, object)
 }
 
 /// The kinds of packed line, as `packet` names them.
@@ -277,7 +164,7 @@ fn tag<T: DeserializeOwned>(object: &mut Map<String, Value>, name: &str, at: &st
 }
 
 /// Reads `object` as `T`, keeping the path of a fault, under `at`.
-fn typed<T: DeserializeOwned>(object: Map<String, Value>, at: &str) -> Result<T, Fault> {
+pub(super) fn typed<T: DeserializeOwned>(object: Map<String, Value>, at: &str) -> Result<T, Fault> {
     serde_path_to_error::deserialize(Value::Object(object)).map_err(|error| {
         let path = error.path().to_string();
         let inner = error.into_inner();
@@ -311,13 +198,15 @@ fn fault_of(path: &str, error: &serde_json::Error) -> Fault {
     Fault::new(path, rule, text)
 }
 
-/// A rule by its name, as [`PackedLine`]'s reading writes it.
+/// A rule by its name, as [`PackedLine`]'s reading and a sound's tagged
+/// choices and ranged integers write it.
 fn rule_named(name: &str) -> Rule {
     match name {
         "UnknownField" => Rule::UnknownField,
         "MissingField" => Rule::MissingField,
         "DuplicateField" => Rule::DuplicateField,
         "NotListed" => Rule::NotListed,
+        "OutOfRange" => Rule::OutOfRange,
         _ => Rule::WrongType,
     }
 }

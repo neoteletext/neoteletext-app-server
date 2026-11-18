@@ -42,7 +42,7 @@ use crate::protocol::{
     ProgramMessage, Refusal, Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, SessionId, Standard, Start,
 };
 use crate::records;
-use crate::sound::{Sounds, audience};
+use crate::sound::Sounds;
 use crate::stats::{ChannelStats, count};
 
 /// The service number audio and input records are sent on (the
@@ -883,6 +883,7 @@ impl Channel {
         self.flush_moves(connection, now);
         self.release_held(connection);
         let Some(state) = self.connections.remove(&connection) else { return };
+        self.sounds.forget(connection);
         if state.announced
             && let Some(selection) = state.selection
         {
@@ -990,6 +991,10 @@ impl Channel {
         for (connection, event) in paced {
             self.tell_move(connection, event);
         }
+        // SRV-77: live synthesizer blocks as their lead allows.
+        for (connection, records) in self.sounds.due(now) {
+            self.records(&[connection], &records);
+        }
     }
 
     /// Tells `connection` its selection ended with `status` (DOC-1961):
@@ -1016,7 +1021,7 @@ impl Channel {
         // A move's time is in microseconds: this is the first millisecond at
         // or after it.
         let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
-        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).min()
+        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).chain(self.sounds.next_due()).min()
     }
 
     /// Takes one item of `connection`'s input; false for one out of the
@@ -1302,6 +1307,8 @@ impl Channel {
             self.log(Level::Warn, "line_refused", format!("refused a line from the program: {refusal}"));
             let mut refused = refusal.refused();
             refused.request = protocol::request_of(line);
+            // SRV-48: a refused sound names the sound it concerns.
+            refused.sound = protocol::sound_of(line);
             self.tell(&ServerMessage::Refused(refused));
         }
     }
@@ -1411,9 +1418,14 @@ impl Channel {
                 }
             }
             ProgramMessage::Sound(sound) => {
-                let records = self.sounds.records(&sound).map_err(|(rule, detail)| refuse("", rule, detail))?;
-                let targets = self.targets(audience(&sound));
-                self.records(&targets, &records);
+                let targets = self.targets(sound.connections());
+                let sent = self.sounds.act(&sound, &targets, now).map_err(|refused| refuse(&refused.path, refused.rule, refused.detail))?;
+                for (connection, records) in sent.records {
+                    self.records(&[connection], &records);
+                }
+                if let Some(built) = sent.built {
+                    self.tell(&ServerMessage::SoundBuilt(built));
+                }
             }
             ProgramMessage::Cookie(cookie) => {
                 if !self.connections.contains_key(&cookie.connection) {

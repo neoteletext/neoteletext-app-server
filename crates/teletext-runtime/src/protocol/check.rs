@@ -26,10 +26,6 @@ use super::{
 use super::{
     BlocksSound, GainSound, LiveSound, M29Line, ObjectSound, OpusLiveSound, OpusPacketsSound, OpusSound, PlaySound, StopSound, X27Line, X27NibblesLine, X28Line,
 };
-use super::{
-    MOST_INSTRUMENT_BLOCKS, MOST_LIVE_INSTRUMENT_BLOCKS, Synth, Synth7BankSound, Synth7BlocksSound, Synth7LiveSound, Synth7Sound, Synth8LiveSound, Synth8Sound,
-    Synth6581BlocksSound, Synth6581LiveSound, Synth6581Sound, SynthBankSound, SynthBlocksSound, SynthLiveSound, SynthSound,
-};
 
 mod instrument;
 
@@ -56,7 +52,7 @@ impl Refusal {
     /// The `refused` message that carries it.
     #[must_use]
     pub fn refused(self) -> Refused {
-        Refused { message: self.message, path: self.path, rule: self.rule, detail: self.detail, request: None }
+        Refused { message: self.message, path: self.path, rule: self.rule, detail: self.detail, request: None, sound: None }
     }
 }
 
@@ -615,6 +611,9 @@ const MOST_PCM_BYTES: usize = super::MOST_SAMPLES * 2;
 const MOST_OPUS_BYTES: usize = super::MOST_SAMPLES / neoteletext_opus::FRAME_SAMPLES * OPUS_MOST_PACKET_BYTES as usize;
 
 fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
+    if let Some(checked) = instrument::check(root, sound) {
+        return checked;
+    }
     match sound {
         Sound::Opus(OpusSound { connections, packet_bytes, packets, .. }) | Sound::OpusPackets(OpusPacketsSound { connections, packet_bytes, packets, .. }) => {
             check_connections(&root.field("connections"), connections)?;
@@ -642,60 +641,6 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             check_connections(&root.field("connections"), connections)?;
             check_rate(&root.field("rate"), *rate)
         }
-        Sound::Synth6581(Synth6581Sound { connections, images_per_block, images, .. })
-        | Sound::Synth8580(Synth6581Sound { connections, images_per_block, images, .. }) => {
-            instrument::synth6581(root, connections, *images_per_block, Some((images, MOST_INSTRUMENT_BLOCKS)))
-        }
-        Sound::Synth6581Live(Synth6581LiveSound { connections, images_per_block, .. })
-        | Sound::Synth8580Live(Synth6581LiveSound { connections, images_per_block, .. }) => instrument::synth6581(root, connections, *images_per_block, None),
-        Sound::Synth6581Blocks(Synth6581BlocksSound { connections, images_per_block, images, .. })
-        | Sound::Synth8580Blocks(Synth6581BlocksSound { connections, images_per_block, images, .. }) => {
-            instrument::synth6581(root, connections, *images_per_block, Some((images, MOST_LIVE_INSTRUMENT_BLOCKS)))
-        }
-        Sound::Synth7(Synth7Sound { connections, slots, blocks, .. }) => instrument::synth7(root, connections, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS))),
-        Sound::Synth7Live(Synth7LiveSound { connections, slots, .. }) => instrument::synth7(root, connections, *slots, None),
-        Sound::Synth7Blocks(Synth7BlocksSound { connections, slots, blocks, .. }) => {
-            instrument::synth7(root, connections, *slots, Some((blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
-        }
-        Sound::Synth7Bank(Synth7BankSound { connections, patches, .. }) => instrument::bank(root, connections, patches),
-        Sound::Synth106(sound) => synth_stored(root, Synth::Synth106, sound),
-        Sound::Synth106Live(sound) => synth_live(root, Synth::Synth106, sound),
-        Sound::Synth60(sound) => synth_stored(root, Synth::Synth60, sound),
-        Sound::Synth60Live(sound) => synth_live(root, Synth::Synth60, sound),
-        Sound::SynthD(sound) => synth_stored(root, Synth::SynthD, sound),
-        Sound::SynthDLive(sound) => synth_live(root, Synth::SynthD, sound),
-        Sound::Synth53(sound) => synth_stored(root, Synth::Synth53, sound),
-        Sound::Synth53Live(sound) => synth_live(root, Synth::Synth53, sound),
-        Sound::Synth52(sound) => synth_stored(root, Synth::Synth52, sound),
-        Sound::Synth52Live(sound) => synth_live(root, Synth::Synth52, sound),
-        Sound::Synth51(sound) => synth_stored(root, Synth::Synth51, sound),
-        Sound::Synth51Live(sound) => synth_live(root, Synth::Synth51, sound),
-        Sound::Synth80(sound) => synth_stored(root, Synth::Synth80, sound),
-        Sound::Synth80Live(sound) => synth_live(root, Synth::Synth80, sound),
-        Sound::Synth8(Synth8Sound { connections, slots, blocks, split_key, .. }) => {
-            instrument::synth(root, connections, Synth::Synth8, *slots, Some((blocks, MOST_INSTRUMENT_BLOCKS)))?;
-            instrument::split_key(root, *split_key)
-        }
-        Sound::Synth8Live(Synth8LiveSound { connections, slots, split_key, .. }) => {
-            instrument::synth(root, connections, Synth::Synth8, *slots, None)?;
-            instrument::split_key(root, *split_key)
-        }
-        Sound::Synth106Blocks(blocks) => synth_blocks(root, Synth::Synth106, blocks),
-        Sound::Synth60Blocks(blocks) => synth_blocks(root, Synth::Synth60, blocks),
-        Sound::SynthDBlocks(blocks) => synth_blocks(root, Synth::SynthD, blocks),
-        Sound::Synth53Blocks(blocks) => synth_blocks(root, Synth::Synth53, blocks),
-        Sound::Synth52Blocks(blocks) => synth_blocks(root, Synth::Synth52, blocks),
-        Sound::Synth51Blocks(blocks) => synth_blocks(root, Synth::Synth51, blocks),
-        Sound::Synth8Blocks(blocks) => synth_blocks(root, Synth::Synth8, blocks),
-        Sound::Synth80Blocks(blocks) => synth_blocks(root, Synth::Synth80, blocks),
-        Sound::Synth106Bank(bank) => synth_bank(root, Synth::Synth106, bank),
-        Sound::Synth60Bank(bank) => synth_bank(root, Synth::Synth60, bank),
-        Sound::SynthDBank(bank) => synth_bank(root, Synth::SynthD, bank),
-        Sound::Synth53Bank(bank) => synth_bank(root, Synth::Synth53, bank),
-        Sound::Synth52Bank(bank) => synth_bank(root, Synth::Synth52, bank),
-        Sound::Synth51Bank(bank) => synth_bank(root, Synth::Synth51, bank),
-        Sound::Synth8Bank(bank) => synth_bank(root, Synth::Synth8, bank),
-        Sound::Synth80Bank(bank) => synth_bank(root, Synth::Synth80, bank),
         Sound::Play(PlaySound { connections, channel, gain, duck, .. }) => {
             check_connections(&root.field("connections"), connections)?;
             check_channel(&root.field("channel"), *channel)?;
@@ -714,6 +659,8 @@ fn check_sound(root: &Path<'_>, sound: &Sound) -> Checked {
             check_channel(&root.field("channel"), *channel)?;
             check_gain(&root.field("gain"), *gain)
         }
+        // The synthesizer kinds are `instrument::check`'s, above.
+        _ => Ok(()),
     }
 }
 
@@ -941,6 +888,10 @@ pub(crate) const TYPE_REGIS_CURSOR: u8 = 16;
 /// NAPLPS renderer's REQ-6408 item 2), which only the `naplps` message sends.
 pub(crate) const TYPE_NAPLPS: u8 = 17;
 
+/// The audio profile's record types a `packets` message may not carry: a
+/// sound's OBJECT, DATA and CONTROL records (the engine's `record.rs`).
+const AUDIO_RECORD_TYPES: [u8; 3] = [neoteletext_audio::record::TYPE_OBJECT, neoteletext_audio::record::TYPE_DATA, neoteletext_audio::record::TYPE_CONTROL];
+
 /// The most raw packets one message may carry: a megabyte of them.
 const MOST_RAW_BYTES: usize = 1024 * 1024;
 
@@ -969,6 +920,18 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
             let detail = "a record of a sub-page's ReGIS or NAPLPS goes in a regis, regis_links, regis_cursor or naplps message, which checks it";
             return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
         }
+        // Nor an audio record (TODO-6475): a sound's OBJECT, DATA and CONTROL
+        // records go in a sound message, whose blocks, banks and patches the
+        // server checks with the receiver's own code (MIDI-21); in raw
+        // packets a program could send a synthesizer what no check saw.
+        if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
+            && fragment.index == 0
+            && let Some(kind) = fragment.data.get(1)
+            && AUDIO_RECORD_TYPES.contains(kind)
+        {
+            let detail = "TODO-6475: an audio record (OBJECT, DATA or CONTROL) goes in a sound message, which checks what it carries";
+            return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
+        }
     }
     Ok(())
 }
@@ -979,24 +942,4 @@ pub(crate) fn bytes_of(text: &str) -> Vec<u8> {
     let length = base64::decode(text.as_bytes(), &mut bytes).unwrap_or(0);
     bytes.truncate(length);
     bytes
-}
-
-/// A stored sound of the analogue synthesizer its kind names.
-fn synth_stored(root: &Path<'_>, synth: Synth, sound: &SynthSound) -> Checked {
-    instrument::synth(root, &sound.connections, synth, sound.slots, Some((&sound.blocks, MOST_INSTRUMENT_BLOCKS)))
-}
-
-/// A live sound's object, of the analogue synthesizer its kind names.
-fn synth_live(root: &Path<'_>, synth: Synth, sound: &SynthLiveSound) -> Checked {
-    instrument::synth(root, &sound.connections, synth, sound.slots, None)
-}
-
-/// A live sound's next blocks, of the analogue synthesizer its kind names.
-fn synth_blocks(root: &Path<'_>, synth: Synth, sound: &SynthBlocksSound) -> Checked {
-    instrument::synth(root, &sound.connections, synth, sound.slots, Some((&sound.blocks, MOST_LIVE_INSTRUMENT_BLOCKS)))
-}
-
-/// A bank of the patches of the analogue synthesizer its kind names.
-fn synth_bank(root: &Path<'_>, synth: Synth, sound: &SynthBankSound) -> Checked {
-    instrument::synth_bank(root, &sound.connections, synth, &sound.patches)
 }

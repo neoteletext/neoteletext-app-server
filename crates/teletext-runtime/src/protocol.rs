@@ -28,9 +28,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod check;
 mod read;
+mod sound;
 
 pub use check::Refusal;
 pub use read::{read, read_reporting, request_of};
+pub use sound::*;
 
 /// The protocol's version, in `start` and in the schema's name. Version 1
 /// was the protocol before DEC-1482: declared pages, TTI and
@@ -56,8 +58,13 @@ pub use read::{read, read_reporting, request_of};
 /// and adds two of the standard's limits. Version 12 names the
 /// synthesizers' kinds `synth6581` to `synth80`, each name a kind of its
 /// own with no `model` or `chip` field (DEC-6461): a program of version 11
-/// stops at `start` rather than have a kind it sends refused.
-pub const PROTOCOL: u32 = 12;
+/// stops at `start` rather than have a kind it sends refused. Version 13
+/// gives the synthesizers their typed interface, timed MIDI events, patches
+/// as named fields or the interfaces' own bytes, banks and Standard MIDI
+/// Files, which the server builds into blocks itself (neoteletext-common's
+/// `docs/audio/server.md`, DEC-6462), and adds the viewer state mechanism
+/// (`docs/viewer-state.md`, DEC-6471).
+pub const PROTOCOL: u32 = 13;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -95,71 +102,9 @@ pub const COOKIE_BYTES: usize = 4_096;
 /// least a user agent keeps for one domain.
 pub const MOST_COOKIES: usize = 50;
 /// The largest integer every language's JSON reader holds exactly, 2^53
-/// less one (IEEE 754 binary64): connections and sessions are at most it.
-pub const SAFE_INTEGER_LIMIT: u64 = crate::session_cookie::SESSION_LIMIT - 1;
-/// The longest a sound may be: two minutes at 48 kHz, the browser's own
-/// limit for one sound.
-pub const MOST_SAMPLES: usize = 48_000 * 120;
-/// The sample rate of the instrument codecs, synth6581's and synth7's
-/// (the engine's REQ-6411, DEC-6410). Which instrument each synthesizer
-/// models is in neoteletext-common's `docs/audio/synthesizers.md`.
-pub const INSTRUMENT_RATE: u32 = 48_000;
-/// The blocks of an instrument's sound in a second: a block is 20 ms.
-pub const INSTRUMENT_BLOCKS_A_SECOND: u32 = 50;
-/// The samples a block of an instrument's sound plays for: 960.
-pub const INSTRUMENT_BLOCK_SAMPLES: u32 = INSTRUMENT_RATE / INSTRUMENT_BLOCKS_A_SECOND;
-/// The most blocks of a stored instrument sound: two minutes, 6,000 blocks,
-/// the receivers' limit on a stored sound.
-pub const MOST_INSTRUMENT_BLOCKS: usize = MOST_SAMPLES / INSTRUMENT_BLOCK_SAMPLES as usize;
-/// The most blocks one message adds to a live instrument sound: two
-/// seconds, far more than a program keeps ahead of what is heard.
-pub const MOST_LIVE_INSTRUMENT_BLOCKS: usize = 100;
-/// The writable registers of synth6581's chip, one image of them: 25
-/// bytes.
-pub const SYNTH6581_IMAGE_BYTES: u16 = 25;
-/// How many images of the chip's registers a synth6581 block may hold: one
-/// every 20, 10 or 5 ms.
-pub const SYNTH6581_IMAGES_PER_BLOCK: [u8; 3] = [1, 2, 4];
-/// One slot of a synth7 block: a time, a MIDI status byte and its two data
-/// bytes.
-pub const SYNTH7_SLOT_BYTES: u16 = 4;
-/// The most slots a synth7 block holds.
-pub const SYNTH7_MOST_SLOTS: u8 = 16;
-/// One synth7 patch in the instrument's packed form: 128 bytes.
-pub const SYNTH7_PATCH_BYTES: u16 = 128;
-/// The most patches a synth7 bank holds: the instrument's 32 voices.
-pub const SYNTH7_MOST_PATCHES: usize = 32;
-/// The bytes of one synth106 patch, which synth60 shares: sixteen sliders
-/// and two bytes of switches, the layout of the engine's `synth106::Patch`
-/// (DEC-6429). Source: Juno-106 owner's manual, MIDI Implementation 3.1.
-pub const SYNTH106_PATCH_BYTES: u16 = 18;
-/// The bytes of one synthD patch, the layout of the engine's
-/// `synthd::Patch`: the panel's knobs and switches, the engine's own
-/// layout since the instrument has no patch memory.
-pub const SYNTHD_PATCH_BYTES: u16 = 36;
-/// The bytes of one synth53 program, which synth52 and synth51 share: the
-/// 24 bytes of its memory. Source: Prophet-5 Operation Manual, section
-/// 6-7.
-pub const SYNTH53_PATCH_BYTES: u16 = 24;
-/// The bytes of one synth8 patch, the layout of the engine's
-/// `synth8::Patch`. Source: Roland's Jupiter-8/System-8 Parameter
-/// Correspondence Table.
-pub const SYNTH8_PATCH_BYTES: u16 = 43;
-/// The bytes of one synth80 patch: two tones of 26 controls and 33
-/// controls of the panel outside them, the layout of the engine's
-/// `synth80::Patch`.
-pub const SYNTH80_PATCH_BYTES: u16 = 85;
-/// The most patches a bank of an analogue synthesizer holds: as many as a
-/// synth7 bank, so that a program change means the same in every
-/// instrument.
-pub const SYNTH_MOST_PATCHES: usize = SYNTH7_MOST_PATCHES;
-/// The largest MIDI key: a data byte's seven bits (MIDI 1.0), the highest
-/// split point a synth8 sound may name.
-pub const LAST_MIDI_KEY: u8 = 0x7F;
-/// The sample rates of the audio profile (the engine's `audio.md`).
-pub const SAMPLE_RATES: [u32; 8] = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000];
-/// The highest duck step (`audio.md` section 4.4: 0 to 6).
-pub const MOST_DUCK: u8 = 6;
+/// less one (IEEE 754 binary64): connections, sessions and a live sound's
+/// times are at most it (server.md SRV-2).
+pub const SAFE_INTEGER_LIMIT: u64 = (1 << 53) - 1;
 /// The six links of packet X/27/0 (EN 300 706 clause 9.6.1).
 pub const LINKS: usize = neoteletext_formats::page::FASTEXT_LINKS;
 /// A row's character codes: 40 (EN 300 706 clause 9.4).
@@ -188,15 +133,8 @@ const NATIONAL_OPTION_MAX: u8 = 7;
 const LAST_ROW: u8 = 24;
 /// The last column, 39.
 const LAST_COLUMN: u8 = 39;
-/// The last audio channel, 3 (`audio.md`).
-const LAST_AUDIO_CHANNEL: u8 = 3;
-/// The highest gain, 100.
-const MOST_GAIN: u8 = neoteletext_audio::MAX_GAIN;
 /// The last mouse button: 2, the right.
 const LAST_BUTTON: u8 = 2;
-/// The longest Opus packet the profile's constant rate allows: 40 bytes
-/// (decision 21; the engine's E.123).
-pub const OPUS_MOST_PACKET_BYTES: u16 = 40;
 
 /// A connection, which the server numbers, from 1, and never reuses
 /// while it runs.
@@ -371,8 +309,22 @@ impl JsonSchema for KeyName {
 }
 
 /// Bytes as exact base64 (RFC 4648 section 4, padded, no whitespace),
-/// checked where it is used for its decoded length ([`check`]).
-pub type Base64 = String;
+/// checked where it is used for its decoded length ([`check`]). The
+/// schema marks it `contentEncoding: "base64"` (JSON Schema 2020-12
+/// Validation, section 8.3), so that a kit's generator types every bytes
+/// field as bytes by one rule (server.md SRV-6).
+#[derive(Clone, PartialEq, Eq, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(transparent)]
+#[schemars(extend("contentEncoding" = "base64"))]
+pub struct Base64(pub String);
+
+impl core::ops::Deref for Base64 {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
 
 /// Who a message is for: every open connection of the channel, or the
 /// connections named. A connection named that has closed is passed over
@@ -422,6 +374,8 @@ pub enum ServerMessage {
     Describe(Describe),
     /// The answer to `measure` (REQ-2216).
     Measured(Measured),
+    /// A stored synthesizer sound was built and sent (server.md SRV-47).
+    SoundBuilt(SoundBuilt),
 }
 
 impl ServerMessage {
@@ -433,7 +387,7 @@ impl ServerMessage {
             | Self::Selected(Selected { connection, .. })
             | Self::Input(InputMessage { connection, .. })
             | Self::Left(Left { connection, .. }) => Some(*connection),
-            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) => None,
+            Self::Start(_) | Self::Closed(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) | Self::SoundBuilt(_) => None,
         }
     }
 }
@@ -1068,6 +1022,10 @@ pub struct Refused {
     /// none otherwise (REQ-2216 item 3).
     #[schemars(range(max = SAFE_INTEGER_LIMIT))]
     pub request: Option<u64>,
+    /// The sound a refused `sound` message concerns, by its kind, handle
+    /// and generation where the line holds them, and none for every other
+    /// message (server.md SRV-48).
+    pub sound: Option<RefusedSound>,
 }
 
 /// `measured`: what the server's encoding of a page `measure` sent costs,
@@ -1229,6 +1187,72 @@ pub enum Rule {
     /// The page's own enhancement data holds objects, which text runs
     /// cannot be merged into.
     TextAndObjects,
+    /// A MIDI message the family of the sound's kind does not act on
+    /// (MIDI-10, MIDI-67, MIDI-80; server.md SRV-51).
+    NotTaken,
+    /// A message MIDI-8 lists as never carried in a block, given as an
+    /// event.
+    NeverCarried,
+    /// Bytes that are not whole MIDI messages (MIDI-11, MIDI-26, MIDI-27).
+    MalformedMidi,
+    /// A data byte where a status byte is expected and no running status is
+    /// in effect (MIDI-12; SRV-13).
+    RunningStatus,
+    /// A system exclusive message of more than 256 bytes after `0xF0` that
+    /// is not a bank dump the server lifts (MIDI-28, MIDI-51).
+    SystemExclusiveTooLong,
+    /// A block that would hold more than 1,005 bytes or 256 events, or for
+    /// the synth6581 family more than 20 register data messages or more
+    /// than one start or stop (MIDI-30, MIDI-31; S6581-42).
+    BlockFull,
+    /// Fifty blocks pass without room for a part's restatement (MIDI-98).
+    NoRoomToRestate,
+    /// An event at or past the stored sound's block count, or a sound
+    /// needing more than 6,000 blocks or 960,000 bytes (MIDI-17, MIDI-19,
+    /// MIDI-104).
+    BeyondLength,
+    /// An event of an events message whose block was already sent (MIDI-20).
+    LateEvent,
+    /// An event of an events message at or after its `until_us` (SRV-74).
+    NotBeforeUntil,
+    /// An events message whose `until_us` is less than the live sound's
+    /// last (SRV-74).
+    UntilMovedBack,
+    /// An events message that advances `until_us` by more than 2,000,000
+    /// microseconds (MIDI-20).
+    AdvanceTooFar,
+    /// An events message for a handle and generation the server holds as
+    /// no live sound of the message's kind (SRV-72).
+    UnknownLiveSound,
+    /// A live sound announced again with its handle and generation but a
+    /// different kind or setting (SRV-73).
+    LiveSoundChanged,
+    /// A synth6581 or synth8580 sound whose first event is not a full
+    /// register update at tick 0 (S6581-45).
+    NoOpeningUpdate,
+    /// A patch the family's check refuses (MIDI-21, MIDI-63).
+    InvalidPatch,
+    /// A bank image the family's bank check refuses (MIDI-53, MIDI-56).
+    InvalidBank,
+    /// A sound naming a handle the server holds as no bank (MIDI-57).
+    UnknownBank,
+    /// A sound naming a bank of another family (MIDI-57).
+    WrongFamily,
+    /// A sound naming, with its lifted banks, more banks than its family's
+    /// most (MIDI-57; SRV-58).
+    TooManyBanks,
+    /// A bank dump after a stored sound's first note on, or in a live
+    /// sound's events (MIDI-58, MIDI-51).
+    BankDumpAfterNote,
+    /// A bank dump to lift with no name left in `lift_banks` (MIDI-58).
+    BankNotNamed,
+    /// A Standard MIDI File of a form the server does not read (MIDI-113).
+    MidiFileUnsupported,
+    /// A Standard MIDI File that is not well formed (MIDI-113, MIDI-114,
+    /// MIDI-117, MIDI-119).
+    MidiFileMalformed,
+    /// A Standard MIDI File past a bound of MIDI-117 or MIDI-119.
+    MidiFileTooLarge,
 }
 
 // ------------------------------------------------------- program to server
@@ -1896,671 +1920,6 @@ pub struct Cursor {
     pub column: u8,
     /// A block cursor rather than an underline.
     pub block: bool,
-}
-
-/// `sound`, by `kind` (the engine's audio profile, DOC-1785).
-// Read by the reader, which follows `kind` to the sound's own type
-// (`read.rs`).
-#[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Sound {
-    /// A stored Opus sound (decision 21).
-    Opus(OpusSound),
-    /// A live Opus sound's object.
-    OpusLive(OpusLiveSound),
-    /// A live Opus sound's next packets.
-    OpusPackets(OpusPacketsSound),
-    /// A stored sound as 16-bit samples, which the server encodes as IMA
-    /// ADPCM, for receivers that decode no Opus.
-    Object(ObjectSound),
-    /// A live sound's object.
-    Live(LiveSound),
-    /// A live sound's next blocks of samples.
-    Blocks(BlocksSound),
-    /// A stored synth6581 sound: images of the chip's registers (DEC-6410,
-    /// DEC-6461).
-    Synth6581(Synth6581Sound),
-    /// A live synth6581 sound's object.
-    Synth6581Live(Synth6581LiveSound),
-    /// A live synth6581 sound's next blocks.
-    Synth6581Blocks(Synth6581BlocksSound),
-    /// A stored synth8580 sound: images of the chip's registers (DEC-6410,
-    /// DEC-6461).
-    Synth8580(Synth6581Sound),
-    /// A live synth8580 sound's object.
-    Synth8580Live(Synth6581LiveSound),
-    /// A live synth8580 sound's next blocks.
-    Synth8580Blocks(Synth6581BlocksSound),
-    /// A stored synth7 sound: timed MIDI messages for the instrument
-    /// (DEC-6410).
-    Synth7(Synth7Sound),
-    /// A live synth7 sound's object.
-    Synth7Live(Synth7LiveSound),
-    /// A live synth7 sound's next blocks.
-    Synth7Blocks(Synth7BlocksSound),
-    /// A bank of synth7 patches, which synth7 sounds name.
-    Synth7Bank(Synth7BankSound),
-    /// A stored synth106 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth106(SynthSound),
-    /// A live synth106 sound's object.
-    Synth106Live(SynthLiveSound),
-    /// A live synth106 sound's next blocks.
-    Synth106Blocks(SynthBlocksSound),
-    /// A bank of synth106 patches, which sounds of its family name.
-    Synth106Bank(SynthBankSound),
-    /// A stored synth60 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth60(SynthSound),
-    /// A live synth60 sound's object.
-    Synth60Live(SynthLiveSound),
-    /// A live synth60 sound's next blocks.
-    Synth60Blocks(SynthBlocksSound),
-    /// A bank of synth60 patches, which sounds of its family name.
-    Synth60Bank(SynthBankSound),
-    /// A stored synthD sound: timed MIDI messages (DEC-6429, DEC-6461).
-    #[serde(rename = "synthd")]
-    SynthD(SynthSound),
-    /// A live synthD sound's object.
-    #[serde(rename = "synthd_live")]
-    SynthDLive(SynthLiveSound),
-    /// A live synthD sound's next blocks.
-    #[serde(rename = "synthd_blocks")]
-    SynthDBlocks(SynthBlocksSound),
-    /// A bank of synthD patches, which sounds of its family name.
-    #[serde(rename = "synthd_bank")]
-    SynthDBank(SynthBankSound),
-    /// A stored synth53 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth53(SynthSound),
-    /// A live synth53 sound's object.
-    Synth53Live(SynthLiveSound),
-    /// A live synth53 sound's next blocks.
-    Synth53Blocks(SynthBlocksSound),
-    /// A bank of synth53 patches, which sounds of its family name.
-    Synth53Bank(SynthBankSound),
-    /// A stored synth52 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth52(SynthSound),
-    /// A live synth52 sound's object.
-    Synth52Live(SynthLiveSound),
-    /// A live synth52 sound's next blocks.
-    Synth52Blocks(SynthBlocksSound),
-    /// A bank of synth52 patches, which sounds of its family name.
-    Synth52Bank(SynthBankSound),
-    /// A stored synth51 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth51(SynthSound),
-    /// A live synth51 sound's object.
-    Synth51Live(SynthLiveSound),
-    /// A live synth51 sound's next blocks.
-    Synth51Blocks(SynthBlocksSound),
-    /// A bank of synth51 patches, which sounds of its family name.
-    Synth51Bank(SynthBankSound),
-    /// A stored synth8 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth8(Synth8Sound),
-    /// A live synth8 sound's object.
-    Synth8Live(Synth8LiveSound),
-    /// A live synth8 sound's next blocks.
-    Synth8Blocks(SynthBlocksSound),
-    /// A bank of synth8 patches, which sounds of its family name.
-    Synth8Bank(SynthBankSound),
-    /// A stored synth80 sound: timed MIDI messages (DEC-6429, DEC-6461).
-    Synth80(SynthSound),
-    /// A live synth80 sound's object.
-    Synth80Live(SynthLiveSound),
-    /// A live synth80 sound's next blocks.
-    Synth80Blocks(SynthBlocksSound),
-    /// A bank of synth80 patches, which sounds of its family name.
-    Synth80Bank(SynthBankSound),
-    /// Play a sound on an audio channel.
-    Play(PlaySound),
-    /// Stop an audio channel.
-    Stop(StopSound),
-    /// Change an audio channel's gain.
-    Gain(GainSound),
-}
-
-/// A stored Opus sound (decision 21).
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OpusSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Every packet's length, 1 to 40 bytes.
-    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-    pub packet_bytes: u16,
-    /// Its length in samples at 48 kHz.
-    #[schemars(range(max = MOST_SAMPLES))]
-    pub samples: u32,
-    /// Its packets back to back, exact base64, at most two minutes.
-    pub packets: Base64,
-}
-
-/// A live Opus sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OpusLiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Every packet's length.
-    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-    pub packet_bytes: u16,
-}
-
-/// A live Opus sound's next packets.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OpusPacketsSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Every packet's length.
-    #[schemars(range(min = 1, max = OPUS_MOST_PACKET_BYTES))]
-    pub packet_bytes: u16,
-    /// The first packet's block number.
-    pub first: u16,
-    /// The packets, exact base64.
-    pub packets: Base64,
-}
-
-/// A stored sound as 16-bit samples, which the server encodes as IMA
-/// ADPCM, for receivers that decode no Opus.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ObjectSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Its sample rate, one of the profile's.
-    #[schemars(extend("enum" = SAMPLE_RATES))]
-    pub rate: u32,
-    /// 16-bit little-endian mono samples, exact base64, at most two
-    /// minutes.
-    pub pcm: Base64,
-}
-
-/// A live sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Its sample rate.
-    #[schemars(extend("enum" = SAMPLE_RATES))]
-    pub rate: u32,
-}
-
-/// A live sound's next blocks of samples.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BlocksSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Its sample rate.
-    #[schemars(extend("enum" = SAMPLE_RATES))]
-    pub rate: u32,
-    /// The first block's number.
-    pub first: u16,
-    /// The samples, exact base64.
-    pub pcm: Base64,
-}
-
-/// The clock the chip of synth6581 or synth8580 runs from, which sets the
-/// pitch of a frequency register's value.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Synth6581Clock {
-    /// A PAL machine's: 985,248 Hz.
-    Pal,
-    /// An NTSC machine's: 1,022,727 Hz.
-    Ntsc,
-}
-
-/// A stored sound of synth6581 or synth8580, whichever its kind names:
-/// images of the chip's 25 writable registers, 1, 2 or 4 to a 20 ms block
-/// (the audio profile's codec 3, DEC-6410). The two differ in their filter
-/// and their combined waveforms.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth6581Sound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
-    pub images_per_block: u8,
-    /// The clock the chip runs from.
-    pub clock: Synth6581Clock,
-    /// Its blocks back to back, each `images_per_block` images of 25
-    /// bytes, exact base64: 1 to 6,000 blocks, two minutes.
-    pub images: Base64,
-}
-
-/// A live sound's object, of synth6581 or synth8580.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth6581LiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
-    pub images_per_block: u8,
-    /// The clock the chip runs from.
-    pub clock: Synth6581Clock,
-}
-
-/// A live sound's next blocks, of synth6581 or synth8580.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth6581BlocksSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The images of the chip's registers in each 20 ms block: 1, 2 or 4.
-    #[schemars(extend("enum" = SYNTH6581_IMAGES_PER_BLOCK))]
-    pub images_per_block: u8,
-    /// The first block's number, counting modulo 65,536.
-    pub first: u16,
-    /// The blocks back to back, exact base64: 1 to 100 blocks.
-    pub images: Base64,
-}
-
-/// A stored synth7 sound: MIDI messages for the instrument, each timed
-/// within its 20 ms block (the audio profile's codec 4, DEC-6410). A slot
-/// is a time in tenths of a millisecond, 0 to 199, a status byte and two
-/// data bytes; four zero bytes are an empty slot. The messages taken are
-/// note off and note on, control changes 1, 7, 64, 120, 121 and 123, a
-/// program change to one of the bank's 32 patches, and pitch bend.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth7Sound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank its program changes choose patches from.
-    pub bank: u8,
-    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
-    /// base64: 1 to 6,000 blocks, two minutes.
-    pub blocks: Base64,
-}
-
-/// A live synth7 sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth7LiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank its program changes choose patches from.
-    pub bank: u8,
-}
-
-/// A live synth7 sound's next blocks.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth7BlocksSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The first block's number, counting modulo 65,536.
-    pub first: u16,
-    /// The blocks back to back, exact base64: 1 to 100 blocks.
-    pub blocks: Base64,
-}
-
-/// A bank of synth7 patches (the audio profile's codec 5, DEC-6410), which
-/// a synth7 sound names by this handle.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth7BankSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Its patches back to back, each the instrument's 128 packed bytes,
-    /// every byte at most 127, exact base64: 1 to 32 patches.
-    pub patches: Base64,
-}
-
-/// The analogue synthesizers a program's sound may be for (DEC-6429,
-/// DEC-6461), each name a kind of its own. Those of one family share a
-/// codec of the audio profile, whose block is synth7's: 1 to 16 slots of a
-/// timed MIDI message. Not a message of its own: the kind of a sound names
-/// it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Synth {
-    /// synth106.
-    Synth106,
-    /// synth60, of synth106's family.
-    Synth60,
-    /// synthD.
-    SynthD,
-    /// synth53.
-    Synth53,
-    /// synth52, of synth53's family.
-    Synth52,
-    /// synth51, of synth53's family, and one model with synth52.
-    Synth51,
-    /// synth8.
-    Synth8,
-    /// synth80.
-    Synth80,
-}
-
-impl Synth {
-    /// Every one, in the order of their codecs.
-    pub const ALL: [Self; 8] = [Self::Synth106, Self::Synth60, Self::SynthD, Self::Synth53, Self::Synth52, Self::Synth51, Self::Synth8, Self::Synth80];
-
-    /// The audio profile's codec of its sounds, which is also the code that
-    /// names its family in a patch bank (the engine's `TAG_BANK_FAMILY`).
-    #[must_use]
-    pub const fn codec(self) -> u8 {
-        match self {
-            Self::Synth106 | Self::Synth60 => 6,
-            Self::SynthD => 7,
-            Self::Synth53 | Self::Synth52 | Self::Synth51 => 8,
-            Self::Synth8 => 9,
-            Self::Synth80 => 10,
-        }
-    }
-
-    /// The model of its family it is, as the engine's `TAG_MODEL` counts
-    /// it, where its family's sounds name one: synth106 and synth53 are
-    /// model 0, synth60 model 1, and synth52 and synth51 the one earlier
-    /// revision, model 1.
-    #[must_use]
-    pub const fn model(self) -> Option<u8> {
-        match self {
-            Self::Synth106 | Self::Synth53 => Some(0),
-            Self::Synth60 | Self::Synth52 | Self::Synth51 => Some(1),
-            Self::SynthD | Self::Synth8 | Self::Synth80 => None,
-        }
-    }
-
-    /// The bytes of one of its patches, in the instrument's own layout.
-    #[must_use]
-    pub const fn patch_bytes(self) -> u16 {
-        match self {
-            Self::Synth106 | Self::Synth60 => SYNTH106_PATCH_BYTES,
-            Self::SynthD => SYNTHD_PATCH_BYTES,
-            Self::Synth53 | Self::Synth52 | Self::Synth51 => SYNTH53_PATCH_BYTES,
-            Self::Synth8 => SYNTH8_PATCH_BYTES,
-            Self::Synth80 => SYNTH80_PATCH_BYTES,
-        }
-    }
-
-    /// Its name, as a sound's kind begins with it.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Synth106 => "synth106",
-            Self::Synth60 => "synth60",
-            Self::SynthD => "synthd",
-            Self::Synth53 => "synth53",
-            Self::Synth52 => "synth52",
-            Self::Synth51 => "synth51",
-            Self::Synth8 => "synth8",
-            Self::Synth80 => "synth80",
-        }
-    }
-}
-
-/// How synth8's keyboard plays its two patches, the upper chosen by
-/// program changes on MIDI channel 1 and the lower on channel 2.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Synth8KeyMode {
-    /// Every key plays the upper patch, on eight voices.
-    Whole,
-    /// Every key plays both patches, four voices each.
-    Dual,
-    /// Keys below `split_key` play the lower patch and the others the
-    /// upper, four voices each.
-    Split,
-}
-
-/// A stored sound of any analogue synthesizer but synth8, the one its kind
-/// names: MIDI messages for the instrument, each timed within its 20 ms
-/// block (the audio profile's codecs 6, 7, 8 and 10, DEC-6429). A slot is
-/// a time in tenths of a millisecond, 0 to 199, a status byte and two data
-/// bytes; four zero bytes are an empty slot. Every instrument takes note
-/// off and note on, control changes 1, 7, 64, 120, 121 and 123, a program
-/// change to one of the bank's 32 patches, and pitch bend; synth80 also
-/// polyphonic key pressure and channel pressure, synth106 and synth60
-/// control changes 124 to 127, and synth8 control changes 5, 8 and 65,
-/// with program changes on MIDI channels 1 and 2 only.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SynthSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank its program changes choose patches from: a
-    /// bank of any name of its family.
-    pub bank: u8,
-    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
-    /// base64: 1 to 6,000 blocks, two minutes.
-    pub blocks: Base64,
-}
-
-/// A live sound's object, of any analogue synthesizer but synth8.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SynthLiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank its program changes choose patches from: a
-    /// bank of any name of its family.
-    pub bank: u8,
-}
-
-/// A live sound's next blocks, of any of the analogue synthesizers.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SynthBlocksSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The first block's number, counting modulo 65,536.
-    pub first: u16,
-    /// The blocks back to back, exact base64: 1 to 100 blocks.
-    pub blocks: Base64,
-}
-
-/// A bank of patches of one of the analogue synthesizers, the one its kind
-/// names (the audio profile's codec 11, DEC-6429), which the sounds of
-/// that instrument's family name by this handle. Each patch is the
-/// instrument's own layout: 18 bytes for synth106 and synth60, 36 for
-/// synthD, 24 for synth53, synth52 and synth51, 43 for synth8 and 85 for
-/// synth80, every byte within the range of the control it holds.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SynthBankSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// Its patches back to back, exact base64: 1 to 32 patches.
-    pub patches: Base64,
-}
-
-/// A stored synth8 sound (the audio profile's codec 9): as [`SynthSound`],
-/// with how its keyboard plays its two patches.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth8Sound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// How the keyboard plays the upper and lower patches.
-    pub key_mode: Synth8KeyMode,
-    /// The lowest key of the upper patch in the split mode, a MIDI key of
-    /// 0 to 127; sent, and unused, in the others.
-    #[schemars(range(max = LAST_MIDI_KEY))]
-    pub split_key: u8,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of synth8 patches its program changes
-    /// choose from.
-    pub bank: u8,
-    /// Its blocks back to back, each `slots` slots of 4 bytes, exact
-    /// base64: 1 to 6,000 blocks, two minutes.
-    pub blocks: Base64,
-}
-
-/// A live synth8 sound's object.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Synth8LiveSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// Its handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// How the keyboard plays the upper and lower patches.
-    pub key_mode: Synth8KeyMode,
-    /// The lowest key of the upper patch in the split mode, a MIDI key of
-    /// 0 to 127; sent, and unused, in the others.
-    #[schemars(range(max = LAST_MIDI_KEY))]
-    pub split_key: u8,
-    /// The slots of each 20 ms block: 1 to 16, of 4 bytes each.
-    #[schemars(range(min = 1, max = SYNTH7_MOST_SLOTS))]
-    pub slots: u8,
-    /// The handle of the bank of synth8 patches its program changes
-    /// choose from.
-    pub bank: u8,
-}
-
-/// Play a sound on an audio channel.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PlaySound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// The audio channel, 0 to 3.
-    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-    pub channel: u8,
-    /// The sound's handle.
-    pub handle: u8,
-    /// Its generation.
-    pub generation: u16,
-    /// The gain, 0 to 100.
-    #[schemars(range(max = MOST_GAIN))]
-    pub gain: u8,
-    /// The fade in, in milliseconds.
-    pub fade_ms: u16,
-    /// It loops.
-    pub r#loop: bool,
-    /// It plays after the sound playing ends.
-    pub after: bool,
-    /// How far other channels duck under it, 0 to 6.
-    #[schemars(range(max = MOST_DUCK))]
-    pub duck: u8,
-    /// The page it belongs to, or none for the whole service.
-    pub page: Option<PageNumber>,
-}
-
-/// Stop an audio channel.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StopSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// The audio channel, 0 to 3.
-    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-    pub channel: u8,
-    /// The fade out, in milliseconds.
-    pub fade_ms: u16,
-}
-
-/// Change an audio channel's gain.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GainSound {
-    /// Who it is for.
-    pub connections: Connections,
-    /// The audio channel, 0 to 3.
-    #[schemars(range(max = LAST_AUDIO_CHANNEL))]
-    pub channel: u8,
-    /// The gain, 0 to 100.
-    #[schemars(range(max = MOST_GAIN))]
-    pub gain: u8,
-    /// The fade, in milliseconds.
-    pub fade_ms: u16,
 }
 
 /// `cookie`: sets or clears one of the program's cookies for a connection
