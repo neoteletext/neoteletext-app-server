@@ -3268,6 +3268,78 @@
       ],
       "type": "object"
     },
+    "ObjectDefinitionContent": {
+      "additionalProperties": false,
+      "description": "One object of an object page (clause 13.1).",
+      "properties": {
+        "index": {
+          "description": "Its place among the sub-page's objects of its type, 0 to 31.",
+          "format": "uint8",
+          "maximum": 31,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/ObjectType",
+          "description": "Its type."
+        },
+        "triplets": {
+          "description": "Its body: the row and column triplets of Tables 28 and 29 the object\ndraws, after its Object Definition triplet and before its\nTermination Marker, which the server writes.",
+          "items": {
+            "$ref": "#/$defs/TripletContent"
+          },
+          "maxItems": 507,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "index",
+        "triplets"
+      ],
+      "type": "object"
+    },
+    "ObjectPageContent": {
+      "additionalProperties": false,
+      "description": "One sub-page of a Public or Global Public Object Page (EN 300 706\nclause 10.5.1): the objects it defines, of which the server writes the\npointer table, each definition's Object Definition triplet and\nTermination Marker, and the packets, every triplet Hamming 24/18 coded\n(clause 8.3). A sprite's frame of source `public` or `global` names the\nobject of `index` of its `kind` on sub-page `s1` by the number N8 to N0\nwhose N3 to N0 are `s1`, N4 is `index` mod 2, N6 N5 are (`index` mod 8)\ndiv 2 and N8 N7 are `index` div 8 (Table 28; clause 10.5.1.2).",
+      "properties": {
+        "global": {
+          "description": "A Global Public Object Page when true, else a Public Object Page\n(the page function of packet X/28/0, clause 9.4.2.1).",
+          "type": "boolean"
+        },
+        "last": {
+          "description": "Whether this is the page's last sub-page, which its Termination\nMarkers say (Table 28, mode 11111).",
+          "type": "boolean"
+        },
+        "objects": {
+          "description": "The objects, each type's indexes distinct.",
+          "items": {
+            "$ref": "#/$defs/ObjectDefinitionContent"
+          },
+          "maxItems": 96,
+          "type": "array"
+        },
+        "page": {
+          "$ref": "#/$defs/PageNumber",
+          "description": "The object page's number."
+        },
+        "s1": {
+          "description": "Its sub-page S1, 0 to 15 (Annex A.1): the low four bits of each of\nits objects' numbers.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "page",
+        "s1",
+        "global",
+        "last",
+        "objects"
+      ],
+      "type": "object"
+    },
     "ObjectSource": {
       "description": "Where a sprite's frame, a teletext object, is defined (EN 300 706\nclause 13).",
       "oneOf": [
@@ -8610,8 +8682,8 @@
               "description": "Who it is for: of them, those that have the page selected."
             },
             "object": {
-              "$ref": "#/$defs/Page",
-              "description": "The object page: a Public or Global Public Object Page (EN 300 706\nclause 10.5), encoded as a `page` message's sub-page is."
+              "$ref": "#/$defs/ObjectPageContent",
+              "description": "The object page's sub-page, by the objects it defines."
             },
             "page": {
               "$ref": "#/$defs/PageNumber",
@@ -9103,6 +9175,11 @@
         {
           "const": "invalid_sprites",
           "description": "Sprites the engine's reader refuses.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_object_page",
+          "description": "An object page whose objects cannot be written (EN 300 706 clause\n10.5.1).",
           "type": "string"
         },
         {
@@ -29162,6 +29239,39 @@
         },
         "mode": {
           "description": "The mode, 5 bits.",
+          "format": "uint8",
+          "maximum": 31,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "mode",
+        "data"
+      ],
+      "type": "object"
+    },
+    "TripletContent": {
+      "additionalProperties": false,
+      "description": "A triplet's three fields (EN 300 706 clause 12.3.1, Tables 28 and 29),\neighteen bits that Hamming 24/18 codes in three bytes (clause 8.3).",
+      "properties": {
+        "address": {
+          "description": "The address: 0 to 39 a column, 40 to 63 a row.",
+          "format": "uint8",
+          "maximum": 63,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "data": {
+          "description": "The data.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "description": "The mode.",
           "format": "uint8",
           "maximum": 31,
           "minimum": 0,
