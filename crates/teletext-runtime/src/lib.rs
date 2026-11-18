@@ -36,6 +36,7 @@ pub mod frame;
 pub mod input;
 pub mod json;
 pub mod landing;
+mod object_page;
 mod page;
 pub mod protocol;
 mod records;

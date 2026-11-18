@@ -1338,6 +1338,9 @@ pub enum Rule {
     InvalidAnimation,
     /// Sprites the engine's reader refuses.
     InvalidSprites,
+    /// An object page whose objects cannot be written (EN 300 706 clause
+    /// 10.5.1).
+    InvalidObjectPage,
     /// NAPLPS objects the engine's reader refuses.
     InvalidNaplpsObjects,
     /// A sprite sheet that a renderer refuses, or that draws.

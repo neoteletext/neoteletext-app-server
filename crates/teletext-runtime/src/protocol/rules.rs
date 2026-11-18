@@ -38,9 +38,7 @@ use serde_json::{Map, Value};
 use super::animation::{MOST_NAPLPS_OBJECTS, MOST_OPERATIONS, MOST_SPRITES, NaplpsObject, Sprite};
 use super::read::{Fault, join, typed, typed_value};
 use super::sound::{MOST_DUCK, carried, not_listed, tagged, tagged_choice};
-use super::{
-    AnimationOp, ConnectionId, Connections, Data, I32In, KeyName, MidiChannel, Page, PageNumber, Rule, SAFE_INTEGER_LIMIT, SubCode, U8In, U16In, U64In,
-};
+use super::{AnimationOp, ConnectionId, Connections, Data, I32In, KeyName, MidiChannel, PageNumber, Rule, SAFE_INTEGER_LIMIT, SubCode, U8In, U16In, U64In};
 
 /// The most characters of a rule's, a group's, a sequence's, a row set's
 /// or a rectangle's name (RULE-36).
@@ -2542,9 +2540,85 @@ pub struct ObjectPage {
     pub page: PageNumber,
     /// Its sub-page.
     pub sub: SubCode,
-    /// The object page: a Public or Global Public Object Page (EN 300 706
-    /// clause 10.5), encoded as a `page` message's sub-page is.
-    pub object: Page,
+    /// The object page's sub-page, by the objects it defines.
+    pub object: ObjectPageContent,
+}
+
+/// One sub-page of a Public or Global Public Object Page (EN 300 706
+/// clause 10.5.1): the objects it defines, of which the server writes the
+/// pointer table, each definition's Object Definition triplet and
+/// Termination Marker, and the packets, every triplet Hamming 24/18 coded
+/// (clause 8.3). A sprite's frame of source `public` or `global` names the
+/// object of `index` of its `kind` on sub-page `s1` by the number N8 to N0
+/// whose N3 to N0 are `s1`, N4 is `index` mod 2, N6 N5 are (`index` mod 8)
+/// div 2 and N8 N7 are `index` div 8 (Table 28; clause 10.5.1.2).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectPageContent {
+    /// The object page's number.
+    pub page: PageNumber,
+    /// Its sub-page S1, 0 to 15 (Annex A.1): the low four bits of each of
+    /// its objects' numbers.
+    pub s1: U8In<0, { MOST_OBJECT_SUBPAGE }>,
+    /// A Global Public Object Page when true, else a Public Object Page
+    /// (the page function of packet X/28/0, clause 9.4.2.1).
+    pub global: bool,
+    /// Whether this is the page's last sub-page, which its Termination
+    /// Markers say (Table 28, mode 11111).
+    pub last: bool,
+    /// The objects, each type's indexes distinct.
+    #[schemars(length(max = MOST_OBJECT_PAGE_OBJECTS))]
+    pub objects: Vec<ObjectDefinitionContent>,
+}
+
+/// The highest index of an object among its type on one sub-page: 32 of
+/// each (clause 10.5.1.1), asserted against the engine's count.
+pub const LAST_OBJECT_INDEX: u8 = 31;
+const _: () = assert!(LAST_OBJECT_INDEX as usize + 1 == neoteletext_core::consts::OBJECTS_PER_TYPE);
+
+/// The highest S1 of an object page's sub-page (clause 10.5.1.1: at most
+/// sixteen sub-pages).
+pub const MOST_OBJECT_SUBPAGE: u8 = 15;
+/// The objects of one sub-page: 32 of each of the three types (clause
+/// 10.5.1.1).
+pub const MOST_OBJECT_PAGE_OBJECTS: usize = neoteletext_core::consts::OBJECTS_PER_TYPE * neoteletext_core::consts::OBJECT_TYPES;
+/// The triplets an object page's sub-page holds, 0 to 506 (clause
+/// 10.5.1.2): the most one object's body may have.
+pub const MOST_OBJECT_TRIPLETS: usize = neoteletext_core::consts::OBJECT_TRIPLET_LAST as usize + 1;
+
+/// One object of an object page (clause 13.1).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectDefinitionContent {
+    /// Its type.
+    pub kind: super::animation::ObjectType,
+    /// Its place among the sub-page's objects of its type, 0 to 31.
+    pub index: U8In<0, LAST_OBJECT_INDEX>,
+    /// Its body: the row and column triplets of Tables 28 and 29 the object
+    /// draws, after its Object Definition triplet and before its
+    /// Termination Marker, which the server writes.
+    #[schemars(length(max = MOST_OBJECT_TRIPLETS))]
+    pub triplets: Vec<TripletContent>,
+}
+
+/// The highest triplet address: six bits (EN 300 706 clause 12.3.1).
+pub const MOST_TRIPLET_ADDRESS: u8 = (1 << 6) - 1;
+/// The highest triplet mode: five bits (clause 12.3.1).
+pub const MOST_TRIPLET_MODE: u8 = (1 << 5) - 1;
+/// The highest triplet data: seven bits (clause 12.3.1).
+pub const MOST_TRIPLET_DATA: u8 = (1 << 7) - 1;
+
+/// A triplet's three fields (EN 300 706 clause 12.3.1, Tables 28 and 29),
+/// eighteen bits that Hamming 24/18 codes in three bytes (clause 8.3).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TripletContent {
+    /// The address: 0 to 39 a column, 40 to 63 a row.
+    pub address: U8In<0, MOST_TRIPLET_ADDRESS>,
+    /// The mode.
+    pub mode: U8In<0, MOST_TRIPLET_MODE>,
+    /// The data.
+    pub data: U8In<0, MOST_TRIPLET_DATA>,
 }
 
 // ------------------------------------------------ server to program

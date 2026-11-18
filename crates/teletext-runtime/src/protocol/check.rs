@@ -173,9 +173,11 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Report(message) => check_command(&root, &super::CommandMessage::Report(message.clone())),
         ProgramMessage::Run(message) => check_command(&root, &super::CommandMessage::Run(message.clone())),
         ProgramMessage::Sequence(message) => check_command(&root, &super::CommandMessage::Sequence(message.clone())),
-        ProgramMessage::ObjectPage(message) => check_connections(&root.field("connections"), &message.connections)
-            .and_then(|()| check_shown_subpage(&root, message.sub))
-            .and_then(|()| check_page(&root.field("object"), &message.object)),
+        ProgramMessage::ObjectPage(message) => {
+            check_connections(&root.field("connections"), &message.connections).and_then(|()| check_shown_subpage(&root, message.sub)).and_then(|()| {
+                crate::object_page::packets(&message.object).map(|_| ()).map_err(|detail| fault(&root.field("object"), Rule::InvalidObjectPage, detail))
+            })
+        }
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }

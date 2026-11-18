@@ -588,7 +588,8 @@ fn a_timeline_ends_when_its_page_is_left() {
 #[test]
 fn an_object_page_reaches_its_pages_viewers() {
     let mut channel = selected();
-    let object = with(&subpage(), "/page", json!("1C0"));
+    let object = json!({"page":"1C0","s1":0,"global":false,"last":true,
+        "objects":[{"kind":"passive","index":0,"triplets":[{"address":0,"mode":15,"data":65}]}]});
     let to = |page: &str| serde_json::to_vec(&json!({"type":"object_page","connections":"all","page":page,"sub":"0000","object":object})).unwrap();
     channel.from_program(&to("200"), 1);
     assert_eq!(sent_to(&channel.take_effects(), CONNECTION), Vec::<u8>::new());

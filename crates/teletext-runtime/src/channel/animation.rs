@@ -437,20 +437,21 @@ impl Channel {
         Ok(())
     }
 
-    /// `object_page` (ANIM-17, TODO-6569): a teletext object page that a
-    /// page's sprites take their frames from, sent to the connections
-    /// named that have that page selected, before the page itself. The
-    /// object page is encoded as a `page` message's sub-page is, but it is
-    /// no selection's answer: what the connection shows does not change,
-    /// and nothing of it is kept (RULE-40), so a program sends it at each
-    /// selection, before the page.
-    pub(super) fn object_page(&mut self, message: &ObjectPage) {
+    /// `object_page` (ANIM-7, ANIM-17, TODO-6569): one sub-page of a
+    /// teletext object page that a page's sprites take their frames from,
+    /// written from its objects (EN 300 706 clause 10.5.1) and sent to the
+    /// connections named that have that page selected, before the page
+    /// itself. It is no selection's answer: what the connection shows does
+    /// not change, and nothing of it is kept (RULE-40), so a program sends
+    /// it at each selection, before the page.
+    pub(super) fn object_page(&mut self, message: &ObjectPage) -> Result<(), Refusal> {
         let (page, sub) = (message.page.0, message.sub.0);
-        let encoded = crate::page::encode(&message.object);
-        let bytes = encoded.packets.concat();
+        let bytes =
+            crate::object_page::packets(&message.object).map_err(|detail| refuse(MessageType::ObjectPage, "object", Rule::InvalidObjectPage, detail))?;
         for connection in self.showing(&message.connections, page, sub) {
             self.send_for_page(connection, page, bytes.clone());
         }
+        Ok(())
     }
 
     /// `timeline` (ANIM-21): played for each connection named, from now.

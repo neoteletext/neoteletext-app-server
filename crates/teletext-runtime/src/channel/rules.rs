@@ -352,10 +352,7 @@ impl Channel {
             ProgramMessage::Report(message) => self.command(&CommandMessage::Report(message)),
             ProgramMessage::Run(message) => self.command(&CommandMessage::Run(message)),
             ProgramMessage::Sequence(message) => self.command(&CommandMessage::Sequence(message)),
-            ProgramMessage::ObjectPage(message) => {
-                self.object_page(&message);
-                Ok(())
-            }
+            ProgramMessage::ObjectPage(message) => self.object_page(&message),
             other => self.act_on_animation(other, now),
         }
     }
