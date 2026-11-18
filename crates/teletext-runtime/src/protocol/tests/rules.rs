@@ -126,9 +126,17 @@ fn every_worked_example_is_encoded_as_its_vector() {
         assert_eq!(again[..length], body[..], "{name} decodes to the table that was encoded");
         written.push_str(name);
         written.push('\t');
+        let mut hexadecimal = String::new();
         for byte in &body {
-            write!(written, "{byte:02x}").unwrap();
+            write!(hexadecimal, "{byte:02x}").unwrap();
         }
+        // RULE-85: the shared wire vectors hold the same bytes under the
+        // same name, so this file and that table cannot part.
+        let shared = neoteletext_web::wire_vectors::vectors()
+            .find(|row| row.kind == "rules" && row.name == *name)
+            .unwrap_or_else(|| panic!("no shared rules row {name}"));
+        assert_eq!(shared.value, hexadecimal, "{name} is the shared wire vector");
+        written.push_str(&hexadecimal);
         written.push('\n');
     }
     if std::env::var_os(BLESS).is_some() {

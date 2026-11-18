@@ -377,6 +377,11 @@ fn a_local_sound_is_its_object_and_its_setup() {
     sound.variant = Some(0);
     let object = sound.object_record().unwrap();
     assert_eq!(object.len(), length + 3, "the vector and the variant's tag, length and value");
+    // RULE-85: and with the variant named it is the shared row of what the
+    // server writes, byte for byte.
+    let row = neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "object" && row.name == "local_sound_as_the_server_writes_it").unwrap();
+    let (vector, length) = neoteletext_web::wire_vectors::bytes_of(row.value).unwrap();
+    assert_eq!(object, vector[..length], "the shared vector of the OBJECT as the server writes it");
     assert!(object.windows(3).any(|tag| tag == [neoteletext_audio::record::TAG_LOCAL, 1, 1]), "tag 9, one byte, 1");
     let mut records = alloc::vec![object];
     records.extend(sound.data_records());

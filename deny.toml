@@ -38,5 +38,6 @@ allow-git = [
     "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext",
     "https://github.com/neoteletext/neoteletext-renderer-regis",
     "file:///Users/andrewstuart/devel/neoteletext-renderer-regis",
+    "https://github.com/neoteletext/neoteletext-renderer-naplps",
     "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps",
 ]
