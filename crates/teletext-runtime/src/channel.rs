@@ -47,7 +47,7 @@ use crate::stats::{ChannelStats, count};
 
 /// The service number audio and input records are sent on (the
 /// reference channel's, DOC-1951).
-const SERVICE: u8 = 0;
+pub(crate) const SERVICE: u8 = 0;
 
 /// The capabilities the channel uses of what a receiver offers in HELLO
 /// (DOC-1922): the cursor record, SELECT, the tab's selection
