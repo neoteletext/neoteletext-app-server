@@ -37,6 +37,30 @@ fn the_schema_lists_every_kind_once() {
     assert_eq!(synthesizers, 42);
 }
 
+/// SRV-3, REQ-1475: every sound kind's branch refuses an unknown field, as
+/// the reader does: it is closed (`additionalProperties: false`) and lists
+/// the message's `type` among its own properties, so that a closed branch
+/// still takes the message it is part of (DEC-6462: the kits follow this
+/// schema).
+#[test]
+fn every_sound_branch_refuses_an_unknown_field() {
+    let schema = schema();
+    let messages = schema["$defs"]["ProgramMessage"]["oneOf"].as_array().unwrap();
+    let sound = messages.iter().find(|message| message["properties"]["type"]["const"] == "sound").unwrap();
+    let branches = sound["oneOf"].as_array().unwrap();
+    let kinds: alloc::vec::Vec<&str> = branches.iter().map(|branch| branch["properties"]["kind"]["const"].as_str().unwrap()).collect();
+    let expected: alloc::vec::Vec<&str> = crate::protocol::SoundKind::ALL.iter().map(|kind| kind.name()).collect();
+    assert_eq!(kinds, expected, "one branch for each kind, in order");
+    for branch in branches {
+        let kind = branch["properties"]["kind"]["const"].as_str().unwrap();
+        assert_eq!(branch["additionalProperties"], false, "{kind} is open");
+        assert_eq!(branch["properties"]["type"], serde_json::json!({ "const": "sound", "type": "string" }), "{kind} lacks the message's type");
+        let required = branch["required"].as_array().unwrap();
+        assert_eq!(required[..2], [serde_json::json!("type"), serde_json::json!("kind")], "{kind} requires its tags first");
+        assert!(branch["properties"].get("unknown").is_none(), "{kind} names the field the test calls unknown");
+    }
+}
+
 /// SRV-6: `Base64` carries `contentEncoding: "base64"`, and only it.
 #[test]
 fn bytes_are_marked_base64() {

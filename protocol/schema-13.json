@@ -2368,6 +2368,7 @@
           "description": "A sound, its data, or a command.",
           "oneOf": [
             {
+              "additionalProperties": false,
               "description": "A stored Opus sound (decision 21).",
               "properties": {
                 "connections": {
@@ -2409,9 +2410,14 @@
                   "maximum": 5760000,
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2423,6 +2429,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live Opus sound's object.",
               "properties": {
                 "connections": {
@@ -2453,9 +2460,14 @@
                   "maximum": 40,
                   "minimum": 1,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2465,6 +2477,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live Opus sound's next packets.",
               "properties": {
                 "connections": {
@@ -2506,9 +2519,14 @@
                 "packets": {
                   "$ref": "#/$defs/Base64",
                   "description": "The packets, exact base64."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2520,6 +2538,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored sound as 16-bit samples, which the server encodes as IMA ADPCM, for receivers that decode no Opus.",
               "properties": {
                 "connections": {
@@ -2563,9 +2582,14 @@
                   "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2576,6 +2600,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live sound's object.",
               "properties": {
                 "connections": {
@@ -2615,9 +2640,14 @@
                   "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2627,6 +2657,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live sound's next blocks of samples.",
               "properties": {
                 "connections": {
@@ -2677,9 +2708,14 @@
                   "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2691,6 +2727,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth6581 sound: ASID register updates, timed (server.md SRV-12, SRV-16).",
               "properties": {
                 "clock": {
@@ -2726,9 +2763,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth6581Music",
                   "description": "Its music, whose first event is a full register update at tick 0\n(S6581-45)."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2740,6 +2782,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth6581 sound, announced (SRV-17).",
               "properties": {
                 "clock": {
@@ -2767,9 +2810,14 @@
                 "kind": {
                   "const": "synth6581_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2779,6 +2827,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth6581 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -2811,6 +2860,10 @@
                   "const": "synth6581_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time up to which the program has given every event.",
                   "format": "uint64",
@@ -2820,6 +2873,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2830,6 +2884,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth8580 sound: ASID register updates, timed (SRV-12, SRV-16).",
               "properties": {
                 "clock": {
@@ -2865,9 +2920,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth6581Music",
                   "description": "Its music, whose first event is a full register update at tick 0\n(S6581-45)."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2879,6 +2939,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth8580 sound, announced (SRV-17).",
               "properties": {
                 "clock": {
@@ -2906,9 +2967,14 @@
                 "kind": {
                   "const": "synth8580_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2918,6 +2984,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth8580 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -2950,6 +3017,10 @@
                   "const": "synth8580_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time up to which the program has given every event.",
                   "format": "uint64",
@@ -2959,6 +3030,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -2969,6 +3041,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth7 sound: timed MIDI events or a Standard MIDI File (SRV-14, SRV-16).",
               "properties": {
                 "banks": {
@@ -3020,9 +3093,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth7Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3034,6 +3112,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth7 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -3069,9 +3148,14 @@
                 "kind": {
                   "const": "synth7_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3081,6 +3165,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth7 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -3113,6 +3198,10 @@
                   "const": "synth7_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -3122,6 +3211,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3132,6 +3222,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth7 voices, which synth7 sounds name (SRV-19, SRV-27).",
               "properties": {
                 "bank": {
@@ -3159,9 +3250,14 @@
                 "kind": {
                   "const": "synth7_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3171,6 +3267,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth106 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -3222,9 +3319,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth106Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3236,6 +3338,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth106 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -3271,9 +3374,14 @@
                 "kind": {
                   "const": "synth106_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3283,6 +3391,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth106 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -3315,6 +3424,10 @@
                   "const": "synth106_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -3324,6 +3437,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3334,6 +3448,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth106 patches (SRV-19, SRV-32).",
               "properties": {
                 "bank": {
@@ -3361,9 +3476,14 @@
                 "kind": {
                   "const": "synth106_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3373,6 +3493,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth60 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -3424,9 +3545,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth60Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3438,6 +3564,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth60 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -3473,9 +3600,14 @@
                 "kind": {
                   "const": "synth60_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3485,6 +3617,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth60 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -3517,6 +3650,10 @@
                   "const": "synth60_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -3526,6 +3663,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3536,6 +3674,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth60 patches (SRV-19, SRV-32).",
               "properties": {
                 "bank": {
@@ -3563,9 +3702,14 @@
                 "kind": {
                   "const": "synth60_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3575,6 +3719,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synthD sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -3626,9 +3771,14 @@
                 "music": {
                   "$ref": "#/$defs/SynthDMusic",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3640,6 +3790,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synthD sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -3675,9 +3826,14 @@
                 "kind": {
                   "const": "synthd_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3687,6 +3843,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synthD sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -3719,6 +3876,10 @@
                   "const": "synthd_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -3728,6 +3889,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3738,6 +3900,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synthD patches (SRV-19, SRV-35).",
               "properties": {
                 "bank": {
@@ -3765,9 +3928,14 @@
                 "kind": {
                   "const": "synthd_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3777,6 +3945,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth53 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -3828,9 +3997,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth53Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3842,6 +4016,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth53 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -3877,9 +4052,14 @@
                 "kind": {
                   "const": "synth53_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3889,6 +4069,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth53 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -3921,6 +4102,10 @@
                   "const": "synth53_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -3930,6 +4115,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3940,6 +4126,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth53 programs, one group (SRV-19, SRV-38).",
               "properties": {
                 "bank": {
@@ -3967,9 +4154,14 @@
                 "kind": {
                   "const": "synth53_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -3979,6 +4171,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth52 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -4030,9 +4223,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth53Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4044,6 +4242,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth52 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -4079,9 +4278,14 @@
                 "kind": {
                   "const": "synth52_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4091,6 +4295,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth52 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -4123,6 +4328,10 @@
                   "const": "synth52_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -4132,6 +4341,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4142,6 +4352,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth52 programs, one group (SRV-19, SRV-38).",
               "properties": {
                 "bank": {
@@ -4169,9 +4380,14 @@
                 "kind": {
                   "const": "synth52_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4181,6 +4397,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth51 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -4232,9 +4449,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth53Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4246,6 +4468,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth51 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -4281,9 +4504,14 @@
                 "kind": {
                   "const": "synth51_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4293,6 +4521,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth51 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -4325,6 +4554,10 @@
                   "const": "synth51_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -4334,6 +4567,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4344,6 +4578,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth51 programs, one group (SRV-19, SRV-38).",
               "properties": {
                 "bank": {
@@ -4371,9 +4606,14 @@
                 "kind": {
                   "const": "synth51_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4383,6 +4623,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth8 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -4445,9 +4686,14 @@
                   "maximum": 127,
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4461,6 +4707,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth8 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -4507,9 +4754,14 @@
                   "maximum": 127,
                   "minimum": 0,
                   "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4521,6 +4773,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth8 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -4553,6 +4806,10 @@
                   "const": "synth8_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -4562,6 +4819,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4572,6 +4830,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth8 patches (SRV-19, SRV-41).",
               "properties": {
                 "bank": {
@@ -4599,9 +4858,14 @@
                 "kind": {
                   "const": "synth8_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4611,6 +4875,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A stored synth80 sound (SRV-16).",
               "properties": {
                 "banks": {
@@ -4662,9 +4927,14 @@
                 "music": {
                   "$ref": "#/$defs/Synth80Music",
                   "description": "Its music."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4676,6 +4946,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth80 sound, announced (SRV-17).",
               "properties": {
                 "banks": {
@@ -4711,9 +4982,14 @@
                 "kind": {
                   "const": "synth80_live",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4723,6 +4999,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A live synth80 sound's next events (SRV-18).",
               "properties": {
                 "connections": {
@@ -4755,6 +5032,10 @@
                   "const": "synth80_events",
                   "type": "string"
                 },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                },
                 "until_us": {
                   "description": "The time, in microseconds from the sound's start, up to which\nthe program has given every event: every event is before it.",
                   "format": "uint64",
@@ -4764,6 +5045,7 @@
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4774,6 +5056,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "A bank of synth80 patches (SRV-19, SRV-44).",
               "properties": {
                 "bank": {
@@ -4801,9 +5084,14 @@
                 "kind": {
                   "const": "synth80_bank",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "handle",
@@ -4813,6 +5101,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "Play a sound on an audio channel.",
               "properties": {
                 "after": {
@@ -4883,9 +5172,14 @@
                     }
                   ],
                   "description": "The page it belongs to, or none for the whole service."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "channel",
@@ -4900,6 +5194,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "Stop an audio channel.",
               "properties": {
                 "channel": {
@@ -4923,9 +5218,14 @@
                 "kind": {
                   "const": "stop",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "channel",
@@ -4934,6 +5234,7 @@
               "type": "object"
             },
             {
+              "additionalProperties": false,
               "description": "Change an audio channel's gain.",
               "properties": {
                 "channel": {
@@ -4964,9 +5265,14 @@
                 "kind": {
                   "const": "gain",
                   "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
                 }
               },
               "required": [
+                "type",
                 "kind",
                 "connections",
                 "channel",

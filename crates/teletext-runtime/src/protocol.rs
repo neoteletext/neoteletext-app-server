@@ -1261,6 +1261,7 @@ pub enum Rule {
 // (`read.rs`).
 #[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[schemars(transform = close_nested_branches)]
 pub enum ProgramMessage {
     /// The answer to `connected` (REQ-1471).
     Reply(Reply),
@@ -2123,6 +2124,42 @@ pub fn figures_document(server: &ServerFigures, channels: &BTreeMap<String, Chan
     let mut bytes = serde_json::to_vec(&Document { kind: "stats", server, channels }).unwrap_or_default();
     bytes.push(b'\n');
     bytes
+}
+
+/// Closes each branch of a message that is itself a union (`sound`, by
+/// `kind`): `schemars` leaves those branches open, because the message's
+/// `type` stands beside the union rather than in each branch, and a branch
+/// with `additionalProperties: false` would refuse it. The reader refuses
+/// an unknown field in every one (REQ-1475, SRV-3; the Rust server is the
+/// core and the kits follow its schema, DEC-6462), so each branch is given
+/// the message's own properties (its `type`), first, as `schemars` puts a
+/// tag, and `additionalProperties: false`, and so states it too.
+fn close_nested_branches(schema: &mut Schema) {
+    let Some(messages) = schema.get_mut("oneOf").and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    for message in messages.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+        let Some(own) = message.get("properties").and_then(serde_json::Value::as_object).cloned() else {
+            continue;
+        };
+        let own_required = message.get("required").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+        let Some(branches) = message.get_mut("oneOf").and_then(serde_json::Value::as_array_mut) else {
+            continue;
+        };
+        for branch in branches.iter_mut().filter_map(serde_json::Value::as_object_mut) {
+            if let Some(properties) = branch.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
+                let fields = core::mem::take(properties);
+                properties.extend(own.clone());
+                properties.extend(fields.into_iter().filter(|(key, _)| !own.contains_key(key)));
+            }
+            if let Some(required) = branch.get_mut("required").and_then(serde_json::Value::as_array_mut) {
+                let fields = core::mem::take(required);
+                required.extend(own_required.iter().cloned());
+                required.extend(fields.into_iter().filter(|key| !own_required.contains(key)));
+            }
+            branch.insert("additionalProperties".to_string(), false.into());
+        }
+    }
 }
 
 /// Both directions, for the schema.
