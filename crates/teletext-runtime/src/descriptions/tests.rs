@@ -479,6 +479,26 @@ fn a_described_regis_picture_is_the_png_the_servers_renderer_draws() {
     assert!(page.contains("width=\"800\" height=\"480\" alt=\"Red\""), "{page}");
 }
 
+/// PAR-26 and TODO-6813: a public page's ReGIS v2 picture is drawn with
+/// its committed numbered drawings, as the browser composes them: a kept
+/// picture whose red half lies in drawing 1 gives the PNG of the same red
+/// half drawn on the base.
+#[test]
+fn a_described_kept_regis_pictures_numbered_drawings_are_in_its_png() {
+    let mut channel = channel();
+    let in_drawing = crate::fallback::tests::RED_LEFT_IN_A_DRAWING;
+    let kept =
+        json!({"type": "regis", "connections": "kept", "page": PAGE_TEXT, "sub": "0001", "restart": true, "data": crate::protocol::tests::base64(in_drawing)});
+    channel.from_program(&line(&kept), 0);
+    channel.describe(1, PAGE, 1);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&with(&public_description("t", "x"), "/picture", json!({"kept": "0001"}))), 2);
+    let found = answers(&channel.take_effects());
+    let (png, width, height) = found[0].1.as_ref().unwrap().picture.clone().unwrap();
+    assert_eq!((png.to_vec(), width, height), drawn_png(crate::kept::PictureLanguage::Regis, RED_LEFT));
+    assert_ne!((png.to_vec(), width, height), drawn_png(crate::kept::PictureLanguage::Regis, b""), "not the bare base");
+}
+
 /// PAR-26 verification 2: a kept NAPLPS picture likewise, on the 480 by
 /// 500 raster.
 #[test]

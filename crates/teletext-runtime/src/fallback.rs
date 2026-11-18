@@ -190,8 +190,9 @@ impl Drawn {
     }
 }
 
-/// `stream` drawn as the browser draws it, with `objects` composed for
-/// NAPLPS: no animation and no pointer look (PAR-25, PAR-26).
+/// `stream` drawn as the browser draws it, with the committed numbered
+/// drawings composed for ReGIS and `objects` for NAPLPS: no animation and
+/// no pointer look (PAR-25, PAR-26).
 ///
 /// # Errors
 /// A renderer's refusal to be built or to compose.
@@ -202,7 +203,15 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             let mut screen = regis::Screen::new();
             let _ = terminal.feed_regis(&mut screen, stream);
             let _ = terminal.finish(&mut screen);
-            let canvas = screen.displayed();
+            // The committed numbered drawings over the base, as the
+            // browser's decoder composes them (`docs/regis-v2.md`, "Commit
+            // and repaint"), with no viewer state; a drawing given a paint
+            // rate is shown finished, which is exactly the picture painted
+            // at once (`docs/regis-v2.md`, "Paint rate").
+            let _ = terminal.advance_ticks(u32::MAX);
+            let mut picture = regis::Picture::new();
+            terminal.compose(&screen, &mut picture);
+            let canvas = picture.canvas();
             let colours = terminal.palette().colours().to_vec();
             let title = terminal.title();
             Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours, border: None, title })
@@ -283,4 +292,4 @@ pub(crate) fn rows(language: PictureLanguage, stream: &[u8], objects: Option<&[N
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
