@@ -72,8 +72,8 @@ pub fn records(effects: &[Effect]) -> Vec<(u16, u16, Vec<u8>)> {
     let mut tables = Vec::new();
     for effect in effects {
         let Effect::Send { bytes, .. } = effect else { continue };
-        for packet in bytes.chunks_exact(PACKET_BYTES) {
-            let packet = neoteletext_core::packet::Packet { bytes: packet.try_into().unwrap() };
+        for packet in bytes.as_chunks::<PACKET_BYTES>().0 {
+            let packet = neoteletext_core::packet::Packet { bytes: *packet };
             match reader.push(&packet) {
                 Read::Invalid(_) => panic!("the engine's reader refuses a record the server sent"),
                 Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) => {
