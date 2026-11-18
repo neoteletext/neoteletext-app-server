@@ -14,11 +14,13 @@ use alloc::vec::Vec;
 use super::FamilyFault;
 use crate::protocol::check::bytes_of;
 use crate::protocol::{Rule, SynthDBank, SynthDFamily, SynthDParameterEvent, SynthDPatch, SynthDPatchEvent};
+use crate::sound::family::Synth;
 use crate::sound::synth::FamilyCalls;
+use crate::sound::tracker::TrackHint;
 use crate::sound::wire::Wire;
 
 /// The most banks a synthd sound names (SD-12: no bank select; programs 0 to 127 reach the bank; SRV-58).
-/// TEMPORARY: the engine's constant once its interface module is merged.
+/// One: the family reads bank index 0 alone (SD-12; the engine's `bank_patch`), and the engine names no constant for it.
 pub(crate) const MOST_BANKS: usize = 1;
 
 /// Whether synthd takes `message`. TEMPORARY: every message the block
@@ -36,18 +38,19 @@ pub(crate) const fn check_bank(_image: &[u8]) -> Result<(), FamilyFault> {
 impl FamilyCalls for SynthDFamily {
     type Bank = SynthDBank;
 
-    fn inline_patch(event: &SynthDPatchEvent) -> Result<Vec<Wire>, FamilyFault> {
-        match &event.patch {
+    fn inline_patch(_synth: Synth, event: &SynthDPatchEvent) -> Result<(Vec<Wire>, Option<TrackHint>), FamilyFault> {
+        let wires = match &event.patch {
             SynthDPatch::Fields(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synthd", "patch packer")),
             SynthDPatch::Bytes(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synthd", "inline patch writer")),
-        }
+        }?;
+        Ok((wires, None))
     }
 
-    fn parameter(_event: &SynthDParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
+    fn parameter(_synth: Synth, _event: &SynthDParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
         Err(FamilyFault::unavailable(Rule::NotTaken, "synthd", "parameter writer"))
     }
 
-    fn bank_image(bank: &SynthDBank) -> Result<Vec<u8>, FamilyFault> {
+    fn bank_image(_synth: Synth, bank: &SynthDBank) -> Result<Vec<u8>, FamilyFault> {
         match bank {
             SynthDBank::Patches(_) => Err(FamilyFault::unavailable(Rule::InvalidBank, "synthd", "bank builder")),
             SynthDBank::Bytes(bytes) => {

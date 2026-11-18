@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 
 use neoteletext_audio::midi::{ChannelMessage, DATA_MAX, Message, STATUS_BIT, controller, data_bytes, status};
 
+use super::family::Deferred;
 use crate::protocol::{MidiChannel, ParameterDirection, Rule, SharedEvent};
 
 /// One MIDI message the server writes into a block.
@@ -18,7 +19,16 @@ pub(crate) enum Wire {
     Channel(ChannelMessage),
     /// A system exclusive message: its bytes after `0xF0`, ending `0xF7`.
     Sysex(Vec<u8>),
+    /// A message written from its part's tracked state, resolved as its
+    /// block is written (SRV-33, SRV-68).
+    #[expect(dead_code, reason = "written by synth106's call site, which a following commit gives the engine's interface")]
+    Deferred(Deferred),
 }
+
+/// What a deferred message is as a message before it is resolved: no
+/// message, which the engine's writer refuses and its tracker passes over,
+/// so that one never resolved cannot be written.
+const UNRESOLVED: &[u8] = &[];
 
 impl Wire {
     /// As the engine's writer takes it.
@@ -26,6 +36,7 @@ impl Wire {
         match self {
             Self::Channel(message) => Message::Channel(*message),
             Self::Sysex(bytes) => Message::SystemExclusive(bytes),
+            Self::Deferred(_) => Message::SystemExclusive(UNRESOLVED),
         }
     }
 }

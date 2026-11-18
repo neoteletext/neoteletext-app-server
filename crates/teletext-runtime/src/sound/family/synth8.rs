@@ -14,12 +14,14 @@ use alloc::vec::Vec;
 use super::FamilyFault;
 use crate::protocol::check::bytes_of;
 use crate::protocol::{Rule, Synth8Bank, Synth8Family, Synth8ParameterEvent, Synth8Patch, Synth8PatchEvent};
+use crate::sound::family::Synth;
 use crate::sound::synth::FamilyCalls;
+use crate::sound::tracker::TrackHint;
 use crate::sound::wire::Wire;
 
 /// The most banks a synth8 sound names (S8-29: one bank of up to 64 patches; SRV-58).
-/// TEMPORARY: the engine's constant once its interface module is merged.
-pub(crate) const MOST_BANKS: usize = 1;
+/// The engine's constant.
+pub(crate) const MOST_BANKS: usize = neoteletext_audio_instruments::synth8::interface::BANK_INDEX + 1;
 
 /// Whether synth8 takes `message`. TEMPORARY: every message the block
 /// grammar carries, until the engine's table of the family is pinned.
@@ -36,18 +38,19 @@ pub(crate) const fn check_bank(_image: &[u8]) -> Result<(), FamilyFault> {
 impl FamilyCalls for Synth8Family {
     type Bank = Synth8Bank;
 
-    fn inline_patch(event: &Synth8PatchEvent) -> Result<Vec<Wire>, FamilyFault> {
-        match &event.patch {
+    fn inline_patch(_synth: Synth, event: &Synth8PatchEvent) -> Result<(Vec<Wire>, Option<TrackHint>), FamilyFault> {
+        let wires = match &event.patch {
             Synth8Patch::Fields(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synth8", "patch packer")),
             Synth8Patch::Bytes(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synth8", "inline patch writer")),
-        }
+        }?;
+        Ok((wires, None))
     }
 
-    fn parameter(_event: &Synth8ParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
+    fn parameter(_synth: Synth, _event: &Synth8ParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
         Err(FamilyFault::unavailable(Rule::NotTaken, "synth8", "parameter writer"))
     }
 
-    fn bank_image(bank: &Synth8Bank) -> Result<Vec<u8>, FamilyFault> {
+    fn bank_image(_synth: Synth, bank: &Synth8Bank) -> Result<Vec<u8>, FamilyFault> {
         match bank {
             Synth8Bank::Patches(_) => Err(FamilyFault::unavailable(Rule::InvalidBank, "synth8", "bank builder")),
             Synth8Bank::Bytes(bytes) => {

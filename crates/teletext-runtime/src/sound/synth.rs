@@ -13,12 +13,13 @@ use alloc::vec::Vec;
 
 use neoteletext_audio::encode::{EncodeError, Sound as Encoded};
 use neoteletext_audio::midi::block::BlockWriter;
-use neoteletext_audio::midi::restate::{Parts, SysexKind};
-use neoteletext_audio::midi::{CHANNELS, MOST_SYSTEM_EXCLUSIVE_BYTES, status};
+use neoteletext_audio::midi::{Banks, CHANNELS, MOST_SYSTEM_EXCLUSIVE_BYTES, status};
 use neoteletext_audio::{LIVE_LOOKAHEAD_BLOCKS, LIVE_RING_BLOCKS};
+use neoteletext_audio_instruments::synth6581::interface::{BlockBudget, accepts as synth6581_accepts};
 
 use super::family::{Family, FamilyFault, Synth};
 use super::midi_file;
+use super::tracker::{TrackHint, Tracker};
 use super::wire::{self, Wire};
 use crate::protocol::{
     BLOCK_TICKS, BLOCK_US, BankName, ConnectionId, DroppedCounts, MOST_BLOCK_BYTES, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_ADVANCE_US, MidiChannel, NoteFamily,
@@ -51,12 +52,13 @@ fn family_fault(path: &str, fault: FamilyFault) -> Refused {
 pub(crate) trait FamilyCalls: NoteFamily {
     /// The family's bank type.
     type Bank;
-    /// An inline patch's messages (MIDI-60).
-    fn inline_patch(event: &Self::PatchEvent) -> Result<Vec<Wire>, FamilyFault>;
-    /// A named parameter's message (MIDI-18).
-    fn parameter(event: &Self::ParameterEvent) -> Result<Vec<Wire>, FamilyFault>;
-    /// A bank's image (MIDI-56).
-    fn bank_image(bank: &Self::Bank) -> Result<Vec<u8>, FamilyFault>;
+    /// An inline patch's messages (MIDI-60) for `synth`, and what the
+    /// tracker is told beside them.
+    fn inline_patch(synth: Synth, event: &Self::PatchEvent) -> Result<(Vec<Wire>, Option<TrackHint>), FamilyFault>;
+    /// A named parameter's messages (MIDI-18) for `synth`.
+    fn parameter(synth: Synth, event: &Self::ParameterEvent) -> Result<Vec<Wire>, FamilyFault>;
+    /// A bank's image (MIDI-56) for `synth`.
+    fn bank_image(synth: Synth, bank: &Self::Bank) -> Result<Vec<u8>, FamilyFault>;
 }
 
 /// How far ahead of its due time a live block is sent: 25 blocks, 500
@@ -90,24 +92,38 @@ pub(crate) struct Timed {
     pub(crate) wire: Wire,
     /// The path of the event that gave it.
     pub(crate) path: String,
+    /// What the tracker is told after the message (SRV-68).
+    pub(crate) hint: Option<TrackHint>,
 }
 
 /// Expands a note family's events into messages at their ticks, each
 /// checked against the family (SRV-10, SRV-24).
-pub(crate) fn place_notes<F: FamilyCalls>(family: Family, events: &[F::Event], at: &str, out: &mut Vec<Timed>) -> Result<(), Refused> {
+pub(crate) fn place_notes<F: FamilyCalls>(synth: Synth, events: &[F::Event], at: &str, out: &mut Vec<Timed>) -> Result<(), Refused> {
     let mut wires = Vec::new();
     for (index, event) in events.iter().enumerate() {
         let path = format!("{at}[{index}]");
         let time_us = F::time_us(event);
         wires.clear();
+        let mut hint = None;
         match F::split(event) {
             SplitEvent::Shared(shared) => wire::expand(shared, &mut wires).map_err(|(rule, detail)| refuse(&path, rule, detail))?,
-            SplitEvent::Patch(inline) => wires.extend(F::inline_patch(inline).map_err(|fault| family_fault(&format!("{path}.patch"), fault))?),
-            SplitEvent::Parameter(parameter) => wires.extend(F::parameter(parameter).map_err(|fault| family_fault(&format!("{path}.set"), fault))?),
+            SplitEvent::Patch(inline) => {
+                let (messages, told) = F::inline_patch(synth, inline).map_err(|fault| family_fault(&format!("{path}.patch"), fault))?;
+                wires.extend(messages);
+                hint = told;
+            }
+            SplitEvent::Parameter(parameter) => {
+                wires.extend(F::parameter(synth, parameter).map_err(|fault| family_fault(&format!("{path}.set"), fault))?);
+            }
         }
-        for wire in wires.drain(..) {
-            family.takes(&wire).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
-            out.push(Timed { tick: tick_of(time_us), wire, path: path.clone() });
+        let last = wires.len().saturating_sub(1);
+        for (position, wire) in wires.drain(..).enumerate() {
+            // A deferred message is checked once it is resolved.
+            if !matches!(wire, Wire::Deferred(_)) {
+                synth.takes(&wire).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
+            }
+            let hint = if position == last { hint.take() } else { None };
+            out.push(Timed { tick: tick_of(time_us), wire, path: path.clone(), hint });
         }
     }
     Ok(())
@@ -124,8 +140,8 @@ pub(crate) fn place_synth6581(events: &[Synth6581Event], at: &str, out: &mut Vec
         }
         .map_err(|fault| family_fault(&path, fault))?;
         for wire in wires {
-            Family::Synth6581.takes(&wire).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
-            out.push(Timed { tick: tick_of(event.time_us()), wire, path: path.clone() });
+            super::family::synth6581::takes(&wire).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
+            out.push(Timed { tick: tick_of(event.time_us()), wire, path: path.clone(), hint: None });
         }
     }
     Ok(())
@@ -146,13 +162,18 @@ pub(crate) fn check_opening(events: &[Synth6581Event], at: &str) -> Result<(), R
 }
 
 /// Reads a Standard MIDI File into placed messages (SRV-81 to SRV-86).
-pub(crate) fn place_file(family: Family, bytes: &[u8], map: Option<&[Option<MidiChannel>; 16]>, at: &str) -> Result<(Vec<Timed>, u64, DroppedCounts), Refused> {
-    let takes = |wire: &Wire| family.takes(wire).is_ok();
+pub(crate) fn place_file(synth: Synth, bytes: &[u8], map: Option<&[Option<MidiChannel>; 16]>, at: &str) -> Result<(Vec<Timed>, u64, DroppedCounts), Refused> {
+    let takes = |wire: &Wire| synth.takes(wire).is_ok();
     let music = midi_file::read(bytes, map, &takes).map_err(|(rule, detail)| refuse(at, rule, detail))?;
     let timed = music
         .events
         .into_iter()
-        .map(|event| Timed { tick: event.tick, wire: event.wire, path: format!("{at} (track {}, event {}, byte {})", event.track, event.index, event.offset) })
+        .map(|event| Timed {
+            tick: event.tick,
+            wire: event.wire,
+            path: format!("{at} (track {}, event {}, byte {})", event.track, event.index, event.offset),
+            hint: None,
+        })
         .collect();
     Ok((timed, music.end_tick, music.dropped))
 }
@@ -219,54 +240,85 @@ pub(crate) fn stored_blocks(length: SoundLength, last_tick: Option<u64>) -> Resu
     Ok(blocks)
 }
 
-/// The parts a sound's messages address (SRV-70): a channel message's
-/// channel, a system exclusive message's part where the family says.
-fn used_parts(family: Family, timed: &[Timed]) -> [bool; CHANNELS] {
+/// The parts a stored sound uses (SRV-70): for synth7, each channel a
+/// message addresses (a channel message's, or the channel byte of its
+/// voice dump or parameter change, S7-38, S7-43); for a family of one part,
+/// that part, when the sound has any message.
+fn used_parts(synth: Synth, tracker: &Tracker, timed: &[Timed]) -> Vec<u8> {
+    if tracker.parts() == 1 {
+        return if timed.is_empty() { Vec::new() } else { alloc::vec![super::tracker::ONE_PART] };
+    }
     let mut used = [false; CHANNELS];
     for event in timed {
         let part = match &event.wire {
             Wire::Channel(message) => Some(message.channel()),
-            Wire::Sysex(bytes) => family.sysex_kind(bytes).map(|(part, _)| part),
+            Wire::Sysex(bytes) if synth.family == Family::Synth7 => super::family::synth7::part_of(bytes),
+            Wire::Sysex(_) | Wire::Deferred(_) => None,
         };
         if let Some(slot) = part.and_then(|part| used.get_mut(usize::from(part))) {
             *slot = true;
         }
     }
-    used
+    (0_u8..).zip(used).filter(|(_, used)| *used).map(|(part, _)| part).collect()
 }
 
-/// Gives the tracker a message the server wrote (SRV-68).
-fn track(parts: &mut Parts, family: Family, wire: &Wire) {
-    let sysex = match wire {
-        Wire::Sysex(bytes) => family.sysex_kind(bytes),
-        Wire::Channel(_) => None,
-    };
-    parts.take(&wire.message(), sysex.map(|(part, kind): (u8, SysexKind)| (part, kind)));
-}
-
-/// Part `part`'s restatement, as the engine writes it from the tracker.
-fn restatement(parts: &Parts, part: u8) -> Vec<Wire> {
-    let mut out = Vec::new();
-    if let Some(state) = parts.part(part) {
-        state.restate(part, &mut |message| {
-            out.push(match message {
-                neoteletext_audio::midi::Message::Channel(channel) => Wire::Channel(channel),
-                neoteletext_audio::midi::Message::SystemExclusive(bytes) => Wire::Sysex(bytes.to_vec()),
-            });
-        });
+/// Resolves a block's deferred messages from the tracker and gives the
+/// tracker every message of the block in order (SRV-68): the block's
+/// events as they are written.
+fn resolve_and_track(synth: Synth, tracker: &mut Tracker, banks: &Banks<'_>, events: Vec<Timed>) -> Result<Vec<Timed>, Refused> {
+    let mut written = Vec::with_capacity(events.len());
+    for event in events {
+        let Timed { tick, wire, path, hint } = event;
+        let wires = match &wire {
+            Wire::Deferred(deferred) => {
+                let resolved = deferred.resolve(tracker).map_err(|fault| family_fault(&path, fault))?;
+                for message in &resolved {
+                    synth.takes(message).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
+                }
+                resolved
+            }
+            Wire::Channel(_) | Wire::Sysex(_) => alloc::vec![wire],
+        };
+        let last = wires.len().saturating_sub(1);
+        for (position, wire) in wires.into_iter().enumerate() {
+            let hint = if position == last { hint.clone() } else { None };
+            tracker.take(&wire, hint.as_ref(), banks);
+            written.push(Timed { tick, wire, path: path.clone(), hint });
+        }
     }
-    out
+    Ok(written)
+}
+
+/// The synth6581 family's bound on a block (S6581-42, SRV-67): at most 20
+/// register data messages and one start and one stop, the restatement
+/// among them.
+fn within_budget<'a>(family: Family, messages: impl Iterator<Item = &'a Wire>) -> bool {
+    if family != Family::Synth6581 {
+        return true;
+    }
+    let mut budget = BlockBudget::new();
+    for wire in messages {
+        if !synth6581_accepts(&wire.message()).is_ok_and(|asid| budget.admit(&asid)) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Writes one block: the restatements that fit, at tick 0 before
 /// everything (SRV-69), then the program's events (SRV-65). Gives the
 /// block and which of `restate`'s parts were written.
-fn write_block(index: u64, restate: &[(u8, Vec<Wire>)], events: &[&Timed]) -> Result<(Vec<u8>, Vec<u8>), Refused> {
+fn write_block(family: Family, index: u64, restate: &[(u8, Vec<Wire>)], events: &[&Timed]) -> Result<(Vec<u8>, Vec<u8>), Refused> {
     let mut buffer = [0_u8; MOST_BLOCK_BYTES];
     let mut fit = restate.len();
     loop {
         let mut writer = BlockWriter::new(&mut buffer);
         let mut failed = None;
+        let restated = restate.iter().take(fit).flat_map(|(_, wires)| wires.iter());
+        let over_budget = !within_budget(family, restated.chain(events.iter().map(|event| &event.wire)));
+        if over_budget {
+            failed = Some(None);
+        }
         for (_, wires) in restate.iter().take(fit) {
             for wire in wires {
                 if writer.push(0, &wire.message()).is_err() {
@@ -285,6 +337,14 @@ fn write_block(index: u64, restate: &[(u8, Vec<Wire>)], events: &[&Timed]) -> Re
         }
         match failed {
             None => return Ok((writer.bytes().to_vec(), restate.iter().take(fit).map(|(part, _)| *part).collect())),
+            Some(_) if fit == 0 && over_budget => {
+                let path = events.last().map_or(String::new(), |event| event.path.clone());
+                return Err(refuse(
+                    path,
+                    Rule::BlockFull,
+                    format!("S6581-42, SRV-67: block {index} would hold more than 20 register data messages, or more than one start or one stop"),
+                ));
+            }
             Some(fault) if fit == 0 => {
                 let (error, event) = fault.map_or((None, None), |(error, event)| (Some(error), Some(event)));
                 let path = event.map_or(String::new(), |event| event.path.clone());
@@ -368,6 +428,9 @@ struct Bank {
     generation: u16,
     family: Family,
     records: Vec<Vec<u8>>,
+    /// Its image, which the trackers of the sounds naming it read
+    /// (SRV-68; MIDI-61).
+    image: Vec<u8>,
 }
 
 /// What a sound message sends: records for each connection, in order, and
@@ -406,8 +469,10 @@ struct Live {
     latest_us: u64,
     next_write: u64,
     pending: Vec<Timed>,
-    parts: Parts,
-    since: [u16; CHANNELS],
+    /// The images of its banks, bank index 0 first, as it was announced.
+    images: Vec<Vec<u8>>,
+    tracker: Tracker,
+    since: Vec<u16>,
     opened: bool,
     held: VecDeque<(u64, Vec<u8>, Vec<ConnectionId>)>,
     clock_start_ms: Option<u64>,
@@ -466,6 +531,11 @@ impl Synths {
         Ok(())
     }
 
+    /// The images of the banks `banks` names, bank index 0 first.
+    fn images(&self, banks: &[u8]) -> Vec<Vec<u8>> {
+        banks.iter().filter_map(|handle| self.banks.get(handle)).map(|bank| bank.image.clone()).collect()
+    }
+
     /// Each target's records of the banks it has not been sent, in bank
     /// index order (SRV-61), noting them sent.
     fn banks_for(&mut self, connection: ConnectionId, banks: &[u8]) -> Vec<Vec<u8>> {
@@ -491,11 +561,12 @@ impl Synths {
     }
 
     /// A bank message (SRV-60, SRV-62): checked, held and sent.
-    pub(crate) fn bank(&mut self, family: Family, handle: u8, generation: u16, image: &[u8], targets: &[ConnectionId]) -> Result<Sent, Refused> {
-        family.check_bank(image).map_err(|fault| family_fault("bank", fault))?;
+    pub(crate) fn bank(&mut self, synth: Synth, handle: u8, generation: u16, image: &[u8], targets: &[ConnectionId]) -> Result<Sent, Refused> {
+        let family = synth.family;
+        synth.check_bank(image).map_err(|fault| family_fault("bank", fault))?;
         let records = Self::bank_records(family, handle, generation, image)?;
         self.live.remove(&handle);
-        self.banks.insert(handle, Bank { generation, family, records: records.clone() });
+        self.banks.insert(handle, Bank { generation, family, records: records.clone(), image: image.to_vec() });
         let mut sent = Sent::default();
         for &connection in targets {
             self.sent_banks.entry(connection).or_default().insert((handle, generation));
@@ -527,8 +598,8 @@ impl Synths {
         }
         let mut lifted = Vec::new();
         for (dump, name) in dumps.iter().zip(sound.lift) {
-            let image = family.lifted_bank(dump).map_err(|fault| family_fault("music", fault))?;
-            lifted.push((*name, Self::bank_records(family, name.handle, name.generation, &image)?));
+            let image = sound.synth.lifted_bank(dump).map_err(|fault| family_fault("music", fault))?;
+            lifted.push((*name, Self::bank_records(family, name.handle, name.generation, &image)?, image));
         }
         let last = sound.timed.iter().map(|event| event.tick).max();
         let last = match (last, sound.end_tick) {
@@ -549,41 +620,47 @@ impl Synths {
         {
             return Err(refuse("music", Rule::BeyondLength, format!("SRV-85: the file's end of track at tick {end} is past the sound's {blocks} blocks")));
         }
-        let mut parts = Parts::new();
+        // The sound's banks as its tracker reads them: those it names, then
+        // those lifted from its music (MIDI-57, MIDI-58).
+        let mut images = self.images(&sound.settings.banks);
+        images.extend(lifted.iter().map(|(_, _, image)| image.clone()));
+        let image_slices: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
+        let banks = Banks::new(&image_slices);
+        let mut tracker = Tracker::new(sound.synth, &banks);
+        // SRV-70: synth6581's and synth8580's own first event is their
+        // restatement (S6581-45).
         let restate: Vec<(u8, Vec<Wire>)> = if family == Family::Synth6581 {
             Vec::new()
         } else {
-            used_parts(family, &sound.timed).iter().zip(0_u8..).filter(|(used, _)| **used).map(|(_, part)| (part, restatement(&parts, part))).collect()
+            used_parts(sound.synth, &tracker, &sound.timed).into_iter().map(|part| (part, tracker.restate(part))).collect()
         };
         let mut written = Vec::with_capacity(usize::try_from(blocks).unwrap_or(0));
-        let mut next = 0;
+        let mut timed = core::mem::take(&mut sound.timed).into_iter().peekable();
         for index in 0..blocks {
-            let start = next;
-            while sound.timed.get(next).is_some_and(|event| event.tick / BLOCK_TICKS == index) {
-                next = next.saturating_add(1);
+            let mut block_events = Vec::new();
+            while let Some(event) = timed.next_if(|event| event.tick / BLOCK_TICKS == index) {
+                block_events.push(event);
             }
-            let events: Vec<&Timed> = sound.timed.get(start..next).unwrap_or(&[]).iter().collect();
+            let block_events = resolve_and_track(sound.synth, &mut tracker, &banks, block_events)?;
+            let events: Vec<&Timed> = block_events.iter().collect();
             let opening: &[(u8, Vec<Wire>)] = if index == 0 { &restate } else { &[] };
-            let (block, restated) = write_block(index, opening, &events)?;
+            let (block, restated) = write_block(family, index, opening, &events)?;
             if restated.len() != opening.len() {
                 return Err(refuse("music", Rule::BlockFull, "SRV-70, MIDI-99: block 0 has no room for every part's restatement"));
-            }
-            for event in &events {
-                track(&mut parts, family, &event.wire);
             }
             written.push(block);
         }
         let mut settings = sound.settings.clone();
-        settings.banks.extend(lifted.iter().map(|(name, _)| name.handle));
+        settings.banks.extend(lifted.iter().map(|(name, _, _)| name.handle));
         let mut encoded = Encoded::events(sound.handle, sound.generation, family.codec(), &written).map_err(encode_fault)?;
         settings.apply(sound.synth, &mut encoded);
         let mut records = alloc::vec![encoded.object_record().map_err(encode_fault)?];
         records.extend(encoded.data_records());
         // Only now, with nothing refused, does any table change (SRV-49).
         self.replaced(sound.handle);
-        for (name, bank_records) in &lifted {
+        for (name, bank_records, image) in lifted.iter().cloned() {
             self.live.remove(&name.handle);
-            self.banks.insert(name.handle, Bank { generation: name.generation, family, records: bank_records.clone() });
+            self.banks.insert(name.handle, Bank { generation: name.generation, family, records: bank_records, image });
         }
         let mut sent = Sent::default();
         for &connection in targets {
@@ -599,7 +676,7 @@ impl Synths {
             blocks: u16::try_from(blocks).unwrap_or(u16::MAX),
             bytes: u32::try_from(bytes).unwrap_or(u32::MAX),
             longest_block: encoded.block_bytes,
-            banks_lifted: lifted.iter().map(|(name, _)| *name).collect(),
+            banks_lifted: lifted.iter().map(|(name, _, _)| *name).collect(),
             dropped: sound.dropped,
         });
         Ok(sent)
@@ -645,12 +722,18 @@ impl Synths {
         let mut encoded = Encoded::live_events(handle, generation, synth.family.codec()).map_err(encode_fault)?;
         settings.apply(synth, &mut encoded);
         let object = encoded.object_record().map_err(encode_fault)?;
+        let images = self.images(&settings.banks);
+        let tracker = {
+            let image_slices: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
+            Tracker::new(synth, &Banks::new(&image_slices))
+        };
         self.replaced(handle);
         for &connection in targets {
             let mut out = self.banks_for(connection, &settings.banks);
             out.push(object.clone());
             sent.add(connection, out);
         }
+        let since = alloc::vec![0; tracker.parts()];
         self.live.insert(
             handle,
             Live {
@@ -665,8 +748,9 @@ impl Synths {
                 latest_us: 0,
                 next_write: 0,
                 pending: Vec::new(),
-                parts: Parts::new(),
-                since: [0; CHANNELS],
+                images,
+                tracker,
+                since,
                 opened: false,
                 held: VecDeque::new(),
                 clock_start_ms: None,
@@ -744,27 +828,30 @@ impl Synths {
         live.pending.extend(timed);
         live.until_us = until_us;
         let named: Vec<ConnectionId> = targets.to_vec();
+        let images = core::mem::take(&mut live.images);
+        let image_slices: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
+        let banks = Banks::new(&image_slices);
         while (live.next_write.saturating_add(1)).saturating_mul(BLOCK_US) <= until_us {
             let index = live.next_write;
             let split = live.pending.iter().take_while(|event| event.tick / BLOCK_TICKS == index).count();
             let events: Vec<Timed> = live.pending.drain(..split).collect();
-            let candidates: Vec<(u8, Vec<Wire>)> = if family == Family::Synth6581 {
-                Vec::new()
-            } else {
-                (0_u8..)
-                    .zip(live.since)
-                    .filter(|(_, since)| index == 0 || *since >= RESTATE_AIM_BLOCKS)
-                    .map(|(part, _)| (part, restatement(&live.parts, part)))
-                    .collect()
-            };
+            // SRV-69, S6581-46: every part's restatement in the first block,
+            // then each where the blocks have room once 25 have passed,
+            // carrying the state before this block's events.
+            let candidates: Vec<(u8, Vec<Wire>)> = (0_u8..)
+                .zip(&live.since)
+                .filter(|(_, since)| index == 0 || **since >= RESTATE_AIM_BLOCKS)
+                .map(|(part, _)| (part, live.tracker.restate(part)))
+                .collect();
+            let events = resolve_and_track(live.synth, &mut live.tracker, &banks, events)?;
             let references: Vec<&Timed> = events.iter().collect();
-            let (block, restated) = write_block(index, &candidates, &references)?;
+            let (block, restated) = write_block(family, index, &candidates, &references)?;
             for (part, since) in (0_u8..).zip(live.since.iter_mut()) {
                 if restated.contains(&part) {
                     *since = 0;
                 } else {
                     *since = since.saturating_add(1);
-                    if *since >= RESTATE_EVERY_BLOCKS && family != Family::Synth6581 {
+                    if *since >= RESTATE_EVERY_BLOCKS {
                         return Err(refuse(
                             "events",
                             Rule::NoRoomToRestate,
@@ -773,14 +860,13 @@ impl Synths {
                     }
                 }
             }
-            for event in &events {
-                track(&mut live.parts, family, &event.wire);
-            }
             live.encoded.live_event_records(0, &[&block]).map_err(encode_fault)?;
             live.held.push_back((index, block, named.clone()));
             live.next_write = index.saturating_add(1);
         }
         // Nothing refused: the copy replaces the live sound.
+        drop(image_slices);
+        live.images = images;
         let mut sent = Sent::default();
         let new: Vec<ConnectionId> = named.iter().copied().filter(|connection| !live.announced.contains(connection)).collect();
         let banks = live.settings.banks.clone();

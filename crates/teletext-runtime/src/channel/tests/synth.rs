@@ -82,9 +82,10 @@ fn sound_records(blocks: &[Vec<u8>]) -> Vec<Vec<u8>> {
     records
 }
 
-/// SRV-61, SRV-79, SRV-47, SRV-7: a bank, then a stored sound naming it:
-/// the bank's records go before the sound's OBJECT once, the events land
-/// in the blocks with channels 1 and 16 written 0 and 15, and
+/// SRV-61, SRV-79, SRV-47, SRV-7, SRV-70: a bank, then a stored sound
+/// naming it: the bank's records go before the sound's OBJECT once, the
+/// block opens with the restatement, the events land in the blocks with
+/// channels 1 and 16 written 0 and 15, and
 /// `sound_built` reports the blocks and bytes.
 #[test]
 fn a_stored_sound_goes_after_its_bank() {
@@ -98,12 +99,15 @@ fn a_stored_sound_goes_after_its_bank() {
     channel.from_program(&stored(&[note(0, 1), note(0, 16)], &json!({"tail_us": 0})), 2);
     let effects = channel.take_effects();
     assert_eq!(refusals(&effects), [] as [Value; 0]);
-    let block = alloc::vec![0x00, 0x90, 60, 100, 0x00, 0x9F, 60, 100];
+    // The block opens with synth8's restatement at tick 0 (SRV-70, S8-29
+    // (e)): the upper and lower halves' program changes, 0 on channels 1
+    // and 2, as the engine's tracker writes them for a fresh sound.
+    let block = alloc::vec![0x00, 0xC0, 0, 0x00, 0xC1, 0, 0x00, 0x90, 60, 100, 0x00, 0x9F, 60, 100];
     assert_eq!(sent_to(&effects, CONNECTION), audio(&sound_records(&[block]), first), "the bank is not sent twice");
     let built = built(&effects);
     assert_eq!(
         built,
-        [json!({"type": "sound_built", "kind": "synth8", "handle": HANDLE, "generation": 0, "blocks": 1, "bytes": 8, "longest_block": 8,
+        [json!({"type": "sound_built", "kind": "synth8", "handle": HANDLE, "generation": 0, "blocks": 1, "bytes": 14, "longest_block": 14,
         "banks_lifted": [], "dropped": {"not_taken": 0, "unmapped_channel": 0, "system_messages": 0, "escapes": 0, "meta_events": 0}})]
     );
 }

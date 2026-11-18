@@ -28,6 +28,7 @@ pub(crate) use synth::{Refused, Sent};
 mod family;
 mod midi_file;
 pub(crate) mod synth;
+mod tracker;
 mod wire;
 
 /// A command's operations (the engine's `audio.md` section 4.4).
@@ -296,12 +297,12 @@ macro_rules! note_sound {
         let (timed, end_tick, dropped) = match &$sound.music {
             crate::protocol::$music::Events(list) => {
                 let mut timed = Vec::new();
-                synth::place_notes::<$family>($synth.family, &list.events, "music.events", &mut timed)?;
+                synth::place_notes::<$family>($synth, &list.events, "music.events", &mut timed)?;
                 (timed, None, crate::protocol::DroppedCounts::default())
             }
             crate::protocol::$music::MidiFile(file) => {
                 let (timed, end, dropped) =
-                    synth::place_file($synth.family, &crate::protocol::check::bytes_of(&file.bytes), file.channel_map.as_ref(), "music.bytes")?;
+                    synth::place_file($synth, &crate::protocol::check::bytes_of(&file.bytes), file.channel_map.as_ref(), "music.bytes")?;
                 (timed, Some(end), dropped)
             }
         };
@@ -331,7 +332,7 @@ macro_rules! live_sound {
 macro_rules! events_sound {
     ($self:ident, $sound:ident, $targets:ident, $now:ident, $kind:ident, $synth:ident, $family:ty) => {{
         let mut timed = Vec::new();
-        synth::place_notes::<$family>($synth.family, &$sound.events, "events", &mut timed)?;
+        synth::place_notes::<$family>($synth, &$sound.events, "events", &mut timed)?;
         let first = $sound.events.first().map(<$family as NoteFamily>::time_us);
         $self.synths.events(live_kind_of($kind), $sound.handle, $sound.generation, $sound.until_us.get(), timed, (first, None), $targets, $now)
     }};
@@ -339,8 +340,8 @@ macro_rules! events_sound {
 
 macro_rules! bank_sound {
     ($self:ident, $sound:ident, $targets:ident, $synth:ident, $family:ty) => {{
-        let image = <$family as FamilyCalls>::bank_image(&$sound.bank).map_err(|fault| refuse("bank", fault.rule, fault.detail))?;
-        $self.synths.bank($synth.family, $sound.handle, $sound.generation, &image, $targets)
+        let image = <$family as FamilyCalls>::bank_image($synth, &$sound.bank).map_err(|fault| refuse("bank", fault.rule, fault.detail))?;
+        $self.synths.bank($synth, $sound.handle, $sound.generation, &image, $targets)
     }};
 }
 
@@ -360,7 +361,7 @@ impl Sounds {
                         (timed, None)
                     }
                     Synth6581Music::MidiFile(file) => {
-                        let (timed, end, _) = synth::place_file(synth.family, &crate::protocol::check::bytes_of(&file.bytes), None, "music.bytes")?;
+                        let (timed, end, _) = synth::place_file(synth, &crate::protocol::check::bytes_of(&file.bytes), None, "music.bytes")?;
                         (timed, Some(end))
                     }
                 };

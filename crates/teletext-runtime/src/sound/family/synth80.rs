@@ -14,12 +14,14 @@ use alloc::vec::Vec;
 use super::FamilyFault;
 use crate::protocol::check::bytes_of;
 use crate::protocol::{Rule, Synth80Bank, Synth80Family, Synth80ParameterEvent, Synth80Patch, Synth80PatchEvent};
+use crate::sound::family::Synth;
 use crate::sound::synth::FamilyCalls;
+use crate::sound::tracker::TrackHint;
 use crate::sound::wire::Wire;
 
 /// The most banks a synth80 sound names (S80-36: controller 0 values 0 to 2 choose among three banks; SRV-58).
-/// TEMPORARY: the engine's constant once its interface module is merged.
-pub(crate) const MOST_BANKS: usize = 3;
+/// The engine's constant.
+pub(crate) const MOST_BANKS: usize = neoteletext_audio_instruments::synth80::interface::BANKS;
 
 /// Whether synth80 takes `message`. TEMPORARY: every message the block
 /// grammar carries, until the engine's table of the family is pinned.
@@ -36,18 +38,19 @@ pub(crate) const fn check_bank(_image: &[u8]) -> Result<(), FamilyFault> {
 impl FamilyCalls for Synth80Family {
     type Bank = Synth80Bank;
 
-    fn inline_patch(event: &Synth80PatchEvent) -> Result<Vec<Wire>, FamilyFault> {
-        match &event.patch {
+    fn inline_patch(_synth: Synth, event: &Synth80PatchEvent) -> Result<(Vec<Wire>, Option<TrackHint>), FamilyFault> {
+        let wires = match &event.patch {
             Synth80Patch::Fields(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synth80", "patch packer")),
             Synth80Patch::Bytes(_) => Err(FamilyFault::unavailable(Rule::InvalidPatch, "synth80", "inline patch writer")),
-        }
+        }?;
+        Ok((wires, None))
     }
 
-    fn parameter(_event: &Synth80ParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
+    fn parameter(_synth: Synth, _event: &Synth80ParameterEvent) -> Result<Vec<Wire>, FamilyFault> {
         Err(FamilyFault::unavailable(Rule::NotTaken, "synth80", "parameter writer"))
     }
 
-    fn bank_image(bank: &Synth80Bank) -> Result<Vec<u8>, FamilyFault> {
+    fn bank_image(_synth: Synth, bank: &Synth80Bank) -> Result<Vec<u8>, FamilyFault> {
         match bank {
             Synth80Bank::Patches(_) => Err(FamilyFault::unavailable(Rule::InvalidBank, "synth80", "bank builder")),
             Synth80Bank::Bytes(bytes) => {
