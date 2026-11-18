@@ -18,7 +18,9 @@ neoteletext-audio.workspace = true
 neoteletext-audio-instruments.workspace = true
 neoteletext-web = { workspace = true, features = ["alloc"] }
 neoteletext-opus.workspace = true
+neoteletext-rules.workspace = true
 regis.workspace = true
+naplps.workspace = true
 ring.workspace = true
 schemars.workspace = true
 serde.workspace = true

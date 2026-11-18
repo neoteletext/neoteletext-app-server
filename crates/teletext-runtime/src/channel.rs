@@ -174,10 +174,10 @@ pub struct ChannelConfig {
     /// The channel's other public addresses, each ending in `/`, at most
     /// three: a proof is verified under each as under `address` (VS-301).
     pub other_addresses: Vec<String>,
-    /// The channel uses the mouse wheel over its pages: its `channel.ttx`
-    /// says so (`push.wheel`), and a receiver gives it the wheel there
-    /// rather than stepping a page's sub-pages with it (the browser's
-    /// DEC-6447).
+    /// The channel uses the mouse wheel over its pages: its default rule
+    /// table then has the `wheel` rule (page-rules.md RULE-53), so a
+    /// receiver gives it the wheel there rather than stepping a page's
+    /// sub-pages with it. It shapes the default table and nothing else.
     pub wheel: bool,
 }
 
@@ -553,19 +553,17 @@ impl Channel {
     }
 
     /// The channel's `channel.ttx`, generated (DEC-1467 item 1): its name,
-    /// its initial page and its push WebSocket, which takes input, always
-    /// at `<channel>push` (REQ-1693 item 2). A receiver reads it first to
-    /// know the channel is live (the engine's REQ-WEB-018), and then asks
-    /// for nothing else over HTTP.
+    /// its initial page and its push WebSocket, always at `<channel>push`
+    /// (REQ-1693 item 2). A receiver reads it first to know the channel is
+    /// live (the engine's REQ-WEB-018), and then asks for nothing else over
+    /// HTTP. Its `push` says nothing of input: `push.input` and
+    /// `push.wheel` are withdrawn by push protocol 9, and a page's rule
+    /// table is the only thing that asks for a viewer's input
+    /// (page-rules.md RULE-49, REQ-6523).
     #[must_use]
     pub fn descriptor(&self) -> Vec<u8> {
-        let mut push = Writer::nested();
-        push.boolean("input", true);
-        if self.config.wheel {
-            push.boolean("wheel", true);
-        }
         let mut descriptor = Writer::nested();
-        descriptor.text("name", &self.config.name).text("initial_page", &self.config.initial_page.to_string()).object("push", push);
+        descriptor.text("name", &self.config.name).text("initial_page", &self.config.initial_page.to_string()).object("push", Writer::nested());
         let mut bytes = descriptor.line();
         bytes.pop();
         bytes

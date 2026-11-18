@@ -670,18 +670,12 @@ fn a_page_redirect_leaves_parameters_behind() {
     assert_eq!(selections(&channel.take_effects()), [(json!("303"), json!(null))]);
 }
 
-/// REQ-1693 item 2: the push address is fixed, so `channel.ttx` never names one.
+/// REQ-1693 item 2: the push address is fixed, so `channel.ttx` never names
+/// one. REQ-6532, RULE-49: `push.input` and `push.wheel` are withdrawn, so
+/// it asks for no input either, whether or not the channel uses the wheel.
 #[test]
-fn the_descriptor_names_no_push_address() {
-    let descriptor: Value = serde_json::from_slice(&channel().descriptor()).unwrap();
-    assert_eq!(descriptor["push"], json!({"input": true}));
-}
-
-/// The browser's DEC-6447: a channel configured to use the wheel says so
-/// in `channel.ttx`, beside its input; one that is not says nothing of it.
-#[test]
-fn a_channel_that_uses_the_wheel_says_so() {
-    let written = |wheel: bool| {
+fn the_descriptor_names_no_push_address_and_asks_for_no_input() {
+    for wheel in [false, true] {
         let config = ChannelConfig {
             name: "Test".into(),
             address: "http://127.0.0.1/test/".into(),
@@ -692,10 +686,8 @@ fn a_channel_that_uses_the_wheel_says_so() {
         };
         let descriptor: Value =
             serde_json::from_slice(&Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random()).descriptor()).unwrap();
-        descriptor["push"].clone()
-    };
-    assert_eq!(written(true), json!({"input": true, "wheel": true}));
-    assert_eq!(written(false), json!({"input": true}));
+        assert_eq!(descriptor["push"], json!({}));
+    }
 }
 
 /// The `connected` lines among `effects`.
