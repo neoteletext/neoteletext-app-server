@@ -15,6 +15,7 @@ use neoteletext_audio::encode::{EncodeError, Sound as Encoded};
 use neoteletext_audio::midi::block::BlockWriter;
 use neoteletext_audio::midi::{Banks, CHANNELS, MOST_SYSTEM_EXCLUSIVE_BYTES, status};
 use neoteletext_audio::{LIVE_LOOKAHEAD_BLOCKS, LIVE_RING_BLOCKS};
+use neoteletext_audio_instruments::synth106::interface::Model;
 use neoteletext_audio_instruments::synth6581::interface::{BlockBudget, accepts as synth6581_accepts};
 
 use super::family::{Family, FamilyFault, Synth};
@@ -427,6 +428,9 @@ struct Bank {
     generation: u16,
     family: Family,
     records: Vec<Vec<u8>>,
+    /// The synth106 family's model it is for, whose patch size it holds
+    /// (SRV-32); none for every other family.
+    model: Option<Model>,
     /// Its image, which the trackers of the sounds naming it read
     /// (SRV-68; MIDI-61).
     image: Vec<u8>,
@@ -509,7 +513,8 @@ impl Synths {
 
     /// The banks a sound names, checked against the bank table (SRV-58,
     /// SRV-61).
-    fn check_banks(&self, family: Family, banks: &[u8], lifted: usize) -> Result<(), Refused> {
+    fn check_banks(&self, synth: Synth, banks: &[u8], lifted: usize) -> Result<(), Refused> {
+        let family = synth.family;
         let total = banks.len().saturating_add(lifted);
         if total > family.most_banks() {
             return Err(refuse("banks", Rule::TooManyBanks, format!("SRV-58: {total} banks; a {} sound names at most {}", family.name(), family.most_banks())));
@@ -524,6 +529,15 @@ impl Synths {
                     format!("banks[{index}]"),
                     Rule::WrongFamily,
                     format!("MIDI-57: bank {handle} is for {}, not {}", bank.family.name(), family.name()),
+                ));
+            }
+            // synth106's and synth60's patches differ in size (SRV-32), so a
+            // sound reads only a bank of its own model.
+            if family == Family::Synth106 && bank.model != Some(synth.model()) {
+                return Err(refuse(
+                    format!("banks[{index}]"),
+                    Rule::WrongFamily,
+                    format!("MIDI-57, SRV-32: bank {handle} is not a bank of this sound's model, whose patches it holds"),
                 ));
             }
         }
@@ -565,7 +579,8 @@ impl Synths {
         synth.check_bank(image).map_err(|fault| family_fault("bank", fault))?;
         let records = Self::bank_records(family, handle, generation, image)?;
         self.live.remove(&handle);
-        self.banks.insert(handle, Bank { generation, family, records: records.clone(), image: image.to_vec() });
+        let model = (family == Family::Synth106).then(|| synth.model());
+        self.banks.insert(handle, Bank { generation, family, model, records: records.clone(), image: image.to_vec() });
         let mut sent = Sent::default();
         for &connection in targets {
             self.sent_banks.entry(connection).or_default().insert((handle, generation));
@@ -593,7 +608,7 @@ impl Synths {
             ));
         }
         if family != Family::Synth6581 {
-            self.check_banks(family, &sound.settings.banks, dumps.len())?;
+            self.check_banks(sound.synth, &sound.settings.banks, dumps.len())?;
         }
         let mut lifted = Vec::new();
         for (dump, name) in dumps.iter().zip(sound.lift) {
@@ -659,7 +674,8 @@ impl Synths {
         self.replaced(sound.handle);
         for (name, bank_records, image) in lifted.iter().cloned() {
             self.live.remove(&name.handle);
-            self.banks.insert(name.handle, Bank { generation: name.generation, family, records: bank_records, image });
+            let model = (family == Family::Synth106).then(|| sound.synth.model());
+            self.banks.insert(name.handle, Bank { generation: name.generation, family, model, records: bank_records, image });
         }
         let mut sent = Sent::default();
         for &connection in targets {
@@ -716,7 +732,7 @@ impl Synths {
             return Ok(sent);
         }
         if synth.family != Family::Synth6581 {
-            self.check_banks(synth.family, &settings.banks, 0)?;
+            self.check_banks(synth, &settings.banks, 0)?;
         }
         let mut encoded = Encoded::live_events(handle, generation, synth.family.codec()).map_err(encode_fault)?;
         settings.apply(synth, &mut encoded);

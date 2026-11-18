@@ -272,35 +272,44 @@ fn a_standard_midi_file_is_read() {
     assert_eq!(refusals(&channel.take_effects())[0]["rule"], "midi_file_unsupported");
 }
 
-/// The shared fixture `docs/audio/examples.jsonl` through a channel. Every
-/// line the pinned engine can build is accepted; every other is refused
-/// only because a family's interface module is not yet in the pinned
-/// engine (SRV-55), never for a fault of the line.
-#[test]
-#[ignore = "needs a neoteletext-common checkout at ~/devel/neoteletext-common or NEOTELETEXT_COMMON, holding docs/audio/examples.jsonl"]
-fn the_shared_examples_are_built_or_wait_for_their_family() {
-    for line in crate::protocol::tests::synth::examples() {
-        let value: Value = serde_json::from_str(&line).unwrap();
-        let mut channel = answered();
-        channel.from_program(&serde_json::to_vec(&value["message"]).unwrap(), 1);
-        for refused in refusals(&channel.take_effects()) {
-            let detail = refused["detail"].as_str().unwrap_or_default();
-            let waits = detail.starts_with("SRV-55") || refused["rule"] == "unknown_bank" || refused["rule"] == "unknown_live_sound";
-            assert!(waits, "{}: {refused}", value["example"]);
-        }
-    }
-}
+/// The live synth8 sound the fixture's `named-parameter` example adds to:
+/// the fixture gives its events message alone, so the test announces the
+/// sound first, with a bank (SRV-58, SRV-72).
+const NAMED_PARAMETER_LIVE: u8 = 50;
 
-/// The shared fixture, every line accepted and built, each example's lines
-/// in order on one channel.
+/// SRV-94: the shared fixture `docs/audio/examples.jsonl`, every line
+/// accepted and built, each example's lines in order on one channel.
 #[test]
-#[ignore = "waits for the engine's family interface modules (family-synth6581 to family-synth80) in the pinned engine, and needs the neoteletext-common checkout"]
 fn the_shared_examples_are_all_built() {
     let mut channel = answered();
     for (now, line) in (1..).zip(crate::protocol::tests::synth::examples()) {
         let value: Value = serde_json::from_str(&line).unwrap();
+        if value["example"] == "named-parameter" {
+            channel.from_program(&bank(), now);
+            let live = json!({"handle": NAMED_PARAMETER_LIVE, "generation": 0, "key_mode": "whole", "split_key": 0, "banks": [BANK]});
+            channel.from_program(&message("synth8_live", live), now);
+        }
         channel.from_program(&serde_json::to_vec(&value["message"]).unwrap(), now);
         let refused: Vec<String> = refusals(&channel.take_effects()).iter().map(ToString::to_string).collect();
         assert_eq!(refused, [] as [String; 0], "{}", value["example"]);
     }
+}
+
+/// SRV-32, MIDI-57: synth106's and synth60's patches differ in size, so a
+/// synth60 sound naming a synth106 bank is refused, and a synth106 sound
+/// naming it is not.
+#[test]
+fn a_bank_is_read_only_by_its_own_model() {
+    let mut channel = answered();
+    let panel = json!({"form": "fields", "lfo_rate": 40, "lfo_delay": 0, "dco_lfo": 0, "dco_pwm": 0, "noise_level": 0, "vcf_frequency": 52,
+        "vcf_resonance": 18, "vcf_envelope": 70, "vcf_lfo": 0, "vcf_keyboard": 64, "vca_level": 90, "attack": 22, "decay": 60, "sustain": 80,
+        "release": 30, "sub_level": 40, "range": "feet_8", "pulse": false, "sawtooth": true, "chorus": "one", "pwm": "manual",
+        "envelope_polarity": "positive", "vca": "envelope", "hpf": 0});
+    channel.from_program(&message("synth106_bank", json!({"handle": BANK, "generation": 0, "bank": {"form": "patches", "patches": [panel]}})), 1);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
+    channel.from_program(&message("synth60_live", json!({"handle": HANDLE, "generation": 0, "banks": [BANK]})), 2);
+    let refused = refusals(&channel.take_effects());
+    assert_eq!(refused.iter().map(|refused| refused["rule"].clone()).collect::<Vec<_>>(), [json!("wrong_family")]);
+    channel.from_program(&message("synth106_live", json!({"handle": HANDLE, "generation": 0, "banks": [BANK]})), 3);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
 }

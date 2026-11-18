@@ -6,7 +6,6 @@
 //! family's module is one call site into the family's `interface` module
 //! in the engine, so nothing can drift from the receiver (MIDI-21).
 //!
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -239,36 +238,4 @@ impl FamilyFault {
     pub(crate) fn new(rule: Rule, detail: impl Into<String>) -> Self {
         Self { rule, detail: detail.into() }
     }
-
-    /// What a temporary call site answers where the family's engine
-    /// function is not yet in the pinned engine (SRV-55): the message is
-    /// refused, never built by a second implementation here.
-    pub(crate) fn unavailable(rule: Rule, family: &str, function: &str) -> Self {
-        Self::new(
-            rule,
-            format!(
-                "SRV-55: {family}'s {function} is not yet in the engine this server pins; it comes with the engine's branch family-{family} \
-                 (sound/family/{family}.rs is its temporary call site)"
-            ),
-        )
-    }
-}
-
-/// The checks every family's system exclusive inline patch meets before
-/// the family's own check (SRV-57): one whole message, `F0` to `F7`, that
-/// fits one event (MIDI-27, MIDI-28). Gives its bytes after `F0`.
-pub(crate) fn whole_message(bytes: &[u8]) -> Result<Vec<u8>, FamilyFault> {
-    let after = bytes.strip_prefix(&[neoteletext_audio::midi::status::SYSTEM_EXCLUSIVE]).unwrap_or(&[]);
-    if !neoteletext_audio::midi::block::whole_system_exclusive(after) {
-        return Err(FamilyFault::new(
-            Rule::InvalidPatch,
-            format!("MIDI-27, MIDI-28: {} bytes are not one whole system exclusive message of at most 257", bytes.len()),
-        ));
-    }
-    Ok(after.to_vec())
-}
-
-/// A whole system exclusive message as one inline patch event (MIDI-60).
-pub(crate) fn sysex_patch(bytes: &[u8]) -> Result<Vec<Wire>, FamilyFault> {
-    Ok(alloc::vec![Wire::Sysex(whole_message(bytes)?)])
 }
