@@ -523,3 +523,45 @@ fn an_animation_record_in_raw_packets_is_refused() {
     channel.from_program(&line(&json!({"type": "packets", "connections": [CONNECTION], "packets": base64(&record[..PACKET_BYTES])})), 2);
     assert_eq!(refusals(&channel.take_effects()), named("invalid_packet", "packets[0]"));
 }
+
+/// The packets of a row of the engine's wire vectors of kind `records`:
+/// each 42 bytes in hexadecimal, separated by a space.
+fn vector_packets(name: &str) -> Vec<u8> {
+    let row = neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "records" && row.name == name).unwrap_or_else(|| panic!("no records {name}"));
+    row.value
+        .split(' ')
+        .flat_map(|packet| {
+            let (bytes, length) = neoteletext_web::wire_vectors::bytes_of(packet).unwrap();
+            bytes[..length].to_vec()
+        })
+        .collect()
+}
+
+/// REQ-6533, ANIM-23, RULE-85: the engine's wire vectors of the five
+/// records of animation. What the server writes for the same frame, the
+/// same operations and the same sheet is byte for byte the vector, and the
+/// vectors of sprites and of NAPLPS objects are read by the reader the
+/// server checks its own with.
+#[test]
+fn the_servers_records_are_the_engines_wire_vectors() {
+    use crate::protocol::{FrameMarkName, SheetKindName};
+    for (name, mark) in [("frame_begin", FrameMarkName::Begin), ("frame_end", FrameMarkName::End)] {
+        let vector = vector_packets(name);
+        let read = frame::read(&records(&vector)[0].1).unwrap();
+        let written = crate::animation::frame_record(read.page.mpp(), read.subcode.value(), mark, read.identifier, &mut 0).unwrap();
+        assert_eq!(written, vector, "{name}");
+    }
+    let vector = vector_packets("animate");
+    let body = &records(&vector)[0].1;
+    let read = animate::read(body).unwrap();
+    let sub = read.subcode.map_or(neoteletext_core::limits::SUBCODE_ANY, neoteletext_core::types::SubCode::value);
+    assert_eq!(crate::animation::animate_records(read.page.mpp(), sub, &operations(body), &mut 0).unwrap(), vector);
+    let vector = vector_packets("sheet");
+    let read_records = records(&vector);
+    let read = sheet::read(&read_records[0].1).unwrap();
+    assert_eq!(read.kind, SheetKind::Regis);
+    let written = crate::animation::sheet_records(read.page.mpp(), SheetKindName::Regis, read.generation, read.offset, read.data, &mut 0).unwrap();
+    assert_eq!(written, vector);
+    assert_eq!(sprites::read(&records(&vector_packets("sprites"))[0].1).map(|record| record.count), Ok(1));
+    assert!(naplps_objects::read(&records(&vector_packets("naplps_objects"))[0].1).is_ok());
+}

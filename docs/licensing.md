@@ -23,7 +23,8 @@ GPL and AGPL, in any form.
 
 | Library | Licence | For | Approved |
 |---|---|---|---|
-| The engine's crates (`neoteletext-core`, `-formats`, `-input`, `-audio`, `-web`, `-opus`) | MIT | Teletext itself; `neoteletext-opus`, the engine's integer port of libopus's decoder, checks programs' Opus packets (decision 21) | Decision 1 |
+| The engine's crates (`neoteletext-core`, `-formats`, `-input`, `-audio`, `-audio-instruments`, `-web`, `-opus`, `-rules`) | MIT | Teletext itself; `neoteletext-opus`, the engine's integer port of libopus's decoder, checks programs' Opus packets (decision 21); `neoteletext-rules` encodes and checks each page's rule table with the code every receiver decodes it with (REQ-6532, page-rules.md RULE-59) | Decision 1 |
+| The ReGIS renderer (`regis`) and the NAPLPS renderer (`naplps`), NeoTeletext's own, each pinned at one commit; neither has a dependency | MIT | A program's ReGIS, and a page's ReGIS or NAPLPS sprite sheet, are read with the receiver's own code before they are sent (DEC-6335, REQ-6533, animation.md ANIM-17 and ANIM-21) | DEC-6335 for `regis`; `naplps` was taken on 18 November 2026 while the owner was away, and waits for the owner's approval by name (the decision recorded with REQ-6533) |
 | `tokio`, `hyper`, `hyper-util` | MIT | The native host | Decision 5 |
 | `listenfd` (and on Windows alone what it brings, `uuid` and `winapi`, checked by `cargo deny`) | Apache-2.0 | systemd's socket activation in the native host | DEC-1767 |
 | `tracing`, `tracing-subscriber` (and what they bring: `tracing-core`, `tracing-serde`, `serde`, `serde_json`, `sharded-slab`, `thread_local`, `smallvec` and others, all MIT or Apache-2.0, checked by `cargo deny`) | MIT | The native host's log | Decision 18 |
