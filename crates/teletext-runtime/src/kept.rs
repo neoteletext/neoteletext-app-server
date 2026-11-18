@@ -119,10 +119,10 @@ impl Checker {
                 let _ = validator.feed(bytes);
                 let after = *validator.diagnostics();
                 if after.refused() > before.refused() {
-                    let kind = naplps::Refusal::ALL.into_iter().find(|&kind| after.count(kind) > before.count(kind));
-                    let name = kind.map_or("a refusal", naplps::Refusal::name);
+                    let names: Vec<&str> =
+                        naplps::Refusal::ALL.into_iter().filter(|&kind| after.count(kind) > before.count(kind)).map(naplps::Refusal::name).collect();
                     let offset = after.first_refused.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
-                    return Err(CheckRefusal { rule: Rule::InvalidNaplps, detail: format!("{name}, first at stream offset {offset}") });
+                    return Err(CheckRefusal { rule: Rule::InvalidNaplps, detail: format!("{}; the first at stream offset {offset}", names.join(", ")) });
                 }
                 let passed = after.passed_over.saturating_sub(before.passed_over);
                 if passed == 0 {
