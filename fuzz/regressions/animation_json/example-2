@@ -1,0 +1,1 @@
+"ops":[{"action":"move","target":{"object":10},"x":120,"y":80,"relative":false},{"action":"cycle","target":{"object":10},"first":0,"last":3,"period":6,"once":false},{"action":"hide","target":{"object":20}},{"action":"reset","target":{"object":21}}]

@@ -29,6 +29,7 @@
 
 extern crate alloc;
 
+pub mod animation;
 pub mod channel;
 pub mod descriptions;
 pub mod frame;

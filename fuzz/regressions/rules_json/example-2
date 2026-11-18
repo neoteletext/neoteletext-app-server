@@ -1,0 +1,1 @@
+{"rules":[{"name":"vote_down","on":{"event":"press","target":{"control":3},"button":0},"do":[{"action":"look","target":{"control":3},"look":"pressed"}]},{"name":"vote","on":{"event":"release","target":{"control":3},"button":0},"do":[{"action":"look","target":{"control":3},"look":"normal"}],"echo":true}]}

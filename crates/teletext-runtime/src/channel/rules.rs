@@ -268,9 +268,9 @@ impl Channel {
                 continue;
             }
             let bytes = state.rules.record(page, self.default_table.as_ref(), &mut state.record_id);
-            if !bytes.is_empty() {
-                self.send(connection, Arc::from(bytes));
-            }
+            // Inside a frame open for the page, it waits for the frame's
+            // end with the rest (ANIM-2).
+            self.send_for_page(connection, page, bytes);
         }
         Ok(())
     }

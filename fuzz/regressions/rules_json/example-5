@@ -1,0 +1,1 @@
+{"timers":[{"name":"idle","running":true}],"rules":[{"name":"blink","on":{"event":"open"},"do":[{"action":"cycle","target":{"object":7},"first":0,"last":1,"period":30,"once":false}]},{"name":"awake","on":{"event":"key","keys":"any"},"do":[{"action":"start_timer","timer":"idle"}]},{"name":"asleep","on":{"event":"after","ticks":600,"timer":"idle"},"do":[{"action":"send"}]}]}

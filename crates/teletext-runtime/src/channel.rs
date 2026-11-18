@@ -47,6 +47,7 @@ use crate::sound::Sounds;
 use crate::stats::{ChannelStats, count};
 use crate::viewer::{HandleSecret, RandomSource};
 
+mod animation;
 mod rules;
 mod viewers;
 
@@ -326,6 +327,8 @@ struct Connection {
     moved_by: Vec<(u8, rules::Sender)>,
     /// The rule tables it was given and sent (RULE-40).
     rules: rules::PageTables,
+    /// Its sprites, objects, sheets, frame and animation state (ANIM-21).
+    animation: animation::Animated,
     /// Where the pointer last was, column and row: a lost button's place.
     pointer: (u8, u8),
     /// Its moves, each paced and the latest kept (REQ-1360). A slot a
@@ -405,6 +408,7 @@ impl Connection {
             pressed_by: Vec::new(),
             moved_by: Vec::new(),
             rules: rules::PageTables::default(),
+            animation: animation::Animated::default(),
             pointer: (0, 0),
             moves: Pacer::new(),
             record_id: 0,
@@ -436,7 +440,12 @@ impl Connection {
         if restart {
             self.regis_generation = self.regis_generation.wrapping_add(1);
             let generation = self.regis_generation;
-            self.regis = Some(RegisStream { page, sub, generation, offset: 0, validator: regis::Validator::new(), pending: false });
+            // The page's sheet is fed to every renderer of its sub-pages
+            // before the sub-page's own stream (ANIM-17): it was read when
+            // it was given, so what it reports is not this message's.
+            let mut validator = regis::Validator::new();
+            let _ = validator.feed_regis(&self.animation.regis_sheet(page));
+            self.regis = Some(RegisStream { page, sub, generation, offset: 0, validator, pending: false });
         }
         let Some(stream) = self.regis.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(()) };
         let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
@@ -530,6 +539,8 @@ pub struct Channel {
     /// The channel's default table, for a page a connection was given no
     /// table of (RULE-53); none when the configuration says `none`.
     default_table: Option<Arc<crate::rules::Compiled>>,
+    /// The timelines the server is playing (ANIM-21).
+    timelines: animation::Timelines,
 }
 
 impl Channel {
@@ -557,6 +568,7 @@ impl Channel {
         Self {
             viewers,
             default_table,
+            timelines: animation::Timelines::default(),
             config,
             program: false,
             answered: false,
@@ -746,6 +758,9 @@ impl Channel {
     /// starts. A selection not yet answered keeps its deadline, so its viewer
     /// is told the channel is unavailable (REQ-1481).
     pub fn program_ended(&mut self) {
+        // A program that ends with a frame open: the server ends it
+        // (ANIM-21).
+        self.end_open_frames();
         self.program = false;
         self.answered = false;
         self.readiness_page = None;
@@ -891,6 +906,7 @@ impl Channel {
         let Some(state) = self.connections.remove(&connection) else { return };
         self.stats.left();
         self.sounds.forget(connection);
+        self.timelines.forget(connection);
         if state.announced
             && let Some(selection) = state.selection
         {
@@ -974,6 +990,8 @@ impl Channel {
             self.records(&[connection], &records);
         }
         self.late_queries(now);
+        self.late_frames(now);
+        self.play_timelines(now);
     }
 
     /// Tells `connection` its selection ended with `status` (DOC-1961):
@@ -1003,7 +1021,15 @@ impl Channel {
         // or after it.
         let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
         let queries = self.connections.values().filter_map(|state| state.rules.next_due());
-        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).chain(self.sounds.next_due()).chain(queries).min()
+        let frames = self.connections.values().filter_map(|state| state.animation.next_due());
+        dues.chain(expiry)
+            .chain(moves)
+            .chain(self.descriptions.next_due())
+            .chain(self.sounds.next_due())
+            .chain(queries)
+            .chain(frames)
+            .chain(self.timelines.next_due())
+            .min()
     }
 
     /// Takes one item of `connection`'s input; false for one out of the
@@ -1209,6 +1235,7 @@ impl Channel {
             state.parameters = None;
             state.shown = None;
             state.rules.left();
+            state.animation.left();
             self.unanswered_queries(connection, None);
             let Some(state) = self.connections.get_mut(&connection) else { return };
             state.ending = Ending::Answered;
@@ -1262,9 +1289,12 @@ impl Channel {
         state.regis = None;
         state.naplps = None;
         let announced = state.announced;
-        // The page's table goes before anything of the page (RULE-40).
+        // The page's table goes before anything of the page (RULE-40), and
+        // after it what the connection is to hold of the page's animation
+        // (ANIM-21).
         self.unanswered_queries(connection, Some(selection.page.0));
         self.place_rules(connection, selection.page.0);
+        self.place_animation(connection, selection.page.0, selection.sub.0);
         let Some(state) = self.connections.get_mut(&connection) else { return };
         if announced {
             state.request = state.request.saturating_add(1);
@@ -1345,6 +1375,7 @@ impl Channel {
         &mut self,
         targets: &[ConnectionId],
         kind: protocol::MessageType,
+        of_page: Option<u16>,
         mut make: impl FnMut(&mut Connection) -> Result<Vec<u8>, records::Refused>,
     ) -> Result<(), Refusal> {
         let mut sends = Vec::new();
@@ -1354,8 +1385,12 @@ impl Channel {
             sends.push((connection, bytes));
         }
         for (connection, bytes) in sends {
-            if !bytes.is_empty() {
-                self.send(connection, Arc::from(bytes));
+            match of_page {
+                // What changes a page's picture waits for the end of a
+                // frame open for it (ANIM-2).
+                Some(page) => self.send_for_page(connection, page, bytes),
+                None if bytes.is_empty() => {}
+                None => self.send(connection, Arc::from(bytes)),
             }
         }
         Ok(())
@@ -1403,14 +1438,14 @@ impl Channel {
                         })
                     })
                     .collect();
-                self.send_records(&targets, kind, |state| {
+                self.send_records(&targets, kind, None, |state| {
                     state.list_held = Some((page, list.version));
                     records::subpage_list(&list, &mut state.record_id)
                 })?;
             }
             ProgramMessage::Index(index) => {
                 let targets = self.targets(&index.connections);
-                self.send_records(&targets, kind, |state| {
+                self.send_records(&targets, kind, None, |state| {
                     state.index_generation = state.index_generation.wrapping_add(1);
                     records::index(state.index_generation, &index.magazines, &mut state.record_id)
                 })?;
@@ -1449,7 +1484,7 @@ impl Channel {
             ProgramMessage::OfferRemember(offer) => self.offer_remember(offer)?,
             ProgramMessage::AuthorLog(line) => {
                 let targets = self.targets(&line.connections);
-                self.send_records(&targets, kind, |state| records::author_log(&line, &mut state.record_id))?;
+                self.send_records(&targets, kind, None, |state| records::author_log(&line, &mut state.record_id))?;
             }
             ProgramMessage::Log(line) => self.log(operator_level(line.level), "program_log", format!("{}: {}", line.event, line.text)),
             ProgramMessage::Regis(message) => self.regis(&message)?,
@@ -1464,9 +1499,7 @@ impl Channel {
             }
             ProgramMessage::Rules(message) => self.rules(&message)?,
             ProgramMessage::QueryState(query) => self.query_state(query, now)?,
-            // Read and checked; what each does comes with the records of
-            // animation (REQ-6533).
-            other => self.log(Level::Debug, "animation_message", format!("{:?} was read and is not yet acted on", other.kind())),
+            other => self.act_on_animation(other, now)?,
         }
         Ok(())
     }
@@ -1483,7 +1516,7 @@ impl Channel {
         let bytes = protocol::check::bytes_of(&message.data);
         let (page, sub, restart) = (message.page.0, message.sub.0, message.restart);
         let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::Naplps, |state| state.naplps_records(page, sub, restart, &bytes))
+        self.send_records(&targets, protocol::MessageType::Naplps, Some(page), |state| state.naplps_records(page, sub, restart, &bytes))
     }
 
     /// `regis_links`: a sub-page's drawing links, to the connections named
@@ -1491,7 +1524,9 @@ impl Channel {
     fn regis_links(&mut self, message: &protocol::RegisLinks) -> Result<(), Refusal> {
         let (page, sub) = (message.page.0, message.sub.0);
         let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::RegisLinks, |state| records::drawing_links(page, sub, &message.links, &mut state.record_id))
+        self.send_records(&targets, protocol::MessageType::RegisLinks, Some(page), |state| {
+            records::drawing_links(page, sub, &message.links, &mut state.record_id)
+        })
     }
 
     /// `regis_cursor`: a sub-page's cursor drawing, to the connections
@@ -1499,7 +1534,9 @@ impl Channel {
     fn regis_cursor(&mut self, message: &protocol::RegisCursor) -> Result<(), Refusal> {
         let (page, sub) = (message.page.0, message.sub.0);
         let targets = self.showing(&message.connections, page, sub);
-        self.send_records(&targets, protocol::MessageType::RegisCursor, |state| records::regis_cursor(page, sub, message.drawing, &mut state.record_id))
+        self.send_records(&targets, protocol::MessageType::RegisCursor, Some(page), |state| {
+            records::regis_cursor(page, sub, message.drawing, &mut state.record_id)
+        })
     }
 
     /// `regis`: more of a sub-page's ReGIS, to the connections named that
@@ -1523,7 +1560,7 @@ impl Channel {
             }
             return Err(Refusal { message: Some(kind), path: "data".to_string(), rule: Rule::InvalidRegis, detail });
         }
-        self.send_records(&targets, kind, |state| state.regis_records(&bytes))
+        self.send_records(&targets, kind, Some(page), |state| state.regis_records(&bytes))
     }
 
     /// `reply`, the answer to `connected` (REQ-1471).
@@ -1550,7 +1587,7 @@ impl Channel {
             self.tell_focus(reply.connection);
         }
         let magazines = reply.magazines;
-        self.send_records(&[reply.connection], kind, |state| {
+        self.send_records(&[reply.connection], kind, None, |state| {
             state.index_generation = state.index_generation.wrapping_add(1);
             records::index(state.index_generation, &magazines, &mut state.record_id)
         })?;
@@ -1569,7 +1606,7 @@ impl Channel {
         if !self.is_current(redirect.connection, redirect.request) {
             return Ok(());
         }
-        self.send_records(&[redirect.connection], protocol::MessageType::Redirect, |state| records::redirect(&redirect, &mut state.record_id))?;
+        self.send_records(&[redirect.connection], protocol::MessageType::Redirect, None, |state| records::redirect(&redirect, &mut state.record_id))?;
         count(&mut self.stats.redirects);
         match (redirect.page, redirect.sub, redirect.address) {
             (Some(page), Some(sub), _) => {
@@ -1659,6 +1696,9 @@ impl Channel {
             // The page's table before the page (RULE-40), for a selection
             // that came to be this page by the program's answer.
             let mut bytes = state.rules.place(number, default_table.as_ref(), &mut state.record_id);
+            // And what it is to hold of the sub-page's animation, now that
+            // its sub-code is known (ANIM-21).
+            bytes.extend(state.place_animation(number, sub));
             match change {
                 Change::Nothing if bytes.is_empty() => continue,
                 Change::Nothing => {
@@ -1685,7 +1725,7 @@ impl Channel {
             self.log(Level::Error, "links_refused", format!("{number:03X}/{sub:04X}: the engine refused its links: {fault}"));
         }
         for (connection, bytes) in sends {
-            self.send(connection, Arc::from(bytes));
+            self.send_for_page(connection, number, bytes);
         }
     }
 

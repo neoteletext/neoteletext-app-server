@@ -1,0 +1,1 @@
+"id":1,"loop_ticks":null,"steps":[{"tick":0,"ops":[{"action":"show","target":{"object":10}}]},{"tick":30,"ops":[{"action":"move","target":{"object":10},"x":8,"y":0,"relative":true}]}]

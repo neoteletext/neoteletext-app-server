@@ -570,7 +570,9 @@ name = "teletext-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "neoteletext-core",
  "neoteletext-input",
+ "neoteletext-rules",
  "neoteletext-web",
  "ring",
  "teletext-native",

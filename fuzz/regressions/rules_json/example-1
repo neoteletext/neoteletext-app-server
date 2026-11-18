@@ -1,0 +1,1 @@
+{"rules":[{"name":"typed","on":{"event":"key","keys":"any","repeat":true},"do":[{"action":"send"}]},{"name":"composed","on":{"event":"text"},"do":[{"action":"send"}]}]}

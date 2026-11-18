@@ -154,14 +154,18 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
         ProgramMessage::Animate(animate) => {
             check_connections(&root.field("connections"), &animate.connections).and_then(|()| rules::operations(&root.field("ops"), &animate.ops).map(|_| ()))
         }
-        ProgramMessage::Sprites(sprites) => {
-            check_connections(&root.field("connections"), &sprites.connections).and_then(|()| check_shown_subpage(&root, sprites.sub))
+        ProgramMessage::Sprites(sprites) => check_sprites(&root, sprites),
+        ProgramMessage::NaplpsObjects(objects) => check_naplps_objects(&root, objects),
+        ProgramMessage::SpriteSheet(sheet) => check_connections(&root.field("connections"), &sheet.connections).and_then(|()| {
+            check_base64(&root.field("data"), &sheet.data, neoteletext_web::consts::MAX_SHEET_BYTES).map(|_| ()).map_err(|refused| match refused.rule {
+                // More than a whole sheet in one message.
+                Rule::TooLong => Fault { rule: Rule::SheetTooLarge, ..refused },
+                _ => refused,
+            })
+        }),
+        ProgramMessage::Timeline(timeline) => {
+            check_connections(&root.field("connections"), &timeline.connections).and_then(|()| check_timeline(&root, timeline).map(|_| ()))
         }
-        ProgramMessage::NaplpsObjects(objects) => {
-            check_connections(&root.field("connections"), &objects.connections).and_then(|()| check_shown_subpage(&root, objects.sub))
-        }
-        ProgramMessage::SpriteSheet(sheet) => check_connections(&root.field("connections"), &sheet.connections),
-        ProgramMessage::Timeline(timeline) => check_connections(&root.field("connections"), &timeline.connections),
         ProgramMessage::TimelineStop(stop) => check_connections(&root.field("connections"), &stop.connections),
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
@@ -829,6 +833,109 @@ fn check_rules(root: &Path<'_>, message: &super::RulesMessage) -> Result<Option<
 /// The first fault of RULE-39.
 pub(crate) fn compiled(message: &super::RulesMessage) -> Result<Option<crate::rules::Compiled>, Refusal> {
     check_rules(&Path::Root, message).map_err(|fault| Refusal { message: Some(MessageType::Rules), path: fault.path, rule: fault.rule, detail: fault.detail })
+}
+
+/// The operations of an `animate` message, as the engine holds them: what
+/// [`message`] checked.
+///
+/// # Errors
+/// `invalid_animation`, with the operation's path.
+pub(crate) fn operations(kind: MessageType, at: &'static str, ops: &[super::AnimationOp]) -> Result<Vec<neoteletext_rules::animate::Operation>, Refusal> {
+    rules::operations(&Path::Root.field(at), ops).map_err(|fault| Refusal { message: Some(kind), path: fault.path, rule: fault.rule, detail: fault.detail })
+}
+
+/// A timeline's steps, each its tick and its operations as the engine
+/// holds them (animation.md ANIM-21): 1 to 1,024, their ticks ascending,
+/// and every one before the tick at which the timeline begins again.
+type Steps = Vec<(u64, Vec<neoteletext_rules::animate::Operation>)>;
+
+fn check_timeline(root: &Path<'_>, timeline: &super::TimelineMessage) -> Result<Steps, Fault> {
+    let path = root.field("steps");
+    if timeline.steps.is_empty() {
+        return Err(fault(&path, Rule::TooShort, "no step".to_string()));
+    }
+    if timeline.steps.len() > super::MAX_TIMELINE_STEPS {
+        return Err(fault(&path, Rule::TooLong, format!("{} steps, at most {}", timeline.steps.len(), super::MAX_TIMELINE_STEPS)));
+    }
+    let mut steps = Steps::with_capacity(timeline.steps.len());
+    for (index, step) in timeline.steps.iter().enumerate() {
+        let at = path.item(index);
+        let tick = step.tick.get();
+        if steps.last().is_some_and(|(before, _)| *before >= tick) {
+            return Err(fault(&at.field("tick"), Rule::NotAscending, format!("tick {tick} does not come after the step before it")));
+        }
+        if let Some(loop_ticks) = timeline.loop_ticks.filter(|loop_ticks| loop_ticks.get() <= tick) {
+            let detail = format!("tick {tick} is not before {}, where the timeline begins again", loop_ticks.get());
+            return Err(fault(&at.field("tick"), Rule::InvalidAnimation, detail));
+        }
+        steps.push((tick, rules::operations(&at.field("ops"), &step.ops)?));
+    }
+    Ok(steps)
+}
+
+/// A `timeline` message's steps: what [`message`] checked.
+///
+/// # Errors
+/// The first fault of its steps, with its path.
+pub(crate) fn timeline_steps(timeline: &super::TimelineMessage) -> Result<Steps, Refusal> {
+    check_timeline(&Path::Root, timeline).map_err(|fault| Refusal {
+        message: Some(MessageType::Timeline),
+        path: fault.path,
+        rule: fault.rule,
+        detail: fault.detail,
+    })
+}
+
+/// `sprites`: who they are for, a sub-page that can be shown, each
+/// sprite's number once, and a record the engine's reader takes
+/// (animation.md ANIM-7, ANIM-21).
+fn check_sprites(root: &Path<'_>, sprites: &super::Sprites) -> Checked {
+    check_connections(&root.field("connections"), &sprites.connections)?;
+    check_shown_subpage(root, sprites.sub)?;
+    let path = root.field("sprites");
+    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidSprites, detail));
+    if sprites.sprites.len() > super::MOST_SPRITES {
+        return refuse(&path, format!("{} sprites, at most {}", sprites.sprites.len(), super::MOST_SPRITES));
+    }
+    for (index, sprite) in sprites.sprites.iter().enumerate() {
+        let at = path.item(index);
+        if sprites.sprites.iter().take(index).any(|earlier| earlier.number == sprite.number) {
+            return refuse(&at.field("number"), format!("sprite {} is given twice", sprite.number.get()));
+        }
+        if sprite.frames.is_empty() || sprite.frames.len() > super::MOST_OBJECT_FRAMES {
+            return refuse(&at.field("frames"), format!("{} frames, 1 to {}", sprite.frames.len(), super::MOST_OBJECT_FRAMES));
+        }
+    }
+    crate::animation::sprites_record(sprites.page.0, sprites.sub.0, &sprites.sprites, &mut 0).map(|_| ()).or_else(|detail| refuse(&path, detail))
+}
+
+/// `naplps_objects`: who they are for, a sub-page that can be shown, each
+/// object's number once, a macro object's frames and a region's none, and
+/// a record the engine's reader takes (animation.md ANIM-11, ANIM-21).
+fn check_naplps_objects(root: &Path<'_>, objects: &super::NaplpsObjects) -> Checked {
+    check_connections(&root.field("connections"), &objects.connections)?;
+    check_shown_subpage(root, objects.sub)?;
+    let path = root.field("objects");
+    let refuse = |path: &Path<'_>, detail: String| Err(fault(path, Rule::InvalidNaplpsObjects, detail));
+    if objects.objects.len() > super::MOST_NAPLPS_OBJECTS {
+        return refuse(&path, format!("{} objects, at most {}", objects.objects.len(), super::MOST_NAPLPS_OBJECTS));
+    }
+    for (index, object) in objects.objects.iter().enumerate() {
+        let at = path.item(index);
+        if objects.objects.iter().take(index).any(|earlier| earlier.number == object.number) {
+            return refuse(&at.field("number"), format!("object {} is given twice", object.number.get()));
+        }
+        let frames = object.frames.len();
+        match object.kind {
+            super::NaplpsObjectKind::Macro if frames == 0 || frames > super::MOST_OBJECT_FRAMES => {
+                return refuse(&at.field("frames"), format!("a macro object has 1 to {} frames", super::MOST_OBJECT_FRAMES));
+            }
+            super::NaplpsObjectKind::Macro if object.cover.is_some() => return refuse(&at.field("cover"), "a macro object has no cover: null".to_string()),
+            super::NaplpsObjectKind::Region if frames != 0 => return refuse(&at.field("frames"), "a region has no frames".to_string()),
+            _ => {}
+        }
+    }
+    crate::animation::naplps_objects_record(objects.page.0, objects.sub.0, 1, &objects.objects, &mut 0).map(|_| ()).or_else(|detail| refuse(&path, detail))
 }
 
 /// The most ReGIS one message may carry: a megabyte, a quarter of all the
