@@ -100,7 +100,8 @@ impl Checker {
     /// For ReGIS a commit that fails, with its code and drawing; for NAPLPS
     /// any refusal of the receiver's reader (PAR-23), named by
     /// `Refusal::name` with the stream offset of the first. Bytes passed
-    /// over are no refusal, and are noted for the author's log.
+    /// over and characters written back over their neighbour in colour
+    /// mode 2 are no refusal, and are noted for the author's log.
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<Notes, CheckRefusal> {
         match self {
             Self::Regis(validator) => {
@@ -124,12 +125,24 @@ impl Checker {
                     let offset = after.first_refused.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
                     return Err(CheckRefusal { rule: Rule::InvalidNaplps, detail: format!("{}; the first at stream offset {offset}", names.join(", ")) });
                 }
+                let mut notes = Vec::new();
                 let passed = after.passed_over.saturating_sub(before.passed_over);
-                if passed == 0 {
-                    return Ok(Vec::new());
+                if passed > 0 {
+                    let first = after.first_passed_over.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
+                    notes.push(format!("NAPLPS: {passed} bytes had no effect and were passed over; the stream's first at offset {first}"));
                 }
-                let first = after.first_passed_over.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
-                Ok(alloc::vec![format!("NAPLPS: {passed} bytes had no effect and were passed over; the stream's first at offset {first}")])
+                // PAR-23, PAR-5: in colour mode 2 a character's field is
+                // filled with the background (ANSI X3.110-1983 section
+                // 5.3.2.6.3), so a mark written back over its letter erases
+                // the letter. The author is told; the bytes are not refused.
+                let overwritten = after.overwritten_in_mode_two.saturating_sub(before.overwritten_in_mode_two);
+                if overwritten > 0 {
+                    let first = after.first_overwritten_in_mode_two.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
+                    notes.push(format!(
+                        "NAPLPS: {overwritten} characters were written back over the one before in colour mode 2, which erases it, as a text part's mark does; the stream's first at offset {first}"
+                    ));
+                }
+                Ok(notes)
             }
         }
     }

@@ -302,6 +302,33 @@ fn the_server_checks_naplps_as_the_receiver_reads_it() {
     assert_eq!(records(&sent).iter().filter(|(kind, _)| *kind == TYPE_NAPLPS_OBJECTS).count(), 2, "not refused");
 }
 
+/// PAR-23 with PAR-5: a text part's mark written while colour mode 2 is in
+/// force is logged for the author, and the bytes are sent, not refused.
+#[test]
+fn a_mark_written_in_colour_mode_two_is_logged_and_sent() {
+    // SO, then SELECT COLOR (3/14) with operands giving colour mode 2
+    // (ANSI X3.110-1983 section 5.3.2.6.3), then SI back to the text set.
+    const MODE_TWO: [u8; 5] = [0x0E, 0x3E, 0x70, 0x4C, 0x0F];
+    let mut channel = empty();
+    let _ = arrive(&mut channel, 1, BOTH, 0);
+    let logged = |channel: &mut Channel, parts: Value| {
+        let message = json!({"type": "naplps", "connections": [1], "page": "100", "sub": "0001", "restart": true, "parts": parts});
+        channel.from_program(&line(&message), 1);
+        let sent = sent_to(&channel.take_effects(), 1);
+        assert_eq!(streams(&sent, TYPE_NAPLPS).len(), 1, "sent, not refused");
+        records(&sent)
+            .into_iter()
+            .filter(|(kind, _)| *kind == TYPE_LOG)
+            .map(|(_, body)| alloc::string::String::from_utf8_lossy(&body).into_owned())
+            .collect::<Vec<_>>()
+    };
+    let in_mode_two = logged(&mut channel, json!([{"data": base64(&MODE_TWO)}, {"text": "\u{e9}", "language": null}]));
+    assert_eq!(in_mode_two.len(), 1, "{in_mode_two:?}");
+    assert!(in_mode_two[0].contains("colour mode 2"), "{in_mode_two:?}");
+    let in_mode_zero = logged(&mut channel, json!([{"text": "\u{e9}", "language": null}]));
+    assert!(in_mode_zero.is_empty(), "colour mode 0 keeps the letter: {in_mode_zero:?}");
+}
+
 /// PAR-24 verification: a connection is sent a language's records only
 /// when it agreed that language's bit, kept or sent to it.
 #[test]
