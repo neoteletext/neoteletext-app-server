@@ -127,10 +127,11 @@ const DRAWING_LINK_FIELDS: usize = 2 + 2;
 
 /// A sub-page's drawing links as `DRAWING_LINKS` records (the engine's
 /// REQ-6370): as many links in each as fit, none split, and with no links
-/// one record of none, which removes those a receiver held. The engine
-/// this server is pinned to predates the record, so its body is written
-/// here, through the engine's frame; the message's check has bounded the
-/// links and their targets.
+/// one record of none, which removes those a receiver held. Its body is
+/// written here by [`drawing_links_body`], which a rule table's group
+/// shares (PAR-20), through the engine's frame; the message's check has
+/// bounded the links and their targets. The bodies are the engine's
+/// `drawing_links::encode`'s, as the protocol's tests check.
 pub(crate) fn drawing_links(page: u16, sub: u16, links: &[crate::protocol::DrawingLink], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     let room = neoteletext_audio::MAX_FRAMED_BODY.saturating_sub(DRAWING_LINKS_FIXED);
     let size = |link: &crate::protocol::DrawingLink| DRAWING_LINK_FIELDS.saturating_add(link.target.len());
