@@ -5,6 +5,9 @@
 # each of which must fail.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Run from a git hook, these name the repository being committed: unset,
+# every git command here is the made repository's alone.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 
 mkdir -p tmp
 work="$(mktemp -d tmp/limit-figures.XXXXXX)"

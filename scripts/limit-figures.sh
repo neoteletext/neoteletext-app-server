@@ -11,6 +11,9 @@
 # limits are the names of its RULE_57 table and TICKS_PER_SECOND, each
 # with the literal its `pub const` gives.
 set -euo pipefail
+# A git hook sets these to the repository being committed; the check reads
+# the repository at DIRECTORY, whatever runs it.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
 
 limits_rs="$1"
 directory="$2"
