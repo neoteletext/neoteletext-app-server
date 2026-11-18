@@ -59,7 +59,15 @@ const MOVE: u8 = 5;
 /// table the connection was sent for the page.
 fn sent_by(rule: u8, carried: &[u8]) -> Vec<u8> {
     use neoteletext_input::rules::{RuleBody, RuleEvent};
-    let event = RuleEvent { on: ON, generation: 1, rule, tick: 0, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(carried) };
+    let event = RuleEvent {
+        on: ON,
+        generation: 1,
+        rule,
+        row: neoteletext_rules::limits::NO_RULE,
+        tick: 0,
+        target: neoteletext_rules::table::Target::NONE,
+        body: RuleBody::Input(carried),
+    };
     bytes_of(&Item::Event(Event::RuleEvent(event)))
 }
 

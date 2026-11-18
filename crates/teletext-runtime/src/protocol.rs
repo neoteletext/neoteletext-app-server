@@ -84,7 +84,7 @@ pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefus
 /// (REQ-6523); `sound` gains the local sounds, `synth7_local` to
 /// `synth80_local`; and a program sends `frame`, `animate`, `sprites`,
 /// `naplps_objects`, `sprite_sheet`, `timeline` and `timeline_stop`.
-pub const PROTOCOL: u32 = 14;
+pub const PROTOCOL: u32 = 15;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -640,6 +640,9 @@ pub struct InputMessage {
     pub lost: bool,
     /// The name of the rule of the page's table that sent it (RULE-37).
     pub rule: RuleName,
+    /// The place of the firing row within the rule's rows, or null.
+    #[schemars(range(max = neoteletext_rules::limits::MAX_ROWS))]
+    pub row: Option<u8>,
     /// The page tick at which the rule fired.
     pub tick: u32,
     /// The target the pointer was inside, for a pointer trigger whose rule
@@ -1131,6 +1134,13 @@ pub enum MessageType {
     SpriteSheet,
     Timeline,
     TimelineStop,
+    LocalMidi,
+    Variable,
+    Timer,
+    Report,
+    Run,
+    Sequence,
+    ObjectPage,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1292,15 +1302,23 @@ pub enum Rule {
     MidiFileMalformed,
     /// A Standard MIDI File past a bound of MIDI-117 or MIDI-119.
     MidiFileTooLarge,
-    /// A rule table over a limit the schema cannot state (RULE-39): more
-    /// than 8 terms, 16 nodes or 3 levels in a condition, more than 64
-    /// distinct values or targets, or an encoded table over 8,184 bytes.
+    /// A rule table over a limit the schema cannot state (RULE-39), whose
+    /// detail names the limit's constant and its value (REQ-6608).
     RulesOverLimit,
     /// A rule table with a shape fault the schema cannot state (RULE-39),
     /// or one the receivers' own decoder refuses.
     InvalidRules,
-    /// A rule, variable, timer or rectangle name the table does not
-    /// declare.
+    /// A group fault (RULE-39): a message type a group may not hold, a
+    /// `play` with a page, after the current sound or for the whole service,
+    /// an amount in a field that takes none, a variable as a target's
+    /// number, groups that run each other in a ring, nesting deeper than
+    /// `MAX_GROUP_DEPTH`, or a run of more than `MAX_RUN_COMMANDS` commands.
+    InvalidGroup,
+    /// A command sent directly that is allowed only in a group: an amount,
+    /// a value of the firing, a `report` of the firing (RULE-39).
+    InvalidCommand,
+    /// A rule, group, sequence, row-set or rectangle name the table does
+    /// not have.
     UnknownName,
     /// A name declared twice within its kind.
     DuplicateName,
@@ -1401,6 +1419,20 @@ pub enum ProgramMessage {
     Timeline(TimelineMessage),
     /// Stops a timeline.
     TimelineStop(TimelineStop),
+    /// One MIDI message to a page's local sound (RULE-114).
+    LocalMidi(LocalMidiMessage),
+    /// Changes a page's variable (RULE-114).
+    Variable(VariableMessage),
+    /// Starts or stops a page's timer (RULE-114).
+    Timer(TimerMessage),
+    /// Reports a page's value to its channel (RULE-114).
+    Report(ReportMessage),
+    /// Runs a group of a page's table (RULE-114).
+    Run(RunMessage),
+    /// Starts or stops a sequence of a page's table (RULE-114).
+    Sequence(SequenceMessage),
+    /// A teletext object page a page's sprites use (ANIM-17).
+    ObjectPage(Box<ObjectPage>),
 }
 
 impl ProgramMessage {
@@ -1436,6 +1468,13 @@ impl ProgramMessage {
             Self::SpriteSheet(_) => MessageType::SpriteSheet,
             Self::Timeline(_) => MessageType::Timeline,
             Self::TimelineStop(_) => MessageType::TimelineStop,
+            Self::LocalMidi(_) => MessageType::LocalMidi,
+            Self::Variable(_) => MessageType::Variable,
+            Self::Timer(_) => MessageType::Timer,
+            Self::Report(_) => MessageType::Report,
+            Self::Run(_) => MessageType::Run,
+            Self::Sequence(_) => MessageType::Sequence,
+            Self::ObjectPage(_) => MessageType::ObjectPage,
         }
     }
 
@@ -2237,7 +2276,7 @@ pub fn figures_document(server: &ServerFigures, channels: &BTreeMap<String, Chan
 /// core and the kits follow its schema, DEC-6462), so each branch is given
 /// the message's own properties (its `type`), first, as `schemars` puts a
 /// tag, and `additionalProperties: false`, and so states it too.
-fn close_nested_branches(schema: &mut Schema) {
+pub(crate) fn close_nested_branches(schema: &mut Schema) {
     let Some(messages) = schema.get_mut("oneOf").and_then(serde_json::Value::as_array_mut) else {
         return;
     };

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::read::{Fault, INNER_PATH, typed};
-use super::{Base64, Connections, PageNumber, SAFE_INTEGER_LIMIT};
+use super::{Base64, Connections, CueNumber, PageNumber, SAFE_INTEGER_LIMIT};
 
 mod fields;
 mod ranged;
@@ -452,6 +452,45 @@ pub struct MidiFile {
     /// message keeps its channel (MIDI-116).
     #[serde(default)]
     pub channel_map: Option<[Option<MidiChannel>; 16]>,
+    /// The file's Marker and Cue Point meta events to keep as cues
+    /// (page-rules.md RULE-109): each meta event whose text is exactly an
+    /// entry's `text` becomes that entry's cue at the event's time; the
+    /// others are dropped as before.
+    #[serde(default)]
+    #[schemars(length(max = MOST_FILE_CUES))]
+    pub cues: Vec<FileCue>,
+}
+
+/// A Marker or Cue Point text of a Standard MIDI File and the cue it
+/// becomes (RULE-109).
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FileCue {
+    /// The meta event's text, compared byte for byte.
+    #[schemars(length(min = 1, max = MOST_CUE_TEXT_BYTES))]
+    pub text: String,
+    /// The cue's number.
+    pub number: CueNumber,
+}
+
+/// The most entries of a file's `cues`: one for each cue number
+/// (RULE-109).
+pub const MOST_FILE_CUES: usize = neoteletext_rules::limits::MAX_CUE as usize + 1;
+/// The longest text of a file's cue the server compares: RULE-109 states
+/// no bound, and this one is the server's own, recorded with its readings
+/// of the second form.
+pub const MOST_CUE_TEXT_BYTES: usize = 64;
+
+/// `cue`: a numbered point of the sound's event list (RULE-109), written
+/// in its block as the Cue Point meta event; it fires a `cue` rule of the
+/// page when it is heard.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CueEvent {
+    /// Microseconds from the sound's start (SRV-8).
+    pub time_us: TimeUs,
+    /// The cue's number.
+    pub number: CueNumber,
 }
 
 /// A Standard MIDI File as a synth6581 or synth8580 sound's music (SRV-14).
@@ -460,6 +499,11 @@ pub struct MidiFile {
 pub struct Synth6581MidiFile {
     /// The file, exact base64: 14 to 1,048,576 bytes once decoded.
     pub bytes: Base64,
+    /// The file's Marker and Cue Point meta events to keep as cues
+    /// (RULE-109).
+    #[serde(default)]
+    #[schemars(length(max = MOST_FILE_CUES))]
+    pub cues: Vec<FileCue>,
 }
 
 // ---------------------------------------------------------- the events
@@ -656,6 +700,8 @@ pub enum SharedEvent<'a> {
     SystemExclusive(&'a SystemExclusive),
     /// `raw`.
     Raw(&'a RawMidi),
+    /// `cue`.
+    Cue(&'a CueEvent),
 }
 
 /// A note-playing family's event, split into what every family shares and
@@ -775,6 +821,8 @@ macro_rules! note_family {
             Patch($patch_event),
             /// A named parameter.
             Parameter($parameter_event),
+            /// A cue point (RULE-109).
+            Cue(CueEvent),
         }
 
         tagged_choice!($event, "event", {
@@ -793,6 +841,7 @@ macro_rules! note_family {
             "raw" => Raw,
             "patch" => Patch,
             "parameter" => Parameter,
+            "cue" => Cue,
         });
 
         impl NoteFamily for $family {
@@ -816,7 +865,8 @@ macro_rules! note_family {
                     | $event::SystemExclusive(SystemExclusive { time_us, .. })
                     | $event::Raw(RawMidi { time_us, .. })
                     | $event::Patch($patch_event { time_us, .. })
-                    | $event::Parameter($parameter_event { time_us, .. }) => time_us.get(),
+                    | $event::Parameter($parameter_event { time_us, .. })
+                    | $event::Cue(CueEvent { time_us, .. }) => time_us.get(),
                 }
             }
 
@@ -835,6 +885,7 @@ macro_rules! note_family {
                     $event::NrpnStep(event) => SharedEvent::NrpnStep(event),
                     $event::SystemExclusive(event) => SharedEvent::SystemExclusive(event),
                     $event::Raw(event) => SharedEvent::Raw(event),
+                    $event::Cue(event) => SharedEvent::Cue(event),
                     $event::Patch(event) => return SplitEvent::Patch(event),
                     $event::Parameter(event) => return SplitEvent::Parameter(event),
                 })
@@ -1274,16 +1325,20 @@ pub enum Synth6581Event {
     RegisterUpdate(RegisterUpdate),
     /// An ASID message as its bytes.
     Asid(AsidMessage),
+    /// A cue point (RULE-109).
+    Cue(CueEvent),
 }
 
-tagged_choice!(Synth6581Event, "event", { "register_update" => RegisterUpdate, "asid" => Asid });
+tagged_choice!(Synth6581Event, "event", { "register_update" => RegisterUpdate, "asid" => Asid, "cue" => Cue });
 
 impl Synth6581Event {
     /// Its time in microseconds.
     #[must_use]
     pub const fn time_us(&self) -> u64 {
         match self {
-            Self::RegisterUpdate(RegisterUpdate { time_us, .. }) | Self::Asid(AsidMessage { time_us, .. }) => time_us.get(),
+            Self::RegisterUpdate(RegisterUpdate { time_us, .. }) | Self::Asid(AsidMessage { time_us, .. }) | Self::Cue(CueEvent { time_us, .. }) => {
+                time_us.get()
+            }
         }
     }
 }

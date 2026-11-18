@@ -346,6 +346,7 @@ fn synth6581_events(path: &Path<'_>, events: &[Synth6581Event], most: Option<usi
                 }
             }
             Synth6581Event::Asid(message) => bytes_within(&at.field("bytes"), &message.bytes, LEAST_ASID_BYTES, MOST_ASID_BYTES)?,
+            Synth6581Event::Cue(_) => {}
         }
     }
     Ok(())

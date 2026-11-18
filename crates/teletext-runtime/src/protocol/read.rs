@@ -122,6 +122,13 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::SpriteSheet => ProgramMessage::SpriteSheet(typed(object, "")?),
         MessageType::Timeline => ProgramMessage::Timeline(typed(object, "")?),
         MessageType::TimelineStop => ProgramMessage::TimelineStop(typed(object, "")?),
+        MessageType::LocalMidi => ProgramMessage::LocalMidi(typed(object, "")?),
+        MessageType::Variable => ProgramMessage::Variable(typed(object, "")?),
+        MessageType::Timer => ProgramMessage::Timer(typed(object, "")?),
+        MessageType::Report => ProgramMessage::Report(typed(object, "")?),
+        MessageType::Run => ProgramMessage::Run(typed(object, "")?),
+        MessageType::Sequence => ProgramMessage::Sequence(typed(object, "")?),
+        MessageType::ObjectPage => ProgramMessage::ObjectPage(typed(object, "")?),
     })
 }
 

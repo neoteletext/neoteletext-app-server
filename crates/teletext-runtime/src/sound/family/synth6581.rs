@@ -61,6 +61,7 @@ pub(crate) fn is_full_update(event: &Synth6581Event) -> bool {
             let bytes = bytes_of(&message.bytes);
             matches!(engine::read_midi(&bytes), Ok(Asid::RegisterData(data)) if data.is_full_update())
         }
+        Synth6581Event::Cue(_) => false,
     }
 }
 

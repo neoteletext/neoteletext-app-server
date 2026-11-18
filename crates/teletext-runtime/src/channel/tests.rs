@@ -26,7 +26,6 @@ use super::{
 };
 use crate::protocol::tests::{line, subpage, with};
 
-mod animation;
 mod delivery;
 mod fields;
 mod moves;
@@ -151,8 +150,16 @@ fn message(channel: &Channel, connection: u64, items: &[Item<'_>]) -> Vec<u8> {
             carried.extend_from_slice(&bare(core::slice::from_ref(pick)));
         }
         let on = crate::input::stamp(item).or_else(|| channel.selection_of(connection)).unwrap_or(ON);
-        let generation = channel.rules_generation(connection, on.page).unwrap_or(1);
-        let event = RuleEvent { on, generation, rule, tick: TICK, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(&carried) };
+        let generation = channel.rules_generation(connection, on.page, on.sub).unwrap_or(1);
+        let event = RuleEvent {
+            on,
+            generation,
+            rule,
+            row: neoteletext_rules::limits::NO_RULE,
+            tick: TICK,
+            target: neoteletext_rules::table::Target::NONE,
+            body: RuleBody::Input(&carried),
+        };
         let mut one = [0; MESSAGE_BYTES * 2];
         let length = write(&Item::Event(Event::RuleEvent(event)), &mut one).unwrap();
         bytes.extend_from_slice(&one[..length]);
@@ -288,23 +295,6 @@ fn stale_input_logs_once_an_interval() {
     channel.received(CONNECTION, &message(&channel, CONNECTION, &[key(OTHER, Action::Press, false)]), STALE_INPUT_REPORT_SECONDS * 1_000);
     assert_eq!(logged(&channel.take_effects()), 1, "the next interval's");
     assert_eq!(channel.stats().stale_input, 6);
-}
-
-/// REQ-1555 item 4: a release of what is held, stamped with what is no
-/// longer selected, reaches the program for the place it names, uncounted.
-/// Under push protocol 9 it comes from a rule of the page's table, so the
-/// place is another sub-page of the page, whose table the connection has
-/// (page-rules.md RULE-2).
-#[test]
-fn a_held_release_with_an_old_stamp_reaches_the_program() {
-    let mut channel = selected();
-    channel.received(CONNECTION, &message(&channel, CONNECTION, &[key(ON, Action::Press, false)]), 1);
-    let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&channel, CONNECTION, &[key(OTHER_SUB, Action::Release, false)]), 2);
-    let lines = inputs(&channel.take_effects());
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!((&lines[0]["page"], &lines[0]["sub"], &lines[0]["event"]["action"]), (&json!("100"), &json!("0001"), &json!("release")));
-    assert_eq!(channel.stats().stale_input, 0);
 }
 
 /// REQ-1555 item 4: a release of what a change of selection let go already
@@ -501,17 +491,25 @@ fn sent_to(effects: &[Effect], connection: u64) -> Vec<u8> {
     split_rules(&all_sent_to(effects, connection)).0
 }
 
-/// The bodies of the RULES records `effects` send `connection`, in order.
-fn rules_sent(effects: &[Effect], connection: u64) -> Vec<Vec<u8>> {
+/// The tables the RULES records `effects` send `connection` give, in
+/// order: each record's page, sub-code and generation, and the whole image
+/// it completes, or none for a record that says the page has no table.
+pub(super) fn rules_sent(effects: &[Effect], connection: u64) -> Vec<(u16, u16, u16, Option<Vec<u8>>)> {
+    use neoteletext_web::records::rules::{Assembled, Assembler};
     let packets = split_rules(&all_sent_to(effects, connection)).1;
-    let mut bodies = Vec::new();
+    let mut tables = Vec::new();
     let mut reader = neoteletext_web::records::RecordReader::new();
+    let mut assembler = alloc::boxed::Box::new(Assembler::new());
     for packet in packets.as_chunks::<PACKET_BYTES>().0 {
         if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::Rules(record)) = reader.push(&Packet { bytes: *packet }) {
-            bodies.push(record.body.to_vec());
+            match assembler.push(&record) {
+                Assembled::Removed { page, subcode, generation } => tables.push((page.mpp(), subcode.value(), generation, None)),
+                Assembled::Whole { page, subcode, generation, image } => tables.push((page.mpp(), subcode.value(), generation, Some(image.to_vec()))),
+                Assembled::Incomplete | Assembled::OutOfPlace { .. } => {}
+            }
         }
     }
-    bodies
+    tables
 }
 
 /// DEC-1689, REQ-1688 item 2: a page redirect reaches the receiver as a

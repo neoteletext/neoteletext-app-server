@@ -23,8 +23,8 @@ use super::midi_file;
 use super::tracker::{TrackHint, Tracker};
 use super::wire::{self, Wire};
 use crate::protocol::{
-    BLOCK_TICKS, BLOCK_US, BankName, ConnectionId, DroppedCounts, MOST_BLOCK_BYTES, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_ADVANCE_US, MidiChannel, NoteFamily,
-    Rule, SoundBuilt, SoundKind, SoundLength, SplitEvent, Synth6581Event, TICK_US,
+    BLOCK_TICKS, BLOCK_US, BankName, ConnectionId, DroppedCounts, FileCue, MOST_BLOCK_BYTES, MOST_INSTRUMENT_BLOCKS, MOST_LIVE_ADVANCE_US, MidiChannel,
+    NoteFamily, Rule, SoundBuilt, SoundKind, SoundLength, SplitEvent, Synth6581Event, TICK_US,
 };
 
 /// A refusal of a sound message: the path, the rule and the detail
@@ -119,8 +119,9 @@ pub(crate) fn place_notes<F: FamilyCalls>(synth: Synth, events: &[F::Event], at:
         }
         let last = wires.len().saturating_sub(1);
         for (position, wire) in wires.drain(..).enumerate() {
-            // A deferred message is checked once it is resolved.
-            if !matches!(wire, Wire::Deferred(_)) {
+            // A deferred message is checked once it is resolved; a cue is
+            // no message of the family's (RULE-109).
+            if !matches!(wire, Wire::Deferred(_) | Wire::Cue(_)) {
                 synth.takes(&wire).map_err(|detail| refuse(&path, Rule::NotTaken, detail))?;
             }
             let hint = if position == last { hint.take() } else { None };
@@ -138,6 +139,12 @@ pub(crate) fn place_synth6581(events: &[Synth6581Event], at: &str, out: &mut Vec
         let wires = match event {
             Synth6581Event::RegisterUpdate(update) => super::family::synth6581::register_update(update),
             Synth6581Event::Asid(message) => super::family::synth6581::asid(&crate::protocol::check::bytes_of(&message.bytes)),
+            // RULE-109: a cue is no register write; it is written in its
+            // block as the Cue Point meta event.
+            Synth6581Event::Cue(cue) => {
+                out.push(Timed { tick: tick_of(event.time_us()), wire: Wire::Cue(cue.number.get()), path, hint: None });
+                continue;
+            }
         }
         .map_err(|fault| family_fault(&path, fault))?;
         for wire in wires {
@@ -159,9 +166,15 @@ pub(crate) fn check_opening(events: &[Synth6581Event], at: &str) -> Result<(), R
 }
 
 /// Reads a Standard MIDI File into placed messages (SRV-81 to SRV-86).
-pub(crate) fn place_file(synth: Synth, bytes: &[u8], map: Option<&[Option<MidiChannel>; 16]>, at: &str) -> Result<(Vec<Timed>, u64, DroppedCounts), Refused> {
+pub(crate) fn place_file(
+    synth: Synth,
+    bytes: &[u8],
+    map: Option<&[Option<MidiChannel>; 16]>,
+    cues: &[FileCue],
+    at: &str,
+) -> Result<(Vec<Timed>, u64, DroppedCounts), Refused> {
     let takes = |wire: &Wire| synth.takes(wire).is_ok();
-    let music = midi_file::read(bytes, map, &takes).map_err(|(rule, detail)| refuse(at, rule, detail))?;
+    let music = midi_file::read(bytes, map, cues, &takes).map_err(|(rule, detail)| refuse(at, rule, detail))?;
     let timed = music
         .events
         .into_iter()
@@ -253,7 +266,7 @@ fn used_parts(synth: Synth, tracker: &Tracker, timed: &[Timed]) -> Vec<u8> {
         let part = match &event.wire {
             Wire::Channel(message) => Some(message.channel()),
             Wire::Sysex(bytes) if synth.family == Family::Synth7 => super::family::synth7::part_of(bytes),
-            Wire::Sysex(_) | Wire::Deferred(_) => None,
+            Wire::Sysex(_) | Wire::Deferred(_) | Wire::Cue(_) => None,
         };
         if let Some(slot) = part.and_then(|part| used.get_mut(usize::from(part))) {
             *slot = true;
@@ -277,12 +290,15 @@ fn resolve_and_track(synth: Synth, tracker: &mut Tracker, banks: &Banks<'_>, eve
                 }
                 resolved
             }
-            Wire::Channel(_) | Wire::Sysex(_) => alloc::vec![wire],
+            Wire::Channel(_) | Wire::Sysex(_) | Wire::Cue(_) => alloc::vec![wire],
         };
         let last = wires.len().saturating_sub(1);
         for (position, wire) in wires.into_iter().enumerate() {
             let hint = if position == last { hint.clone() } else { None };
-            tracker.take(&wire, hint.as_ref(), banks);
+            // A cue changes no part's state (RULE-109).
+            if !matches!(wire, Wire::Cue(_)) {
+                tracker.take(&wire, hint.as_ref(), banks);
+            }
             written.push(Timed { tick, wire, path: path.clone(), hint });
         }
     }
@@ -297,7 +313,7 @@ fn within_budget<'a>(family: Family, messages: impl Iterator<Item = &'a Wire>) -
         return true;
     }
     let mut budget = BlockBudget::new();
-    for wire in messages {
+    for wire in messages.filter(|wire| !matches!(wire, Wire::Cue(_))) {
         if !synth6581_accepts(&wire.message()).is_ok_and(|asid| budget.admit(&asid)) {
             return false;
         }
@@ -329,7 +345,13 @@ fn write_block(family: Family, index: u64, restate: &[(u8, Vec<Wire>)], events: 
         if failed.is_none() {
             for event in events {
                 let time = u8::try_from(event.tick % BLOCK_TICKS).unwrap_or(u8::MAX);
-                if let Err(error) = writer.push(time, &event.wire.message()) {
+                // RULE-109: a cue is the Cue Point meta event, at most
+                // `MAX_CUES_PER_BLOCK` in a block.
+                let written = match event.wire {
+                    Wire::Cue(number) => writer.push_cue(time, number),
+                    _ => writer.push(time, &event.wire.message()),
+                };
+                if let Err(error) = written {
                     failed = Some(Some((error, *event)));
                     break;
                 }
@@ -534,6 +556,10 @@ impl Synths {
         targets: &[ConnectionId],
     ) -> Result<Sent, Refused> {
         let family = synth.family;
+        // RULE-109: a local sound has no timeline and so no cues.
+        if let Some(cue) = timed.iter().find(|event| matches!(event.wire, Wire::Cue(_))) {
+            return Err(refuse(&cue.path, Rule::NeverCarried, "RULE-109: a local sound has no timeline, and so no cue"));
+        }
         if let Some(late) = timed.iter().find(|event| event.tick != 0) {
             return Err(refuse(format!("{}.time_us", late.path), Rule::OutOfRange, "RULE-61: every event of a local sound's setup is at time 0"));
         }

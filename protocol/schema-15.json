@@ -1,7 +1,7 @@
 {
   "$defs": {
     "AnimationOp": {
-      "description": "One operation on a control's or an object's animation state (ANIM-6),\nby `action`: the shapes of the rule table's actions of the same names,\nand `reset`.",
+      "description": "One operation on a control's or an object's animation state (ANIM-6),\nby `action`.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -50,7 +50,7 @@
               "type": "string"
             },
             "look": {
-              "$ref": "#/$defs/LookName",
+              "$ref": "#/$defs/LookChoice",
               "description": "The look."
             },
             "target": {
@@ -83,18 +83,104 @@
               "description": "One object."
             },
             "x": {
-              "description": "Across.",
-              "format": "int32",
-              "maximum": 32767,
-              "minimum": -32768,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 32767,
+                  "minimum": -32768,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 32767,
+                      "minimum": -32768,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "Across."
             },
             "y": {
-              "description": "Down.",
-              "format": "int32",
-              "maximum": 32767,
-              "minimum": -32768,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 32767,
+                  "minimum": -32768,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 32767,
+                      "minimum": -32768,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "Down."
             }
           },
           "required": [
@@ -115,7 +201,7 @@
             },
             "layer": {
               "default": null,
-              "description": "The layer, 0 to 3, or null to keep it.",
+              "description": "The layer, or null to keep it.",
               "format": "uint8",
               "maximum": 3,
               "minimum": 0,
@@ -125,11 +211,54 @@
               ]
             },
             "order": {
-              "description": "The order within the layer, lowest drawn first.",
-              "format": "int32",
-              "maximum": 127,
-              "minimum": -128,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": -128,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": -128,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The order within the layer, lowest drawn first."
             },
             "target": {
               "$ref": "#/$defs/RuleTarget",
@@ -152,11 +281,54 @@
               "type": "string"
             },
             "frame": {
-              "description": "The frame, 0 to 15.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 15,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 15,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The frame."
             },
             "target": {
               "$ref": "#/$defs/RuleTarget",
@@ -198,11 +370,54 @@
               "type": "boolean"
             },
             "period": {
-              "description": "Ticks a frame.",
-              "format": "uint16",
-              "maximum": 3600,
-              "minimum": 1,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 3600,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 3600,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "Ticks a frame."
             },
             "target": {
               "$ref": "#/$defs/RuleTarget",
@@ -318,6 +533,28 @@
       "description": "Bytes as exact base64 (RFC 4648 section 4, padded, no whitespace),\nchecked where it is used for its decoded length ([`check`]). The\nschema marks it `contentEncoding: \"base64\"` (JSON Schema 2020-12\nValidation, section 8.3), so that a kit's generator types every bytes\nfield as bytes by one rule (server.md SRV-6).",
       "type": "string"
     },
+    "Beat": {
+      "additionalProperties": false,
+      "description": "A timer's next expiry of a period (RULE-15, RULE-103).",
+      "properties": {
+        "ticks": {
+          "description": "The period, in ticks.",
+          "format": "uint64",
+          "maximum": 216000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timer": {
+          "$ref": "#/$defs/TimerRef",
+          "default": "page",
+          "description": "The timer; the page timer when left out."
+        }
+      },
+      "required": [
+        "ticks"
+      ],
+      "type": "object"
+    },
     "Budgets": {
       "additionalProperties": false,
       "description": "The server's own bounds.",
@@ -397,7 +634,7 @@
           "type": "integer"
         }
       ],
-      "description": "The button of a `press` or a `release` trigger: 0 left (or a touch\ncontact), 1 middle, 2 right, or `\"any\"`."
+      "description": "The button of a pointer trigger: 0 left (or a touch contact), 1\nmiddle, 2 right, or `\"any\"`."
     },
     "Buttons": {
       "additionalProperties": false,
@@ -748,6 +985,34 @@
       ],
       "type": "string"
     },
+    "CompareValue": {
+      "anyOf": [
+        {
+          "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "plus": {
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "row": {
+              "const": "p"
+            }
+          },
+          "required": [
+            "row"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Connections": {
       "anyOf": [
         {
@@ -818,21 +1083,21 @@
       ],
       "type": "object"
     },
-    "ControlRef": {
+    "CueChoice": {
       "anyOf": [
         {
           "$ref": "#/$defs/AnyWord",
-          "description": "Any control: the rule fires once for each control concerned."
+          "description": "Any cue."
         },
         {
-          "description": "One control.",
+          "description": "One cue.",
           "format": "uint8",
-          "maximum": 32,
-          "minimum": 1,
+          "maximum": 127,
+          "minimum": 0,
           "type": "integer"
         }
       ],
-      "description": "A control's number, 1 to 32 in the order the page declares its\ncontrols, or `\"any\"` in a pointer trigger (RULE-12)."
+      "description": "The cue of a `cue` trigger: a number, or `\"any\"`."
     },
     "Cursor": {
       "additionalProperties": false,
@@ -984,6 +1249,60 @@
         }
       ]
     },
+    "FileCue": {
+      "additionalProperties": false,
+      "description": "A Marker or Cue Point text of a Standard MIDI File and the cue it\nbecomes (RULE-109).",
+      "properties": {
+        "number": {
+          "description": "The cue's number.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "The meta event's text, compared byte for byte.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "number"
+      ],
+      "type": "object"
+    },
+    "FiredName": {
+      "description": "A value of the firing (RULE-116): what the event and the row that fired\nthe rule give.",
+      "oneOf": [
+        {
+          "const": "key",
+          "description": "The code of the key whose event fired the rule; 0 when none did.",
+          "type": "string"
+        },
+        {
+          "const": "target",
+          "description": "The number of the control, object or rectangle the pointer event\nwas inside; 0 otherwise.",
+          "type": "string"
+        },
+        {
+          "const": "row",
+          "description": "The place of the firing row within the rule's rows; 0 without rows.",
+          "type": "string"
+        },
+        {
+          "const": "cue",
+          "description": "The number of the cue that fired the rule; 0 otherwise.",
+          "type": "string"
+        },
+        {
+          "const": "p",
+          "description": "The row's parameter; 0 when none.",
+          "type": "string"
+        }
+      ]
+    },
     "FrameMarkName": {
       "description": "Which mark a `frame` message is.",
       "oneOf": [
@@ -998,6 +1317,30 @@
           "type": "string"
         }
       ]
+    },
+    "GroupDeclaration": {
+      "additionalProperties": false,
+      "description": "A group of commands (RULE-118), named.",
+      "properties": {
+        "commands": {
+          "description": "Its commands, applied in order.",
+          "items": {
+            "$ref": "#/$defs/RuleCommand"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name."
+        }
+      },
+      "required": [
+        "name",
+        "commands"
+      ],
+      "type": "object"
     },
     "Handle": {
       "description": "A viewer's handle on this channel (VS-305): 32 lower-case hexadecimal digits, meaningless outside the channel.",
@@ -1837,7 +2180,7 @@
           "type": "array"
         }
       ],
-      "description": "A key set (RULE-10): `\"any\"`, or 1 to 16 keys, any of which matches."
+      "description": "A key set (RULE-10): `\"any\"`, or 1 to `MAX_KEYS_PER_TRIGGER` keys, any\nof which matches, or with `by_row` the key of each row in turn."
     },
     "LanguageEntry": {
       "additionalProperties": false,
@@ -2008,6 +2351,585 @@
       ],
       "type": "string"
     },
+    "LocalMidiEvent": {
+      "description": "The one MIDI channel voice message of a `local_midi` message (RULE-21),\nby `event`: a family's event shapes, without a time.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`9n key velocity`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16: the part.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "note_on",
+              "type": "string"
+            },
+            "key": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The key."
+            },
+            "velocity": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The velocity."
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "key",
+            "velocity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`8n key velocity`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16: the part.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "note_off",
+              "type": "string"
+            },
+            "key": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The key."
+            },
+            "velocity": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The velocity."
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "key",
+            "velocity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`Bn controller value`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "controller": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The controller."
+            },
+            "event": {
+              "const": "control_change",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "Its value."
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "controller",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`Cn program`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "program_change",
+              "type": "string"
+            },
+            "program": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 127,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The program."
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "program"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`En lsb msb`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "pitch_bend",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "maximum": 16383,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                  "oneOf": [
+                    {
+                      "required": [
+                        "variable"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "$ref": "#/$defs/FiredName"
+                    },
+                    "plus": {
+                      "format": "int32",
+                      "maximum": 16383,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    },
+                    "variable": {
+                      "$ref": "#/$defs/VariableName"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
+              "description": "The 14-bit bend; 8,192 is none."
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LookChoice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LookName"
+        },
+        {
+          "anyOf": [
+            {
+              "format": "int32",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+              "oneOf": [
+                {
+                  "required": [
+                    "variable"
+                  ]
+                },
+                {
+                  "required": [
+                    "row"
+                  ]
+                },
+                {
+                  "required": [
+                    "fired"
+                  ]
+                }
+              ],
+              "properties": {
+                "fired": {
+                  "$ref": "#/$defs/FiredName"
+                },
+                "plus": {
+                  "format": "int32",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "row": {
+                  "const": "p"
+                },
+                "variable": {
+                  "$ref": "#/$defs/VariableName"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    },
     "LookName": {
       "description": "A look (ANIM-6).",
       "oneOf": [
@@ -2096,7 +3018,14 @@
         "naplps_objects",
         "sprite_sheet",
         "timeline",
-        "timeline_stop"
+        "timeline_stop",
+        "local_midi",
+        "variable",
+        "timer",
+        "report",
+        "run",
+        "sequence",
+        "object_page"
       ],
       "type": "string"
     },
@@ -2338,22 +3267,6 @@
         "target"
       ],
       "type": "object"
-    },
-    "ObjectRef": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/AnyWord",
-          "description": "Any object: the rule fires once for each object concerned."
-        },
-        {
-          "description": "One object.",
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 1,
-          "type": "integer"
-        }
-      ],
-      "description": "An animation object's number, 1 to 65,535, or `\"any\"` in a pointer\ntrigger (RULE-12): a teletext sprite, a ReGIS numbered drawing or a\nNAPLPS object of the sub-page shown."
     },
     "ObjectSource": {
       "description": "Where a sprite's frame, a teletext object, is defined (EN 300 706\nclause 13).",
@@ -2737,24 +3650,23 @@
     },
     "PageRule": {
       "additionalProperties": false,
-      "description": "A rule (RULE-3): one trigger, at most one condition and at most 16\nactions.",
+      "description": "A rule (RULE-3, RULE-35): its triggers, its condition, its rows, and\nexactly one of `run` and `do`.",
       "properties": {
         "do": {
-          "description": "Its actions, run in written order. A rule with none has `echo`.",
+          "description": "The commands it runs, which the server makes into an unnamed group.",
           "items": {
-            "$ref": "#/$defs/RuleAction"
+            "$ref": "#/$defs/RuleCommand"
           },
-          "maxItems": 16,
-          "type": "array"
+          "maxItems": 32,
+          "minItems": 1,
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "echo": {
           "default": false,
-          "description": "A `send` of the trigger's own event after its last action.",
-          "type": "boolean"
-        },
-        "enabled": {
-          "default": true,
-          "description": "Its state when the page opens.",
+          "description": "After the group, a `report` of the firing.",
           "type": "boolean"
         },
         "name": {
@@ -2762,8 +3674,32 @@
           "description": "Its name, by which `input` and `rule_event` name it."
         },
         "on": {
-          "$ref": "#/$defs/RuleTrigger",
-          "description": "The trigger."
+          "$ref": "#/$defs/Triggers",
+          "description": "Its trigger or triggers."
+        },
+        "rows": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The name of the row set it is a template of."
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The name of the group it runs."
         },
         "when": {
           "anyOf": [
@@ -2774,13 +3710,12 @@
               "type": "null"
             }
           ],
-          "description": "What must hold for it to fire, or null; null for a `becomes`\ntrigger, which carries its own condition."
+          "description": "What must hold for it to fire, or null; for `becomes`, the\ncondition whose becoming true fires it."
         }
       },
       "required": [
         "name",
-        "on",
-        "do"
+        "on"
       ],
       "type": "object"
     },
@@ -7024,6 +7959,10 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
             },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F."
+            },
             "table": {
               "anyOf": [
                 {
@@ -7044,6 +7983,7 @@
             "type",
             "connections",
             "page",
+            "sub",
             "table"
           ],
           "type": "object"
@@ -7070,6 +8010,10 @@
               "minimum": 1,
               "type": "integer"
             },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "Its sub-page."
+            },
             "type": {
               "const": "query_state",
               "type": "string"
@@ -7079,6 +8023,7 @@
             "type",
             "connection",
             "page",
+            "sub",
             "request"
           ],
           "type": "object"
@@ -7140,7 +8085,7 @@
             },
             "sub": {
               "$ref": "#/$defs/SubCode",
-              "description": "The sub-page, or 3F7F for whichever sub-page of the page is shown."
+              "description": "The sub-page: never 3F7F, which names no page (DEC-6599)."
             },
             "type": {
               "const": "animate",
@@ -7257,6 +8202,10 @@
               "description": "Begin the sheet again: a new generation.",
               "type": "boolean"
             },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: a sheet belongs to one page and sub-code (DEC-6599),\nnever 3F7F."
+            },
             "type": {
               "const": "sprite_sheet",
               "type": "string"
@@ -7266,6 +8215,7 @@
             "type",
             "connections",
             "page",
+            "sub",
             "kind",
             "data"
           ],
@@ -7312,7 +8262,7 @@
             },
             "sub": {
               "$ref": "#/$defs/SubCode",
-              "description": "The sub-page, or 3F7F for whichever sub-page of the page is shown."
+              "description": "The sub-page: never 3F7F, which names no page (DEC-6599)."
             },
             "type": {
               "const": "timeline",
@@ -7348,6 +8298,10 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
             },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F."
+            },
             "type": {
               "const": "timeline_stop",
               "type": "string"
@@ -7357,7 +8311,327 @@
             "type",
             "connections",
             "page",
+            "sub",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One MIDI message to a page's local sound (RULE-114).",
+          "properties": {
+            "channel": {
+              "description": "The audio channel.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "message": {
+              "$ref": "#/$defs/LocalMidiEvent",
+              "description": "The message."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "type": {
+              "const": "local_midi",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "channel",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes a page's variable (RULE-114).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "high": {
+              "default": null,
+              "description": "The range's greatest, for `wrap`.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "low": {
+              "default": null,
+              "description": "The range's least, for `wrap`.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "op": {
+              "$ref": "#/$defs/VariableOp",
+              "description": "What it does."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "type": {
+              "const": "variable",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VariableOperand"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The value, for `set`, `add`, `sub`, `min` and `max`."
+            },
+            "variable": {
+              "$ref": "#/$defs/VariableOrAll",
+              "description": "The variable; `\"all\"` with `clear` alone."
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "op",
+            "variable"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts or stops a page's timer (RULE-114).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "op": {
+              "$ref": "#/$defs/StartStop",
+              "description": "Start or stop."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "timer": {
+              "$ref": "#/$defs/TimerName",
+              "description": "The timer; never the page timer."
+            },
+            "type": {
+              "const": "timer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "op",
+            "timer"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reports a page's value to its channel (RULE-114).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "type": {
+              "const": "report",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleValue"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The value reported, or null (only in a group) for the firing."
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Runs a group of a page's table (RULE-114).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "group": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The group's name."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "type": {
+              "const": "run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "group"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts or stops a sequence of a page's table (RULE-114).",
+          "properties": {
+            "at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SequenceAt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `start`, when it begins: the next tick when null."
+            },
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "op": {
+              "$ref": "#/$defs/StartStop",
+              "description": "Start or stop."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sequence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The sequence's name, or null with `stop` for every sequence."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, never 3F7F (DEC-6599)."
+            },
+            "type": {
+              "const": "sequence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "op"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A teletext object page a page's sprites use (ANIM-17).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for: of them, those that have the page selected."
+            },
+            "object": {
+              "$ref": "#/$defs/Page",
+              "description": "The object page: a Public or Global Public Object Page (EN 300 706\nclause 10.5), encoded as a `page` message's sub-page is."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page whose sprites use it."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "Its sub-page."
+            },
+            "type": {
+              "const": "object_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "object"
           ],
           "type": "object"
         }
@@ -7365,7 +8639,7 @@
     },
     "RectDeclaration": {
       "additionalProperties": false,
-      "description": "A rectangle's declaration (RULE-13), in the pixels of the sub-page's\npicture from its top left: a teletext page is 480 by 500, a ReGIS\npicture 800 by 480, a NAPLPS picture 640 by 480.",
+      "description": "A rectangle's declaration (RULE-13), in the pixels of the page's\npicture from its top left: a teletext page is 480 by 500, a ReGIS\npicture 800 by 480, a NAPLPS picture 640 by 480.",
       "properties": {
         "height": {
           "description": "The height, at least 1.",
@@ -7768,7 +9042,7 @@
         },
         {
           "const": "rules_over_limit",
-          "description": "A rule table over a limit the schema cannot state (RULE-39): more\nthan 8 terms, 16 nodes or 3 levels in a condition, more than 64\ndistinct values or targets, or an encoded table over 8,184 bytes.",
+          "description": "A rule table over a limit the schema cannot state (RULE-39), whose\ndetail names the limit's constant and its value (REQ-6608).",
           "type": "string"
         },
         {
@@ -7777,8 +9051,18 @@
           "type": "string"
         },
         {
+          "const": "invalid_group",
+          "description": "A group fault (RULE-39): a message type a group may not hold, a\n`play` with a page, after the current sound or for the whole service,\nan amount in a field that takes none, a variable as a target's\nnumber, groups that run each other in a ring, nesting deeper than\n`MAX_GROUP_DEPTH`, or a run of more than `MAX_RUN_COMMANDS` commands.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_command",
+          "description": "A command sent directly that is allowed only in a group: an amount,\na value of the firing, a `report` of the firing (RULE-39).",
+          "type": "string"
+        },
+        {
           "const": "unknown_name",
-          "description": "A rule, variable, timer or rectangle name the table does not\ndeclare.",
+          "description": "A rule, group, sequence, row-set or rectangle name the table does\nnot have.",
           "type": "string"
         },
         {
@@ -7843,31 +9127,428 @@
         }
       ]
     },
-    "RuleAction": {
-      "description": "One local effect of a rule (RULE-20, RULE-35), by `action`.",
+    "RuleCommand": {
+      "description": "A command of a group (RULE-35, RULE-118, RULE-119), by `type`: a\nprogram message without its `connections`, `page` and `sub`, which the\ntable supplies.",
       "oneOf": [
+        {
+          "description": "A `play`, `stop` or `gain`.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Starts a sound.",
+              "properties": {
+                "after": {
+                  "default": false,
+                  "description": "Always false in a group: refused when true (`invalid_group`).",
+                  "type": "boolean"
+                },
+                "channel": {
+                  "description": "The audio channel.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "duck": {
+                  "default": 0,
+                  "description": "How far other channels duck under it.",
+                  "format": "uint8",
+                  "maximum": 6,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "fade_ms": {
+                  "anyOf": [
+                    {
+                      "format": "int32",
+                      "maximum": 10000,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                      "oneOf": [
+                        {
+                          "required": [
+                            "variable"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "row"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "fired"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "fired": {
+                          "$ref": "#/$defs/FiredName"
+                        },
+                        "plus": {
+                          "format": "int32",
+                          "maximum": 10000,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "row": {
+                          "const": "p"
+                        },
+                        "variable": {
+                          "$ref": "#/$defs/VariableName"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "description": "The fade in, in milliseconds."
+                },
+                "gain": {
+                  "anyOf": [
+                    {
+                      "format": "int32",
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                      "oneOf": [
+                        {
+                          "required": [
+                            "variable"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "row"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "fired"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "fired": {
+                          "$ref": "#/$defs/FiredName"
+                        },
+                        "plus": {
+                          "format": "int32",
+                          "maximum": 100,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "row": {
+                          "const": "p"
+                        },
+                        "variable": {
+                          "$ref": "#/$defs/VariableName"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "description": "The gain."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "The sound's handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "play",
+                  "type": "string"
+                },
+                "loop": {
+                  "default": false,
+                  "description": "It loops.",
+                  "type": "boolean"
+                },
+                "page": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PageNumber"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Never given in a group: the table's page is the play's\n(`invalid_group`)."
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "channel",
+                "handle",
+                "generation",
+                "gain",
+                "fade_ms"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stops an audio channel.",
+              "properties": {
+                "channel": {
+                  "description": "The audio channel.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "fade_ms": {
+                  "anyOf": [
+                    {
+                      "format": "int32",
+                      "maximum": 10000,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                      "oneOf": [
+                        {
+                          "required": [
+                            "variable"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "row"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "fired"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "fired": {
+                          "$ref": "#/$defs/FiredName"
+                        },
+                        "plus": {
+                          "format": "int32",
+                          "maximum": 10000,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "row": {
+                          "const": "p"
+                        },
+                        "variable": {
+                          "$ref": "#/$defs/VariableName"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "description": "The fade out, in milliseconds."
+                },
+                "kind": {
+                  "const": "stop",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "channel",
+                "fade_ms"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Changes an audio channel's gain.",
+              "properties": {
+                "channel": {
+                  "description": "The audio channel.",
+                  "format": "uint8",
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "fade_ms": {
+                  "anyOf": [
+                    {
+                      "format": "int32",
+                      "maximum": 10000,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                      "oneOf": [
+                        {
+                          "required": [
+                            "variable"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "row"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "fired"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "fired": {
+                          "$ref": "#/$defs/FiredName"
+                        },
+                        "plus": {
+                          "format": "int32",
+                          "maximum": 10000,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "row": {
+                          "const": "p"
+                        },
+                        "variable": {
+                          "$ref": "#/$defs/VariableName"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "description": "The ramp, in milliseconds."
+                },
+                "gain": {
+                  "anyOf": [
+                    {
+                      "format": "int32",
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+                      "oneOf": [
+                        {
+                          "required": [
+                            "variable"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "row"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "fired"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "fired": {
+                          "$ref": "#/$defs/FiredName"
+                        },
+                        "plus": {
+                          "format": "int32",
+                          "maximum": 100,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "row": {
+                          "const": "p"
+                        },
+                        "variable": {
+                          "$ref": "#/$defs/VariableName"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ],
+                  "description": "The gain."
+                },
+                "kind": {
+                  "const": "gain",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "channel",
+                "gain",
+                "fade_ms"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "sound",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
         {
           "additionalProperties": false,
           "description": "A MIDI message to a local sound.",
           "properties": {
-            "action": {
-              "const": "midi",
-              "type": "string"
-            },
             "channel": {
-              "description": "The audio channel, 0 to 3.",
+              "description": "The audio channel.",
               "format": "uint8",
               "maximum": 3,
               "minimum": 0,
               "type": "integer"
             },
             "message": {
-              "$ref": "#/$defs/RuleMidi",
+              "$ref": "#/$defs/LocalMidiEvent",
               "description": "The message."
+            },
+            "type": {
+              "const": "local_midi",
+              "type": "string"
             }
           },
           "required": [
-            "action",
+            "type",
             "channel",
             "message"
           ],
@@ -7875,339 +9556,161 @@
         },
         {
           "additionalProperties": false,
-          "description": "Starts a sound.",
+          "description": "Animation operations.",
           "properties": {
-            "action": {
-              "const": "play",
+            "ops": {
+              "description": "The operations, applied in order.",
+              "items": {
+                "$ref": "#/$defs/AnimationOp"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "type": {
+              "const": "animate",
               "type": "string"
-            },
-            "channel": {
-              "description": "The audio channel, 0 to 3.",
-              "format": "uint8",
-              "maximum": 3,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "fade_ms": {
-              "description": "The fade in, 0 to 10,000 milliseconds.",
-              "format": "uint16",
-              "maximum": 10000,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "gain": {
-              "description": "The gain, 0 to 100.",
-              "format": "uint8",
-              "maximum": 100,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "generation": {
-              "description": "Its generation.",
-              "format": "uint16",
-              "maximum": 65535,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "handle": {
-              "description": "The sound's handle.",
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "loop": {
-              "description": "It loops.",
-              "type": "boolean"
             }
           },
           "required": [
-            "action",
-            "channel",
-            "handle",
-            "generation",
-            "gain",
-            "fade_ms",
-            "loop"
+            "type",
+            "ops"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Stops an audio channel.",
+          "description": "The page's teletext sprites.",
           "properties": {
-            "action": {
-              "const": "stop",
+            "sprites": {
+              "description": "The sprites.",
+              "items": {
+                "$ref": "#/$defs/Sprite"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "type": {
+              "const": "sprites",
               "type": "string"
-            },
-            "channel": {
-              "description": "The audio channel, 0 to 3.",
-              "format": "uint8",
-              "maximum": 3,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "fade_ms": {
-              "description": "The fade out, 0 to 10,000 milliseconds.",
-              "format": "uint16",
-              "maximum": 10000,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
-            "action",
-            "channel",
-            "fade_ms"
+            "type",
+            "sprites"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Changes an audio channel's gain.",
+          "description": "The page's NAPLPS objects.",
           "properties": {
-            "action": {
-              "const": "gain",
+            "objects": {
+              "description": "The objects.",
+              "items": {
+                "$ref": "#/$defs/NaplpsObject"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "type": {
+              "const": "naplps_objects",
               "type": "string"
-            },
-            "channel": {
-              "description": "The audio channel, 0 to 3.",
-              "format": "uint8",
-              "maximum": 3,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "fade_ms": {
-              "description": "The ramp, 0 to 10,000 milliseconds.",
-              "format": "uint16",
-              "maximum": 10000,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "gain": {
-              "description": "The gain, 0 to 100.",
-              "format": "uint8",
-              "maximum": 100,
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
-            "action",
-            "channel",
-            "gain",
-            "fade_ms"
+            "type",
+            "objects"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Makes a control or an object shown.",
+          "description": "A variable changed.",
           "properties": {
-            "action": {
-              "const": "show",
-              "type": "string"
+            "high": {
+              "default": null,
+              "description": "The range's greatest, for `wrap`.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One control or one object; `stop_cycle` takes an object only."
-            }
-          },
-          "required": [
-            "action",
-            "target"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Makes it hidden.",
-          "properties": {
-            "action": {
-              "const": "hide",
-              "type": "string"
+            "low": {
+              "default": null,
+              "description": "The range's least, for `wrap`.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One control or one object; `stop_cycle` takes an object only."
-            }
-          },
-          "required": [
-            "action",
-            "target"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Forces a look on a control or an object.",
-          "properties": {
-            "action": {
-              "const": "look",
-              "type": "string"
+            "op": {
+              "$ref": "#/$defs/VariableOp",
+              "description": "What it does."
             },
-            "look": {
-              "$ref": "#/$defs/LookName",
-              "description": "The look."
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One control or one object."
-            }
-          },
-          "required": [
-            "action",
-            "target",
-            "look"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Sets a variable.",
-          "properties": {
-            "action": {
-              "const": "set",
+            "type": {
+              "const": "variable",
               "type": "string"
             },
             "value": {
-              "description": "The constant.",
-              "format": "int32",
-              "maximum": 2147483647,
-              "minimum": -2147483648,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/VariableOperand"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The value, for `set`, `add`, `sub`, `min` and `max`."
             },
             "variable": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The variable's name."
+              "$ref": "#/$defs/VariableOrAll",
+              "description": "The variable; `\"all\"` with `clear` alone."
             }
           },
           "required": [
-            "action",
-            "variable",
-            "value"
+            "type",
+            "op",
+            "variable"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Adds to a variable.",
+          "description": "A timer started or stopped.",
           "properties": {
-            "action": {
-              "const": "add",
-              "type": "string"
-            },
-            "amount": {
-              "description": "The constant.",
-              "format": "int32",
-              "maximum": 2147483647,
-              "minimum": -2147483648,
-              "type": "integer"
-            },
-            "variable": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The variable's name."
-            }
-          },
-          "required": [
-            "action",
-            "variable",
-            "amount"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Starts or restarts a timer.",
-          "properties": {
-            "action": {
-              "const": "start_timer",
-              "type": "string"
+            "op": {
+              "$ref": "#/$defs/StartStop",
+              "description": "Start or stop."
             },
             "timer": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The timer's name; the page timer cannot be started or stopped."
+              "$ref": "#/$defs/TimerName",
+              "description": "The timer; never the page timer."
+            },
+            "type": {
+              "const": "timer",
+              "type": "string"
             }
           },
           "required": [
-            "action",
+            "type",
+            "op",
             "timer"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Stops a timer.",
+          "description": "A report to the channel.",
           "properties": {
-            "action": {
-              "const": "stop_timer",
-              "type": "string"
-            },
-            "timer": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The timer's name; the page timer cannot be started or stopped."
-            }
-          },
-          "required": [
-            "action",
-            "timer"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Switches rules on.",
-          "properties": {
-            "action": {
-              "const": "enable",
-              "type": "string"
-            },
-            "rules": {
-              "description": "The rules' names.",
-              "items": {
-                "$ref": "#/$defs/RuleName"
-              },
-              "maxItems": 64,
-              "minItems": 1,
-              "type": "array"
-            }
-          },
-          "required": [
-            "action",
-            "rules"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Switches rules off.",
-          "properties": {
-            "action": {
-              "const": "disable",
-              "type": "string"
-            },
-            "rules": {
-              "description": "The rules' names.",
-              "items": {
-                "$ref": "#/$defs/RuleName"
-              },
-              "maxItems": 64,
-              "minItems": 1,
-              "type": "array"
-            }
-          },
-          "required": [
-            "action",
-            "rules"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Reports to the page's program.",
-          "properties": {
-            "action": {
-              "const": "send",
+            "type": {
+              "const": "report",
               "type": "string"
             },
             "value": {
@@ -8220,183 +9723,72 @@
                 }
               ],
               "default": null,
-              "description": "The value reported, or null for the trigger's own event."
+              "description": "The value reported, or null (only in a group) for the firing."
             }
           },
           "required": [
-            "action"
+            "type"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Moves an object.",
+          "description": "Another group run in place.",
           "properties": {
-            "action": {
-              "const": "move",
+            "group": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The group's name."
+            },
+            "type": {
+              "const": "run",
               "type": "string"
-            },
-            "relative": {
-              "default": false,
-              "description": "Whether `x` and `y` are added to the position in force.",
-              "type": "boolean"
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One object."
-            },
-            "x": {
-              "description": "Across.",
-              "format": "int32",
-              "maximum": 32767,
-              "minimum": -32768,
-              "type": "integer"
-            },
-            "y": {
-              "description": "Down.",
-              "format": "int32",
-              "maximum": 32767,
-              "minimum": -32768,
-              "type": "integer"
             }
           },
           "required": [
-            "action",
-            "target",
-            "x",
-            "y"
+            "type",
+            "group"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "description": "Sets an object's layer and order.",
+          "description": "A sequence started or stopped.",
           "properties": {
-            "action": {
-              "const": "order",
-              "type": "string"
+            "at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SequenceAt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `start`, when it begins: the next tick when null."
             },
-            "layer": {
+            "op": {
+              "$ref": "#/$defs/StartStop",
+              "description": "Start or stop."
+            },
+            "sequence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "default": null,
-              "description": "The layer, 0 to 3, or null to keep it.",
-              "format": "uint8",
-              "maximum": 3,
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "description": "The sequence's name, or null with `stop` for every sequence."
             },
-            "order": {
-              "description": "The order within the layer, lowest drawn first.",
-              "format": "int32",
-              "maximum": 127,
-              "minimum": -128,
-              "type": "integer"
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One object."
-            }
-          },
-          "required": [
-            "action",
-            "target",
-            "order"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Shows one frame of an object.",
-          "properties": {
-            "action": {
-              "const": "frame",
+            "type": {
+              "const": "sequence",
               "type": "string"
-            },
-            "frame": {
-              "description": "The frame, 0 to 15.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One object."
             }
           },
           "required": [
-            "action",
-            "target",
-            "frame"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Cycles an object's frames.",
-          "properties": {
-            "action": {
-              "const": "cycle",
-              "type": "string"
-            },
-            "first": {
-              "description": "The first frame.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "last": {
-              "description": "The last frame, at least `first`.",
-              "format": "uint8",
-              "maximum": 15,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "once": {
-              "default": false,
-              "description": "Stop at `last` rather than begin again.",
-              "type": "boolean"
-            },
-            "period": {
-              "description": "Ticks a frame.",
-              "format": "uint16",
-              "maximum": 3600,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One object."
-            }
-          },
-          "required": [
-            "action",
-            "target",
-            "first",
-            "last",
-            "period"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Stops an object's cycle at the frame shown.",
-          "properties": {
-            "action": {
-              "const": "stop_cycle",
-              "type": "string"
-            },
-            "target": {
-              "$ref": "#/$defs/RuleTarget",
-              "description": "One control or one object; `stop_cycle` takes an object only."
-            }
-          },
-          "required": [
-            "action",
-            "target"
+            "type",
+            "op"
           ],
           "type": "object"
         }
@@ -8406,7 +9798,7 @@
       "anyOf": [
         {
           "additionalProperties": false,
-          "description": "True when all of its 2 to 8 children are.",
+          "description": "True when all of its children are.",
           "properties": {
             "and": {
               "description": "The children.",
@@ -8425,7 +9817,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "True when any of its 2 to 8 children is.",
+          "description": "True when any of its children is.",
           "properties": {
             "or": {
               "description": "The children.",
@@ -8469,11 +9861,8 @@
               "description": "What is read."
             },
             "value": {
-              "description": "With what.",
-              "format": "int32",
-              "maximum": 2147483647,
-              "minimum": -2147483648,
-              "type": "integer"
+              "$ref": "#/$defs/CompareValue",
+              "description": "With what."
             }
           },
           "required": [
@@ -8512,7 +9901,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "True when the value equals one of 1 to 8 constants.",
+          "description": "True when the value equals one of the constants.",
           "properties": {
             "in_set": {
               "description": "The constants.",
@@ -8576,14 +9965,14 @@
           "type": "object"
         }
       ],
-      "description": "A condition (RULE-18): a tree of at most 16 nodes, of which at most 8\nare terms, with `and`, `or` and `not` nested at most 3 deep. Every\ncomparison is of a value with a constant."
+      "description": "A condition (RULE-18): a tree of at most `MAX_CONDITION_NODES` nodes,\nof which at most `MAX_CONDITION_TERMS` are terms, with `and`, `or` and\n`not` nested at most `MAX_CONDITION_DEPTH` deep. Every comparison is of\na value with a constant."
     },
     "RuleEventBody": {
       "description": "What a `rule_event` reports.",
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "The rule fired, on `open`, `close`, `becomes`, `every` or `after`.",
+          "description": "A run fired, with no input event.",
           "properties": {
             "kind": {
               "const": "fired",
@@ -8597,7 +9986,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "A `send` of a value: what was read, as the table names it, and its\nreading in the tick's snapshot.",
+          "description": "A `report` of a value: what was read, as the table names it, and\nits reading.",
           "properties": {
             "kind": {
               "const": "value",
@@ -8673,194 +10062,39 @@
       ],
       "description": "One key (RULE-10), named in one of the input protocol's three ways."
     },
-    "RuleMidi": {
-      "description": "The one MIDI channel voice message of a `midi` action (RULE-21), by\n`event`: a family's event shapes, without a time.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "`9n key velocity`.",
-          "properties": {
-            "channel": {
-              "description": "The MIDI channel, 1 to 16: the part.",
-              "format": "uint8",
-              "maximum": 16,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "event": {
-              "const": "note_on",
-              "type": "string"
-            },
-            "key": {
-              "description": "The key, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "velocity": {
-              "description": "The velocity, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "event",
-            "channel",
-            "key",
-            "velocity"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "`8n key velocity`.",
-          "properties": {
-            "channel": {
-              "description": "The MIDI channel, 1 to 16: the part.",
-              "format": "uint8",
-              "maximum": 16,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "event": {
-              "const": "note_off",
-              "type": "string"
-            },
-            "key": {
-              "description": "The key, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "velocity": {
-              "description": "The velocity, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "event",
-            "channel",
-            "key",
-            "velocity"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "`Bn controller value`.",
-          "properties": {
-            "channel": {
-              "description": "The MIDI channel, 1 to 16.",
-              "format": "uint8",
-              "maximum": 16,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "controller": {
-              "description": "The controller, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "event": {
-              "const": "control_change",
-              "type": "string"
-            },
-            "value": {
-              "description": "Its value, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "event",
-            "channel",
-            "controller",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "`Cn program`.",
-          "properties": {
-            "channel": {
-              "description": "The MIDI channel, 1 to 16.",
-              "format": "uint8",
-              "maximum": 16,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "event": {
-              "const": "program_change",
-              "type": "string"
-            },
-            "program": {
-              "description": "The program, 0 to 127.",
-              "format": "uint8",
-              "maximum": 127,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "event",
-            "channel",
-            "program"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "`En lsb msb`.",
-          "properties": {
-            "channel": {
-              "description": "The MIDI channel, 1 to 16.",
-              "format": "uint8",
-              "maximum": 16,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "event": {
-              "const": "pitch_bend",
-              "type": "string"
-            },
-            "value": {
-              "description": "The bend, 0 to 16,383; 8,192 is none.",
-              "format": "uint16",
-              "maximum": 16383,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "event",
-            "channel",
-            "value"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "RuleName": {
-      "description": "A rule's, a variable's, a timer's or a rectangle's name (RULE-36): distinct within its kind in a table, and never sent to a receiver.",
+      "description": "A rule's, a group's, a sequence's, a row set's or a rectangle's name (RULE-36): distinct within its kind in a table, and never sent to a receiver.",
       "pattern": "^[a-z][a-z0-9_]{0,31}$",
       "type": "string"
     },
+    "RuleRow": {
+      "anyOf": [
+        {
+          "description": "An integer.",
+          "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        {
+          "$ref": "#/$defs/RuleKey",
+          "description": "A key's code."
+        }
+      ],
+      "description": "A binding row (RULE-105, DEC-6635 item 8): its one parameter `p`, a\nsigned 32-bit integer, or a key, which stands for that key's code."
+    },
     "RuleTable": {
       "additionalProperties": false,
-      "description": "A page's rule table (RULE-2, RULE-35): one for a page, for all its\nsub-pages.",
+      "description": "A page's rule table (RULE-2, RULE-35): one for one page number and\nsub-code (DEC-6599).",
       "properties": {
+        "groups": {
+          "description": "The named groups.",
+          "items": {
+            "$ref": "#/$defs/GroupDeclaration"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
         "rects": {
           "description": "The rectangles.",
           "items": {
@@ -8868,6 +10102,19 @@
           },
           "maxItems": 16,
           "type": "array"
+        },
+        "rows": {
+          "additionalProperties": false,
+          "description": "The row sets, by name, laid out in the order of their names, with\n`MAX_ROWS` rows in all.",
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,31}$": {
+              "items": {
+                "$ref": "#/$defs/RuleRow"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
         },
         "rules": {
           "description": "The rules, in rule order.",
@@ -8877,28 +10124,12 @@
           "maxItems": 64,
           "type": "array"
         },
-        "subpages": {
-          "description": "The rules switched off for a sub-page.",
+        "sequences": {
+          "description": "The sequences.",
           "items": {
-            "$ref": "#/$defs/SubpageRules"
-          },
-          "maxItems": 16,
-          "type": "array"
-        },
-        "timers": {
-          "description": "The timers, beside the page timer.",
-          "items": {
-            "$ref": "#/$defs/TimerDeclaration"
+            "$ref": "#/$defs/SequenceDeclaration"
           },
           "maxItems": 8,
-          "type": "array"
-        },
-        "variables": {
-          "description": "The page variables.",
-          "items": {
-            "$ref": "#/$defs/VariableDeclaration"
-          },
-          "maxItems": 32,
           "type": "array"
         }
       },
@@ -8918,7 +10149,50 @@
           "description": "A teletext control of the page.",
           "properties": {
             "control": {
-              "$ref": "#/$defs/ControlRef",
+              "anyOf": [
+                {
+                  "format": "uint16",
+                  "maximum": 32,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "const": "any"
+                },
+                {
+                  "additionalProperties": false,
+                  "oneOf": [
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "enum": [
+                        "target",
+                        "row"
+                      ]
+                    },
+                    "plus": {
+                      "format": "int16",
+                      "maximum": 32767,
+                      "minimum": -32768,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
               "description": "Which."
             }
           },
@@ -8929,10 +10203,53 @@
         },
         {
           "additionalProperties": false,
-          "description": "An animation object of the sub-page shown.",
+          "description": "An animation object of the page.",
           "properties": {
             "object": {
-              "$ref": "#/$defs/ObjectRef",
+              "anyOf": [
+                {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "const": "any"
+                },
+                {
+                  "additionalProperties": false,
+                  "oneOf": [
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fired"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "fired": {
+                      "enum": [
+                        "target",
+                        "row"
+                      ]
+                    },
+                    "plus": {
+                      "format": "int16",
+                      "maximum": 32767,
+                      "minimum": -32768,
+                      "type": "integer"
+                    },
+                    "row": {
+                      "const": "p"
+                    }
+                  },
+                  "type": "object"
+                }
+              ],
               "description": "Which."
             }
           },
@@ -8956,7 +10273,7 @@
           "type": "object"
         }
       ],
-      "description": "Something on the page (RULE-12): `\"page\"`, `{\"control\": n}`,\n`{\"object\": n}` or `{\"rect\": \"name\"}`. A control or an object may be\n`\"any\"` in the six pointer triggers and nowhere else."
+      "description": "Something on the page (RULE-12): `\"page\"`, `{\"control\": n}`,\n`{\"object\": n}` or `{\"rect\": \"name\"}`. A control or an object may be\n`\"any\"` in the six pointer triggers, and a constant plus the row's\nparameter (in a rule with rows, and in an operation of a group) or plus\nthe firing's target or row (in an operation of a group)."
     },
     "RuleTrigger": {
       "description": "A rule's trigger (RULE-9, RULE-35), by `event`: the event that can\nmake the rule fire.",
@@ -8965,6 +10282,11 @@
           "additionalProperties": false,
           "description": "A key of the set is pressed.",
           "properties": {
+            "by_row": {
+              "default": false,
+              "description": "One key a row (RULE-105): the set holds as many keys as the rule's\nrow set has rows, and the row at each place is matched by the key at\nthe same place. Only a rule with `rows` has it.",
+              "type": "boolean"
+            },
             "event": {
               "const": "key",
               "type": "string"
@@ -8993,6 +10315,11 @@
           "additionalProperties": false,
           "description": "A key of the set is released, or lost.",
           "properties": {
+            "by_row": {
+              "default": false,
+              "description": "One key a row, as for `key`.",
+              "type": "boolean"
+            },
             "event": {
               "const": "key_up",
               "type": "string"
@@ -9155,7 +10482,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "The page stops being shown.",
+          "description": "The page is closed while its connection stands.",
           "properties": {
             "event": {
               "const": "close",
@@ -9211,20 +10538,15 @@
         },
         {
           "additionalProperties": false,
-          "description": "A condition becomes true.",
+          "description": "The rule's `when` becomes true: its only trigger.",
           "properties": {
-            "condition": {
-              "$ref": "#/$defs/RuleCondition",
-              "description": "The condition whose becoming true fires the rule."
-            },
             "event": {
               "const": "becomes",
               "type": "string"
             }
           },
           "required": [
-            "event",
-            "condition"
+            "event"
           ],
           "type": "object"
         },
@@ -9244,16 +10566,9 @@
               "type": "integer"
             },
             "timer": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/RuleName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "The timer's name, or null for the page timer, which runs from the\npage's opening."
+              "$ref": "#/$defs/TimerRef",
+              "default": "page",
+              "description": "The timer; the page timer when left out."
             }
           },
           "required": [
@@ -9278,16 +10593,9 @@
               "type": "integer"
             },
             "timer": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/RuleName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "The timer's name, or null for the page timer, which runs from the\npage's opening."
+              "$ref": "#/$defs/TimerRef",
+              "default": "page",
+              "description": "The timer; the page timer when left out."
             }
           },
           "required": [
@@ -9295,28 +10603,54 @@
             "ticks"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue of a playing sound is heard.",
+          "properties": {
+            "channel": {
+              "description": "The audio channel.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "$ref": "#/$defs/CueChoice",
+              "description": "The cue; any when left out."
+            }
+          },
+          "required": [
+            "event",
+            "channel"
+          ],
+          "type": "object"
         }
       ]
     },
     "RuleValue": {
-      "description": "Something a condition or a `send` reads (RULE-23 to RULE-28), by `of`.\nEvery value is a signed 32-bit integer.",
+      "description": "Something a condition, a `report` or a `set` reads (section 6), by\n`of`. Every value is a signed 32-bit integer.",
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "A page variable.",
+          "description": "A variable.",
           "properties": {
-            "name": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The variable's name."
-            },
             "of": {
               "const": "variable",
               "type": "string"
+            },
+            "variable": {
+              "$ref": "#/$defs/VariableName",
+              "description": "The variable."
             }
           },
           "required": [
             "of",
-            "name"
+            "variable"
           ],
           "type": "object"
         },
@@ -9382,7 +10716,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "How many keys are down, 0 to 16.",
+          "description": "How many keys are down.",
           "properties": {
             "of": {
               "const": "keys_down",
@@ -9398,25 +10732,28 @@
           "additionalProperties": false,
           "description": "A timer's state.",
           "properties": {
-            "name": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/RuleName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "The timer's name, or null for the page timer."
-            },
             "of": {
               "const": "timer",
               "type": "string"
             },
+            "period": {
+              "description": "The period, with `phase` only.",
+              "format": "uint64",
+              "maximum": 216000,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "property": {
               "$ref": "#/$defs/TimerProperty",
               "description": "What is read."
+            },
+            "timer": {
+              "$ref": "#/$defs/TimerRef",
+              "default": "page",
+              "description": "The timer; the page timer when left out."
             }
           },
           "required": [
@@ -9454,7 +10791,7 @@
           "description": "The sound on an audio channel.",
           "properties": {
             "channel": {
-              "description": "The audio channel, 0 to 3.",
+              "description": "The audio channel.",
               "format": "uint8",
               "maximum": 3,
               "minimum": 0,
@@ -9481,7 +10818,7 @@
           "description": "A synthesizer's state.",
           "properties": {
             "channel": {
-              "description": "The audio channel, 0 to 3.",
+              "description": "The audio channel.",
               "format": "uint8",
               "maximum": 3,
               "minimum": 0,
@@ -9544,6 +10881,49 @@
             "property"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A value of the firing.",
+          "properties": {
+            "of": {
+              "const": "fired",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/FiredName",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "of",
+            "property"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A sequence's state.",
+          "properties": {
+            "of": {
+              "const": "sequence",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/SequenceProperty",
+              "description": "What is read."
+            },
+            "sequence": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The sequence's name."
+            }
+          },
+          "required": [
+            "of",
+            "sequence",
+            "property"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -9552,17 +10932,12 @@
       "oneOf": [
         {
           "const": "undecodable",
-          "description": "The receiver could not decode the table and refused it whole: the\npage has no table in that view.",
+          "description": "The receiver could not assemble or decode the table and refused it\nwhole: the page has no table in that view.",
           "type": "string"
         },
         {
-          "const": "tick_overrun",
-          "description": "A tick passed 256 actions, and further firings in it were dropped.",
-          "type": "string"
-        },
-        {
-          "const": "sends_dropped",
-          "description": "Sends dropped by the receiver's send budget.",
+          "const": "reports_dropped",
+          "description": "Reports dropped by the receiver's budgets.",
           "type": "string"
         },
         {
@@ -9571,8 +10946,8 @@
           "type": "string"
         },
         {
-          "const": "actions_skipped",
-          "description": "Actions skipped for a missing target or sound.",
+          "const": "commands_skipped",
+          "description": "Commands that did nothing for a missing target or sound.",
           "type": "string"
         },
         {
@@ -9588,6 +10963,16 @@
         {
           "const": "animation_slowed",
           "description": "Animation slowed by its budget.",
+          "type": "string"
+        },
+        {
+          "const": "evaluation_late",
+          "description": "The page's evaluation took longer than its ticks' own time, so page\ntime slowed.",
+          "type": "string"
+        },
+        {
+          "const": "queue_full",
+          "description": "A command, a cue or a sound command dropped at a full queue or\nbudget.",
           "type": "string"
         }
       ]
@@ -9633,6 +11018,162 @@
       "required": [
         "page",
         "sub"
+      ],
+      "type": "object"
+    },
+    "SequenceAt": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "At a page tick: a tick passed means the next tick.",
+          "properties": {
+            "tick": {
+              "description": "The page tick.",
+              "format": "uint64",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "tick"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "At the timer's next expiry of a period.",
+          "properties": {
+            "beat": {
+              "$ref": "#/$defs/Beat",
+              "description": "The timer and the period."
+            }
+          },
+          "required": [
+            "beat"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "When a sequence that is started begins (RULE-103, DEC-6635 item 6):\n`{\"tick\":n}`, a page tick, or `{\"beat\":{…}}`, a timer's next expiry of\na period; the next tick when null."
+    },
+    "SequenceDeclaration": {
+      "additionalProperties": false,
+      "description": "A sequence (RULE-103): steps a receiver plays on its own clock.",
+      "properties": {
+        "length": {
+          "description": "A pass's length in ticks.",
+          "format": "uint64",
+          "maximum": 216000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name."
+        },
+        "repeat": {
+          "description": "How many passes it plays, or 0 until stopped.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "steps": {
+          "description": "Its steps, in ascending `tick`.",
+          "items": {
+            "$ref": "#/$defs/SequenceStep"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "length",
+        "repeat",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "SequenceProperty": {
+      "description": "What `sequence` reads (RULE-117).",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "1 while it runs, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "passes",
+          "description": "The passes completed since its start.",
+          "type": "string"
+        },
+        {
+          "const": "position",
+          "description": "Its position in ticks within the pass; 0 while stopped.",
+          "type": "string"
+        },
+        {
+          "const": "waiting",
+          "description": "1 while it waits for the tick it starts at, else 0.",
+          "type": "string"
+        }
+      ]
+    },
+    "SequenceState": {
+      "additionalProperties": false,
+      "description": "A sequence's state in `page_state`.",
+      "properties": {
+        "passes": {
+          "description": "The passes completed since its start.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "position": {
+          "description": "Its position within the pass; 0 while it is not running.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running": {
+          "description": "Whether it runs.",
+          "type": "boolean"
+        },
+        "waiting": {
+          "description": "Whether it waits for the tick it starts at (RULE-103).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "running",
+        "passes",
+        "position",
+        "waiting"
+      ],
+      "type": "object"
+    },
+    "SequenceStep": {
+      "additionalProperties": false,
+      "description": "One step of a sequence: a group run at a tick offset.",
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/RuleName",
+          "description": "The group's name."
+        },
+        "tick": {
+          "description": "The offset in ticks within a pass, below the length.",
+          "format": "uint64",
+          "maximum": 216000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tick",
+        "run"
       ],
       "type": "object"
     },
@@ -9757,7 +11298,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 14,
+              "const": 15,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -9934,6 +11475,16 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page on screen when it happened: the event's stamp, which is the\nconnection's selection, or for a release the page that held it\n(REQ-1557). Focus and raw text carry no stamp, and are for the\nselection as it stands."
             },
+            "row": {
+              "description": "The place of the firing row within the rule's rows, or null.",
+              "format": "uint8",
+              "maximum": 64,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "rule": {
               "$ref": "#/$defs/RuleName",
               "description": "The name of the rule of the page's table that sent it (RULE-37)."
@@ -9995,9 +11546,26 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page on screen."
             },
+            "row": {
+              "description": "The place of the firing row within the rule's rows, or null.",
+              "format": "uint8",
+              "maximum": 64,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "rule": {
-              "$ref": "#/$defs/RuleName",
-              "description": "The rule's name."
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The rule's name, or null when the run was not made by a rule (a\ncommand the server sent, or a sequence it started)."
             },
             "sub": {
               "$ref": "#/$defs/SubCode",
@@ -10019,7 +11587,6 @@
             "connection",
             "page",
             "sub",
-            "rule",
             "tick",
             "event"
           ],
@@ -10036,14 +11603,6 @@
               "minimum": 1,
               "type": "integer"
             },
-            "enabled": {
-              "description": "The names of the rules enabled, in rule order.",
-              "items": {
-                "$ref": "#/$defs/RuleName"
-              },
-              "maxItems": 64,
-              "type": "array"
-            },
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
@@ -10054,16 +11613,26 @@
               "minimum": 1,
               "type": "integer"
             },
+            "sequences": {
+              "additionalProperties": false,
+              "description": "Every sequence of the table, by name.",
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,31}$": {
+                  "$ref": "#/$defs/SequenceState"
+                }
+              },
+              "type": "object"
+            },
             "sub": {
               "$ref": "#/$defs/SubCode",
-              "description": "The sub-code on screen."
+              "description": "The sub-code."
             },
             "table": {
               "description": "Whether the page has a table in that view.",
               "type": "boolean"
             },
             "targets": {
-              "description": "Every control and object the table names, in the order first named.",
+              "description": "Every control and object the table names by a constant, in the\norder first named.",
               "items": {
                 "$ref": "#/$defs/TargetState"
               },
@@ -10071,19 +11640,16 @@
               "type": "array"
             },
             "tick": {
-              "description": "The page tick of the snapshot reported.",
+              "description": "The page tick the state was read at.",
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
             "timers": {
-              "additionalProperties": false,
-              "description": "Each timer's state, by its name.",
-              "patternProperties": {
-                "^[a-z][a-z0-9_]{0,31}$": {
-                  "$ref": "#/$defs/TimerState"
-                }
+              "additionalProperties": {
+                "$ref": "#/$defs/TimerState"
               },
+              "description": "The timers that run, by name.",
               "type": "object"
             },
             "type": {
@@ -10091,7 +11657,7 @@
               "type": "string"
             },
             "values": {
-              "description": "Every distinct value the table's conditions and sends read, in the\norder first read.",
+              "description": "Every distinct value the table reads, in the order first read.",
               "items": {
                 "$ref": "#/$defs/ValueReading"
               },
@@ -10099,15 +11665,14 @@
               "type": "array"
             },
             "variables": {
-              "additionalProperties": false,
-              "description": "Each variable's value, by its name.",
-              "patternProperties": {
-                "^[a-z][a-z0-9_]{0,31}$": {
-                  "format": "int32",
-                  "type": "integer"
-                }
+              "description": "The sixteen variables, `v0` first.",
+              "items": {
+                "format": "int32",
+                "type": "integer"
               },
-              "type": "object"
+              "maxItems": 16,
+              "minItems": 16,
+              "type": "array"
             }
           },
           "required": [
@@ -10120,7 +11685,7 @@
             "table",
             "variables",
             "timers",
-            "enabled",
+            "sequences",
             "targets",
             "values"
           ],
@@ -10149,7 +11714,7 @@
               "description": "The fault."
             },
             "generation": {
-              "description": "The generation of the table the receiver holds, as the server\nnumbers each table it sends that connection for the page.",
+              "description": "The generation of the table the receiver holds.",
               "format": "uint16",
               "maximum": 65535,
               "minimum": 0,
@@ -10158,6 +11723,10 @@
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code."
             },
             "type": {
               "const": "rules_fault",
@@ -10168,6 +11737,7 @@
             "type",
             "connection",
             "page",
+            "sub",
             "generation",
             "fault",
             "count"
@@ -10977,7 +12547,7 @@
         },
         {
           "const": "gain",
-          "description": "The channel's gain as last commanded, 0 to 100.",
+          "description": "The channel's gain as last commanded.",
           "type": "string"
         },
         {
@@ -11171,6 +12741,21 @@
       ],
       "type": "object"
     },
+    "StartStop": {
+      "description": "Start or stop.",
+      "oneOf": [
+        {
+          "const": "start",
+          "description": "Start, replacing a run in progress.",
+          "type": "string"
+        },
+        {
+          "const": "stop",
+          "description": "Stop.",
+          "type": "string"
+        }
+      ]
+    },
     "StateRefusal": {
       "description": "Why a state request or a `STATE_KEEP_OFFER` was not granted (VS-351\nitem 4).",
       "oneOf": [
@@ -11240,29 +12825,6 @@
       },
       "required": [
         "sub"
-      ],
-      "type": "object"
-    },
-    "SubpageRules": {
-      "additionalProperties": false,
-      "description": "The rules switched off while one sub-page is shown (RULE-17).",
-      "properties": {
-        "off": {
-          "description": "The names of the rules that are off while it is shown.",
-          "items": {
-            "$ref": "#/$defs/RuleName"
-          },
-          "maxItems": 64,
-          "type": "array"
-        },
-        "sub": {
-          "$ref": "#/$defs/SubCode",
-          "description": "The sub-page: never 3F7F, and named once in a table."
-        }
-      },
-      "required": [
-        "sub",
-        "off"
       ],
       "type": "object"
     },
@@ -11958,6 +13520,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -12013,6 +13605,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -13349,6 +14949,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -13404,6 +15034,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -15675,6 +17313,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -15730,6 +17398,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -16430,6 +18106,36 @@
             "bytes"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -16466,6 +18172,14 @@
             "bytes": {
               "$ref": "#/$defs/Base64",
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(RULE-109).",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -17467,6 +19181,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -17522,6 +19266,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -21239,6 +22991,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -21294,6 +23076,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -23931,6 +25721,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -24006,6 +25826,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -25743,6 +27571,36 @@
             "set"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A cue point (RULE-109).",
+          "properties": {
+            "event": {
+              "const": "cue",
+              "type": "string"
+            },
+            "number": {
+              "description": "The cue's number.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "time_us": {
+              "description": "Microseconds from the sound's start (SRV-8).",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "time_us",
+            "number"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -25798,6 +27656,14 @@
                 "array",
                 "null"
               ]
+            },
+            "cues": {
+              "description": "The file's Marker and Cue Point meta events to keep as cues\n(page-rules.md RULE-109): each meta event whose text is exactly an\nentry's `text` becomes that entry's cue at the event's time; the\nothers are dropped as before.",
+              "items": {
+                "$ref": "#/$defs/FileCue"
+              },
+              "maxItems": 128,
+              "type": "array"
             },
             "form": {
               "const": "midi_file",
@@ -26940,7 +28806,7 @@
       "oneOf": [
         {
           "const": "exists",
-          "description": "1 when it exists on the sub-page shown, else 0.",
+          "description": "1 when it exists on the page, else 0.",
           "type": "string"
         },
         {
@@ -26950,7 +28816,7 @@
         },
         {
           "const": "frame",
-          "description": "Its frame in force, 0 to 15.",
+          "description": "Its frame in force.",
           "type": "string"
         },
         {
@@ -26970,7 +28836,7 @@
         },
         {
           "const": "layer",
-          "description": "Its layer, 0 to 3.",
+          "description": "Its layer.",
           "type": "string"
         },
         {
@@ -26999,7 +28865,7 @@
           "type": "boolean"
         },
         "exists": {
-          "description": "Whether it exists on the sub-page shown.",
+          "description": "Whether it exists on the page.",
           "type": "boolean"
         },
         "frame": {
@@ -27195,27 +29061,22 @@
       ],
       "type": "object"
     },
-    "TimerDeclaration": {
-      "additionalProperties": false,
-      "description": "A timer's declaration (RULE-15).",
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/RuleName",
-          "description": "Its name; never `page`."
-        },
-        "running": {
-          "description": "Whether it runs from the page's opening.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "name",
-        "running"
+    "TimerName": {
+      "description": "One of the eight timers every page has (RULE-15), stopped when the page opens.",
+      "enum": [
+        "t0",
+        "t1",
+        "t2",
+        "t3",
+        "t4",
+        "t5",
+        "t6",
+        "t7"
       ],
-      "type": "object"
+      "type": "string"
     },
     "TimerProperty": {
-      "description": "What `timer` reads.",
+      "description": "What `timer` reads (RULE-25).",
       "oneOf": [
         {
           "const": "running",
@@ -27226,6 +29087,21 @@
           "const": "elapsed",
           "description": "The ticks since it started, 0 while it is stopped.",
           "type": "string"
+        },
+        {
+          "const": "phase",
+          "description": "Where it stands in a period of `period` ticks: the elapsed ticks\nless the greatest multiple of the period (DEC-6635 item 6).",
+          "type": "string"
+        }
+      ]
+    },
+    "TimerRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TimerName"
+        },
+        {
+          "const": "page"
         }
       ]
     },
@@ -27234,7 +29110,7 @@
       "description": "A timer's state in `page_state`.",
       "properties": {
         "elapsed": {
-          "description": "The ticks since it started; 0 while it is stopped.",
+          "description": "The ticks since it started.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -27249,6 +29125,22 @@
         "elapsed"
       ],
       "type": "object"
+    },
+    "Triggers": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuleTrigger"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/RuleTrigger"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "type": "array"
+        }
+      ],
+      "description": "One trigger, or a list of triggers, any of which fires the rule (RULE-107)."
     },
     "Triplet": {
       "additionalProperties": false,
@@ -27292,7 +29184,7 @@
           "description": "What was read, as the table names it."
         },
         "value": {
-          "description": "Its reading in the answering tick's snapshot.",
+          "description": "Its reading.",
           "format": "int32",
           "type": "integer"
         }
@@ -27303,43 +29195,157 @@
       ],
       "type": "object"
     },
-    "VariableDeclaration": {
-      "additionalProperties": false,
-      "description": "A page variable's declaration (RULE-14): `min ≤ initial ≤ max`.",
-      "properties": {
-        "initial": {
-          "description": "Its value when the page opens.",
-          "format": "int32",
-          "maximum": 2147483647,
-          "minimum": -2147483648,
-          "type": "integer"
-        },
-        "max": {
-          "description": "The greatest.",
-          "format": "int32",
-          "maximum": 2147483647,
-          "minimum": -2147483648,
-          "type": "integer"
-        },
-        "min": {
-          "description": "The least value it holds.",
-          "format": "int32",
-          "maximum": 2147483647,
-          "minimum": -2147483648,
-          "type": "integer"
-        },
-        "name": {
-          "$ref": "#/$defs/RuleName",
-          "description": "Its name."
-        }
-      },
-      "required": [
-        "name",
-        "min",
-        "max",
-        "initial"
+    "VariableName": {
+      "description": "One of the sixteen variables every page has (RULE-14): a signed 32-bit integer, zero when the page opens.",
+      "enum": [
+        "v0",
+        "v1",
+        "v2",
+        "v3",
+        "v4",
+        "v5",
+        "v6",
+        "v7",
+        "v8",
+        "v9",
+        "v10",
+        "v11",
+        "v12",
+        "v13",
+        "v14",
+        "v15"
       ],
-      "type": "object"
+      "type": "string"
+    },
+    "VariableOp": {
+      "description": "What a `variable` command does (RULE-99).",
+      "oneOf": [
+        {
+          "const": "set",
+          "description": "`v` becomes the value.",
+          "type": "string"
+        },
+        {
+          "const": "inc",
+          "description": "`v + 1`, saturating.",
+          "type": "string"
+        },
+        {
+          "const": "dec",
+          "description": "`v − 1`, saturating.",
+          "type": "string"
+        },
+        {
+          "const": "add",
+          "description": "`v` plus the value, saturating.",
+          "type": "string"
+        },
+        {
+          "const": "sub",
+          "description": "`v` minus the value, saturating.",
+          "type": "string"
+        },
+        {
+          "const": "toggle",
+          "description": "0 becomes 1, anything else 0.",
+          "type": "string"
+        },
+        {
+          "const": "min",
+          "description": "`v` held to at most the value.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "`v` held to at least the value.",
+          "type": "string"
+        },
+        {
+          "const": "wrap",
+          "description": "Above `high` becomes `low`, below `low` becomes `high`.",
+          "type": "string"
+        },
+        {
+          "const": "clear",
+          "description": "`v` becomes 0; with `\"all\"`, every variable does.",
+          "type": "string"
+        }
+      ]
+    },
+    "VariableOperand": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An amount (RULE-106): `plus` and one source, in a group only.",
+              "oneOf": [
+                {
+                  "required": [
+                    "variable"
+                  ]
+                },
+                {
+                  "required": [
+                    "row"
+                  ]
+                },
+                {
+                  "required": [
+                    "fired"
+                  ]
+                }
+              ],
+              "properties": {
+                "fired": {
+                  "$ref": "#/$defs/FiredName"
+                },
+                "plus": {
+                  "format": "int32",
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "row": {
+                  "const": "p"
+                },
+                "variable": {
+                  "$ref": "#/$defs/VariableName"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "$ref": "#/$defs/RuleValue"
+            }
+          },
+          "required": [
+            "read"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "VariableOrAll": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VariableName"
+        },
+        {
+          "const": "all"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27352,5 +29358,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 14"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 15"
 }

@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use neoteletext_audio::midi::{ChannelMessage, DATA_MAX, STATUS_BIT, data_bytes, status};
 
 use super::wire::Wire;
-use crate::protocol::{DroppedCounts, MidiChannel, Rule, TICK_US};
+use crate::protocol::{DroppedCounts, FileCue, MidiChannel, Rule, TICK_US};
 
 /// The most tracks a file may have (MIDI-119).
 pub(crate) const MOST_MIDI_FILE_TRACKS: usize = 1_024;
@@ -49,6 +49,11 @@ const META_TEMPO: u8 = 0x51;
 const TEMPO_BYTES: usize = 3;
 /// End of track, `FF 2F 00`.
 const META_END_OF_TRACK: u8 = 0x2F;
+/// The Marker meta event's type (Standard MIDI Files 1.0, "Meta-Events":
+/// `FF 06 len text`).
+const META_MARKER: u8 = 0x06;
+/// The Cue Point meta event's type (`FF 07 len text`).
+const META_CUE_POINT: u8 = 0x07;
 /// The division's bit that means SMPTE time.
 const DIVISION_SMPTE: u16 = 0x8000;
 /// The formats read (MIDI-113).
@@ -93,6 +98,14 @@ pub(crate) type FileFault = (Rule, String);
 
 fn malformed(detail: String) -> FileFault {
     (Rule::MidiFileMalformed, detail)
+}
+
+/// What reading a track takes from the program: its channel map, its cues
+/// and the family's test of a message.
+struct Reading<'a> {
+    map: Option<&'a [Option<MidiChannel>; 16]>,
+    cues: &'a [FileCue],
+    takes: &'a dyn Fn(&Wire) -> bool,
 }
 
 /// One event of a track before the tempo map places it.
@@ -166,7 +179,7 @@ fn be16(bytes: &[u8]) -> u16 {
 ///
 /// # Errors
 /// The first fault, with its rule of SRV-51.
-pub(crate) fn read(file: &[u8], map: Option<&[Option<MidiChannel>; 16]>, takes: &dyn Fn(&Wire) -> bool) -> Result<FileMusic, FileFault> {
+pub(crate) fn read(file: &[u8], map: Option<&[Option<MidiChannel>; 16]>, cues: &[FileCue], takes: &dyn Fn(&Wire) -> bool) -> Result<FileMusic, FileFault> {
     if file.len() > crate::protocol::MOST_MIDI_FILE_BYTES {
         return Err((Rule::MidiFileTooLarge, format!("MIDI-119: {} bytes, at most {}", file.len(), crate::protocol::MOST_MIDI_FILE_BYTES)));
     }
@@ -212,7 +225,8 @@ pub(crate) fn read(file: &[u8], map: Option<&[Option<MidiChannel>; 16]>, takes: 
             if found >= tracks {
                 return Err(malformed(format!("MIDI-113: more MTrk chunks than the header's {tracks}")));
             }
-            let end = track(Cursor { bytes: body, at: 0, base: start }, found, map, takes, &mut raws, &mut dropped, &mut counted)?;
+            let reading = Reading { map, cues, takes };
+            let end = track(Cursor { bytes: body, at: 0, base: start }, found, &reading, &mut raws, &mut dropped, &mut counted)?;
             end_file_tick = end_file_tick.max(end);
             found = found.saturating_add(1);
         }
@@ -228,12 +242,10 @@ pub(crate) fn read(file: &[u8], map: Option<&[Option<MidiChannel>; 16]>, takes: 
 
 /// Reads one track's events.
 #[allow(clippy::too_many_lines, reason = "one arm for each kind of a track's event, as Standard MIDI Files 1.0 lists them")]
-#[allow(clippy::too_many_arguments, reason = "the reader's state, passed to the one function that reads a track")]
 fn track(
     mut cursor: Cursor<'_>,
     number: usize,
-    map: Option<&[Option<MidiChannel>; 16]>,
-    takes: &dyn Fn(&Wire) -> bool,
+    reading: &Reading<'_>,
     raws: &mut Vec<Raw>,
     dropped: &mut DroppedCounts,
     counted: &mut usize,
@@ -272,6 +284,12 @@ fn track(
                         push(raws, RawKind::Tempo(tempo.min(MOST_TEMPO_US)));
                     }
                     META_END_OF_TRACK => end = end.max(tick),
+                    // RULE-109: a Marker or a Cue Point whose text a `cues`
+                    // entry names is that cue; the rest are dropped.
+                    META_MARKER | META_CUE_POINT => match reading.cues.iter().find(|cue| cue.text.as_bytes() == data) {
+                        Some(cue) => push(raws, RawKind::Message(Wire::Cue(cue.number.get()))),
+                        None => dropped.meta_events = dropped.meta_events.saturating_add(1),
+                    },
                     _ => dropped.meta_events = dropped.meta_events.saturating_add(1),
                 }
             }
@@ -345,7 +363,7 @@ fn track(
                 }
                 let [data1, data2] = data;
                 let mut message = ChannelMessage { status: status_byte, data1, data2 };
-                if let Some(map) = map {
+                if let Some(map) = reading.map {
                     let Some(channel) = map.get(usize::from(message.channel())).copied().flatten() else {
                         dropped.unmapped_channel = dropped.unmapped_channel.saturating_add(1);
                         index = index.saturating_add(1);
@@ -354,7 +372,7 @@ fn track(
                     message = ChannelMessage::new(message.kind(), channel.get().saturating_sub(1), data1, data2);
                 }
                 let wire = Wire::Channel(message);
-                if super::wire::never_carried(&wire).is_ok() && takes(&wire) {
+                if super::wire::never_carried(&wire).is_ok() && (reading.takes)(&wire) {
                     push(raws, RawKind::Message(wire));
                 } else {
                     dropped.not_taken = dropped.not_taken.saturating_add(1);

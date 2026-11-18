@@ -311,7 +311,7 @@ macro_rules! note_sound {
             }
             crate::protocol::$music::MidiFile(file) => {
                 let (timed, end, dropped) =
-                    synth::place_file($synth, &crate::protocol::check::bytes_of(&file.bytes), file.channel_map.as_ref(), "music.bytes")?;
+                    synth::place_file($synth, &crate::protocol::check::bytes_of(&file.bytes), file.channel_map.as_ref(), &file.cues, "music.bytes")?;
                 (timed, Some(end), dropped)
             }
         };
@@ -381,7 +381,7 @@ impl Sounds {
                         (timed, None)
                     }
                     Synth6581Music::MidiFile(file) => {
-                        let (timed, end, _) = synth::place_file(synth, &crate::protocol::check::bytes_of(&file.bytes), None, "music.bytes")?;
+                        let (timed, end, _) = synth::place_file(synth, &crate::protocol::check::bytes_of(&file.bytes), None, &file.cues, "music.bytes")?;
                         (timed, Some(end))
                     }
                 };

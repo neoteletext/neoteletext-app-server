@@ -167,6 +167,15 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_connections(&root.field("connections"), &timeline.connections).and_then(|()| check_timeline(&root, timeline).map(|_| ()))
         }
         ProgramMessage::TimelineStop(stop) => check_connections(&root.field("connections"), &stop.connections),
+        ProgramMessage::LocalMidi(message) => check_command(&root, &super::CommandMessage::LocalMidi(message.clone())),
+        ProgramMessage::Variable(message) => check_command(&root, &super::CommandMessage::Variable(message.clone())),
+        ProgramMessage::Timer(message) => check_command(&root, &super::CommandMessage::Timer(message.clone())),
+        ProgramMessage::Report(message) => check_command(&root, &super::CommandMessage::Report(message.clone())),
+        ProgramMessage::Run(message) => check_command(&root, &super::CommandMessage::Run(message.clone())),
+        ProgramMessage::Sequence(message) => check_command(&root, &super::CommandMessage::Sequence(message.clone())),
+        ProgramMessage::ObjectPage(message) => check_connections(&root.field("connections"), &message.connections)
+            .and_then(|()| check_shown_subpage(&root, message.sub))
+            .and_then(|()| check_page(&root.field("object"), &message.object)),
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }
@@ -819,11 +828,24 @@ fn check_log(root: &Path<'_>, log: &Log) -> Checked {
     check_text(&root.field("text"), &log.text, 1, super::OPERATOR_LOG_CHARACTERS)
 }
 
-/// `rules`: who it is for, and its table as the engine holds it, encoded
-/// and checked with the engine's crate (page-rules.md RULE-39, RULE-59).
+/// `rules`: who it is for, a page that can be shown, and its table as the
+/// engine holds it, encoded and checked with the engine's crate
+/// (page-rules.md RULE-39, RULE-59).
 fn check_rules(root: &Path<'_>, message: &super::RulesMessage) -> Result<Option<crate::rules::Compiled>, Fault> {
     check_connections(&root.field("connections"), &message.connections)?;
-    message.table.0.as_deref().map(|table| rules::compile(&root.field("table"), table)).transpose()
+    check_shown_subpage(root, message.sub)?;
+    message.table.0.as_deref().map(|table| rules::compile(&root.field("table"), table, (message.page.0, message.sub.0))).transpose()
+}
+
+/// A command sent directly (RULE-114): who it is for, a page that can be
+/// shown, and its record, which a command sent directly encodes with
+/// constants alone (`invalid_command`). The names it gives are checked
+/// against each connection's table when it is sent.
+fn check_command(root: &Path<'_>, message: &super::CommandMessage) -> Checked {
+    check_connections(&root.field("connections"), message.connections())?;
+    let (_, sub) = message.page();
+    check_shown_subpage(root, super::SubCode(sub))?;
+    rules::check_direct(root, message)
 }
 
 /// The table of a `rules` message, ready to send, or none for null: what

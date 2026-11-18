@@ -67,8 +67,7 @@ pub struct FrameMessage {
 }
 
 /// One operation on a control's or an object's animation state (ANIM-6),
-/// by `action`: the shapes of the rule table's actions of the same names,
-/// and `reset`.
+/// by `action`.
 #[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnimationOp {
@@ -104,10 +103,13 @@ tagged_choice!(AnimationOp, "action", {
     "reset" => Reset,
 });
 
-/// `animate`: 1 to 64 operations on the animation state of a sub-page's
-/// controls and objects, applied together (ANIM-6). The server keeps what
-/// they amount to for each connection, and sends it to one that selects
-/// the page later.
+/// `animate`: 1 to 64 operations on the animation state of one page's
+/// controls and objects, applied together (ANIM-6), for the connections
+/// named that have the page selected; the server keeps nothing of them for
+/// a later viewer (ANIM-21). The same message without `connections`,
+/// `page` and `sub` is a command of a rule table's group (page-rules.md
+/// RULE-35), where its fields may be amounts; sent directly they are
+/// constants.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Animate {
@@ -115,7 +117,7 @@ pub struct Animate {
     pub connections: Connections,
     /// The page.
     pub page: PageNumber,
-    /// The sub-page, or 3F7F for whichever sub-page of the page is shown.
+    /// The sub-page: never 3F7F, which names no page (DEC-6599).
     pub sub: SubCode,
     /// The operations, applied in order.
     #[schemars(length(min = 1, max = MOST_OPERATIONS))]
@@ -291,10 +293,12 @@ pub enum SheetKindName {
     Naplps,
 }
 
-/// `sprite_sheet`: the next bytes of a page's sprite sheet (ANIM-17), one
-/// stream of at most 65,536 bytes for a page and kind, which a receiver
-/// feeds to the renderer of each of the page's sub-pages before that
-/// sub-page's own stream. A sheet draws nothing itself.
+/// `sprite_sheet`: the next bytes of one page's sprite sheet (ANIM-17,
+/// DEC-6599: the page number and sub-code), one stream of at most 65,536
+/// bytes for a page and kind, which a receiver feeds to the page's
+/// renderer before the page's own stream. It reaches the connections named
+/// that have the page selected; a program sends it at each selection, as
+/// the server keeps none. A sheet draws nothing itself.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpriteSheet {
@@ -302,6 +306,9 @@ pub struct SpriteSheet {
     pub connections: Connections,
     /// The page.
     pub page: PageNumber,
+    /// The sub-page: a sheet belongs to one page and sub-code (DEC-6599),
+    /// never 3F7F.
+    pub sub: SubCode,
     /// Which renderer it is for.
     pub kind: SheetKindName,
     /// The bytes, exact base64.
@@ -333,7 +340,7 @@ pub struct TimelineMessage {
     pub connections: Connections,
     /// The page.
     pub page: PageNumber,
-    /// The sub-page, or 3F7F for whichever sub-page of the page is shown.
+    /// The sub-page: never 3F7F, which names no page (DEC-6599).
     pub sub: SubCode,
     /// Its number, by which `timeline_stop` names it.
     pub id: U16In<1, 65_535>,
@@ -355,6 +362,8 @@ pub struct TimelineStop {
     pub connections: Connections,
     /// The page.
     pub page: PageNumber,
+    /// The sub-page, never 3F7F.
+    pub sub: SubCode,
     /// The timeline's number.
     pub id: U16In<1, 65_535>,
 }

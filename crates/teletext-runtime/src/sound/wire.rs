@@ -22,6 +22,9 @@ pub(crate) enum Wire {
     /// A message written from its part's tracked state, resolved as its
     /// block is written (SRV-33, SRV-68).
     Deferred(Deferred),
+    /// A cue point, by its number (page-rules.md RULE-109): written as the
+    /// Cue Point meta event, never as a message.
+    Cue(u8),
 }
 
 /// What a deferred message is as a message before it is resolved: no
@@ -35,7 +38,7 @@ impl Wire {
         match self {
             Self::Channel(message) => Message::Channel(*message),
             Self::Sysex(bytes) => Message::SystemExclusive(bytes),
-            Self::Deferred(_) => Message::SystemExclusive(UNRESOLVED),
+            Self::Deferred(_) | Self::Cue(_) => Message::SystemExclusive(UNRESOLVED),
         }
     }
 }
@@ -133,6 +136,7 @@ pub(crate) fn expand(event: SharedEvent<'_>, out: &mut Vec<Wire>) -> Result<(), 
         }
         SharedEvent::SystemExclusive(event) => out.push(Wire::Sysex(system_exclusive(&crate::protocol::check::bytes_of(&event.bytes))?)),
         SharedEvent::Raw(event) => raw(&crate::protocol::check::bytes_of(&event.bytes), out)?,
+        SharedEvent::Cue(event) => out.push(Wire::Cue(event.number.get())),
     }
     Ok(())
 }

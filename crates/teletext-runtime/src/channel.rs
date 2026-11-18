@@ -440,11 +440,12 @@ impl Connection {
         if restart {
             self.regis_generation = self.regis_generation.wrapping_add(1);
             let generation = self.regis_generation;
-            // The page's sheet is fed to every renderer of its sub-pages
-            // before the sub-page's own stream (ANIM-17): it was read when
-            // it was given, so what it reports is not this message's.
+            // The page's sheet is fed to its renderer before the page's own
+            // stream (ANIM-17; a sheet is one page's, DEC-6599): it was
+            // read when it was given, so what it reports is not this
+            // message's.
             let mut validator = regis::Validator::new();
-            let _ = validator.feed_regis(&self.animation.regis_sheet(page));
+            let _ = validator.feed_regis(self.animation.regis_sheet(page, sub));
             self.regis = Some(RegisStream { page, sub, generation, offset: 0, validator, pending: false });
         }
         let Some(stream) = self.regis.as_mut().filter(|stream| stream.page == page && stream.sub == sub) else { return Ok(()) };
@@ -536,9 +537,11 @@ pub struct Channel {
     stale_reported_at: Option<u64>,
     /// What the channel's pages show the web, for a short time (REQ-1728).
     descriptions: Descriptions,
-    /// The channel's default table, for a page a connection was given no
-    /// table of (RULE-53); none when the configuration says `none`.
-    default_table: Option<Arc<crate::rules::Compiled>>,
+    /// Whether the channel's pages have the default table when their
+    /// program gives them none (RULE-53), and with it the `wheel` rule:
+    /// none when the configuration says `none`. The table is made for each
+    /// page as it is sent, since its commands name their page.
+    default_wheel: Option<bool>,
     /// The timelines the server is playing (ANIM-21).
     timelines: animation::Timelines,
 }
@@ -561,13 +564,13 @@ impl Channel {
                 ),
             })
             .collect();
-        let default_table = match config.default_rules {
-            DefaultRules::SendAll => crate::rules::Compiled::send_all(config.wheel).map(Arc::new),
+        let default_wheel = match config.default_rules {
+            DefaultRules::SendAll => Some(config.wheel),
             DefaultRules::None => None,
         };
         Self {
             viewers,
-            default_table,
+            default_wheel,
             timelines: animation::Timelines::default(),
             config,
             program: false,
@@ -761,6 +764,10 @@ impl Channel {
         // A program that ends with a frame open: the server ends it
         // (ANIM-21).
         self.end_open_frames();
+        // RULE-111 case 3: every timeline stops, and each connection's page
+        // drops the program's table; nothing is held for its return.
+        self.timelines.clear();
+        self.tables_dropped();
         self.program = false;
         self.answered = false;
         self.readiness_page = None;
@@ -1236,6 +1243,7 @@ impl Channel {
             state.shown = None;
             state.rules.left();
             state.animation.left();
+            self.timelines.left(connection, None);
             self.unanswered_queries(connection, None);
             let Some(state) = self.connections.get_mut(&connection) else { return };
             state.ending = Ending::Answered;
@@ -1292,9 +1300,19 @@ impl Channel {
         // The page's table goes before anything of the page (RULE-40), and
         // after it what the connection is to hold of the page's animation
         // (ANIM-21).
-        self.unanswered_queries(connection, Some(selection.page.0));
-        self.place_rules(connection, selection.page.0);
-        self.place_animation(connection, selection.page.0, selection.sub.0);
+        // A page left is closed (RULE-111): what was sent of it is no
+        // longer in place, and its timelines end (ANIM-21). Another
+        // sub-code of the same number is another page (DEC-6599).
+        let stays = (selection.page.0, selection.sub.0);
+        if before.is_none_or(|before| (before.page.0, before.sub.0) != stays) {
+            if let Some(state) = self.connections.get_mut(&connection) {
+                state.rules.left();
+                state.animation.left();
+            }
+            self.timelines.left(connection, Some(stays));
+        }
+        self.unanswered_queries(connection, Some(stays));
+        self.place_rules(connection, selection.page.0, selection.sub.0);
         let Some(state) = self.connections.get_mut(&connection) else { return };
         if announced {
             state.request = state.request.saturating_add(1);
@@ -1497,9 +1515,7 @@ impl Channel {
                     self.send(connection, Arc::clone(&bytes));
                 }
             }
-            ProgramMessage::Rules(message) => self.rules(&message)?,
-            ProgramMessage::QueryState(query) => self.query_state(query, now)?,
-            other => self.act_on_animation(other, now)?,
+            other => self.act_on_rules(other, now)?,
         }
         Ok(())
     }
@@ -1665,7 +1681,6 @@ impl Channel {
     fn send_page(&mut self, targets: &[ConnectionId], named: bool, request: Option<RequestNumber>, page: &protocol::Page) {
         let encoded = crate::page::encode(page);
         let (number, sub) = (page.page.0, page.sub.0);
-        let default_table = self.default_table.clone();
         let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
         let mut faults: Vec<String> = Vec::new();
         for &connection in targets {
@@ -1693,12 +1708,13 @@ impl Channel {
                 _ => Change::Whole,
             };
             state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor, links: page.link_extension.clone() });
-            // The page's table before the page (RULE-40), for a selection
-            // that came to be this page by the program's answer.
-            let mut bytes = state.rules.place(number, default_table.as_ref(), &mut state.record_id);
+            // The page's default table or empty record before the page
+            // (RULE-40), for a selection whose sub-code the program's answer
+            // made known.
+            let mut bytes = self.placed_rules(connection, number, sub);
+            let Some(state) = self.connections.get_mut(&connection) else { continue };
             // And what it is to hold of the sub-page's animation, now that
             // its sub-code is known (ANIM-21).
-            bytes.extend(state.place_animation(number, sub));
             match change {
                 Change::Nothing if bytes.is_empty() => continue,
                 Change::Nothing => {

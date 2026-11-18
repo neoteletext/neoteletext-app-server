@@ -40,6 +40,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 
+use teletext_runtime::channel::DefaultRules;
 use teletext_runtime::frame;
 use teletext_runtime::json::{self, Value, Writer};
 use teletext_runtime::landing::{self, Route, route};
@@ -52,7 +53,7 @@ use worker::{
 
 /// The Durable Object binding, in `wrangler.toml`.
 const CHANNEL_BINDING: &str = "CHANNEL";
-/// The channels served, a JSON array of `{"folder","name"}`, in `wrangler.toml`.
+/// The channels served, a JSON array of `{"folder","name","wheel","default_rules"}`, in `wrangler.toml`.
 const CHANNELS_VARIABLE: &str = "CHANNELS";
 /// The address viewers reach the Worker at, such as `https://cf.neoteletext.com`.
 const ORIGIN_VARIABLE: &str = "ORIGIN";
@@ -113,19 +114,42 @@ fn send_binary(socket: &WebSocket, bytes: &[u8]) {
     }
 }
 
-/// The channels the Worker serves: folder and name.
-fn channels(env: &Env) -> Result<Vec<(String, String)>> {
+/// One channel the Worker serves, as `CHANNELS` lists it: its folder, its
+/// name, whether it uses the mouse wheel over its pages, and the table its
+/// pages have when its program gives them none (page-rules.md RULE-53),
+/// read as the native host reads them from `channels.json`.
+struct Served {
+    folder: String,
+    name: String,
+    wheel: bool,
+    default_rules: DefaultRules,
+}
+
+/// The channels the Worker serves. An entry is
+/// `{"folder":…,"name":…,"wheel":true|false,"default_rules":"none"|"send_all"}`;
+/// `name` is the folder when left out, `wheel` false and `default_rules`
+/// `"none"`. A value of `default_rules` or `wheel` of another form is a
+/// fault of the configuration, refused as the native host refuses it.
+fn channels(env: &Env) -> Result<Vec<Served>> {
     let text = env.var(CHANNELS_VARIABLE)?.to_string();
     let value = json::parse(text.as_bytes()).map_err(|fault| failure(format!("{CHANNELS_VARIABLE} is not JSON: {fault:?}")))?;
     let items = value.items().ok_or_else(|| failure(format!("{CHANNELS_VARIABLE} must be an array")))?;
-    Ok(items
-        .iter()
-        .filter_map(|item| {
-            let folder = item.get("folder").and_then(Value::text)?;
-            let name = item.get("name").and_then(Value::text).unwrap_or(folder);
-            Some((folder.to_owned(), name.to_owned()))
-        })
-        .collect())
+    let mut served = Vec::new();
+    for item in items {
+        let Some(folder) = item.get("folder").and_then(Value::text) else { continue };
+        let name = item.get("name").and_then(Value::text).unwrap_or(folder);
+        let wheel = match item.get("wheel") {
+            None => false,
+            Some(value) => value.boolean().ok_or_else(|| failure(format!("{CHANNELS_VARIABLE}: {folder}'s wheel is true or false")))?,
+        };
+        let default_rules = match item.get("default_rules").map(Value::text) {
+            None | Some(Some("none")) => DefaultRules::None,
+            Some(Some("send_all")) => DefaultRules::SendAll,
+            Some(_) => return Err(failure(format!("{CHANNELS_VARIABLE}: {folder}'s default_rules is \"none\" or \"send_all\""))),
+        };
+        served.push(Served { folder: folder.to_owned(), name: name.to_owned(), wheel, default_rules });
+    }
+    Ok(served)
 }
 
 /// The Worker: routes each channel's requests to its object, and refuses a
@@ -139,7 +163,7 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
     // at `/`, no channel's files.
     let reads = request.method() == Method::Get || request.method() == Method::Head;
     let answered = matches!(asked, Route::Program | Route::Descriptor | Route::Push) || (reads && asked != Route::Missing);
-    if !channels.iter().any(|(served, _)| served == folder) || !answered {
+    if !channels.iter().any(|served| served.folder == folder) || !answered {
         return Response::error("Not Found", 404);
     }
     if asked == Route::ToFolder {
@@ -306,7 +330,9 @@ impl ChannelObject {
             Self::set_meta(&sql, HANDLE_SECRET, bytes.to_vec())?;
             HandleSecret::new(bytes)
         };
-        let name = channels(&self.env)?.into_iter().find(|(served, _)| *served == folder).map_or_else(|| folder.clone(), |(_, name)| name);
+        let served = channels(&self.env)?.into_iter().find(|served| served.folder == folder);
+        let (name, wheel, default_rules) =
+            served.map_or_else(|| (folder.clone(), false, DefaultRules::None), |served| (served.name, served.wheel, served.default_rules));
         let origin = self.env.var(ORIGIN_VARIABLE)?.to_string();
         let started_ms = epoch_ms();
         let config = ChannelConfig {
@@ -315,8 +341,8 @@ impl ChannelObject {
             initial_page: InitialPage::new(INITIAL_PAGE).map_err(failure)?,
             epoch_at_start_ms: started_ms,
             other_addresses: Vec::new(),
-            wheel: false,
-            default_rules: teletext_runtime::channel::DefaultRules::None,
+            wheel,
+            default_rules,
         };
         let channel = Channel::new(config, &secret, Box::new(WebCrypto));
         let mut live = Live {

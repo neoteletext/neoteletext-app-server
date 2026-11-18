@@ -2,9 +2,10 @@
 //! `docs/animation.md` ANIM-2, ANIM-6, ANIM-7, ANIM-11, ANIM-17, ANIM-21;
 //! REQ-6533): the protocol's messages turned into the engine's records,
 //! each written by the engine's encoder, which checks what it writes with
-//! its reader; a sprite sheet read by the renderer a receiver has; and the
-//! animation state that the operations sent so far amount to, which a
-//! viewer who comes later is sent.
+//! its reader; and a sprite sheet read by the renderer a receiver has. The
+//! server keeps no animation state for a later viewer (ANIM-21,
+//! page-rules.md RULE-111): a page's program sends it afresh at each
+//! selection.
 
 use alloc::format;
 use alloc::string::String;
@@ -12,9 +13,8 @@ use alloc::vec::Vec;
 
 use neoteletext_core::packet::Packet;
 use neoteletext_core::types::SubCode as EngineSubCode;
-use neoteletext_rules::animate::{AnimationState, AnimationStore, Applied, Operation, OperationKind};
-use neoteletext_rules::limits::{KEEP_LAYER, MAX_ANIMATE_OPERATIONS, TICK_SPAN_MICROSECONDS, TICKS_PER_TICK_SPAN};
-use neoteletext_rules::table::Target;
+use neoteletext_rules::animate::Operation;
+use neoteletext_rules::limits::{MAX_ANIMATE_OPERATIONS, TICK_SPAN_MICROSECONDS, TICKS_PER_TICK_SPAN};
 use neoteletext_web::records::frame::{FrameMark, FrameRecord};
 use neoteletext_web::records::naplps_objects::{NaplpsObject as EngineObject, ObjectKind};
 use neoteletext_web::records::sheet::{MAX_DATA as SHEET_DATA, SheetKind, SheetRecord};
@@ -31,17 +31,6 @@ const SERVICE: u8 = 0;
 /// Why the engine's encoder, or a renderer, refused what the protocol's
 /// checks passed.
 pub(crate) type Refused = String;
-
-/// The most objects and controls of a sub-page whose animation state the
-/// server keeps for a viewer who comes later (ANIM-21): what a receiver
-/// keeps (ANIM-6, `MAX_ANIMATED_OBJECTS`).
-pub const MAX_ANIMATED_OBJECTS: usize = 64;
-/// The most objects of a page that cycle at once (ANIM-14).
-pub const MAX_CYCLING_OBJECTS: usize = 16;
-// What the server keeps is what one renderer keeps at most.
-const _: () = assert!(MAX_ANIMATED_OBJECTS == regis::limits::MAX_ANIMATED_DRAWINGS);
-const _: () = assert!(MAX_CYCLING_OBJECTS == regis::limits::MAX_CYCLING_OBJECTS);
-const _: () = assert!(MAX_ANIMATED_OBJECTS == naplps::limits::MAX_ANIMATED_OBJECTS && MAX_CYCLING_OBJECTS == naplps::limits::MAX_CYCLING_OBJECTS);
 
 /// The colour map a receiver gives a NAPLPS page: 2 to the power of this
 /// many entries, sixteen, as its ReGIS pictures have.
@@ -79,14 +68,13 @@ pub(crate) fn frame_record(page: u16, sub: u16, mark: FrameMarkName, identifier:
     record(record_id, |id, out| frame::encode(frame, SERVICE, id, out))
 }
 
-/// ANIMATE records (ANIM-6) of `operations` for a sub-page, or with the
-/// sub-code 3F7F for whichever sub-page of the page is shown: one record
-/// for each 64 operations.
+/// ANIMATE records (ANIM-6) of `operations` for one page and sub-code
+/// (DEC-6599: never 3F7F, which the engine's encoder refuses): one record
+/// for each `MAX_ANIMATE_OPERATIONS` operations.
 pub(crate) fn animate_records(page: u16, sub: u16, operations: &[Operation], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
-    let subcode = (sub != neoteletext_core::limits::SUBCODE_ANY).then(|| EngineSubCode::new(sub));
     let mut bytes = Vec::new();
     for chunk in operations.chunks(MAX_ANIMATE_OPERATIONS) {
-        bytes.extend(record(record_id, |id, out| animate::encode(address(page), subcode, chunk, SERVICE, id, out))?);
+        bytes.extend(record(record_id, |id, out| animate::encode(address(page), EngineSubCode::new(sub), chunk, SERVICE, id, out))?);
     }
     Ok(bytes)
 }
@@ -165,10 +153,18 @@ pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, given:
     record(record_id, |id, out| naplps_objects::encode((address(page), EngineSubCode::new(sub), generation), &list, SERVICE, id, out))
 }
 
-/// SHEET records (ANIM-17) of `data`, bytes of the page's sheet of `kind`
-/// at `generation` from `offset`: as many as they need. With no bytes, one
-/// record of none, which starts the generation.
-pub(crate) fn sheet_records(page: u16, kind: SheetKindName, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+/// SHEET records (ANIM-17) of `data`, bytes of one page's (number and
+/// sub-code, DEC-6599) sheet of `kind` at `generation` from `offset`: as
+/// many as they need. With no bytes, one record of none, which starts the
+/// generation.
+pub(crate) fn sheet_records(
+    (page, sub): (u16, u16),
+    kind: SheetKindName,
+    generation: u16,
+    offset: u32,
+    data: &[u8],
+    record_id: &mut u8,
+) -> Result<Vec<u8>, Refused> {
     let kind = match kind {
         SheetKindName::Regis => SheetKind::Regis,
         SheetKindName::Naplps => SheetKind::Naplps,
@@ -178,7 +174,7 @@ pub(crate) fn sheet_records(page: u16, kind: SheetKindName, generation: u16, off
     let mut bytes = Vec::new();
     let mut at = offset;
     for chunk in chunks {
-        let sheet = SheetRecord { page: address(page), kind, generation, offset: at, data: chunk };
+        let sheet = SheetRecord { page: address(page), subcode: EngineSubCode::new(sub), kind, generation, offset: at, data: chunk };
         bytes.extend(record(record_id, |id, out| sheet::encode(sheet, SERVICE, id, out))?);
         at = at.saturating_add(u32::try_from(chunk.len()).unwrap_or(u32::MAX));
     }
@@ -200,6 +196,16 @@ pub(crate) fn read_sheet(kind: SheetKindName, sheet: &[u8]) -> Result<(), Refuse
                     return Err(format!("a commit fails with code {} ({error:?}), drawing {drawing}", error.code()));
                 }
             }
+            // ANIM-17: a sheet defines hidden masters and draws nothing
+            // itself, neither a drawing left visible nor anything outside
+            // numbered drawings; the validator is the receiver's own
+            // renderer, which says both.
+            if let Some(drawing) = validator.visible_drawing() {
+                return Err(format!("drawing {drawing} is left visible: a sheet's drawings are hidden masters, and the sheet draws nothing"));
+            }
+            if validator.base_work() > 0 {
+                return Err(String::from("it draws on the picture outside numbered drawings: a sheet defines hidden masters and draws nothing"));
+            }
             Ok(())
         }
         SheetKindName::Naplps => {
@@ -217,88 +223,6 @@ pub(crate) fn read_sheet(kind: SheetKindName, sheet: &[u8]) -> Result<(), Refuse
             }
             Ok(())
         }
-    }
-}
-
-/// The animation state of a sub-page's controls and objects that the
-/// operations sent so far amount to (ANIM-21), folded with the engine's
-/// `neoteletext-rules` as a receiver folds them.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Folded {
-    states: AnimationStore<MAX_ANIMATED_OBJECTS>,
-    /// The targets whose position is the sum of relative moves alone: the
-    /// server does not know where an object of its own is, so what is
-    /// restored for these is the move by that sum.
-    relative: Vec<Target>,
-}
-
-impl Folded {
-    /// Folds `operations` in. Whether each found room: one for a 65th
-    /// object, or a 17th cycle, is not kept, as a receiver does not keep
-    /// it.
-    pub(crate) fn apply(&mut self, operations: &[Operation]) -> bool {
-        let mut kept = true;
-        for operation in operations {
-            match operation.kind {
-                OperationKind::Move { relative: true, .. } if self.states.get(operation.target).is_none_or(|state| state.position.is_none()) => {
-                    self.relative.push(operation.target);
-                }
-                OperationKind::Move { relative: false, .. } | OperationKind::Reset => self.relative.retain(|target| *target != operation.target),
-                _ => {}
-            }
-            // Relative moves add to a position of (0, 0), so that what is
-            // held of them is their sum; a cycle is held as it was asked
-            // for, and starts again at the viewer's tick.
-            kept &= self.states.apply(operation, (0, 0), 0, MAX_CYCLING_OBJECTS) == Applied::Done;
-        }
-        self.relative.retain(|target| self.states.get(*target).is_some_and(|state| state.position.is_some()));
-        kept
-    }
-
-    /// Forgets the state of every object, as a record that replaces a
-    /// sub-page's sprites or objects, and a new generation of its stream,
-    /// make a receiver forget it (ANIM-6); controls keep theirs.
-    pub(crate) fn forget_objects(&mut self) {
-        let objects: Vec<Target> =
-            self.states.entries().iter().map(|(target, _)| *target).filter(|target| target.kind == neoteletext_rules::table::TargetKind::Object).collect();
-        for target in objects {
-            let _ = self.states.apply(&Operation { target, kind: OperationKind::Reset }, (0, 0), 0, MAX_CYCLING_OBJECTS);
-        }
-        self.relative.retain(|target| self.states.get(*target).is_some());
-    }
-
-    /// The operations that give a receiver with no state this one.
-    pub(crate) fn operations(&self) -> Vec<Operation> {
-        let mut operations = Vec::new();
-        for (target, state) in self.states.entries() {
-            let AnimationState { shown, position, layer, order, frame, cycle, look } = *state;
-            let mut push = |kind: OperationKind| operations.push(Operation { target: *target, kind });
-            match shown {
-                Some(true) => push(OperationKind::Show),
-                Some(false) => push(OperationKind::Hide),
-                None => {}
-            }
-            if look != 0 {
-                push(OperationKind::Look(look));
-            }
-            if let Some((x, y)) = position {
-                push(OperationKind::Move { relative: self.relative.contains(target), x, y });
-            }
-            if let Some(order) = order {
-                push(OperationKind::Order { layer: layer.unwrap_or(KEEP_LAYER), order });
-            }
-            match cycle {
-                Some(cycle) => push(OperationKind::Cycle { first: cycle.first, last: cycle.last, period: cycle.period, once: cycle.once }),
-                None if frame != 0 => push(OperationKind::Frame(frame)),
-                None => {}
-            }
-        }
-        operations
-    }
-
-    /// Whether nothing is held.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.states.entries().is_empty()
     }
 }
 
@@ -337,6 +261,11 @@ mod tests {
         assert!(read_sheet(SheetKindName::Naplps, &RECTANGLE).is_err());
         assert_eq!(read_sheet(SheetKindName::Regis, b"D(S1(V0),C)"), Ok(()));
         assert!(read_sheet(SheetKindName::Regis, b"D(S1(H2),S2(A1),C)").is_err());
+        // TODO-6570: a drawing left visible, and drawing outside any
+        // numbered drawing, are refused with the renderer's own validator.
+        assert_eq!(read_sheet(SheetKindName::Regis, b"D(B41)P[10,10]V[20,20]D(E)D(S41(V0),C)"), Ok(()));
+        assert!(read_sheet(SheetKindName::Regis, b"D(B41)P[10,10]V[20,20]D(E)D(C)").is_err());
+        assert!(read_sheet(SheetKindName::Regis, b"P[10,10]V[20,20]").is_err());
     }
 
     /// REQ-6533, ANIM-21: a timeline's tick is a sixtieth of a second on
