@@ -203,7 +203,6 @@ impl Synth {
 /// resolved only as its block is written (SRV-33, SRV-68).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Deferred {
-    #[expect(dead_code, reason = "written by synth106's call site, which the next commit gives the engine's interface")]
     /// A named synth106 switch parameter on channel `channel` (0 to 15):
     /// the whole switch byte from the tracked panel with the one field
     /// changed (SRV-33 item 1).

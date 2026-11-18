@@ -21,7 +21,6 @@ pub(crate) enum Wire {
     Sysex(Vec<u8>),
     /// A message written from its part's tracked state, resolved as its
     /// block is written (SRV-33, SRV-68).
-    #[expect(dead_code, reason = "written by synth106's call site, which a following commit gives the engine's interface")]
     Deferred(Deferred),
 }
 
