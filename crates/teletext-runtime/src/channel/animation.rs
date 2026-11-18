@@ -370,6 +370,12 @@ impl Channel {
         let (page, sub) = (message.page.0, message.sub.0);
         let Some(connections) = message.connections.connections() else { return self.kept_naplps_objects(message) };
         let targets = self.agreeing(connections, crate::kept::PictureLanguage::Naplps, page, sub);
+        // PAR-25: the objects of a picture kept for a fallback.
+        for connection in self.showing(connections, page, sub) {
+            if !targets.contains(&connection) {
+                self.own_fallback_objects(connection, page, sub, &message.objects, message.one);
+            }
+        }
         self.undefined_macro_notes(&targets, message);
         for connection in targets {
             let Some(state) = self.connections.get_mut(&connection) else { continue };

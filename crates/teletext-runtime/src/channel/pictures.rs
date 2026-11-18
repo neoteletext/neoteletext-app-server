@@ -108,7 +108,7 @@ impl Connection {
     }
 
     /// Whether the sub-page whose frame it was sent last is `page`, `sub`.
-    fn has_shown(&self, page: u16, sub: u16) -> bool {
+    pub(super) fn has_shown(&self, page: u16, sub: u16) -> bool {
         self.shown.as_ref().is_some_and(|shown| shown.page == page && shown.sub == sub)
     }
 
@@ -337,8 +337,19 @@ impl Channel {
                 StreamChange::Appended => Delta::Appended(bytes),
             };
             self.deliver_kept(page, sub, &delta);
+            self.kept_changed(page, sub);
             return Ok(());
         };
+        // PAR-25: what a connection that did not agree the language cannot
+        // be sent is kept for its fallback.
+        let without: Vec<ConnectionId> = self
+            .showing(connections, page, sub)
+            .into_iter()
+            .filter(|connection| self.connections.get(connection).is_some_and(|state| !state.agrees(language)))
+            .collect();
+        for connection in without {
+            self.own_fallback_stream(connection, language, page, sub, restart, bytes);
+        }
         let targets: Vec<ConnectionId> = self
             .showing(connections, page, sub)
             .into_iter()
@@ -481,6 +492,7 @@ impl Channel {
             self.author_notes(&viewers, page, alloc::vec![undefined_note(&missing)]);
         }
         self.deliver_kept(page, sub, &Delta::Objects(message.into()));
+        self.kept_changed(page, sub);
         Ok(())
     }
 
@@ -527,6 +539,14 @@ impl Channel {
         }
         for fault in faults {
             self.log(Level::Error, "kept_refused", format!("{page:03X}/{sub:04X}: the engine refused a forgotten picture's records: {fault}"));
+        }
+        // PAR-25: a connection shown the forgotten picture's fallback is
+        // shown the program's rows again.
+        let without: Vec<ConnectionId> =
+            self.connections.iter().filter(|(_, state)| state.has_shown(page, sub) && !state.agrees(language)).map(|(&id, _)| id).collect();
+        self.kept_changed(page, sub);
+        for connection in without {
+            self.show_program_rows(connection);
         }
         Ok(())
     }

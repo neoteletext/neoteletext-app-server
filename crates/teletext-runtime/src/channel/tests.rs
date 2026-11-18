@@ -28,6 +28,7 @@ use crate::protocol::tests::{line, subpage, with};
 
 mod animation;
 mod delivery;
+mod fallback;
 mod fields;
 mod kept;
 mod moves;

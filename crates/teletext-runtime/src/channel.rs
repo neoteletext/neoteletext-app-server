@@ -48,6 +48,7 @@ use crate::stats::{ChannelStats, count};
 use crate::viewer::{HandleSecret, RandomSource};
 
 mod animation;
+mod fallback;
 mod pictures;
 mod rules;
 mod viewers;
@@ -281,6 +282,9 @@ struct Shown {
     /// Its Link Extension links as last sent, which its packets do not
     /// carry: they travel as its LINKS record (REQ-1494).
     links: protocol::LinkExtension,
+    /// The program's sub-page, for a connection that may be shown a
+    /// picture's mosaic fallback over it (PAR-25).
+    program: fallback::ProgramPage,
 }
 
 /// How a connection's selection stands (DOC-1921, REQ-1481).
@@ -373,6 +377,9 @@ struct Connection {
     /// (the NAPLPS renderer's REQ-6408 item 3), and its last one's number.
     naplps: Option<pictures::PictureStream>,
     naplps_generation: u16,
+    /// A picture sent to it in a language it did not agree, kept for its
+    /// mosaic fallback (PAR-25).
+    own_picture: Option<fallback::OwnPicture>,
 }
 
 impl Connection {
@@ -407,6 +414,7 @@ impl Connection {
             regis_generation: 0,
             naplps: None,
             naplps_generation: 0,
+            own_picture: None,
         }
     }
 
@@ -477,6 +485,11 @@ pub struct Channel {
     /// The length of the program's line being acted on: a kept
     /// companion's cost (PAR-17).
     line_bytes: usize,
+    /// The time of what the channel is acting on.
+    now: u64,
+    /// The mosaic fallbacks of kept pictures, and the channel's drawings
+    /// (PAR-25).
+    fallbacks: fallback::Fallbacks,
 }
 
 impl Channel {
@@ -518,6 +531,8 @@ impl Channel {
             descriptions: Descriptions::default(),
             kept: crate::kept::KeptPictures::default(),
             line_bytes: 0,
+            now: 0,
+            fallbacks: fallback::Fallbacks::default(),
         }
     }
 
@@ -706,6 +721,7 @@ impl Channel {
         // PAR-17: kept pictures are dropped when the program ends; it
         // sends them again when it starts.
         self.kept.clear();
+        self.fallbacks = fallback::Fallbacks::default();
         self.program = false;
         self.answered = false;
         self.readiness_page = None;
@@ -937,6 +953,8 @@ impl Channel {
         self.late_queries(now);
         self.late_frames(now);
         self.play_timelines(now);
+        self.now = now;
+        self.draw_fallbacks(now);
     }
 
     /// Tells `connection` its selection ended with `status` (DOC-1961):
@@ -974,6 +992,7 @@ impl Channel {
             .chain(queries)
             .chain(frames)
             .chain(self.timelines.next_due())
+            .chain(self.next_fallback())
             .min()
     }
 
@@ -1234,6 +1253,7 @@ impl Channel {
         // Another selection: the ReGIS it was sent is not of this one.
         state.regis = None;
         state.naplps = None;
+        state.own_picture = None;
         let announced = state.announced;
         // The page's table goes before anything of the page (RULE-40), and
         // after it what the connection is to hold of the page's animation
@@ -1292,6 +1312,7 @@ impl Channel {
     pub fn from_program(&mut self, line: &[u8], now: u64) {
         count(&mut self.stats.lines_from_application);
         self.line_bytes = line.len();
+        self.now = now;
         let acted = protocol::read_reporting(line).and_then(|(message, replaced)| {
             for Replaced { page, character, stand_in, language } in replaced {
                 // REQ-2150 item 2: each replacement reported, once a page message and character.
@@ -1315,6 +1336,8 @@ impl Channel {
             refused.sound = protocol::sound_of(line);
             self.tell(&ServerMessage::Refused(refused));
         }
+        // PAR-25: a picture's first change is drawn at once.
+        self.draw_fallbacks(now);
     }
 
     /// The open connections `connections` names.
@@ -1581,6 +1604,13 @@ impl Channel {
         let mut pending_kept: Vec<ConnectionId> = Vec::new();
         for &connection in targets {
             let answers = request.is_none_or(|request| self.is_current(connection, request));
+            // PAR-25: a connection that did not agree a picture's language
+            // is sent the sub-page with the fallback's rows, and the
+            // program's sub-page is kept to draw them on again.
+            let needs_fallback = self.may_need_fallback(connection) && self.connections.get(&connection).is_some_and(|state| state.shows(number, sub));
+            let program = needs_fallback.then(|| Box::new(page.clone()));
+            let alternative = if needs_fallback { self.page_for(connection, page).map(|page| crate::page::encode(&page)) } else { None };
+            let encoded = alternative.as_ref().unwrap_or(&encoded);
             let Some(state) = self.connections.get_mut(&connection) else { continue };
             if !answers || (request.is_none() && state.ending.due().is_some()) {
                 continue;
@@ -1594,16 +1624,17 @@ impl Channel {
             state.selection = Some(Selection { page: page.page, sub: page.sub });
             state.ending = Ending::Answered;
             let change = match &state.shown {
-                Some(kept) if kept.page == number && kept.sub == sub => match crate::page::changes(&kept.packets, &encoded) {
+                Some(kept) if kept.page == number && kept.sub == sub => match crate::page::changes(&kept.packets, encoded) {
                     // Links alone changed: a frame of the header without the
                     // erase bit, then its LINKS record, or none when every
                     // link was removed (DEC-1517).
-                    Change::Nothing if kept.links != page.link_extension => crate::page::header_only(&encoded),
+                    Change::Nothing if kept.links != page.link_extension => crate::page::header_only(encoded),
                     change => change,
                 },
                 _ => Change::Whole,
             };
-            state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor, links: page.link_extension.clone() });
+            state.shown =
+                Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor, links: page.link_extension.clone(), program });
             // The page's default table or empty record before the page
             // (RULE-40), for a selection whose sub-code the program's answer
             // made known.

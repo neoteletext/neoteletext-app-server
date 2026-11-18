@@ -32,6 +32,7 @@ extern crate alloc;
 pub mod animation;
 pub mod channel;
 pub mod descriptions;
+mod fallback;
 pub mod frame;
 pub mod input;
 pub mod json;
