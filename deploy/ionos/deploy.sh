@@ -105,7 +105,11 @@ EOF
 deploy_target=$repo/target/deploy
 if [ "$build" = 1 ]; then
     say "the server, built static here"
-    (cd "$repo" && cargo build --quiet --release --locked --target $musl --target-dir "$deploy_target" -p teletext-native)
+    # ring, which checks viewer state's signatures (DEC-6471), compiles C and
+    # assembly that use no C library, so the system compiler serves for the
+    # musl target and no musl C compiler is needed; the runtime's tests pass
+    # in this build (18 November 2026).
+    (cd "$repo" && CC_x86_64_unknown_linux_musl=gcc cargo build --quiet --release --locked --target $musl --target-dir "$deploy_target" -p teletext-native)
 fi
 server_binary=$deploy_target/$musl/release/teletext-server
 [ -x "$server_binary" ] || die "no server binary at $server_binary; run without --no-build"
