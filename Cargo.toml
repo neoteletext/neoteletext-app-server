@@ -59,14 +59,14 @@ regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", r
 # ANIM-21), on the receiver's canvas with its character sets (the
 # renderer's REQ-5819 and REQ-6668, merged into its working branch).
 # MIT; no dependencies.
-naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "27000408468141b3e7e708f5da130f4e6e52c926" }
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "19f5bbac3d08a19471f0e3434227c33c5957ee82" }
 # The fonts the browser draws pictures with, as text compiled in: the
 # VT340's alphabet 0 for ReGIS and the NAPLPS stroke font, so that the
 # server's mosaic fallback and a public page's picture are drawn as the
 # browser draws them (renderer parity PAR-25, PAR-26). The renderers'
 # repositories' own crates, pure Rust with no dependencies (DEC-6579).
 regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2" }
-naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "27000408468141b3e7e708f5da130f4e6e52c926" }
+naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "19f5bbac3d08a19471f0e3434227c33c5957ee82" }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the

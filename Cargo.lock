@@ -445,12 +445,17 @@ dependencies = [
 [[package]]
 name = "naplps"
 version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=19f5bbac3d08a19471f0e3434227c33c5957ee82#19f5bbac3d08a19471f0e3434227c33c5957ee82"
+
+[[package]]
+name = "naplps"
+version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=27000408468141b3e7e708f5da130f4e6e52c926#27000408468141b3e7e708f5da130f4e6e52c926"
 
 [[package]]
 name = "naplps-fonts"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=27000408468141b3e7e708f5da130f4e6e52c926#27000408468141b3e7e708f5da130f4e6e52c926"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=19f5bbac3d08a19471f0e3434227c33c5957ee82#19f5bbac3d08a19471f0e3434227c33c5957ee82"
 
 [[package]]
 name = "neoteletext-audio"
@@ -476,7 +481,7 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
- "naplps",
+ "naplps 0.1.0 (git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=27000408468141b3e7e708f5da130f4e6e52c926)",
  "neoteletext-core",
  "regis",
  "unicode-bidi",
@@ -920,7 +925,7 @@ dependencies = [
 name = "teletext-runtime"
 version = "0.1.0"
 dependencies = [
- "naplps",
+ "naplps 0.1.0 (git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=19f5bbac3d08a19471f0e3434227c33c5957ee82)",
  "naplps-fonts",
  "neoteletext-audio",
  "neoteletext-audio-instruments",
