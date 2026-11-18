@@ -1049,3 +1049,124 @@ fn a_channel_with_a_command_has_no_program_websocket() {
     assert_eq!(status_of(&head), "404", "{head}");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// The program of `a_kept_picture_reaches_receivers_through_real_sockets`:
+/// at `start` it keeps a ReGIS picture of page 100/0001, its links and its
+/// cursor, and asks what a Greek text part costs; it answers each
+/// connection's selection with a sub-page whose row 24 is its own; and it
+/// writes every line it is told to `heard`.
+const PICTURE_PROGRAM: &str = r#"
+import base64, json, sys
+heard = open(sys.argv[1], "a", buffering=1)
+def send(message):
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+row24 = base64.b64encode(b"Fastext row of the program".ljust(40)).decode()
+page = {"page": "100", "sub": "0001", "rows": [None] * 24 + [row24], "links": [None] * 6, "display_row_24": True,
+        "link_extension": {"keys": [], "numbers": [], "texts": []},
+        "control": {"erase": False, "inhibit_display": False, "interrupted_sequence": False, "magazine_serial": False,
+                    "newsflash": False, "subtitle": False, "suppress_header": False, "update": False},
+        "enhancements": [], "packets": []}
+magazines = [{"magazine": 1, "name": "Pictures", "pages": [{"page": "100", "title": "A picture", "section": None, "subpages": 1}]}]
+red = b"S(M1(H120L50S100))W(I1)P[0,0]F(V[399,0][399,479][0,479][0,0])"
+for line in sys.stdin:
+    heard.write(line)
+    message = json.loads(line)
+    kind = message["type"]
+    if kind == "start":
+        send({"type": "regis", "connections": "kept", "page": "100", "sub": "0001", "restart": True,
+              "parts": [{"data": base64.b64encode(red).decode()}, {"text": "Καλημέρα", "language": "el"}]})
+        send({"type": "regis_links", "connections": "kept", "page": "100", "sub": "0001", "links": [{"drawing": 1, "target": "200"}]})
+        send({"type": "regis_cursor", "connections": "kept", "page": "100", "sub": "0001", "drawing": 1})
+        send({"type": "measure_picture_text", "request": 17, "text": "Καλημέρα", "language": "el"})
+    elif kind == "connected":
+        send({"type": "reply", "connection": message["connection"], "request": message["request"], "magazines": magazines, "selected": page})
+    elif kind == "selected":
+        send({"type": "page", "connections": [message["connection"]], "request": message["request"], "page": page})
+"#;
+
+/// Reads `stream` until `found` holds of a packet or a record, giving up
+/// after `WITHIN`.
+fn until_packet(stream: &mut TcpStream, mut found: impl FnMut(&Packet, Option<&ChannelRecord<'_>>) -> bool) {
+    let started = Instant::now();
+    let mut reader = RecordReader::new();
+    loop {
+        assert!(started.elapsed() < WITHIN, "not found in time");
+        let message = server_frame(stream);
+        for bytes in message.as_chunks::<PACKET_BYTES>().0 {
+            let packet = Packet { bytes: *bytes };
+            let read = reader.push(&packet);
+            let record = if let RecordRead::Record(record) = &read { Some(record) } else { None };
+            if found(&packet, record) {
+                return;
+            }
+        }
+    }
+}
+
+/// Renderer parity end to end (REQ-6766, REQ-6767, REQ-6769; PAR-16,
+/// PAR-18, PAR-21, PAR-22, PAR-24, PAR-25), through the real server, a
+/// real program and real sockets: a picture kept at the program's start
+/// reaches a receiver that agreed ReGIS when it selects the page later,
+/// stream first and then its links and cursor, its text part written in
+/// the provided sets; a receiver that did not agree ReGIS is shown it as
+/// red mosaics on rows 1 to 23 under the program's row 24; and the
+/// program is answered `measured_picture_text`.
+#[test]
+fn a_kept_picture_reaches_receivers_through_real_sockets() {
+    use neoteletext_core::packet::{Decoded, decode};
+    use neoteletext_input::caps::{CURSOR_CAP, REGIS_CAP};
+    let folder = scratch("pictures");
+    let heard = folder.join("heard");
+    let program = folder.join("program.py");
+    std::fs::write(&program, PICTURE_PROGRAM).unwrap();
+    let script = format!("exec python3 -I {program:?} {heard:?}");
+    let file = channels(&folder, &script);
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    let told = until_heard(&heard, |told| told.contains("measured_picture_text"));
+    let measured = told.lines().find(|line| line.contains("measured_picture_text")).unwrap();
+    assert!(measured.contains("\"request\":17") && measured.contains("\"G0-Greek\""), "{measured}");
+    assert!(!told.contains("\"refused\""), "{told}");
+
+    let select = Item::Event(Event::Select(Select::new(0x100, 0x0001).unwrap(), ""));
+    let (mut drawing, _) = push(&server.address);
+    let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: CURSOR_CAP | SELECT_CAP | REGIS_CAP, agent: None });
+    send_input(&mut drawing, &[hello, select]);
+    let mut order = Vec::new();
+    let mut greek = false;
+    until_packet(&mut drawing, |_, record| {
+        match record {
+            Some(ChannelRecord::Regis(regis)) => {
+                order.push("regis");
+                greek |= regis.data.windows(b"T(A117)".len()).any(|window| window == b"T(A117)");
+            }
+            Some(ChannelRecord::DrawingLinks(_)) => order.push("links"),
+            Some(ChannelRecord::RegisCursor(_)) => order.push("cursor"),
+            _ => {}
+        }
+        order.contains(&"cursor")
+    });
+    assert_eq!(order, ["regis", "links", "cursor"]);
+    assert!(greek, "the Greek part in alphabet 117, set 17 G0-Greek (PAR-4)");
+
+    let (mut mosaics, _) = push(&server.address);
+    let hello = Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: CURSOR_CAP | SELECT_CAP, agent: None });
+    send_input(&mut mosaics, &[hello, select]);
+    let (mut red, mut row24) = (false, Vec::new());
+    until_packet(&mut mosaics, |packet, record| {
+        assert!(!matches!(record, Some(ChannelRecord::Regis(_))), "no REGIS record without REGIS_CAP");
+        if let Ok(Decoded::Row(row)) = decode(packet) {
+            let codes: Vec<u8> = row.bytes.iter().map(|byte| byte & 0x7F).collect();
+            if row.row == 12 && codes[..20].contains(&0x11) {
+                red = true;
+            }
+            if row.row == 24 {
+                row24 = codes;
+            }
+        }
+        red && !row24.is_empty()
+    });
+    assert!(row24.starts_with(b"Fastext row of the program"), "{row24:?}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
