@@ -445,7 +445,7 @@ dependencies = [
 [[package]]
 name = "naplps"
 version = "0.1.0"
-source = "git+https://github.com/neoteletext/neoteletext-renderer-naplps?rev=5a2464e9fea58a7bbf576e3f837e4d9972b3f880#5a2464e9fea58a7bbf576e3f837e4d9972b3f880"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe#b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe"
 
 [[package]]
 name = "neoteletext-audio"

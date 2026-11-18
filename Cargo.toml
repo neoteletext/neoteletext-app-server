@@ -52,8 +52,10 @@ regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", r
 # The NAPLPS renderer, pinned to one commit as the ReGIS renderer is: a
 # page's NAPLPS sprite sheet is read with the receiver's own code before
 # it is sent, since a sheet must draw nothing (animation.md ANIM-17,
-# ANIM-21). MIT; no dependencies.
-naplps = { git = "https://github.com/neoteletext/neoteletext-renderer-naplps", rev = "5a2464e9fea58a7bbf576e3f837e4d9972b3f880" }
+# ANIM-21), on the receiver's canvas with its character sets (the
+# renderer's REQ-5819 and REQ-6668; its branch charsets, unpublished, so
+# a file source until it is). MIT; no dependencies.
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe" }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the

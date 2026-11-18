@@ -11,6 +11,10 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use neoteletext_core::charset::CharRef;
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH};
+use neoteletext_core::glyphs::GlyphSet;
+use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
 use neoteletext_core::packet::Packet;
 use neoteletext_core::types::SubCode as EngineSubCode;
 use neoteletext_rules::animate::Operation;
@@ -35,6 +39,54 @@ pub(crate) type Refused = String;
 /// The colour map a receiver gives a NAPLPS page: 2 to the power of this
 /// many entries, sixteen, as its ReGIS pictures have.
 const NAPLPS_PALETTE_BITS: u32 = 4;
+
+/// The lines of the teletext raster a NAPLPS page's display area takes
+/// (REQ-5819, DEC-6667 item 1): 480 by 462 of the 480 by 500 raster has
+/// the NAPLPS page's shape of 1.28 to 1 at teletext's 16/13 pixel shape
+/// (480 × 16/13 ÷ 1.28 = 461.5, rounded), with 19 border lines above and
+/// below, which the receiver draws itself.
+const NAPLPS_DISPLAY_LINES: usize = 462;
+const _: () =
+    assert!(NAPLPS_DISPLAY_LINES < PAGE_HEIGHT && (PAGE_HEIGHT - NAPLPS_DISPLAY_LINES) / 2 == NAPLPS_BORDER_LINES, "REQ-5819: 19 border lines above and below");
+/// See [`NAPLPS_DISPLAY_LINES`].
+const NAPLPS_BORDER_LINES: usize = 19;
+
+/// The first and last codes of a character set the NAPLPS renderer takes,
+/// 2/0 and 7/15 (REQ-6668: each of the 55 sets has 96 positions).
+const FIRST_SET_CODE: u8 = 0x20;
+/// See [`FIRST_SET_CODE`].
+const LAST_SET_CODE: u8 = 0x7F;
+const _: () = assert!((LAST_SET_CODE - FIRST_SET_CODE + 1) as usize == naplps::bitmap::BITMAP_SET_CODES);
+// REQ-6668: the engine's sets are the renderer's, one for one, in order.
+const _: () = assert!(FONT_SET_COUNT == naplps::TELETEXT_SET_COUNT);
+
+/// Noto Teletext, the engine's one compiled font (its REQ-FNT-001), which
+/// a public page's picture is drawn in too.
+static GLYPHS: GlyphSet<'static> = GlyphSet::noto_teletext();
+
+/// A NAPLPS terminal and canvas as a receiver has them (the browser's
+/// decoder): the display area of the teletext raster, 480 by 462 pixels
+/// (REQ-5819, DEC-6667), and the engine's 55 teletext character sets in
+/// the order of its `FONT_SETS`, which is the renderer's `TELETEXT_SETS`,
+/// each code's glyph the teletext renderer's (REQ-6668; DEC-6669: the
+/// provided sets only). What the server reads with it is read as the
+/// receiver will read it.
+fn naplps_receiver() -> Result<(naplps::Terminal, naplps::Canvas), Refused> {
+    let size = |side: usize| u32::try_from(side).map_err(|_| String::from("a side of the raster passes 32 bits"));
+    let canvas = naplps::Canvas::new(size(PAGE_WIDTH)?, size(NAPLPS_DISPLAY_LINES)?).map_err(|error| format!("{error:?}"))?;
+    let mut terminal = naplps::Terminal::new(NAPLPS_PALETTE_BITS);
+    let (Ok(width), Ok(height)) = (u8::try_from(CELL_WIDTH), u8::try_from(CELL_HEIGHT)) else {
+        return Err(String::from("the engine's cell passes the renderer's bitmap"));
+    };
+    for (number, (_, set)) in (0_u8..).zip(FONT_SETS.iter()) {
+        let mut bitmap = naplps::BitmapSet::new(width, height).map_err(|error| format!("{error:?}"))?;
+        for code in FIRST_SET_CODE..=LAST_SET_CODE {
+            bitmap.set_glyph(code, &GLYPHS.glyph(CharRef::new(*set, code))).map_err(|error| format!("{error:?}"))?;
+        }
+        terminal.set_teletext_set(number, bitmap).map_err(|error| format!("{error:?}"))?;
+    }
+    Ok((terminal, canvas))
+}
 
 /// The bits of an Object Invocation triplet's fields in a sprite's object
 /// reference (ANIM-7; EN 300 706 Table 28): the source in bits 12 and 11,
@@ -297,9 +349,7 @@ pub(crate) fn read_sheet(kind: SheetKindName, sheet: &[u8]) -> Result<(), Refuse
             Ok(())
         }
         SheetKindName::Naplps => {
-            let (width, height) = (naplps::limits::OBJECT_PICTURE_WIDTH, naplps::limits::OBJECT_PICTURE_HEIGHT);
-            let mut canvas = naplps::Canvas::new(width, height).map_err(|error| format!("{error:?}"))?;
-            let mut terminal = naplps::Terminal::new(NAPLPS_PALETTE_BITS);
+            let (mut terminal, mut canvas) = naplps_receiver()?;
             // A canvas begins all of one entry, so any other entry is
             // something the sheet drew.
             let blank = canvas.pixels().first().copied();
@@ -354,6 +404,31 @@ mod tests {
         assert_eq!(read_sheet(SheetKindName::Regis, b"D(B41)P[10,10]V[20,20]D(E)D(S41(V0),C)"), Ok(()));
         assert!(read_sheet(SheetKindName::Regis, b"D(B41)P[10,10]V[20,20]D(E)D(C)").is_err());
         assert!(read_sheet(SheetKindName::Regis, b"P[10,10]V[20,20]").is_err());
+    }
+
+    /// REQ-5819, DEC-6667, REQ-6668: the server reads NAPLPS on the canvas
+    /// a receiver draws it on, the 480 by 462 display area of the teletext
+    /// raster, with the engine's 55 sets: a page designating Greek (set 17,
+    /// ESC 2/8 2/1 3/1 into G0) draws the engine's Noto Teletext capital
+    /// delta for its 4/4, exactly as a terminal given that glyph alone
+    /// draws it, and not nothing.
+    #[test]
+    fn naplps_is_read_on_the_receivers_raster_with_its_character_sets() {
+        const GREEK_D: &[u8] = b"\x1b\x28\x21\x31D";
+        let (mut terminal, mut canvas) = naplps_receiver().unwrap();
+        assert_eq!((canvas.width(), canvas.height()), (480, 462));
+        let _ = terminal.feed(&mut canvas, GREEK_D);
+        let _ = terminal.finish(&mut canvas);
+        let delta = *GLYPHS.lookup('\u{0394}').unwrap();
+        let mut alone = naplps::Terminal::new(NAPLPS_PALETTE_BITS);
+        let mut set = naplps::BitmapSet::new(12, 20).unwrap();
+        set.set_glyph(0x44, &delta).unwrap();
+        alone.set_teletext_set(17, set).unwrap();
+        let mut expected = naplps::Canvas::new(480, 462).unwrap();
+        let _ = alone.feed(&mut expected, GREEK_D);
+        let _ = alone.finish(&mut expected);
+        assert!(expected.pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
+        assert_eq!(canvas.pixels(), expected.pixels(), "the engine's Greek glyph, as the receiver draws it");
     }
 
     /// REQ-6533, ANIM-21: a timeline's tick is a sixtieth of a second on
