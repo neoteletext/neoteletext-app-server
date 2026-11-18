@@ -30,10 +30,11 @@ const PAGE_DATA_DESIGNATION: u8 = 0;
 
 /// What a run from outside shows for a character its language cannot, the
 /// first of these its language shows (REQ-2150 item 2, DEC-2326): the
-/// question mark; the Arabic script's own, where its sets lack ASCII's
-/// (the library's measurement of 3 November 2026, `unshown.ts`); then a
-/// hyphen or a full stop, which every set but one shows.
-const STAND_INS: [char; 4] = ['?', '\u{061F}', '-', '.'];
+/// question mark, which the engine writes through Latin English inside a
+/// run whose own set lacks it (the engine's DEC-2473), so that the Arabic
+/// script's own question mark is no longer needed; then a hyphen or a full
+/// stop, should the question mark not fit.
+const STAND_INS: [char; 3] = ['?', '-', '.'];
 
 /// A run's language as the encoder reads it: its own, else the page's.
 fn run_language<'a>(run: &'a protocol::TextRun, page: Option<&'a str>) -> Option<&'a str> {
