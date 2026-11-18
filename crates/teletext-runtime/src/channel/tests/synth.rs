@@ -495,3 +495,57 @@ fn a_local_sound_is_refused_as_it_must_be() {
     channel.from_program(&play(&Value::Null, true, false), 6);
     assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
 }
+
+/// A cue point at `time_us`, numbered `number` (page-rules.md RULE-109).
+fn cue(time_us: u64, number: u8) -> Value {
+    json!({"event": "cue", "time_us": time_us, "number": number})
+}
+
+/// RULE-109 (REQ-6532, REQ-6614): a cue of a family's event list is
+/// written in its block as the Cue Point meta event `FF 07 01 nn` at its
+/// time, after the events before it.
+#[test]
+fn a_cue_is_a_cue_point_in_its_block() {
+    let mut channel = answered();
+    channel.from_program(&bank(), 1);
+    let _ = channel.take_effects();
+    let first = first_record(&channel);
+    channel.from_program(&stored(&[note(0, 1), note(0, 16), cue(0, 5)], &json!({"tail_us": 0})), 2);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [Value; 0]);
+    let block = alloc::vec![0x00, 0xC0, 0, 0x00, 0xC1, 0, 0x00, 0x90, 60, 100, 0x00, 0x9F, 60, 100, 0x00, 0xFF, 0x07, 0x01, 5];
+    assert_eq!(sent_to(&effects, CONNECTION), audio(&sound_records(&[block]), first));
+}
+
+/// RULE-109 (REQ-6532): a Standard MIDI File's Marker whose text a `cues`
+/// entry names becomes that cue; one no entry names is dropped as before.
+#[test]
+fn a_files_marker_named_in_cues_is_a_cue() {
+    // A note on, a Marker "x" and a Marker "y", then the end of track.
+    let track = [0x00, 0x90, 60, 100, 0x00, 0xFF, 0x06, 0x01, b'x', 0x00, 0xFF, 0x06, 0x01, b'y', 0x00, 0xFF, 0x2F, 0x00];
+    let mut channel = answered();
+    channel.from_program(&bank(), 1);
+    let _ = channel.take_effects();
+    let sound = message(
+        "synth8",
+        json!({"handle": HANDLE, "generation": 0, "key_mode": "whole", "split_key": 0, "banks": [BANK], "lift_banks": [], "length": {"tail_us": 0},
+            "music": {"form": "midi_file", "bytes": base64(&file(&track)), "cues": [{"text": "x", "number": 3}]}}),
+    );
+    channel.from_program(&sound, 2);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [Value; 0]);
+    assert_eq!(built(&effects)[0]["dropped"]["meta_events"], 1);
+    // The note on, then the cue: the Cue Point meta event with its number.
+    let sent = sent_to(&effects, CONNECTION);
+    assert!(sent.windows(8).any(|window| window == [0x90, 60, 100, 0x00, 0xFF, 0x07, 0x01, 3]), "{sent:?}");
+}
+
+/// RULE-109 (REQ-6532): a local sound has no timeline and so no cue: a
+/// setup holding one is refused.
+#[test]
+fn a_local_sounds_setup_has_no_cue() {
+    let mut channel = answered();
+    channel.from_program(&local_synth106(&json!([program_change(0), cue(0, 1)])), 1);
+    let refused = refusals(&channel.take_effects());
+    assert_eq!(refused.first().map(|refusal| refusal["rule"].clone()), Some(json!("never_carried")), "{refused:?}");
+}
