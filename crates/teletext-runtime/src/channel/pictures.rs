@@ -552,6 +552,43 @@ impl Channel {
     }
 }
 
+impl Channel {
+    /// The picture a description gives (PAR-26), drawn as the browser
+    /// draws it with its shown objects composed, as a PNG at its language's
+    /// own size; none when it gives none, or the PNG passes
+    /// `MOST_PICTURE_BYTES`.
+    ///
+    /// # Errors
+    /// `not_kept` for a kept picture of a sub-code with nothing kept; the
+    /// receiver's refusal of the bytes (`invalid_regis`, `invalid_naplps`).
+    pub(super) fn description_picture(&self, description: &protocol::Description) -> Result<Option<crate::descriptions::Picture>, Refusal> {
+        let kind = MessageType::Description;
+        let refuse = |path: &str, rule: Rule, detail: String| Refusal { message: Some(kind), path: path.to_string(), rule, detail };
+        let (Some(picture), true) = (&description.picture, description.public) else { return Ok(None) };
+        let drawn = match picture {
+            protocol::DescriptionPicture::Kept(name) => {
+                let (page, sub) = (description.page.0, name.kept.0);
+                let kept = self.kept.get(page, sub).ok_or_else(|| refuse("picture.kept", Rule::NotKept, format!("nothing is kept of {page:03X}/{sub:04X}")))?;
+                let objects = kept.objects.as_ref().map(|objects| objects.objects.as_slice());
+                crate::fallback::draw(kept.language, &kept.stream, objects)
+            }
+            protocol::DescriptionPicture::Bytes(bytes) => {
+                let language = match bytes.language {
+                    protocol::PictureLanguageName::Regis => PictureLanguage::Regis,
+                    protocol::PictureLanguageName::Naplps => PictureLanguage::Naplps,
+                };
+                let data = protocol::check::bytes_of(&bytes.data);
+                Checker::new(language).feed(&data).map_err(|refused| refuse("picture.data", refused.rule, refused.detail))?;
+                crate::fallback::draw(language, &data, bytes.objects.as_deref())
+            }
+        };
+        let drawn = drawn.map_err(|fault| refuse("picture", Rule::WrongType, fault))?;
+        Ok(crate::fallback::png(&drawn)
+            .filter(|(png, _, _)| png.len() <= crate::descriptions::MOST_PICTURE_BYTES)
+            .map(|(png, width, height)| (alloc::sync::Arc::from(png), width, height)))
+    }
+}
+
 /// The author's line for objects that name macros not yet defined.
 fn undefined_note(missing: &[u8]) -> String {
     let codes: Vec<String> = missing.iter().map(|code| format!("0x{code:02X}")).collect();

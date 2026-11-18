@@ -20,7 +20,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_core::charset::CharRef;
-use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_WIDTH};
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_HEIGHT, PAGE_WIDTH};
 use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
 use neoteletext_core::glyphs::{GlyphSet, JoiningClass, joining};
 use neoteletext_core::packet::{Decoded, Packet, decode};
@@ -171,6 +171,8 @@ pub(crate) struct Drawn {
     pub height: usize,
     pub addresses: Vec<u8>,
     pub colours: Vec<[u8; 3]>,
+    /// NAPLPS: the screen colour its border lines take (REQ-5819).
+    pub border: Option<u8>,
 }
 
 impl Drawn {
@@ -198,7 +200,7 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             let _ = terminal.finish(&mut screen);
             let canvas = screen.displayed();
             let colours = terminal.palette().colours().to_vec();
-            Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours })
+            Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours, border: None })
         }
         PictureLanguage::Naplps => {
             let (mut terminal, mut canvas) = naplps_terminal()?;
@@ -215,7 +217,7 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             };
             let colours = terminal.palette().colours().to_vec();
             let (width, height) = (presented.width() as usize, presented.height() as usize);
-            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours })
+            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours, border: Some(terminal.screen_colour()) })
         }
     }
 }
@@ -243,6 +245,28 @@ pub(crate) fn mosaics(drawn: &Drawn) -> Result<MosaicRows, String> {
         }
     }
     Ok(rows)
+}
+
+/// `drawn` as a PNG at its language's own size, as the browser shows it
+/// (PAR-26): ReGIS 800 by 480; NAPLPS on the 480 by 500 teletext raster,
+/// its 19 border lines above and below in the screen colour (REQ-5819),
+/// the same raster and pixel shape as a teletext page's public picture.
+/// None when the writer refuses it.
+pub(crate) fn png(drawn: &Drawn) -> Option<(Vec<u8>, usize, usize)> {
+    let palette = drawn.colours.iter().map(|&[red, green, blue]| neoteletext_image::palette::Rgba::opaque(red, green, blue)).collect();
+    let (height, indices) = match drawn.border {
+        None => (drawn.height, drawn.addresses.clone()),
+        Some(border) => {
+            let lines = PAGE_HEIGHT.saturating_sub(drawn.height) / 2;
+            let edge = alloc::vec![border; lines.saturating_mul(drawn.width)];
+            let mut indices = edge.clone();
+            indices.extend_from_slice(&drawn.addresses);
+            indices.extend_from_slice(&edge);
+            (drawn.height.saturating_add(lines.saturating_mul(2)), indices)
+        }
+    };
+    let raster = neoteletext_image::raster::Raster { width: drawn.width, height, indices, palette };
+    neoteletext_image::raster::png(&raster).ok().map(|bytes| (bytes, drawn.width, height))
 }
 
 /// `stream` as the fallback's rows.

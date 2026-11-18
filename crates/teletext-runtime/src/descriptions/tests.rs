@@ -386,7 +386,7 @@ fn a_description_later_than_the_caches_life_is_refused() {
 fn the_picture_is_of_the_page_the_program_gave() {
     let picture_of = |rows: Value| {
         let description = with(&public_description("t", "x"), "/content/rows/1", rows);
-        answered_with(&description).unwrap().picture.clone().unwrap()
+        answered_with(&description).unwrap().picture.clone().unwrap().0
     };
     let blank = picture_of(Value::Null);
     let filled = picture_of(json!("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpBQkNERUZHSElKS0xNTg=="));
@@ -454,4 +454,72 @@ fn a_late_answer_makes_a_program_ready() {
     channel.from_program(&line(&not_public()), DESCRIPTION_WAIT_MS + DESCRIPTION_CACHE_MS * 2);
     assert_eq!(channel.stats().refused, 0, "long after the cache's life");
     assert!(channel.is_ready());
+}
+
+/// The ReGIS of a public picture: the left half red (the ReGIS manual's
+/// chapter 2, HLS hue 120; chapter 11, a filled polygon).
+const RED_LEFT: &[u8] = b"S(M1(H120L50S100))W(I1)P[0,0]F(V[399,0][399,479][0,479][0,0])";
+
+/// The PNG the server's renderer draws for `language` and `bytes`.
+fn drawn_png(language: crate::kept::PictureLanguage, bytes: &[u8]) -> (Vec<u8>, usize, usize) {
+    crate::fallback::png(&crate::fallback::draw(language, bytes, None).unwrap()).unwrap()
+}
+
+/// Renderer parity PAR-26 verification 1: a described ReGIS picture gives
+/// the PNG the server's renderer draws, at 800 by 480, in place of the
+/// teletext page's.
+#[test]
+fn a_described_regis_picture_is_the_png_the_servers_renderer_draws() {
+    let picture = json!({"language": "regis", "data": crate::protocol::tests::base64(RED_LEFT)});
+    let answer = answered_with(&with(&public_description("Red", "x"), "/picture", picture)).unwrap();
+    let (png, width, height) = answer.picture.clone().unwrap();
+    assert_eq!((width, height), (800, 480));
+    assert_eq!((png.to_vec(), width, height), drawn_png(crate::kept::PictureLanguage::Regis, RED_LEFT));
+    let (page, _) = shown("100", &Some(answer));
+    assert!(page.contains("width=\"800\" height=\"480\" alt=\"Red\""), "{page}");
+}
+
+/// PAR-26 verification 2: a kept NAPLPS picture likewise, on the 480 by
+/// 500 raster.
+#[test]
+fn a_described_kept_naplps_picture_is_drawn_on_the_raster() {
+    let mut channel = channel();
+    let stream = [0x0E, 0x3E, 0x5C, 0x24, 0x40, 0x40, 0x40, 0x31, 0x52, 0x47, 0x47];
+    let kept =
+        json!({"type": "naplps", "connections": "kept", "page": PAGE_TEXT, "sub": "0001", "restart": true, "data": crate::protocol::tests::base64(&stream)});
+    channel.from_program(&line(&kept), 0);
+    channel.describe(1, PAGE, 1);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&with(&public_description("t", "x"), "/picture", json!({"kept": "0001"}))), 2);
+    let found = answers(&channel.take_effects());
+    let (png, width, height) = found[0].1.as_ref().unwrap().picture.clone().unwrap();
+    assert_eq!((width, height), (480, 500));
+    assert_eq!((png.to_vec(), width, height), drawn_png(crate::kept::PictureLanguage::Naplps, &stream));
+}
+
+/// PAR-26 verification 3: each refusal.
+#[test]
+fn a_description_picture_with_nothing_kept_or_refused_bytes_is_refused() {
+    let refusal = |picture: Value| {
+        let mut channel = channel();
+        channel.describe(1, PAGE, 0);
+        let _ = channel.take_effects();
+        channel.from_program(&line(&with(&public_description("t", "x"), "/picture", picture)), 1);
+        let refused: Vec<Value> = lines(&channel.take_effects()).into_iter().filter(|line| line["type"] == "refused").collect();
+        assert_eq!(refused.len(), 1);
+        (refused[0]["path"].clone(), refused[0]["rule"].clone())
+    };
+    assert_eq!(refusal(json!({"kept": "0001"})), (json!("picture.kept"), json!("not_kept")));
+    let failing = crate::protocol::tests::base64(b"V[1,1]D(S2(P9),C)");
+    assert_eq!(refusal(json!({"language": "regis", "data": failing})), (json!("picture.data"), json!("invalid_regis")));
+    let mut past = alloc::vec![0x1B, 0x2E, 0x20, 0x7A];
+    for number in 0x21..0x31_u8 {
+        past.extend_from_slice(&[0x80, number]);
+        for _ in 0..60 {
+            past.extend_from_slice(&[0x19, number.saturating_add(1)]);
+        }
+    }
+    past.extend_from_slice(&[0x80, 0x31, b'x', 0x85, 0x19, 0x21, b'a']);
+    let past = crate::protocol::tests::base64(&past);
+    assert_eq!(refusal(json!({"language": "naplps", "data": past})), (json!("picture.data"), json!("invalid_naplps")));
 }

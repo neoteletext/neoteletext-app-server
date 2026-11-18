@@ -59,9 +59,14 @@ pub struct PublicPage {
     pub title: String,
     /// Its text.
     pub text: String,
-    /// Its picture as a PNG, when one could be drawn.
-    pub picture: Option<Arc<[u8]>>,
+    /// Its picture as a PNG, when one could be drawn, with its width and
+    /// height: a teletext page's at the engine's size, a ReGIS or NAPLPS
+    /// picture's at its language's own (renderer parity PAR-26).
+    pub picture: Option<Picture>,
 }
+
+/// A public page's picture: a PNG, its width and its height.
+pub type Picture = (Arc<[u8]>, usize, usize);
 
 /// What a page's address answers: the page, when it is public; none for a
 /// page that is not public, does not exist or was not described.

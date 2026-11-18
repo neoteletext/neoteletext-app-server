@@ -779,7 +779,8 @@ impl Channel {
                 detail: format!("no `describe` of {page:03X} is waiting"),
             });
         }
-        let answer = public_page(description).map(Arc::new);
+        let drawn = self.description_picture(&description)?;
+        let answer = public_page(description, drawn).map(Arc::new);
         for visitor in self.descriptions.answered(page, &answer, now) {
             self.effects.push(Effect::Described { visitor, answer: answer.clone() });
         }
@@ -1698,9 +1699,16 @@ impl Channel {
 
 /// What `description` shows the web: nothing unless it says public, which the
 /// protocol's check has seen gives all three.
-fn public_page(description: Description) -> Option<PublicPage> {
-    let Description { public: true, title: Some(title), text: Some(text), content: Some(content), .. } = description else { return None };
-    Some(PublicPage { title, text, picture: crate::page::picture(&content) })
+/// `drawn` is the picture `description.picture` gave, drawn (PAR-26),
+/// in place of `content`'s.
+fn public_page(description: Description, drawn: Option<crate::descriptions::Picture>) -> Option<PublicPage> {
+    let Description { public: true, title: Some(title), text: Some(text), content: Some(content), picture, .. } = description else { return None };
+    let teletext = || {
+        let (width, height) = neoteletext_image::raster::picture_size();
+        crate::page::picture(&content).map(|png| (png, width, height))
+    };
+    let picture = if picture.is_some() { drawn } else { teletext() };
+    Some(PublicPage { title, text, picture })
 }
 
 fn wide(count: usize) -> u64 {

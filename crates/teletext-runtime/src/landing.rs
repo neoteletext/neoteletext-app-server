@@ -11,7 +11,6 @@ use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 
-use neoteletext_image::raster::picture_size;
 use neoteletext_web::channel::SETTINGS_FILE;
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use neoteletext_web::map::Place;
@@ -179,8 +178,8 @@ pub fn described(name: &str, channel: &str, tail: &str, page: PageNumber, answer
     let address = format!("{channel}{tail}");
     let Some(public) = answer else { return (small_page::private_page(name, &address), CONTENT_SECURITY_POLICY) };
     let canonical = format!("{channel}{:03X}", page.0);
-    let (width, height) = picture_size();
-    let shown = Shown { title: &public.title, text: &public.text, canonical: &canonical, picture: public.picture.as_deref().map(|png| (png, width, height)) };
+    let picture = public.picture.as_ref().map(|(png, width, height)| (&png[..], *width, *height));
+    let shown = Shown { title: &public.title, text: &public.text, canonical: &canonical, picture };
     (small_page::public_page(name, &address, &shown), PUBLIC_CONTENT_SECURITY_POLICY)
 }
 
