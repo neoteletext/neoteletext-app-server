@@ -310,6 +310,25 @@ fn frames_are_paired_or_ended_by_the_server() {
     assert_eq!(refusals(&channel.take_effects()), named("out_of_range", "sub"));
 }
 
+/// REQ-6533, ANIM-2, ANIM-21 (TODO-6675): a frame answering a selection
+/// the connection has since left is passed over whole, its end as its
+/// begin, with no refusal; a lone end on a page the connection shows is
+/// still refused `frame_order`.
+#[test]
+fn a_frame_for_a_page_left_is_passed_over_whole() {
+    let mark = |mark: &str| line(&json!({"type": "frame", "connections": [CONNECTION], "page": "150", "sub": "0001", "mark": mark}));
+    let mut channel = showing(0x160);
+    channel.from_program(&mark("begin"), 1);
+    channel.from_program(&line(&example("animate")), 2);
+    channel.from_program(&mark("end"), 3);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [(String, String); 0]);
+    assert_eq!(kinds(&effects), [] as [u8; 0], "nothing of it is sent");
+    let mut channel = showing(0x150);
+    channel.from_program(&mark("end"), 1);
+    assert_eq!(refusals(&channel.take_effects()), named("frame_order", "mark"));
+}
+
 /// REQ-6533, ANIM-3, ANIM-21: a frame whose records pass 262,144 bytes is
 /// refused `frame_too_large`, and what it held is sent as it is, with no
 /// frame.

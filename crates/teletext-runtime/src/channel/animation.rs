@@ -310,12 +310,16 @@ impl Channel {
                 let open = |state: &Connection| state.animation.frame.as_ref().is_some_and(|frame| frame.page == page && frame.sub == sub);
                 let targets: Vec<ConnectionId> =
                     self.targets(&message.connections).into_iter().filter(|connection| self.connections.get(connection).is_some_and(open)).collect();
-                if targets.is_empty() {
+                // An end whose begin found no connection showing the page,
+                // because each had moved on, is passed over as its begin
+                // was: only a connection that shows the page with no frame
+                // of it open is a fault of order (TODO-6675).
+                if targets.is_empty() && !self.showing(&message.connections, page, sub).is_empty() {
                     return Err(refuse(
                         kind,
                         "mark",
                         Rule::FrameOrder,
-                        format!("no connection named has a frame of {page:03X}/{sub:04X} open: an end follows its begin"),
+                        format!("no connection named that shows {page:03X}/{sub:04X} has a frame of it open: an end follows its begin"),
                     ));
                 }
                 for connection in targets {
