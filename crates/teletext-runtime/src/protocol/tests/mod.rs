@@ -25,6 +25,7 @@ mod reply;
 mod schema;
 mod sound;
 mod subpages;
+pub(crate) mod synth;
 mod viewer;
 
 /// The line a program would send for `value`.

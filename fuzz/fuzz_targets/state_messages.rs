@@ -75,8 +75,14 @@ fn proof(seed: [u8; 32], lifetime: Lifetime, challenge: &[u8; CHALLENGE_BYTES]) 
 }
 
 fuzz_target!(|data: &[u8]| {
-    let config =
-        ChannelConfig { name: "Fuzz".into(), address: ADDRESS.into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, other_addresses: Vec::new(), wheel: false };
+    let config = ChannelConfig {
+        name: "Fuzz".into(),
+        address: ADDRESS.into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        other_addresses: Vec::new(),
+        wheel: false,
+    };
     let mut channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(Counting(0)));
     let mut latest = [None; 2];
     let mut readers = [RecordReader::new(), RecordReader::new()];

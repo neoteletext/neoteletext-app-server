@@ -178,7 +178,7 @@ pub(crate) fn encode(page: &mut Page) -> Result<Cost, Fault> {
     };
     for (slot, (new, old)) in page.rows.iter_mut().zip(codes.iter().zip(&before)) {
         if new != old {
-            *slot = Some(row_text(new));
+            *slot = Some(protocol::Base64(row_text(new)));
         }
     }
     if encoded.changed {

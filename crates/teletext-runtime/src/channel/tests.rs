@@ -27,11 +27,11 @@ use crate::protocol::tests::{line, subpage, with};
 
 mod delivery;
 mod fields;
-mod instrument;
 mod moves;
 mod naplps;
 mod regis;
 mod sound;
+mod synth;
 mod viewers;
 
 /// The connection and session of a test.

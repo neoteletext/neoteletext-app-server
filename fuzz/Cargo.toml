@@ -21,12 +21,12 @@ teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
 # The engine's input writer, to write viewer state's messages as a
 # receiver does.
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "1ed23a538487989f090ed7c41427806a5e2a4943", default-features = false }
 # Ed25519 signing, to make proofs that verify (DEC-6471, approved by name).
 ring = { version = "=0.17.14", default-features = false }
 # The engine's base64, to write the packets as a program does; its records
 # reader, to find the challenges; its signed bytes.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34", default-features = false }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "1ed23a538487989f090ed7c41427806a5e2a4943", default-features = false }
 
 [profile.release]
 debug = 1
@@ -67,8 +67,29 @@ doc = false
 bench = false
 
 [[bin]]
-name = "instrument_sound"
-path = "fuzz_targets/instrument_sound.rs"
+name = "synth_sound"
+path = "fuzz_targets/synth_sound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "synth_live"
+path = "fuzz_targets/synth_live.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "synth_patch"
+path = "fuzz_targets/synth_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "midi_file"
+path = "fuzz_targets/midi_file.rs"
 test = false
 doc = false
 bench = false

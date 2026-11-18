@@ -1,236 +1,408 @@
-//! The instrument sounds' rules (REQ-6413, DEC-6410, DEC-6429): the images
-//! of the chip's registers of a synth6581 or synth8580 sound, the timed
-//! MIDI messages of a synth7 sound or of an analogue synthesizer's, and a
-//! bank of synth7 patches or of one synthesizer's, each held to what its
-//! receiver plays (the engine's
-//! REQ-6411), so that a program learns of a fault where it made it and no
-//! receiver is sent a block it would refuse, or a patch it would replace
-//! with its default.
+//! The synthesizers' program-facing shape (server.md SRV-49 item 2,
+//! SRV-53): what a schema cannot state of a synthesizer sound, checked once
+//! it is read and before anything is built. Every rule of a family's
+//! messages, patches and banks is the engine's and is checked where the
+//! server builds them (`crate::sound`); here are only the lengths of lists
+//! and bytes, times, the order of events, the banks a sound names and its
+//! lifted banks' names, and the text of a synth7 voice's name.
 
 use alloc::format;
+use alloc::string::ToString;
 
-use super::super::{
-    Connections, LAST_MIDI_KEY, Rule, SYNTH_MOST_PATCHES, SYNTH7_MOST_PATCHES, SYNTH7_MOST_SLOTS, SYNTH7_PATCH_BYTES, SYNTH7_SLOT_BYTES, SYNTH6581_IMAGE_BYTES,
-    SYNTH6581_IMAGES_PER_BLOCK, Synth,
-};
 use super::{Checked, Path, check_base64, check_connections, fault};
+use crate::protocol::{
+    BytesForm, LEAST_ASID_BYTES, LEAST_MIDI_FILE_BYTES, LEAST_SYSTEM_EXCLUSIVE_BYTES, MOST_ASID_BYTES, MOST_BANK_IMAGE_BYTES, MOST_EVENT_BYTES,
+    MOST_LIFTED_BANKS, MOST_LIVE_EVENTS, MOST_MIDI_FILE_BYTES, MOST_PATCH_BYTES, MOST_SOUND_BANKS, MOST_STORED_EVENTS, MOST_STORED_TIME_US, NoteFamily, Rule,
+    SYNTH7_BANK_VOICES, SYNTH8_BANK_PATCHES, SYNTH53_BANK_PROGRAMS, SharedEvent, Sound, SplitEvent, Synth7Family, Synth7Patch, Synth8Family, Synth53Family,
+    Synth60Family, Synth80Family, Synth106Family, Synth6581Event, Synth6581Music, SynthDFamily,
+};
+use crate::protocol::{MOST_BANK_PATCHES, Synth7Bank, Synth8Bank, Synth53Bank, Synth60Bank, Synth80Bank, Synth106Bank, SynthDBank};
 
-mod patch;
+/// The most characters of a synth7 voice's name (S7-28, parameters 145 to
+/// 154).
+const SYNTH7_NAME_CHARACTERS: usize = 10;
+/// The characters a synth7 voice's name may hold in the fields form:
+/// printable ASCII (SRV-26).
+const SYNTH7_NAME_CHARACTER: core::ops::RangeInclusive<char> = ' '..='~';
 
-/// The last time a synth7 slot may carry: tenths of a millisecond within a
-/// 20 ms block, 0 to 199.
-const SYNTH7_LAST_TIME: u8 = 199;
-/// The most a MIDI data byte holds: 7 bits (MIDI 1.0 Detailed
-/// Specification, "Data Bytes"). A synth7 patch's bytes are held to it too,
-/// as the instrument's own bulk dump is.
-const MIDI_DATA_MOST: u8 = 0x7F;
-/// A MIDI status byte's message, its high four bits; the low four are the
-/// MIDI channel, which is the part that plays it.
-const MIDI_MESSAGE_BITS: u8 = 0xF0;
-/// Note off.
-const NOTE_OFF: u8 = 0x80;
-/// Note on.
-const NOTE_ON: u8 = 0x90;
-/// Control change.
-const CONTROL_CHANGE: u8 = 0xB0;
-/// Program change.
-const PROGRAM_CHANGE: u8 = 0xC0;
-/// Pitch bend.
-const PITCH_BEND: u8 = 0xE0;
-/// Polyphonic key pressure, which synth80 alone takes.
-const KEY_PRESSURE: u8 = 0xA0;
-/// Channel pressure, which synth80 alone takes.
-const CHANNEL_PRESSURE: u8 = 0xD0;
-/// The bits of a MIDI status byte that are its channel, counted from 0.
-const MIDI_CHANNEL_BITS: u8 = 0x0F;
-/// The controllers the synth7 codec takes: the modulation wheel (1), volume
-/// (7), the sustain pedal (64), all sound off (120), reset all controllers
-/// (121) and all notes off (123).
-const CONTROLLERS: [u8; 6] = [1, 7, 64, 120, 121, 123];
-/// The controllers synth8's codec takes beyond [`CONTROLLERS`]:
-/// portamento time (5), the balance of its two halves (8) and portamento
-/// on or off (65) (the engine's `receiver/instruments/analogue.rs`).
-const SYNTH8_CONTROLLERS: [u8; 3] = [5, 8, 65];
-/// The controllers the codec of synth106 and synth60 takes beyond
-/// [`CONTROLLERS`]: omni off (124), omni on (125), mono on (126) and poly on
-/// (127), each of which is to the instrument an all notes off (the engine's
-/// `receiver/instruments/analogue.rs`). Source: Roland's Juno-106 owner's
-/// manual, MIDI Implementation 2.1: "Mode messages (123 - 127) are also
-/// recognized as ALL NOTES OFF".
-const SYNTH106_CONTROLLERS: [u8; 4] = [124, 125, 126, 127];
-/// The MIDI channels, counted from 0, whose program changes synth8
-/// takes: channel 1 chooses the upper patch and channel 2 the lower.
-const SYNTH8_PROGRAM_CHANNELS: u8 = 2;
-/// The last patch a program change may choose: a bank holds 32.
-const LAST_PATCH: u8 = 31;
-const _: () = assert!(LAST_PATCH as usize + 1 == SYNTH7_MOST_PATCHES);
-
-/// Whole blocks of `block_bytes` in the base64 at `path`, 1 to `most` of
-/// them.
-fn check_blocks(path: &Path<'_>, text: &str, block_bytes: u16, most: usize, block: &str) -> Result<alloc::vec::Vec<u8>, super::Fault> {
-    let size = usize::from(block_bytes);
-    let bytes = check_base64(path, text, most.saturating_mul(size))?;
-    if bytes.is_empty() || size == 0 || !bytes.len().is_multiple_of(size) {
-        return Err(fault(path, Rule::WrongLength, format!("{} bytes: whole {block} of {block_bytes}", bytes.len())));
-    }
-    let count = bytes.len().checked_div(size).unwrap_or(0);
-    if count > most {
-        return Err(fault(path, Rule::TooLong, format!("{count} {block}, at most {most}")));
-    }
-    Ok(bytes)
+/// Checks a synthesizer sound's shape; `None` for a sound of another kind.
+#[allow(clippy::too_many_lines, reason = "one arm for each of the 42 synthesizer kinds")]
+pub(super) fn check(root: &Path<'_>, sound: &Sound) -> Option<Checked> {
+    Some(match sound {
+        Sound::Synth6581(stored) | Sound::Synth8580(stored) => stored_shape(root, &stored.connections, &[], &[]).and_then(|()| match &stored.music {
+            Synth6581Music::Events(list) => synth6581_events(&root.field("music").field("events"), &list.events, Some(MOST_STORED_EVENTS), None),
+            Synth6581Music::MidiFile(file) => midi_file(&root.field("music").field("bytes"), &file.bytes),
+        }),
+        Sound::Synth6581Live(live) | Sound::Synth8580Live(live) => check_connections(&root.field("connections"), &live.connections),
+        Sound::Synth6581Events(events) | Sound::Synth8580Events(events) => check_connections(&root.field("connections"), &events.connections)
+            .and_then(|()| synth6581_events(&root.field("events"), &events.events, None, Some(events.until_us.get()))),
+        Sound::Synth7(stored) => stored_sound::<Synth7Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_7(stored)),
+        Sound::Synth106(stored) => stored_sound::<Synth106Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_106(stored)),
+        Sound::Synth60(stored) => stored_sound::<Synth60Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_60(stored)),
+        Sound::SynthD(stored) => stored_sound::<SynthDFamily>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_d(stored)),
+        Sound::Synth53(stored) | Sound::Synth52(stored) | Sound::Synth51(stored) => {
+            stored_sound::<Synth53Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_53(stored))
+        }
+        Sound::Synth8(stored) => stored_sound::<Synth8Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_8(stored)),
+        Sound::Synth80(stored) => stored_sound::<Synth80Family>(root, &stored.connections, &stored.banks, &stored.lift_banks, &music_of_80(stored)),
+        Sound::Synth7Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth106Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth60Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::SynthDLive(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth53Live(live) | Sound::Synth52Live(live) | Sound::Synth51Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth8Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth80Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth7Events(events) => live_events::<Synth7Family>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::Synth106Events(events) => live_events::<Synth106Family>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::Synth60Events(events) => live_events::<Synth60Family>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::SynthDEvents(events) => live_events::<SynthDFamily>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::Synth53Events(events) | Sound::Synth52Events(events) | Sound::Synth51Events(events) => {
+            live_events::<Synth53Family>(root, &events.connections, &events.events, events.until_us.get())
+        }
+        Sound::Synth8Events(events) => live_events::<Synth8Family>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::Synth80Events(events) => live_events::<Synth80Family>(root, &events.connections, &events.events, events.until_us.get()),
+        Sound::Synth7Bank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| synth7_bank(&root.field("bank"), &bank.bank)),
+        Sound::Synth106Bank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| match &bank.bank {
+            Synth106Bank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), MOST_BANK_PATCHES).and_then(|()| {
+                patch_bytes_each(
+                    &root.field("bank").field("patches"),
+                    list.patches.iter().map(|patch| match patch {
+                        crate::protocol::Synth106Patch::Bytes(bytes) => Some(bytes),
+                        crate::protocol::Synth106Patch::Fields(_) => None,
+                    }),
+                )
+            }),
+            Synth106Bank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+        }),
+        Sound::Synth60Bank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| match &bank.bank {
+            Synth60Bank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), MOST_BANK_PATCHES).and_then(|()| {
+                patch_bytes_each(
+                    &root.field("bank").field("patches"),
+                    list.patches.iter().map(|patch| match patch {
+                        crate::protocol::Synth60Patch::Bytes(bytes) => Some(bytes),
+                        crate::protocol::Synth60Patch::Fields(_) => None,
+                    }),
+                )
+            }),
+            Synth60Bank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+        }),
+        Sound::SynthDBank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| match &bank.bank {
+            SynthDBank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), MOST_BANK_PATCHES).and_then(|()| {
+                patch_bytes_each(
+                    &root.field("bank").field("patches"),
+                    list.patches.iter().map(|patch| match patch {
+                        crate::protocol::SynthDPatch::Bytes(bytes) => Some(bytes),
+                        crate::protocol::SynthDPatch::Fields(_) => None,
+                    }),
+                )
+            }),
+            SynthDBank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+        }),
+        Sound::Synth53Bank(bank) | Sound::Synth52Bank(bank) | Sound::Synth51Bank(bank) => check_connections(&root.field("connections"), &bank.connections)
+            .and_then(|()| match &bank.bank {
+                Synth53Bank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), SYNTH53_BANK_PROGRAMS).and_then(|()| {
+                    patch_bytes_each(
+                        &root.field("bank").field("patches"),
+                        list.patches.iter().map(|patch| match patch {
+                            crate::protocol::Synth53Patch::Bytes(bytes) => Some(bytes),
+                            crate::protocol::Synth53Patch::Fields(_) => None,
+                        }),
+                    )
+                }),
+                Synth53Bank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+            }),
+        Sound::Synth8Bank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| match &bank.bank {
+            Synth8Bank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), SYNTH8_BANK_PATCHES).and_then(|()| {
+                patch_bytes_each(
+                    &root.field("bank").field("patches"),
+                    list.patches.iter().map(|patch| match patch {
+                        crate::protocol::Synth8Patch::Bytes(bytes) => Some(bytes),
+                        crate::protocol::Synth8Patch::Fields(_) => None,
+                    }),
+                )
+            }),
+            Synth8Bank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+        }),
+        Sound::Synth80Bank(bank) => check_connections(&root.field("connections"), &bank.connections).and_then(|()| match &bank.bank {
+            Synth80Bank::Patches(list) => patch_count(&root.field("bank").field("patches"), list.patches.len(), MOST_BANK_PATCHES).and_then(|()| {
+                patch_bytes_each(
+                    &root.field("bank").field("patches"),
+                    list.patches.iter().map(|patch| match patch {
+                        crate::protocol::Synth80Patch::Bytes(bytes) => Some(bytes),
+                        crate::protocol::Synth80Patch::Fields(_) => None,
+                    }),
+                )
+            }),
+            Synth80Bank::Bytes(bytes) => bank_bytes(&root.field("bank"), bytes),
+        }),
+        _ => return None,
+    })
 }
 
-/// The kinds of a synth6581 or synth8580 sound: who it is for, images to a block, and, where the
-/// kind carries blocks, `images` as 1 to `most` whole blocks. Every byte
-/// is a value some register takes, so the images themselves are not read.
-pub(super) fn synth6581(root: &Path<'_>, connections: &Connections, images_per_block: u8, images: Option<(&str, usize)>) -> Checked {
-    check_connections(&root.field("connections"), connections)?;
-    if !SYNTH6581_IMAGES_PER_BLOCK.contains(&images_per_block) {
-        return Err(fault(&root.field("images_per_block"), Rule::NotListed, format!("{images_per_block}: one of {SYNTH6581_IMAGES_PER_BLOCK:?}")));
-    }
-    let Some((images, most)) = images else { return Ok(()) };
-    let block_bytes = SYNTH6581_IMAGE_BYTES.saturating_mul(u16::from(images_per_block));
-    check_blocks(&root.field("images"), images, block_bytes, most, "blocks").map(|_| ())
+/// A stored sound's music, as the shape check reads it.
+enum MusicShape<'a, E> {
+    /// Timed events.
+    Events(&'a [E]),
+    /// A Standard MIDI File's bytes.
+    File(&'a str),
 }
 
-/// A synth7 sound's kinds: who it is for, slots to a block, and, where the
-/// kind carries blocks, `blocks` as 1 to `most` whole blocks whose every
-/// slot is empty or a message the codec takes.
-pub(super) fn synth7(root: &Path<'_>, connections: &Connections, slots: u8, blocks: Option<(&str, usize)>) -> Checked {
-    timed(root, connections, Player::Synth7, slots, blocks)
-}
-
-/// An analogue synthesizer's kinds of sound: as a synth7 sound's, each slot
-/// held to the messages that instrument's codec takes.
-pub(super) fn synth(root: &Path<'_>, connections: &Connections, synth: Synth, slots: u8, blocks: Option<(&str, usize)>) -> Checked {
-    timed(root, connections, Player::Synth(synth), slots, blocks)
-}
-
-/// A synth8 sound's split point: a MIDI key.
-pub(super) fn split_key(root: &Path<'_>, split_key: u8) -> Checked {
-    if split_key > LAST_MIDI_KEY {
-        return Err(fault(&root.field("split_key"), Rule::OutOfRange, format!("{split_key}: 0 to {LAST_MIDI_KEY}")));
-    }
-    Ok(())
-}
-
-/// What plays a block of timed MIDI messages, whose codec says which
-/// messages it takes.
-#[derive(Clone, Copy)]
-enum Player {
-    /// synth7.
-    Synth7,
-    /// One of the analogue synthesizers.
-    Synth(Synth),
-}
-
-/// The kinds of sound whose blocks are slots of timed MIDI messages: who it
-/// is for, slots to a block, and, where the kind carries blocks, `blocks`
-/// as 1 to `most` whole blocks whose every slot is empty or a message the
-/// codec takes.
-fn timed(root: &Path<'_>, connections: &Connections, player: Player, slots: u8, blocks: Option<(&str, usize)>) -> Checked {
-    check_connections(&root.field("connections"), connections)?;
-    if slots == 0 || slots > SYNTH7_MOST_SLOTS {
-        return Err(fault(&root.field("slots"), Rule::OutOfRange, format!("{slots}: 1 to {SYNTH7_MOST_SLOTS}")));
-    }
-    let Some((blocks, most)) = blocks else { return Ok(()) };
-    let path = root.field("blocks");
-    let block_bytes = SYNTH7_SLOT_BYTES.saturating_mul(u16::from(slots));
-    let bytes = check_blocks(&path, blocks, block_bytes, most, "blocks")?;
-    for (block, slots) in bytes.chunks_exact(usize::from(block_bytes)).enumerate() {
-        for (index, slot) in slots.as_chunks::<{ SYNTH7_SLOT_BYTES as usize }>().0.iter().enumerate() {
-            if let Some(why) = slot_fault(*slot, player) {
-                return Err(fault(&path, Rule::OutsideProfile, format!("block {block} slot {index} ({slot:02X?}): {why}")));
+macro_rules! music_of {
+    ($name:ident, $sound:ty, $music:ident, $family:ty) => {
+        fn $name(sound: &$sound) -> MusicShape<'_, <$family as NoteFamily>::Event> {
+            match &sound.music {
+                crate::protocol::$music::Events(list) => MusicShape::Events(&list.events),
+                crate::protocol::$music::MidiFile(file) => MusicShape::File(&file.bytes),
             }
         }
-    }
-    Ok(())
+    };
 }
 
-/// Why a block's slot is not one the codec of `player` takes, if it is
-/// not: an empty slot is four zero bytes, and any other is a time within
-/// the block and one of the MIDI messages the instrument is played with,
-/// synth7's five, and for synth80 the two kinds of pressure, for synth106
-/// and synth60 the four mode controllers, and for synth8 three more
-/// controllers and program changes on its two channels only.
-fn slot_fault([time, status, data1, data2]: [u8; SYNTH7_SLOT_BYTES as usize], player: Player) -> Option<&'static str> {
-    if [time, status, data1, data2] == [0; SYNTH7_SLOT_BYTES as usize] {
-        return None;
-    }
-    if time > SYNTH7_LAST_TIME {
-        return Some("its time is 0 to 199, tenths of a millisecond within the block");
-    }
-    let seven_bits = data1 <= MIDI_DATA_MOST && data2 <= MIDI_DATA_MOST;
-    let message = status & MIDI_MESSAGE_BITS;
-    match (player, message) {
-        (Player::Synth(Synth::Synth80), KEY_PRESSURE) if seven_bits => return None,
-        (Player::Synth(Synth::Synth80), KEY_PRESSURE) => return Some("a key pressure's key and pressure are 0 to 127"),
-        (Player::Synth(Synth::Synth80), CHANNEL_PRESSURE) if data1 > MIDI_DATA_MOST => return Some("a channel pressure is 0 to 127"),
-        (Player::Synth(Synth::Synth80), CHANNEL_PRESSURE) if data2 != 0 => return Some("a channel pressure's second data byte is 0"),
-        (Player::Synth(Synth::Synth80), CHANNEL_PRESSURE) => return None,
-        (Player::Synth(Synth::Synth106 | Synth::Synth60), CONTROL_CHANGE) if SYNTH106_CONTROLLERS.contains(&data1) => {
-            return (data2 > MIDI_DATA_MOST).then_some("a controller's value is 0 to 127");
-        }
-        (Player::Synth(Synth::Synth106), CONTROL_CHANGE) if !CONTROLLERS.contains(&data1) => {
-            return Some("a synth106's control change is of controller 1, 7, 64, 120, 121 or 123 to 127");
-        }
-        (Player::Synth(Synth::Synth60), CONTROL_CHANGE) if !CONTROLLERS.contains(&data1) => {
-            return Some("a synth60's control change is of controller 1, 7, 64, 120, 121 or 123 to 127");
-        }
-        (Player::Synth(Synth::Synth8), CONTROL_CHANGE) if SYNTH8_CONTROLLERS.contains(&data1) => {
-            return (data2 > MIDI_DATA_MOST).then_some("a controller's value is 0 to 127");
-        }
-        (Player::Synth(Synth::Synth8), CONTROL_CHANGE) if !CONTROLLERS.contains(&data1) => {
-            return Some("a synth8's control change is of controller 1, 5, 7, 8, 64, 65, 120, 121 or 123");
-        }
-        (Player::Synth(Synth::Synth8), PROGRAM_CHANGE) if status & MIDI_CHANNEL_BITS >= SYNTH8_PROGRAM_CHANNELS => {
-            return Some("a synth8's program change is on MIDI channel 1, the upper patch, or 2, the lower");
-        }
-        _ => {}
-    }
-    match message {
-        NOTE_OFF | NOTE_ON if seven_bits => None,
-        NOTE_OFF | NOTE_ON => Some("a note's key and velocity are 0 to 127"),
-        CONTROL_CHANGE if !CONTROLLERS.contains(&data1) => Some("a control change is of controller 1, 7, 64, 120, 121 or 123"),
-        CONTROL_CHANGE if data2 > MIDI_DATA_MOST => Some("a controller's value is 0 to 127"),
-        PROGRAM_CHANGE if data1 > LAST_PATCH => Some("a program change chooses patch 0 to 31"),
-        PROGRAM_CHANGE if data2 != 0 => Some("a program change's second data byte is 0"),
-        PITCH_BEND if !seven_bits => Some("a pitch bend's two data bytes are 0 to 127"),
-        CONTROL_CHANGE | PROGRAM_CHANGE | PITCH_BEND => None,
-        _ if matches!(player, Player::Synth(Synth::Synth80)) => {
-            Some("its status is a note off, note on, key pressure, control change, program change, channel pressure or pitch bend")
-        }
-        _ => Some("its status is a note off, note on, control change, program change or pitch bend"),
-    }
-}
+music_of!(music_of_7, crate::protocol::Synth7Sound, Synth7Music, Synth7Family);
+music_of!(music_of_106, crate::protocol::Synth106Sound, Synth106Music, Synth106Family);
+music_of!(music_of_60, crate::protocol::Synth60Sound, Synth60Music, Synth60Family);
+music_of!(music_of_d, crate::protocol::SynthDSound, SynthDMusic, SynthDFamily);
+music_of!(music_of_53, crate::protocol::Synth53Sound, Synth53Music, Synth53Family);
+music_of!(music_of_8, crate::protocol::Synth8Sound, Synth8Music, Synth8Family);
+music_of!(music_of_80, crate::protocol::Synth80Sound, Synth80Music, Synth80Family);
 
-/// A bank of synth7 patches: who it is for, and `patches` as 1 to 32 whole
-/// patches whose every byte is one the instrument's bulk dump can carry.
-pub(super) fn bank(root: &Path<'_>, connections: &Connections, patches: &str) -> Checked {
+/// What every stored sound's names must meet: its connections, and its
+/// banks and lifted banks within the most a sound names (SRV-15, SRV-16).
+fn stored_shape(root: &Path<'_>, connections: &crate::protocol::Connections, banks: &[u8], lift: &[crate::protocol::BankName]) -> Checked {
     check_connections(&root.field("connections"), connections)?;
-    let path = root.field("patches");
-    let bytes = check_blocks(&path, patches, SYNTH7_PATCH_BYTES, SYNTH7_MOST_PATCHES, "patches")?;
-    for (patch, packed) in bytes.chunks_exact(usize::from(SYNTH7_PATCH_BYTES)).enumerate() {
-        if let Some((index, byte)) = packed.iter().enumerate().find(|&(_, &byte)| byte > MIDI_DATA_MOST) {
-            return Err(fault(&path, Rule::OutsideProfile, format!("patch {patch} byte {index} is {byte}: at most {MIDI_DATA_MOST}")));
+    if banks.len() > MOST_SOUND_BANKS {
+        return Err(fault(&root.field("banks"), Rule::TooLong, format!("SRV-58: {} banks, at most {MOST_SOUND_BANKS}", banks.len())));
+    }
+    if lift.len() > MOST_LIFTED_BANKS {
+        return Err(fault(&root.field("lift_banks"), Rule::TooLong, format!("SRV-15: {} names, at most {MOST_LIFTED_BANKS}", lift.len())));
+    }
+    for (index, name) in lift.iter().enumerate() {
+        if lift.iter().take(index).any(|earlier| earlier.handle == name.handle) || banks.contains(&name.handle) {
+            return Err(fault(&root.field("lift_banks").item(index), Rule::Duplicate, format!("SRV-15: handle {} is named twice", name.handle)));
         }
     }
     Ok(())
 }
 
-/// A bank of an analogue synthesizer's patches: who it is for, and
-/// `patches` as 1 to 32 whole patches of that instrument, every byte within
-/// the range of the control it holds, since a receiver plays its default
-/// patch in place of one it cannot read, and says nothing.
-pub(super) fn synth_bank(root: &Path<'_>, connections: &Connections, synth: Synth, patches: &str) -> Checked {
+fn stored_sound<F: NoteFamily>(
+    root: &Path<'_>,
+    connections: &crate::protocol::Connections,
+    banks: &[u8],
+    lift: &[crate::protocol::BankName],
+    music: &MusicShape<'_, F::Event>,
+) -> Checked
+where
+    F::PatchEvent: PatchShape,
+{
+    stored_shape(root, connections, banks, lift)?;
+    if banks.is_empty() && lift.is_empty() {
+        return Err(fault(&root.field("banks"), Rule::TooShort, "SRV-16, MIDI-57: a sound names at least one bank, in banks or lift_banks".to_string()));
+    }
+    match music {
+        MusicShape::Events(events) => note_events::<F>(&root.field("music").field("events"), events, Some(MOST_STORED_EVENTS), None),
+        MusicShape::File(bytes) => midi_file(&root.field("music").field("bytes"), bytes),
+    }
+}
+
+fn live_banks(root: &Path<'_>, connections: &crate::protocol::Connections, banks: &[u8]) -> Checked {
     check_connections(&root.field("connections"), connections)?;
-    let path = root.field("patches");
-    let size = synth.patch_bytes();
-    let bytes = check_blocks(&path, patches, size, SYNTH_MOST_PATCHES, "patches")?;
-    for (index, one) in bytes.chunks_exact(usize::from(size)).enumerate() {
-        if let Err(why) = patch::check(synth, one) {
-            return Err(fault(&path, Rule::OutsideProfile, format!("patch {index} {why}")));
+    if banks.is_empty() {
+        return Err(fault(&root.field("banks"), Rule::TooShort, "SRV-17: a live sound names at least one bank".to_string()));
+    }
+    if banks.len() > MOST_SOUND_BANKS {
+        return Err(fault(&root.field("banks"), Rule::TooLong, format!("SRV-58: {} banks, at most {MOST_SOUND_BANKS}", banks.len())));
+    }
+    Ok(())
+}
+
+fn live_events<F: NoteFamily>(root: &Path<'_>, connections: &crate::protocol::Connections, events: &[F::Event], until_us: u64) -> Checked
+where
+    F::PatchEvent: PatchShape,
+{
+    check_connections(&root.field("connections"), connections)?;
+    note_events::<F>(&root.field("events"), events, Some(MOST_LIVE_EVENTS), Some(until_us))
+}
+
+/// The shape of an inline patch: its bytes form's length, and for synth7
+/// its voice's name (SRV-21, SRV-26).
+pub(crate) trait PatchShape {
+    /// Checks it at `path`, the patch's own.
+    fn shape(&self, path: &Path<'_>) -> Checked;
+}
+
+macro_rules! patch_shape {
+    ($($event:ident: $patch:ident),+) => {
+        $(impl PatchShape for crate::protocol::$event {
+            fn shape(&self, path: &Path<'_>) -> Checked {
+                match &self.patch {
+                    crate::protocol::$patch::Bytes(bytes) => bytes_within(&path.field("bytes"), &bytes.bytes, 1, MOST_PATCH_BYTES),
+                    crate::protocol::$patch::Fields(_) => Ok(()),
+                }
+            }
+        })+
+    };
+}
+
+patch_shape!(
+    Synth106PatchEvent: Synth106Patch,
+    Synth60PatchEvent: Synth60Patch,
+    SynthDPatchEvent: SynthDPatch,
+    Synth53PatchEvent: Synth53Patch,
+    Synth8PatchEvent: Synth8Patch,
+    Synth80PatchEvent: Synth80Patch
+);
+
+impl PatchShape for crate::protocol::Synth7PatchEvent {
+    fn shape(&self, path: &Path<'_>) -> Checked {
+        synth7_patch(path, &self.patch)
+    }
+}
+
+/// A time's order and bounds: not before the one before it (SRV-14,
+/// SRV-18), a stored sound's within two minutes (SRV-8), a live message's
+/// before its `until_us` (SRV-74).
+fn check_time(path: &Path<'_>, index: usize, time_us: u64, previous: u64, until_us: Option<u64>) -> Checked {
+    if time_us < previous {
+        return Err(fault(path, Rule::NotAscending, format!("SRV-14: event {index} at {time_us} us is before the one before it, at {previous} us")));
+    }
+    match until_us {
+        None if time_us >= MOST_STORED_TIME_US => {
+            Err(fault(&path.field("time_us"), Rule::OutOfRange, format!("SRV-8: {time_us} us; a stored sound's times are below {MOST_STORED_TIME_US}")))
+        }
+        Some(until) if time_us >= until => {
+            Err(fault(&path.field("time_us"), Rule::NotBeforeUntil, format!("SRV-74: event {index} at {time_us} us is not before until_us {until}")))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn event_count(path: &Path<'_>, count: usize, most: Option<usize>) -> Checked {
+    let most = most.unwrap_or(MOST_LIVE_EVENTS);
+    if count > most {
+        return Err(fault(path, Rule::TooLong, format!("SRV-14, SRV-18: {count} events, at most {most}")));
+    }
+    Ok(())
+}
+
+fn note_events<F: NoteFamily>(path: &Path<'_>, events: &[F::Event], most: Option<usize>, until_us: Option<u64>) -> Checked
+where
+    F::PatchEvent: PatchShape,
+{
+    event_count(path, events.len(), most)?;
+    let mut previous = 0;
+    for (index, event) in events.iter().enumerate() {
+        let at = path.item(index);
+        let time_us = F::time_us(event);
+        check_time(&at, index, time_us, previous, until_us)?;
+        previous = time_us;
+        match F::split(event) {
+            SplitEvent::Shared(SharedEvent::SystemExclusive(event)) => {
+                bytes_within(&at.field("bytes"), &event.bytes, LEAST_SYSTEM_EXCLUSIVE_BYTES, MOST_EVENT_BYTES)?;
+            }
+            SplitEvent::Shared(SharedEvent::Raw(event)) => bytes_within(&at.field("bytes"), &event.bytes, 1, MOST_EVENT_BYTES)?,
+            SplitEvent::Patch(event) => event.shape(&at.field("patch"))?,
+            SplitEvent::Shared(_) | SplitEvent::Parameter(_) => {}
         }
     }
     Ok(())
+}
+
+fn synth6581_events(path: &Path<'_>, events: &[Synth6581Event], most: Option<usize>, until_us: Option<u64>) -> Checked {
+    event_count(path, events.len(), most)?;
+    let mut previous = 0;
+    for (index, event) in events.iter().enumerate() {
+        let at = path.item(index);
+        check_time(&at, index, event.time_us(), previous, until_us)?;
+        previous = event.time_us();
+        match event {
+            Synth6581Event::RegisterUpdate(update) => {
+                if update.registers.by_id().iter().all(Option::is_none) {
+                    return Err(fault(&at.field("registers"), Rule::TooShort, "SRV-12, S6581-16: an update writes at least one register".to_string()));
+                }
+            }
+            Synth6581Event::Asid(message) => bytes_within(&at.field("bytes"), &message.bytes, LEAST_ASID_BYTES, MOST_ASID_BYTES)?,
+        }
+    }
+    Ok(())
+}
+
+/// Base64 of `least` to `most` bytes once decoded (SRV-6).
+fn bytes_within(path: &Path<'_>, text: &str, least: usize, most: usize) -> Checked {
+    let bytes = check_base64(path, text, most)?;
+    if bytes.len() < least {
+        return Err(fault(path, Rule::TooShort, format!("SRV-6: {} bytes, at least {least}", bytes.len())));
+    }
+    Ok(())
+}
+
+fn midi_file(path: &Path<'_>, bytes: &str) -> Checked {
+    let decoded = check_base64(path, bytes, MOST_MIDI_FILE_BYTES).map_err(|mut fault| {
+        if fault.rule == Rule::TooLong {
+            fault.rule = Rule::MidiFileTooLarge;
+            fault.detail = format!("MIDI-119: {}", fault.detail);
+        }
+        fault
+    })?;
+    if decoded.len() < LEAST_MIDI_FILE_BYTES {
+        return Err(fault(path, Rule::MidiFileUnsupported, format!("MIDI-113: {} bytes hold no header chunk of 14", decoded.len())));
+    }
+    Ok(())
+}
+
+fn patch_count(path: &Path<'_>, count: usize, most: usize) -> Checked {
+    if count == 0 {
+        return Err(fault(path, Rule::TooShort, "SRV-20: a bank holds at least one patch".to_string()));
+    }
+    if count > most {
+        return Err(fault(path, Rule::TooLong, format!("SRV-20: {count} patches, at most {most}")));
+    }
+    Ok(())
+}
+
+fn patch_bytes_each<'a>(path: &Path<'_>, patches: impl Iterator<Item = Option<&'a BytesForm>>) -> Checked {
+    for (index, bytes) in patches.enumerate() {
+        if let Some(bytes) = bytes {
+            bytes_within(&path.item(index).field("bytes"), &bytes.bytes, 1, MOST_PATCH_BYTES)?;
+        }
+    }
+    Ok(())
+}
+
+fn bank_bytes(path: &Path<'_>, bytes: &BytesForm) -> Checked {
+    bytes_within(&path.field("bytes"), &bytes.bytes, 1, MOST_BANK_IMAGE_BYTES)
+}
+
+fn synth7_bank(path: &Path<'_>, bank: &Synth7Bank) -> Checked {
+    match bank {
+        Synth7Bank::Patches(list) => {
+            patch_count(&path.field("patches"), list.patches.len(), SYNTH7_BANK_VOICES)?;
+            for (index, patch) in list.patches.iter().enumerate() {
+                synth7_patch(&path.field("patches").item(index), patch)?;
+            }
+            Ok(())
+        }
+        Synth7Bank::Bytes(bytes) => bank_bytes(path, bytes),
+    }
+}
+
+/// A synth7 voice's name in the fields form: at most ten printable ASCII
+/// characters (SRV-26).
+pub(crate) fn synth7_patch(path: &Path<'_>, voice_patch: &Synth7Patch) -> Checked {
+    match voice_patch {
+        Synth7Patch::Fields(voice) => {
+            let name = &voice.name;
+            if let Some(bad) = name.chars().find(|character| !SYNTH7_NAME_CHARACTER.contains(character)) {
+                return Err(fault(&path.field("name"), Rule::ForbiddenCharacter, format!("SRV-26: U+{:04X}; a name is U+0020 to U+007E", u32::from(bad))));
+            }
+            if name.chars().count() > SYNTH7_NAME_CHARACTERS {
+                return Err(fault(
+                    &path.field("name"),
+                    Rule::TooLong,
+                    format!("SRV-26: {} characters, at most {SYNTH7_NAME_CHARACTERS}", name.chars().count()),
+                ));
+            }
+            Ok(())
+        }
+        Synth7Patch::Bytes(bytes) => bytes_within(&path.field("bytes"), &bytes.bytes, 1, MOST_PATCH_BYTES),
+    }
 }

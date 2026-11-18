@@ -153,9 +153,9 @@ fn samples_are_encoded_as_ima_adpcm_and_commands_numbered() {
     channel.from_program(&sound("blocks", json!({"rate": RATE, "first": 3, "pcm": base64(&PCM)})), 2);
     let live = Sound::live(HANDLE, GENERATION, Codec::ImaAdpcm, RATE, IMA_BLOCK_LARGE).unwrap();
     let mut encoder = LiveEncoder::new(&live, 3).unwrap();
-    let mut blocks = encoder.records(&samples);
-    blocks.extend(encoder.finish());
-    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), audio(&blocks, after));
+    let mut expected = encoder.records(&samples);
+    expected.extend(encoder.finish());
+    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), audio(&expected, after));
 
     let stop = line(&json!({"type": "sound", "kind": "stop", "connections": [CONNECTION], "channel": 1, "fade_ms": 0}));
     let command = |channel: &mut Channel| {
