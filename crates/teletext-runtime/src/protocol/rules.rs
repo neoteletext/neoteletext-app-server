@@ -35,7 +35,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use super::animation::{MOST_NAPLPS_OBJECTS, MOST_OPERATIONS, MOST_SPRITES, NaplpsObject, Sprite};
+use super::animation::{MOST_NAPLPS_OBJECTS, MOST_OPERATIONS, MOST_SPRITES, NaplpsObject, NaplpsTitle, Sprite};
 use super::read::{Fault, join, typed, typed_value};
 use super::sound::{MOST_DUCK, carried, not_listed, tagged, tagged_choice};
 use super::{AnimationOp, ConnectionId, Connections, Data, I32In, KeyName, MidiChannel, PageNumber, Rule, SAFE_INTEGER_LIMIT, SubCode, U8In, U16In, U64In};
@@ -2179,13 +2179,20 @@ pub struct SpritesCommand {
 }
 
 /// `naplps_objects` in a group (ANIM-11): replaces the page's NAPLPS
-/// objects.
+/// objects and the picture's title, or with `one` redefines one object,
+/// as the message does.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NaplpsObjectsCommand {
-    /// The objects.
+    /// The objects: exactly one with `one`.
     #[schemars(length(max = MOST_NAPLPS_OBJECTS))]
     pub objects: Vec<NaplpsObject>,
+    /// The picture's title, or null for none; never with `one`.
+    #[serde(default)]
+    pub title: Option<NaplpsTitle>,
+    /// Redefine the one object given, keeping the others and the title.
+    #[serde(default)]
+    pub one: bool,
 }
 
 /// A command of a group (RULE-35, RULE-118, RULE-119), by `type`: a

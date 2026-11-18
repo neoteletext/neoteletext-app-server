@@ -342,7 +342,7 @@ fn a_groups_sprites_and_objects_are_the_records_sent_directly() {
         panic!("not naplps_objects")
     };
     let sprites_body = crate::animation::sprites_body(0x101, 1, &direct_sprites.sprites).unwrap();
-    let objects_body = crate::animation::naplps_objects_body(0x101, 1, 1, &direct_objects.objects).unwrap();
+    let objects_body = crate::animation::naplps_objects_body(0x101, 1, 1, (&direct_objects).into()).unwrap();
     for body in [&sprites_body, &objects_body] {
         assert!(image.windows(body.len()).any(|window| window == body.as_slice()), "the group holds the body");
     }
@@ -368,4 +368,110 @@ const ROW_SETS_BY_THE_ENGINE: &str = "020000070302000000240000000000010000000200
 fn row_sets_are_laid_out_in_name_order_as_the_engine_does() {
     let table = compiled(&serde_json::from_str(ROW_SETS).unwrap()).unwrap_or_else(|refusal| panic!("{refusal}"));
     assert_eq!(hex(table.image()), ROW_SETS_BY_THE_ENGINE);
+}
+
+/// The macro object of the shared wire vectors' `naplps_objects` rows:
+/// number 301 at (`x`, 50), 64 by 32, frame macro 2/0, pressed look 2/1,
+/// labelled `label` when one is given.
+fn vector_object(x: i32, label: Option<&str>) -> Value {
+    let mut object = json!({"number":301,"kind":"macro","shown":true,"detectable":true,"layer":2,"order":0,"x":x,"y":50,"width":64,"height":32,
+        "origin_x":0,"origin_y":0,"frames":[32],"pressed":33});
+    if let Some(label) = label {
+        object["label"] = json!(label);
+    }
+    object
+}
+
+/// A `naplps_objects` message for page 101 sub-page 0001, the shared
+/// wire vectors' page, with `fields` added.
+fn naplps_message(fields: &Value) -> Value {
+    let mut message = json!({"type":"naplps_objects","connections":"all","page":"101","sub":"0001"});
+    for (name, value) in fields.as_object().unwrap() {
+        message[name] = value.clone();
+    }
+    message
+}
+
+/// The packets of the `NAPLPS_OBJECTS` record `message` sends at
+/// generation 1 and record id 0, as the shared file writes them.
+fn naplps_packets(message: &Value) -> String {
+    let ProgramMessage::NaplpsObjects(objects) = accepted(message) else { panic!("not naplps_objects") };
+    let bytes = crate::animation::naplps_objects_record(0x101, 1, 1, (&objects).into(), &mut 0).unwrap();
+    bytes.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().map(|packet| hex(packet)).collect::<Vec<_>>().join(" ")
+}
+
+/// The shared wire vectors' row of kind `records` named `name`.
+fn records_row(name: &str) -> &'static str {
+    neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "records" && row.name == name).unwrap().value
+}
+
+/// ANIM-11, DEC-6638 items 3 and 6 (REQ-6533, TODO-6695): an object's
+/// `label`, the message's `title` and `one` are the engine's record byte
+/// for byte, as the shared wire vectors show it: labelled Play with the
+/// picture titled Jukebox, then the object alone redefined at (200,50);
+/// and with neither, the record is the one it always was.
+#[test]
+fn naplps_labels_a_title_and_one_object_are_the_shared_wire_vectors() {
+    assert_eq!(naplps_packets(&naplps_message(&json!({"objects":[vector_object(100, None)]}))), records_row("naplps_objects"));
+    let labelled = naplps_message(&json!({"objects":[vector_object(100, Some("Play"))],"title":"Jukebox"}));
+    assert_eq!(naplps_packets(&labelled), records_row("naplps_objects_labelled"));
+    let one = naplps_message(&json!({"objects":[vector_object(200, Some("Play"))],"one":true}));
+    assert_eq!(naplps_packets(&one), records_row("naplps_objects_one"));
+}
+
+/// ANIM-11 (REQ-6533, TODO-6695): what the engine's reader refuses of a
+/// label, a title and one object redefined is refused at its path: a
+/// label or a title past 64 bytes (counted in bytes, not characters) or
+/// holding a control character, an empty title, `one` with two objects or
+/// with a title. Sixty-four bytes is taken.
+#[test]
+fn naplps_labels_titles_and_one_are_bounded() {
+    let with_label = |label: &str| naplps_message(&json!({"objects":[vector_object(100, Some(label))]}));
+    let with_title = |title: &str| naplps_message(&json!({"objects":[vector_object(100, None)],"title":title}));
+    let most = "é".repeat(32);
+    assert_eq!(most.len(), crate::protocol::MOST_LABEL_BYTES);
+    accepted(&with_label(&most));
+    accepted(&with_title(&most));
+    accepted(&with_label(""));
+    let over = "é".repeat(33);
+    refused(&with_label(&over), "objects[0].label", Rule::OutOfRange);
+    refused(&with_label("Play\n"), "objects[0].label", Rule::WrongType);
+    refused(&with_label("\u{85}"), "objects[0].label", Rule::WrongType);
+    refused(&with_title(&over), "title", Rule::OutOfRange);
+    refused(&with_title(""), "title", Rule::OutOfRange);
+    refused(&with_title("Juke\u{1b}box"), "title", Rule::WrongType);
+    let mut second = vector_object(200, None);
+    second["number"] = json!(302);
+    let two = naplps_message(&json!({"objects":[vector_object(100, None), second],"one":true}));
+    refused(&two, "objects", Rule::InvalidNaplpsObjects);
+    refused(&naplps_message(&json!({"objects":[],"one":true})), "objects", Rule::InvalidNaplpsObjects);
+    let titled = naplps_message(&json!({"objects":[vector_object(100, None)],"one":true,"title":"Jukebox"}));
+    refused(&titled, "title", Rule::InvalidNaplpsObjects);
+}
+
+/// RULE-119, ANIM-11 (REQ-6532, REQ-6533, TODO-6695): a group's
+/// `naplps_objects` takes labels, a title and `one` as the message does:
+/// its body is the body the same message sent directly carries, and what
+/// the message refuses of `one` the group refuses at the command's field.
+#[test]
+fn a_groups_naplps_objects_take_labels_a_title_and_one() {
+    let labelled = json!({"type":"naplps_objects","objects":[vector_object(100, Some("Play"))],"title":"Jukebox"});
+    let one = json!({"type":"naplps_objects","objects":[vector_object(200, Some("Play"))],"one":true});
+    let table = compiled(&one_rule(&json!([labelled, one]))).unwrap_or_else(|refusal| panic!("{refusal}"));
+    let image = table.image();
+    for (command, scope, title) in [
+        (&labelled, neoteletext_web::records::naplps_objects::Scope::Whole, Some("Jukebox")),
+        (&one, neoteletext_web::records::naplps_objects::Scope::One, None),
+    ] {
+        let mut fields = command.clone();
+        fields.as_object_mut().unwrap().remove("type");
+        let ProgramMessage::NaplpsObjects(direct) = accepted(&naplps_message(&fields)) else { panic!("not naplps_objects") };
+        let body = crate::animation::naplps_objects_body(0x101, 1, 1, (&direct).into()).unwrap();
+        assert!(image.windows(body.len()).any(|window| window == body.as_slice()), "the group holds the body");
+        let read = neoteletext_web::records::naplps_objects::read(&body).unwrap();
+        assert_eq!((read.scope, read.title), (scope, title));
+        assert_eq!(read.labelled_objects().map(|object| object.label).collect::<Vec<_>>(), ["Play"]);
+    }
+    let titled = json!({"type":"naplps_objects","objects":[vector_object(100, None)],"one":true,"title":"Jukebox"});
+    refused(&one_rule(&json!([titled])), "table.rules[0].do[0].title", Rule::InvalidGroup);
 }

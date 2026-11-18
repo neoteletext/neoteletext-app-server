@@ -371,7 +371,7 @@ impl Channel {
         for connection in self.showing(&message.connections, page, sub) {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
             let generation = state.naplps_generation_for(page, sub);
-            let bytes = animation::naplps_objects_record(page, sub, generation, &message.objects, &mut state.record_id)
+            let bytes = animation::naplps_objects_record(page, sub, generation, message.into(), &mut state.record_id)
                 .map_err(|detail| refuse(MessageType::NaplpsObjects, "objects", Rule::InvalidNaplpsObjects, detail))?;
             self.send_for_page(connection, page, bytes);
         }

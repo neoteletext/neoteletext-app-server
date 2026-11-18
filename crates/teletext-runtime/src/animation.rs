@@ -16,13 +16,13 @@ use neoteletext_core::types::SubCode as EngineSubCode;
 use neoteletext_rules::animate::Operation;
 use neoteletext_rules::limits::{MAX_ANIMATE_OPERATIONS, TICK_SPAN_MICROSECONDS, TICKS_PER_TICK_SPAN};
 use neoteletext_web::records::frame::{FrameMark, FrameRecord};
-use neoteletext_web::records::naplps_objects::{NaplpsObject as EngineObject, ObjectKind};
+use neoteletext_web::records::naplps_objects::{LabelledObject, NaplpsObject as EngineObject, ObjectKind};
 use neoteletext_web::records::sheet::{MAX_DATA as SHEET_DATA, SheetKind, SheetRecord};
 use neoteletext_web::records::sprites::Sprite as EngineSprite;
 use neoteletext_web::records::{animate, frame, naplps_objects, sheet, sprites};
 
 use crate::page::address;
-use crate::protocol::{FrameMarkName, NaplpsObject, NaplpsObjectKind, ObjectSource, ObjectType, SheetKindName, Sprite};
+use crate::protocol::{FrameMarkName, NaplpsObject, NaplpsObjectKind, NaplpsObjects, NaplpsObjectsCommand, ObjectSource, ObjectType, SheetKindName, Sprite};
 
 /// The audio and input service the records go on (the reference channel's,
 /// DOC-1951).
@@ -140,51 +140,102 @@ pub(crate) fn sprites_body(page: u16, sub: u16, given: &[Sprite]) -> Result<Vec<
     })
 }
 
-/// `given` as the engine's NAPLPS objects, handed to `use_list`: the one
-/// conversion, for a record sent directly and for a group's command alike.
-fn with_objects<R>(given: &[NaplpsObject], use_list: impl FnOnce(&[EngineObject<'_>]) -> R) -> R {
-    let frames: Vec<Vec<u8>> = given.iter().map(|object| object.frames.iter().map(|code| code.get()).collect()).collect();
-    let code = |look: Option<crate::protocol::MacroCode>| look.map_or(0, crate::protocol::MacroCode::get);
-    let list: Vec<EngineObject<'_>> = given
-        .iter()
-        .zip(&frames)
-        .map(|(object, frames)| EngineObject {
-            number: object.number.get(),
-            kind: match object.kind {
-                NaplpsObjectKind::Macro => ObjectKind::Macro,
-                NaplpsObjectKind::Region => ObjectKind::Region,
-            },
-            shown: object.shown,
-            detectable: object.detectable,
-            layer: object.layer.get(),
-            order: narrow(object.order.get()),
-            x: narrow(object.x.get()),
-            y: narrow(object.y.get()),
-            width: object.width.get(),
-            height: object.height.get(),
-            origin: (narrow(object.origin_x.get()), narrow(object.origin_y.get())),
-            cover: object.cover.map_or(0, crate::protocol::U8In::get),
-            looks: [code(object.hover), code(object.pressed), code(object.alternative)],
-            frames,
-        })
-        .collect();
-    use_list(&list)
+/// What a `naplps_objects` message or a group's command asks of a
+/// sub-page's NAPLPS objects (ANIM-11): the objects, the picture's title,
+/// and whether the one object given is redefined alone.
+#[derive(Clone, Copy)]
+pub(crate) struct NaplpsSet<'a> {
+    /// The objects: exactly one when `one`.
+    pub objects: &'a [NaplpsObject],
+    /// The picture's title, never with `one`.
+    pub title: Option<&'a str>,
+    /// The one object redefines its number's, keeping the rest and the
+    /// title (DEC-6638 item 3).
+    pub one: bool,
 }
 
-/// A `NAPLPS_OBJECTS` record (ANIM-11): all of a sub-page's objects, for
-/// the NAPLPS stream of `generation`.
-pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, given: &[NaplpsObject], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
-    with_objects(given, |list| {
-        record(record_id, |id, out| naplps_objects::encode((address(page), EngineSubCode::new(sub), generation), list, SERVICE, id, out))
+impl<'a> From<&'a NaplpsObjects> for NaplpsSet<'a> {
+    fn from(message: &'a NaplpsObjects) -> Self {
+        Self { objects: &message.objects, title: message.title.as_ref().map(|title| title.0.as_str()), one: message.one }
+    }
+}
+
+impl<'a> From<&'a NaplpsObjectsCommand> for NaplpsSet<'a> {
+    fn from(command: &'a NaplpsObjectsCommand) -> Self {
+        Self { objects: &command.objects, title: command.title.as_ref().map(|title| title.0.as_str()), one: command.one }
+    }
+}
+
+/// Why `set` cannot be written, of what the engine's reader refuses that
+/// the protocol's types do not: `one` with other than one object, or with
+/// a title (ANIM-11: ONE has a count of exactly 1 and never TITLED).
+pub(crate) fn naplps_set_fault(set: NaplpsSet<'_>) -> Option<(&'static str, String)> {
+    if set.one && set.objects.len() != 1 {
+        return Some(("objects", format!("one redefines exactly one object, not {}", set.objects.len())));
+    }
+    if set.one && set.title.is_some() {
+        return Some(("title", "one keeps the picture's title: no title with one".into()));
+    }
+    None
+}
+
+/// `set` as the engine's contents, handed to `use_contents`: the one
+/// conversion, for a record sent directly and for a group's command alike.
+fn with_objects<R>(set: NaplpsSet<'_>, use_contents: impl FnOnce(&naplps_objects::Contents<'_>) -> Result<R, Refused>) -> Result<R, Refused> {
+    if let Some((_, detail)) = naplps_set_fault(set) {
+        return Err(detail);
+    }
+    let frames: Vec<Vec<u8>> = set.objects.iter().map(|object| object.frames.iter().map(|code| code.get()).collect()).collect();
+    let code = |look: Option<crate::protocol::MacroCode>| look.map_or(0, crate::protocol::MacroCode::get);
+    let list: Vec<LabelledObject<'_>> = set
+        .objects
+        .iter()
+        .zip(&frames)
+        .map(|(object, frames)| LabelledObject {
+            object: EngineObject {
+                number: object.number.get(),
+                kind: match object.kind {
+                    NaplpsObjectKind::Macro => ObjectKind::Macro,
+                    NaplpsObjectKind::Region => ObjectKind::Region,
+                },
+                shown: object.shown,
+                detectable: object.detectable,
+                layer: object.layer.get(),
+                order: narrow(object.order.get()),
+                x: narrow(object.x.get()),
+                y: narrow(object.y.get()),
+                width: object.width.get(),
+                height: object.height.get(),
+                origin: (narrow(object.origin_x.get()), narrow(object.origin_y.get())),
+                cover: object.cover.map_or(0, crate::protocol::U8In::get),
+                looks: [code(object.hover), code(object.pressed), code(object.alternative)],
+                frames,
+            },
+            label: object.label.as_ref().map_or("", |label| label.0.as_str()),
+        })
+        .collect();
+    let contents = match (set.one, list.as_slice()) {
+        (true, [object]) => naplps_objects::Contents::One(*object),
+        _ => naplps_objects::Contents::Whole { objects: &list, title: set.title },
+    };
+    use_contents(&contents)
+}
+
+/// A `NAPLPS_OBJECTS` record (ANIM-11): a sub-page's objects and title,
+/// or one object redefined, for the NAPLPS stream of `generation`.
+pub(crate) fn naplps_objects_record(page: u16, sub: u16, generation: u16, set: NaplpsSet<'_>, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    with_objects(set, |contents| {
+        record(record_id, |id, out| naplps_objects::encode_contents((address(page), EngineSubCode::new(sub), generation), contents, SERVICE, id, out))
     })
 }
 
 /// The body of a `NAPLPS_OBJECTS` record alone, as a group's command holds
 /// it (RULE-35, RULE-119): the bytes [`naplps_objects_record`] frames.
-pub(crate) fn naplps_objects_body(page: u16, sub: u16, generation: u16, given: &[NaplpsObject]) -> Result<Vec<u8>, Refused> {
-    with_objects(given, |list| {
+pub(crate) fn naplps_objects_body(page: u16, sub: u16, generation: u16, set: NaplpsSet<'_>) -> Result<Vec<u8>, Refused> {
+    with_objects(set, |contents| {
         let mut body = alloc::vec![0_u8; naplps_objects::MAX_BYTES];
-        let length = naplps_objects::write_body((address(page), EngineSubCode::new(sub), generation), list, &mut body).map_err(|fault| format!("{fault:?}"))?;
+        let length =
+            naplps_objects::write_contents((address(page), EngineSubCode::new(sub), generation), contents, &mut body).map_err(|fault| format!("{fault:?}"))?;
         body.truncate(length);
         Ok(body)
     })

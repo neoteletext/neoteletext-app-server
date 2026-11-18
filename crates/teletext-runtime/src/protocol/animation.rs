@@ -3,15 +3,19 @@
 //! frames, operations on objects' animation state, teletext sprites,
 //! NAPLPS objects, sprite sheets, and timelines the server plays.
 
+use alloc::borrow::Cow;
+use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use schemars::JsonSchema;
+use neoteletext_web::records::naplps_objects;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer};
 
-use super::read::typed;
+use super::read::{Fault, typed};
 use super::rules::{CycleOp, FrameOp, LookOp, MoveOp, OrderInLayer, OrderOp, TargetOp};
-use super::sound::{not_listed, tagged, tagged_choice};
-use super::{Base64, Connections, I32In, PageNumber, SubCode, U8In, U16In, U64In};
+use super::sound::{carried, not_listed, tagged, tagged_choice};
+use super::{Base64, Connections, I32In, PageNumber, Rule, SubCode, U8In, U16In, U64In};
 
 /// The most operations of an `animate` message or a timeline's step
 /// (`neoteletext_rules::limits::MAX_ANIMATE_OPERATIONS`).
@@ -20,6 +24,12 @@ pub const MOST_OPERATIONS: usize = 64;
 pub const MOST_SPRITES: usize = 32;
 /// The most NAPLPS objects of a sub-page (ANIM-11, `MAX_OBJECTS`).
 pub const MOST_NAPLPS_OBJECTS: usize = 64;
+/// The most bytes of a NAPLPS object's label (ANIM-11, the engine's
+/// `MAX_LABEL_BYTES`).
+pub const MOST_LABEL_BYTES: usize = naplps_objects::MAX_LABEL_BYTES;
+/// The most bytes of a NAPLPS picture's title (ANIM-11, the engine's
+/// `MAX_TITLE_BYTES`).
+pub const MOST_TITLE_BYTES: usize = naplps_objects::MAX_TITLE_BYTES;
 /// The most frames of a sprite or an object (ANIM-14,
 /// `MAX_OBJECT_FRAMES`).
 pub const MOST_OBJECT_FRAMES: usize = 16;
@@ -218,6 +228,79 @@ pub enum NaplpsObjectKind {
     Region,
 }
 
+/// Characters a NAPLPS label or title may not hold: Unicode's control
+/// characters (general category Cc), which Rust's `char::is_control`
+/// names and the engine's reader refuses (ANIM-11, DEC-6656 item 2).
+const PLAIN_TEXT_PATTERN: &str = "^[^\\u0000-\\u001F\\u007F-\\u009F]*$";
+
+/// Reads plain text of `least` to `most` bytes, as the engine's reader of
+/// a `NAPLPS_OBJECTS` record takes a label or a title (ANIM-11): text a
+/// screen reader can say as it stands, carrying no command.
+fn plain_text<'de, D: Deserializer<'de>>(deserializer: D, what: &str, least: usize, most: usize) -> Result<String, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    if !(least..=most).contains(&text.len()) {
+        return Err(carried(&Fault::new("", Rule::OutOfRange, format!("{what} of {} bytes: {least} to {most}", text.len()))));
+    }
+    if text.chars().any(char::is_control) {
+        return Err(carried(&Fault::new("", Rule::WrongType, format!("{what} holds a control character"))));
+    }
+    Ok(text)
+}
+
+/// What a screen reader says for a NAPLPS object (ANIM-11; DEC-6638 item
+/// 6): plain text of at most [`MOST_LABEL_BYTES`] bytes of UTF-8, no
+/// control character. Empty, or left out, is no label.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NaplpsLabel(pub String);
+
+impl<'de> Deserialize<'de> for NaplpsLabel {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        plain_text(deserializer, "a label", 0, MOST_LABEL_BYTES).map(Self)
+    }
+}
+
+impl JsonSchema for NaplpsLabel {
+    fn schema_name() -> Cow<'static, str> {
+        "NaplpsLabel".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": format!("What a screen reader says for a NAPLPS object (ANIM-11): plain text of at most {MOST_LABEL_BYTES} bytes of UTF-8, no control character; empty is no label."),
+            "type": "string",
+            "maxLength": MOST_LABEL_BYTES,
+            "pattern": PLAIN_TEXT_PATTERN
+        })
+    }
+}
+
+/// A NAPLPS picture's title (ANIM-11; DEC-6638 item 6): plain text of 1
+/// to [`MOST_TITLE_BYTES`] bytes of UTF-8, no control character.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NaplpsTitle(pub String);
+
+impl<'de> Deserialize<'de> for NaplpsTitle {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        plain_text(deserializer, "a title", 1, MOST_TITLE_BYTES).map(Self)
+    }
+}
+
+impl JsonSchema for NaplpsTitle {
+    fn schema_name() -> Cow<'static, str> {
+        "NaplpsTitle".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": format!("A NAPLPS picture's title (ANIM-11): plain text of 1 to {MOST_TITLE_BYTES} bytes of UTF-8, no control character."),
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MOST_TITLE_BYTES,
+            "pattern": PLAIN_TEXT_PATTERN
+        })
+    }
+}
+
 /// A NAPLPS object (ANIM-11): a numbered object in the layer NeoTeletext
 /// keeps over a NAPLPS picture.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
@@ -264,11 +347,17 @@ pub struct NaplpsObject {
     /// The macro drawn as its alternative look, or null.
     #[serde(default)]
     pub alternative: Option<MacroCode>,
+    /// What a screen reader says for it, or null for nothing.
+    #[serde(default)]
+    pub label: Option<NaplpsLabel>,
 }
 
 /// `naplps_objects`: all of a sub-page's NAPLPS objects, replacing any it
-/// had (ANIM-11); an empty list removes them. They belong to the NAPLPS
-/// stream the connection has for the sub-page.
+/// had, with the picture's title (ANIM-11); an empty list removes them,
+/// and no title clears the title. With `one`, its one object redefines the
+/// sub-page's object of that number, or is added, and every other object,
+/// with its animation state, and the title are kept (DEC-6638 item 3).
+/// They belong to the NAPLPS stream the connection has for the sub-page.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NaplpsObjects {
@@ -278,9 +367,15 @@ pub struct NaplpsObjects {
     pub page: PageNumber,
     /// The sub-page: never 3F7F, which names none.
     pub sub: SubCode,
-    /// The objects.
+    /// The objects: exactly one with `one`.
     #[schemars(length(max = MOST_NAPLPS_OBJECTS))]
     pub objects: Vec<NaplpsObject>,
+    /// The picture's title, or null for none; never with `one`.
+    #[serde(default)]
+    pub title: Option<NaplpsTitle>,
+    /// Redefine the one object given, keeping the others and the title.
+    #[serde(default)]
+    pub one: bool,
 }
 
 /// Which renderer a sprite sheet is for.

@@ -986,7 +986,10 @@ fn check_naplps_objects(root: &Path<'_>, objects: &super::NaplpsObjects) -> Chec
             _ => {}
         }
     }
-    crate::animation::naplps_objects_record(objects.page.0, objects.sub.0, 1, &objects.objects, &mut 0).map(|_| ()).or_else(|detail| refuse(&path, detail))
+    if let Some((field, detail)) = crate::animation::naplps_set_fault(objects.into()) {
+        return refuse(&root.field(field), detail);
+    }
+    crate::animation::naplps_objects_record(objects.page.0, objects.sub.0, 1, objects.into(), &mut 0).map(|_| ()).or_else(|detail| refuse(&path, detail))
 }
 
 /// The most ReGIS one message may carry: a megabyte, a quarter of all the

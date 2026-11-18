@@ -158,7 +158,7 @@ fn objects_table() -> (Vec<u8>, impl Fn(u16) -> Vec<u8>) {
     else {
         panic!("not naplps_objects")
     };
-    (table, move |generation| crate::animation::naplps_objects_body(0x100, 0, generation, &direct.objects).unwrap())
+    (table, move |generation| crate::animation::naplps_objects_body(0x100, 0, generation, (&direct).into()).unwrap())
 }
 
 /// ANIM-11, ANIM-21, RULE-119 (REQ-6532, REQ-6533; DEC-6654 item 11): a

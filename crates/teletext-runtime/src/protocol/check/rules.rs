@@ -779,8 +779,10 @@ impl Scope<'_> {
             ),
             RuleCommand::NaplpsObjects(objects) => (
                 command::TYPE_NAPLPS_OBJECTS,
-                animation::naplps_objects_body(self.page, self.sub, self.naplps_generation, &objects.objects)
-                    .map_err(|detail| fault(&path.field("objects"), Rule::InvalidGroup, detail))?,
+                animation::naplps_objects_body(self.page, self.sub, self.naplps_generation, objects.into()).map_err(|detail| {
+                    let field = animation::naplps_set_fault(objects.into()).map_or("objects", |(field, _)| field);
+                    fault(&path.field(field), Rule::InvalidGroup, detail)
+                })?,
             ),
             RuleCommand::Variable(variable) => (command::TYPE_VARIABLE, self.encoded(path, &self.variable(path, variable, place)?)?),
             RuleCommand::Timer(timer) => {
