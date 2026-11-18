@@ -147,6 +147,19 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_connection(&root.field("connection"), *connection)
         }
         ProgramMessage::EndState(_) => Ok(()),
+        ProgramMessage::Rules(rules) => check_connections(&root.field("connections"), &rules.connections),
+        ProgramMessage::QueryState(query) => check_connection(&root.field("connection"), query.connection),
+        ProgramMessage::Frame(frame) => check_connections(&root.field("connections"), &frame.connections).and_then(|()| check_shown_subpage(&root, frame.sub)),
+        ProgramMessage::Animate(animate) => check_connections(&root.field("connections"), &animate.connections),
+        ProgramMessage::Sprites(sprites) => {
+            check_connections(&root.field("connections"), &sprites.connections).and_then(|()| check_shown_subpage(&root, sprites.sub))
+        }
+        ProgramMessage::NaplpsObjects(objects) => {
+            check_connections(&root.field("connections"), &objects.connections).and_then(|()| check_shown_subpage(&root, objects.sub))
+        }
+        ProgramMessage::SpriteSheet(sheet) => check_connections(&root.field("connections"), &sheet.connections),
+        ProgramMessage::Timeline(timeline) => check_connections(&root.field("connections"), &timeline.connections),
+        ProgramMessage::TimelineStop(stop) => check_connections(&root.field("connections"), &stop.connections),
     };
     checked.map_err(|Fault { path, rule, detail }| Refusal { message: Some(message.kind()), path, rule, detail })
 }

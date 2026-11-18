@@ -1,4 +1,4 @@
-//! server.md SRV-92 item 1: arbitrary bytes as one protocol 13 `sound`
+//! server.md SRV-92 item 1: arbitrary bytes as one `sound` of the program protocol
 //! line of a synthesizer kind, handled to the end: read, checked, built
 //! and sent, or refused whole. The server's encoder reads every block it
 //! writes with the receiver's reader before sending, so an accepted line

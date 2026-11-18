@@ -113,6 +113,15 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::RequestState => ProgramMessage::RequestState(typed(object, "")?),
         MessageType::EndState => ProgramMessage::EndState(typed(object, "")?),
         MessageType::OfferRemember => ProgramMessage::OfferRemember(typed(object, "")?),
+        MessageType::Rules => ProgramMessage::Rules(typed(object, "")?),
+        MessageType::QueryState => ProgramMessage::QueryState(typed(object, "")?),
+        MessageType::Frame => ProgramMessage::Frame(typed(object, "")?),
+        MessageType::Animate => ProgramMessage::Animate(typed(object, "")?),
+        MessageType::Sprites => ProgramMessage::Sprites(typed(object, "")?),
+        MessageType::NaplpsObjects => ProgramMessage::NaplpsObjects(typed(object, "")?),
+        MessageType::SpriteSheet => ProgramMessage::SpriteSheet(typed(object, "")?),
+        MessageType::Timeline => ProgramMessage::Timeline(typed(object, "")?),
+        MessageType::TimelineStop => ProgramMessage::TimelineStop(typed(object, "")?),
     })
 }
 
@@ -167,7 +176,12 @@ fn tag<T: DeserializeOwned>(object: &mut Map<String, Value>, name: &str, at: &st
 
 /// Reads `object` as `T`, keeping the path of a fault, under `at`.
 pub(super) fn typed<T: DeserializeOwned>(object: Map<String, Value>, at: &str) -> Result<T, Fault> {
-    serde_path_to_error::deserialize(Value::Object(object)).map_err(|error| {
+    typed_value(Value::Object(object), at)
+}
+
+/// Reads any JSON `value` as `T`, keeping the path of a fault, under `at`.
+pub(super) fn typed_value<T: DeserializeOwned>(value: Value, at: &str) -> Result<T, Fault> {
+    serde_path_to_error::deserialize(value).map_err(|error| {
         let path = error.path().to_string();
         let inner = error.into_inner();
         fault_of(&join(at, if path == "." { "" } else { &path }), &inner)
@@ -209,12 +223,15 @@ fn rule_named(name: &str) -> Rule {
         "DuplicateField" => Rule::DuplicateField,
         "NotListed" => Rule::NotListed,
         "OutOfRange" => Rule::OutOfRange,
+        "TooLong" => Rule::TooLong,
+        "TooShort" => Rule::TooShort,
+        "Reserved" => Rule::Reserved,
         _ => Rule::WrongType,
     }
 }
 
 /// `at` and `name` joined as a path: `a.b`, `a[3]`, or `name` alone.
-fn join(at: &str, name: &str) -> String {
+pub(super) fn join(at: &str, name: &str) -> String {
     match (at.is_empty(), name.is_empty(), name.starts_with('[')) {
         (_, true, _) => at.to_owned(),
         (true, false, _) | (false, false, true) => format!("{at}{name}"),

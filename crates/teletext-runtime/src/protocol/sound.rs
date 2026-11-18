@@ -28,7 +28,7 @@ mod fields;
 mod ranged;
 
 pub use fields::*;
-pub use ranged::{Data, Data14, MidiChannel, U8In, U16In, U64In};
+pub use ranged::{Data, Data14, I32In, MidiChannel, U8In, U16In, U64In};
 
 // ----------------------------------------------------------- the bounds
 
@@ -100,6 +100,8 @@ pub const MOST_ASID_BYTES: usize = neoteletext_audio::midi::MOST_SYSTEM_EXCLUSIV
 /// The most banks a stored sound may lift from its music: the most it may
 /// name (SRV-15).
 pub const MOST_LIFTED_BANKS: usize = MOST_SOUND_BANKS;
+/// The most events of a local sound's setup (page-rules.md RULE-61).
+pub const MOST_SETUP_EVENTS: usize = 64;
 
 const _: () = assert!(BLOCK_US == 20_000);
 const _: () = assert!(MOST_STORED_TIME_US == 120_000_000);
@@ -112,13 +114,13 @@ const _: () = assert!(MOST_INSTRUMENT_BLOCKS == 6_000);
 
 /// The error that carries a fault inside a tagged choice out of serde,
 /// with its path, as the reader's `fault_of` reads it back.
-fn carried<E: de::Error>(fault: &Fault) -> E {
+pub(super) fn carried<E: de::Error>(fault: &Fault) -> E {
     E::custom(alloc::format!("{INNER_PATH}{}{INNER_PATH}{:?}{INNER_PATH}{}", fault.path, fault.rule, fault.detail))
 }
 
 /// Reads a JSON object whose tag `name` chooses its type, by `choose`,
 /// from what is left once the tag is taken out (SRV-49 item 1).
-fn tagged<'de, D: Deserializer<'de>, T>(
+pub(super) fn tagged<'de, D: Deserializer<'de>, T>(
     deserializer: D,
     name: &'static str,
     choose: impl FnOnce(&str, Map<String, Value>) -> Result<T, Fault>,
@@ -135,7 +137,7 @@ fn tagged<'de, D: Deserializer<'de>, T>(
 }
 
 /// A tag's value not in its closed list.
-fn not_listed(name: &str, value: &str, listed: &[&str]) -> Fault {
+pub(super) fn not_listed(name: &str, value: &str, listed: &[&str]) -> Fault {
     Fault::new(name, super::Rule::NotListed, alloc::format!("unknown variant `{value}`, expected one of {listed:?}"))
 }
 
@@ -154,6 +156,8 @@ macro_rules! tagged_choice {
         }
     };
 }
+
+pub(super) use tagged_choice;
 
 // ---------------------------------------------------------- the kinds
 
@@ -243,38 +247,47 @@ sound_kinds! {
     Synth7(Synth7Sound) = "synth7", "A stored synth7 sound: timed MIDI events or a Standard MIDI File (SRV-14, SRV-16).";
     Synth7Live(Synth7LiveSound) = "synth7_live", "A live synth7 sound, announced (SRV-17).";
     Synth7Events(Synth7EventsSound) = "synth7_events", "A live synth7 sound's next events (SRV-18).";
+    Synth7Local(Synth7LocalSound) = "synth7_local", "A local synth7 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth7Bank(Synth7BankSound) = "synth7_bank", "A bank of synth7 voices, which synth7 sounds name (SRV-19, SRV-27).";
     Synth106(Synth106Sound) = "synth106", "A stored synth106 sound (SRV-16).";
     Synth106Live(Synth106LiveSound) = "synth106_live", "A live synth106 sound, announced (SRV-17).";
     Synth106Events(Synth106EventsSound) = "synth106_events", "A live synth106 sound's next events (SRV-18).";
+    Synth106Local(Synth106LocalSound) = "synth106_local", "A local synth106 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth106Bank(Synth106BankSound) = "synth106_bank", "A bank of synth106 patches (SRV-19, SRV-32).";
     Synth60(Synth60Sound) = "synth60", "A stored synth60 sound (SRV-16).";
     Synth60Live(Synth60LiveSound) = "synth60_live", "A live synth60 sound, announced (SRV-17).";
     Synth60Events(Synth60EventsSound) = "synth60_events", "A live synth60 sound's next events (SRV-18).";
+    Synth60Local(Synth60LocalSound) = "synth60_local", "A local synth60 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth60Bank(Synth60BankSound) = "synth60_bank", "A bank of synth60 patches (SRV-19, SRV-32).";
     SynthD(SynthDSound) = "synthd", "A stored synthD sound (SRV-16).";
     SynthDLive(SynthDLiveSound) = "synthd_live", "A live synthD sound, announced (SRV-17).";
     SynthDEvents(SynthDEventsSound) = "synthd_events", "A live synthD sound's next events (SRV-18).";
+    SynthDLocal(SynthDLocalSound) = "synthd_local", "A local synthD sound, which the receiver renders and a page's rules play (RULE-61).";
     SynthDBank(SynthDBankSound) = "synthd_bank", "A bank of synthD patches (SRV-19, SRV-35).";
     Synth53(Synth53Sound) = "synth53", "A stored synth53 sound (SRV-16).";
     Synth53Live(Synth53LiveSound) = "synth53_live", "A live synth53 sound, announced (SRV-17).";
     Synth53Events(Synth53EventsSound) = "synth53_events", "A live synth53 sound's next events (SRV-18).";
+    Synth53Local(Synth53LocalSound) = "synth53_local", "A local synth53 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth53Bank(Synth53BankSound) = "synth53_bank", "A bank of synth53 programs, one group (SRV-19, SRV-38).";
     Synth52(Synth53Sound) = "synth52", "A stored synth52 sound (SRV-16).";
     Synth52Live(Synth53LiveSound) = "synth52_live", "A live synth52 sound, announced (SRV-17).";
     Synth52Events(Synth53EventsSound) = "synth52_events", "A live synth52 sound's next events (SRV-18).";
+    Synth52Local(Synth53LocalSound) = "synth52_local", "A local synth52 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth52Bank(Synth53BankSound) = "synth52_bank", "A bank of synth52 programs, one group (SRV-19, SRV-38).";
     Synth51(Synth53Sound) = "synth51", "A stored synth51 sound (SRV-16).";
     Synth51Live(Synth53LiveSound) = "synth51_live", "A live synth51 sound, announced (SRV-17).";
     Synth51Events(Synth53EventsSound) = "synth51_events", "A live synth51 sound's next events (SRV-18).";
+    Synth51Local(Synth53LocalSound) = "synth51_local", "A local synth51 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth51Bank(Synth53BankSound) = "synth51_bank", "A bank of synth51 programs, one group (SRV-19, SRV-38).";
     Synth8(Synth8Sound) = "synth8", "A stored synth8 sound (SRV-16).";
     Synth8Live(Synth8LiveSound) = "synth8_live", "A live synth8 sound, announced (SRV-17).";
     Synth8Events(Synth8EventsSound) = "synth8_events", "A live synth8 sound's next events (SRV-18).";
+    Synth8Local(Synth8LocalSound) = "synth8_local", "A local synth8 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth8Bank(Synth8BankSound) = "synth8_bank", "A bank of synth8 patches (SRV-19, SRV-41).";
     Synth80(Synth80Sound) = "synth80", "A stored synth80 sound (SRV-16).";
     Synth80Live(Synth80LiveSound) = "synth80_live", "A live synth80 sound, announced (SRV-17).";
     Synth80Events(Synth80EventsSound) = "synth80_events", "A live synth80 sound's next events (SRV-18).";
+    Synth80Local(Synth80LocalSound) = "synth80_local", "A local synth80 sound, which the receiver renders and a page's rules play (RULE-61).";
     Synth80Bank(Synth80BankSound) = "synth80_bank", "A bank of synth80 patches (SRV-19, SRV-44).";
     Play(PlaySound) = "play", "Play a sound on an audio channel.";
     Stop(StopSound) = "stop", "Stop an audio channel.";
@@ -684,7 +697,7 @@ macro_rules! note_family {
         event $event:ident, $patch_event:ident, $parameter_event:ident,
         patch $patch:ident($fields:ty), parameter $parameter:ty,
         music $music:ident, $event_list:ident,
-        sounds $sound:ident, $live:ident, $events:ident,
+        sounds $sound:ident, $live:ident, $events:ident, $local:ident,
         settings { $($(#[$setting_meta:meta])* $setting:ident: $setting_type:ty,)* },
         bank $bank_sound:ident, $bank:ident($patch_list:ty)
     ) => {
@@ -891,6 +904,27 @@ macro_rules! note_family {
             pub banks: Vec<u8>,
         }
 
+        #[doc = concat!("A local ", $name, " sound (page-rules.md RULE-60, RULE-61): an instrument the receiver keeps open and renders itself, with no blocks from the server, which the `midi` actions of a page's rules play. It is played by `play` with a `page`, `loop` and `after` false.")]
+        #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct $local {
+            /// Who it is for.
+            pub connections: Connections,
+            /// Its handle.
+            pub handle: u8,
+            /// Its generation.
+            pub generation: u16,
+            $($(#[$setting_meta])* pub $setting: $setting_type,)*
+            /// The handles of its banks, bank index 0 first: at least one.
+            #[schemars(length(min = 1, max = MOST_SOUND_BANKS))]
+            pub banks: Vec<u8>,
+            /// What is applied, in order, when the instrument is made: at
+            /// most 64 events, each with `time_us` 0, which must fit one
+            /// block.
+            #[schemars(length(max = MOST_SETUP_EVENTS))]
+            pub setup: Vec<$event>,
+        }
+
         #[doc = concat!("A live ", $name, " sound's next events (SRV-18).")]
         #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
         #[serde(deny_unknown_fields)]
@@ -988,7 +1022,7 @@ note_family!(
     event Synth7Event, Synth7PatchEvent, Synth7ParameterEvent,
     patch Synth7Patch(Synth7Voice), parameter Synth7Parameter,
     music Synth7Music, Synth7EventList,
-    sounds Synth7Sound, Synth7LiveSound, Synth7EventsSound,
+    sounds Synth7Sound, Synth7LiveSound, Synth7EventsSound, Synth7LocalSound,
     settings {},
     bank Synth7BankSound, Synth7Bank(Synth7PatchList)
 );
@@ -997,7 +1031,7 @@ note_family!(
     event Synth106Event, Synth106PatchEvent, Synth106ParameterEvent,
     patch Synth106Patch(Synth106Panel), parameter Synth106Parameter,
     music Synth106Music, Synth106EventList,
-    sounds Synth106Sound, Synth106LiveSound, Synth106EventsSound,
+    sounds Synth106Sound, Synth106LiveSound, Synth106EventsSound, Synth106LocalSound,
     settings {},
     bank Synth106BankSound, Synth106Bank(Synth106PatchList)
 );
@@ -1006,7 +1040,7 @@ note_family!(
     event Synth60Event, Synth60PatchEvent, Synth60ParameterEvent,
     patch Synth60Patch(Synth60Panel), parameter Synth60Parameter,
     music Synth60Music, Synth60EventList,
-    sounds Synth60Sound, Synth60LiveSound, Synth60EventsSound,
+    sounds Synth60Sound, Synth60LiveSound, Synth60EventsSound, Synth60LocalSound,
     settings {},
     bank Synth60BankSound, Synth60Bank(Synth60PatchList)
 );
@@ -1015,7 +1049,7 @@ note_family!(
     event SynthDEvent, SynthDPatchEvent, SynthDParameterEvent,
     patch SynthDPatch(SynthDPanel), parameter SynthDParameter,
     music SynthDMusic, SynthDEventList,
-    sounds SynthDSound, SynthDLiveSound, SynthDEventsSound,
+    sounds SynthDSound, SynthDLiveSound, SynthDEventsSound, SynthDLocalSound,
     settings {},
     bank SynthDBankSound, SynthDBank(SynthDPatchList)
 );
@@ -1024,7 +1058,7 @@ note_family!(
     event Synth53Event, Synth53PatchEvent, Synth53ParameterEvent,
     patch Synth53Patch(Synth53Program), parameter Synth53Parameter,
     music Synth53Music, Synth53EventList,
-    sounds Synth53Sound, Synth53LiveSound, Synth53EventsSound,
+    sounds Synth53Sound, Synth53LiveSound, Synth53EventsSound, Synth53LocalSound,
     settings {},
     bank Synth53BankSound, Synth53Bank(Synth53PatchList)
 );
@@ -1033,7 +1067,7 @@ note_family!(
     event Synth8Event, Synth8PatchEvent, Synth8ParameterEvent,
     patch Synth8Patch(Synth8Panel), parameter Synth8Parameter,
     music Synth8Music, Synth8EventList,
-    sounds Synth8Sound, Synth8LiveSound, Synth8EventsSound,
+    sounds Synth8Sound, Synth8LiveSound, Synth8EventsSound, Synth8LocalSound,
     settings {
         /// How the keyboard plays the upper and lower patches (S8-18).
         key_mode: Synth8KeyMode,
@@ -1048,7 +1082,7 @@ note_family!(
     event Synth80Event, Synth80PatchEvent, Synth80ParameterEvent,
     patch Synth80Patch(Synth80Panel), parameter Synth80Parameter,
     music Synth80Music, Synth80EventList,
-    sounds Synth80Sound, Synth80LiveSound, Synth80EventsSound,
+    sounds Synth80Sound, Synth80LiveSound, Synth80EventsSound, Synth80LocalSound,
     settings {},
     bank Synth80BankSound, Synth80Bank(Synth80PatchList)
 );

@@ -197,7 +197,7 @@ fn a_refused_sound_is_named() {
 }
 
 /// SRV-94's shared fixture: every message of neoteletext-common's
-/// `docs/audio/examples.jsonl` is read whole by protocol 13's reader. The
+/// `docs/audio/examples.jsonl` is read whole by the protocol's reader. The
 /// file is read from the neoteletext-common checkout beside this one, or
 /// from `NEOTELETEXT_COMMON`.
 #[test]

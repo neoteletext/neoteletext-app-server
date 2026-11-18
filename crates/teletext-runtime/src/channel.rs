@@ -670,7 +670,7 @@ impl Channel {
         let (Some(on), Some(moved)) = (input::stamp(&item), Input::of(&item).and_then(|input| input.event())) else { return };
         if self.program {
             count(&mut self.stats.lines_to_application);
-            let message = InputMessage { connection, page: PageNumber(on.page), sub: protocol::SubCode(on.sub), lost: false, event: moved };
+            let message = input_message(connection, PageNumber(on.page), protocol::SubCode(on.sub), false, moved);
             self.effects.push(Effect::MoveToProgram { connection, contact, line: protocol::line(&ServerMessage::Input(message)) });
         }
     }
@@ -839,7 +839,7 @@ impl Channel {
         let Some(focused) = state.focus_untold.take() else { return };
         let event = if focused { protocol::InputEvent::Focus } else { protocol::InputEvent::Blur };
         count(&mut self.stats.inputs);
-        self.tell(&ServerMessage::Input(InputMessage { connection, page: selection.page, sub: selection.sub, lost: false, event }));
+        self.tell(&ServerMessage::Input(input_message(connection, selection.page, selection.sub, false, event)));
     }
 
     /// A connection the host numbered `connection` opened, from `address`
@@ -1089,7 +1089,7 @@ impl Channel {
             self.gesture(connection, now);
         }
         let lost = input::marked_lost(item);
-        self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(page), sub: protocol::SubCode(sub), lost, event }));
+        self.tell(&ServerMessage::Input(input_message(connection, PageNumber(page), protocol::SubCode(sub), lost, event)));
     }
 
     /// Input dropped for its stamp: counted, and the operator told at most
@@ -1119,7 +1119,7 @@ impl Channel {
         for (released, on) in owed {
             let Some(event) = input::lost_release(released, at) else { continue };
             count(&mut self.stats.inputs);
-            self.tell(&ServerMessage::Input(InputMessage { connection, page: PageNumber(on.page), sub: protocol::SubCode(on.sub), lost: true, event }));
+            self.tell(&ServerMessage::Input(input_message(connection, PageNumber(on.page), protocol::SubCode(on.sub), true, event)));
         }
     }
 
@@ -1408,8 +1408,16 @@ impl Channel {
                     self.send(connection, Arc::clone(&bytes));
                 }
             }
+            other => self.act_on_rules(&other),
         }
         Ok(())
+    }
+
+    /// The messages of the page rule table and of animation (REQ-6532,
+    /// REQ-6533): read and checked here; what each does comes with the
+    /// engine that has their records.
+    fn act_on_rules(&mut self, message: &ProgramMessage) {
+        self.log(Level::Debug, "rules_message", format!("{:?} was read and is not yet acted on", message.kind()));
     }
 
     /// The connections named whose selection shows a sub-page: who what a
@@ -1638,7 +1646,11 @@ impl Channel {
     }
 }
 
-/// A count as the protocol writes it.
+/// An `input` message, which names the rule that sent it (RULE-37).
+fn input_message(connection: ConnectionId, page: PageNumber, sub: protocol::SubCode, lost: bool, event: protocol::InputEvent) -> InputMessage {
+    InputMessage { connection, page, sub, lost, rule: protocol::RuleName(String::from("keys")), tick: 0, target: None, event }
+}
+
 /// What `description` shows the web: nothing unless it says public, which the
 /// protocol's check has seen gives all three.
 fn public_page(description: Description) -> Option<PublicPage> {

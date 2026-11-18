@@ -26,13 +26,17 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod animation;
 pub mod check;
 mod read;
+mod rules;
 mod sound;
 pub mod viewer;
 
+pub use animation::*;
 pub use check::Refusal;
 pub use read::{read, read_reporting, request_of};
+pub use rules::*;
 pub use sound::*;
 pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefusal, StateRefused, ViewerBegan, ViewerLeft, ViewersReset};
 
@@ -71,7 +75,16 @@ pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefus
 /// MIDI events, patches as named fields or the interfaces' own bytes,
 /// banks and Standard MIDI Files, which the server builds into blocks
 /// itself (neoteletext-common's `docs/audio/server.md`, DEC-6462).
-pub const PROTOCOL: u32 = 13;
+/// Version 14 adds the page rule table and animation (neoteletext-common's
+/// `docs/page-rules.md` RULE-34 and `docs/animation.md` ANIM-21; DEC-6522,
+/// DEC-6524): a program gives a page its table with `rules` and asks a
+/// view's state with `query_state`; the server tells `rule_event`,
+/// `page_state` and `rules_fault`; `input` names the rule that sent it,
+/// with its tick and target, and is given only for an event a rule sent
+/// (REQ-6523); `sound` gains the local sounds, `synth7_local` to
+/// `synth80_local`; and a program sends `frame`, `animate`, `sprites`,
+/// `naplps_objects`, `sprite_sheet`, `timeline` and `timeline_stop`.
+pub const PROTOCOL: u32 = 14;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).
@@ -357,8 +370,16 @@ pub enum ServerMessage {
     /// A connection selected a page or a sub-page (REQ-1472); answer with
     /// `page`.
     Selected(Selected),
-    /// Input on a page (DOC-1969).
+    /// Input on a page (DOC-1969), which a rule of the page's table sent
+    /// (RULE-37).
     Input(InputMessage),
+    /// A rule with no input event fired and sent, or sent a value
+    /// (RULE-37).
+    RuleEvent(RuleEvent),
+    /// The answer to `query_state` (RULE-38).
+    PageState(Box<PageState>),
+    /// A receiver's report of a fault of a page's table (RULE-48).
+    RulesFault(RulesFault),
     /// A connection's selection left a page, or the connection closed.
     Left(Left),
     /// The connection closed and will not come back (VS-354).
@@ -393,11 +414,14 @@ impl ServerMessage {
             Self::Connected(Connected { connection, .. })
             | Self::Selected(Selected { connection, .. })
             | Self::Input(InputMessage { connection, .. })
+            | Self::RuleEvent(RuleEvent { connection, .. })
+            | Self::RulesFault(RulesFault { connection, .. })
             | Self::Left(Left { connection, .. })
             | Self::Gone(Gone { connection })
             | Self::ViewerBegan(ViewerBegan { connection, .. })
             | Self::ViewerLeft(ViewerLeft { connection })
             | Self::StateRefused(StateRefused { connection, .. }) => Some(*connection),
+            Self::PageState(state) => Some(state.connection),
             Self::Start(_) | Self::ViewersReset(_) | Self::Stats(_) | Self::Refused(_) | Self::Describe(_) | Self::Measured(_) | Self::SoundBuilt(_) => None,
         }
     }
@@ -614,6 +638,13 @@ pub struct InputMessage {
     /// lost the input or the connection went (REQ-207). A game can tell
     /// "the player let go" from "the player left".
     pub lost: bool,
+    /// The name of the rule of the page's table that sent it (RULE-37).
+    pub rule: RuleName,
+    /// The page tick at which the rule fired.
+    pub tick: u32,
+    /// The target the pointer was inside, for a pointer trigger whose rule
+    /// named a control, an object or a rectangle; else null.
+    pub target: Option<RuleTarget>,
     /// What happened.
     pub event: InputEvent,
 }
@@ -1091,6 +1122,15 @@ pub enum MessageType {
     RequestState,
     EndState,
     OfferRemember,
+    Rules,
+    QueryState,
+    Frame,
+    Animate,
+    Sprites,
+    NaplpsObjects,
+    SpriteSheet,
+    Timeline,
+    TimelineStop,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1252,6 +1292,42 @@ pub enum Rule {
     MidiFileMalformed,
     /// A Standard MIDI File past a bound of MIDI-117 or MIDI-119.
     MidiFileTooLarge,
+    /// A rule table over a limit the schema cannot state (RULE-39): more
+    /// than 8 terms, 16 nodes or 3 levels in a condition, more than 64
+    /// distinct values or targets, or an encoded table over 8,184 bytes.
+    RulesOverLimit,
+    /// A rule table with a shape fault the schema cannot state (RULE-39),
+    /// or one the receivers' own decoder refuses.
+    InvalidRules,
+    /// A rule, variable, timer or rectangle name the table does not
+    /// declare.
+    UnknownName,
+    /// A name declared twice within its kind.
+    DuplicateName,
+    /// A synthesizer `field` the named family does not have.
+    UnknownParameter,
+    /// A `query_state` within one second of the last for that connection
+    /// and page.
+    TooFrequent,
+    /// A `query_state` that got no answer (RULE-38).
+    NotAnswered,
+    /// A frame's end with no begin, or a begin inside a frame (ANIM-21).
+    FrameOrder,
+    /// A frame whose records pass 262,144 bytes: what it held is sent
+    /// unframed.
+    FrameTooLarge,
+    /// An animation operation outside its range, or on "any".
+    InvalidAnimation,
+    /// Sprites the engine's reader refuses.
+    InvalidSprites,
+    /// NAPLPS objects the engine's reader refuses.
+    InvalidNaplpsObjects,
+    /// A sprite sheet that a renderer refuses, or that draws.
+    InvalidSheet,
+    /// A sprite sheet over 65,536 bytes.
+    SheetTooLarge,
+    /// A seventeenth timeline playing for a page.
+    TooManyTimelines,
 }
 
 // ------------------------------------------------------- program to server
@@ -1307,6 +1383,24 @@ pub enum ProgramMessage {
     EndState(EndState),
     /// Asks the browser to offer "remember me" (VS-352 item 3).
     OfferRemember(OfferRemember),
+    /// Gives a page its rule table, or removes it (RULE-35).
+    Rules(RulesMessage),
+    /// Asks one connection for one page's local state (RULE-38).
+    QueryState(QueryState),
+    /// Begins or ends an atomic frame of a sub-page (ANIM-2, ANIM-21).
+    Frame(FrameMessage),
+    /// Operations on the animation state of a sub-page's objects (ANIM-6).
+    Animate(Animate),
+    /// A sub-page's teletext sprites (ANIM-7).
+    Sprites(Sprites),
+    /// A sub-page's NAPLPS objects (ANIM-11).
+    NaplpsObjects(NaplpsObjects),
+    /// Bytes of a page's sprite sheet (ANIM-17).
+    SpriteSheet(SpriteSheet),
+    /// A timeline of operations, which the server plays (ANIM-21).
+    Timeline(TimelineMessage),
+    /// Stops a timeline.
+    TimelineStop(TimelineStop),
 }
 
 impl ProgramMessage {
@@ -1333,6 +1427,15 @@ impl ProgramMessage {
             Self::RequestState(_) => MessageType::RequestState,
             Self::EndState(_) => MessageType::EndState,
             Self::OfferRemember(_) => MessageType::OfferRemember,
+            Self::Rules(_) => MessageType::Rules,
+            Self::QueryState(_) => MessageType::QueryState,
+            Self::Frame(_) => MessageType::Frame,
+            Self::Animate(_) => MessageType::Animate,
+            Self::Sprites(_) => MessageType::Sprites,
+            Self::NaplpsObjects(_) => MessageType::NaplpsObjects,
+            Self::SpriteSheet(_) => MessageType::SpriteSheet,
+            Self::Timeline(_) => MessageType::Timeline,
+            Self::TimelineStop(_) => MessageType::TimelineStop,
         }
     }
 

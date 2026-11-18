@@ -1,5 +1,273 @@
 {
   "$defs": {
+    "AnimationOp": {
+      "description": "One operation on a control's or an object's animation state (ANIM-6),\nby `action`: the shapes of the rule table's actions of the same names,\nand `reset`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Makes a control or an object shown.",
+          "properties": {
+            "action": {
+              "const": "show",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Makes it hidden.",
+          "properties": {
+            "action": {
+              "const": "hide",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Forces a look on a control or an object.",
+          "properties": {
+            "action": {
+              "const": "look",
+              "type": "string"
+            },
+            "look": {
+              "$ref": "#/$defs/LookName",
+              "description": "The look."
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "look"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves an object.",
+          "properties": {
+            "action": {
+              "const": "move",
+              "type": "string"
+            },
+            "relative": {
+              "default": false,
+              "description": "Whether `x` and `y` are added to the position in force.",
+              "type": "boolean"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            },
+            "x": {
+              "description": "Across.",
+              "format": "int32",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            },
+            "y": {
+              "description": "Down.",
+              "format": "int32",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Sets an object's layer and order.",
+          "properties": {
+            "action": {
+              "const": "order",
+              "type": "string"
+            },
+            "layer": {
+              "default": null,
+              "description": "The layer, 0 to 3, or null to keep it.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "order": {
+              "description": "The order within the layer, lowest drawn first.",
+              "format": "int32",
+              "maximum": 127,
+              "minimum": -128,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "order"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Shows one frame of an object.",
+          "properties": {
+            "action": {
+              "const": "frame",
+              "type": "string"
+            },
+            "frame": {
+              "description": "The frame, 0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "frame"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cycles an object's frames.",
+          "properties": {
+            "action": {
+              "const": "cycle",
+              "type": "string"
+            },
+            "first": {
+              "description": "The first frame.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last": {
+              "description": "The last frame, at least `first`.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "once": {
+              "default": false,
+              "description": "Stop at `last` rather than begin again.",
+              "type": "boolean"
+            },
+            "period": {
+              "description": "Ticks a frame.",
+              "format": "uint16",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "first",
+            "last",
+            "period"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stops an object's cycle at the frame shown.",
+          "properties": {
+            "action": {
+              "const": "stop_cycle",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Forgets a control's or an object's whole animation state.",
+          "properties": {
+            "action": {
+              "const": "reset",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AnyWord": {
+      "description": "`\"any\"`.",
+      "oneOf": [
+        {
+          "const": "any",
+          "description": "Any one.",
+          "type": "string"
+        }
+      ]
+    },
     "AuthorLevel": {
       "description": "An author's log line's level, as TTI's `LG` writes it.",
       "oneOf": [
@@ -114,6 +382,22 @@
         "description_limit_ms"
       ],
       "type": "object"
+    },
+    "ButtonChoice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnyWord",
+          "description": "Any button."
+        },
+        {
+          "description": "One button.",
+          "format": "uint8",
+          "maximum": 2,
+          "minimum": 0,
+          "type": "integer"
+        }
+      ],
+      "description": "The button of a `press` or a `release` trigger: 0 left (or a touch\ncontact), 1 middle, 2 right, or `\"any\"`."
     },
     "Buttons": {
       "additionalProperties": false,
@@ -452,6 +736,18 @@
       ],
       "type": "object"
     },
+    "CompareOp": {
+      "description": "How a value is compared with a constant.",
+      "enum": [
+        "==",
+        "!=",
+        "<",
+        "<=",
+        ">",
+        ">="
+      ],
+      "type": "string"
+    },
     "Connections": {
       "anyOf": [
         {
@@ -521,6 +817,22 @@
         "magazine_serial"
       ],
       "type": "object"
+    },
+    "ControlRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnyWord",
+          "description": "Any control: the rule fires once for each control concerned."
+        },
+        {
+          "description": "One control.",
+          "format": "uint8",
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        }
+      ],
+      "description": "A control's number, 1 to 32 in the order the page declares its\ncontrols, or `\"any\"` in a pointer trigger (RULE-12)."
     },
     "Cursor": {
       "additionalProperties": false,
@@ -668,6 +980,21 @@
         {
           "const": "all",
           "description": "Every open connection.",
+          "type": "string"
+        }
+      ]
+    },
+    "FrameMarkName": {
+      "description": "Which mark a `frame` message is.",
+      "oneOf": [
+        {
+          "const": "begin",
+          "description": "The frame begins: what follows for the page is held.",
+          "type": "string"
+        },
+        {
+          "const": "end",
+          "description": "The frame ends: what was held is applied and shown on one tick.",
           "type": "string"
         }
       ]
@@ -1494,6 +1821,24 @@
       ],
       "description": "A W3C KeyboardEvent.key name, from the engine's table (DOC-1936), or the one character of a character key."
     },
+    "KeySet": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnyWord",
+          "description": "Any key."
+        },
+        {
+          "description": "The keys named.",
+          "items": {
+            "$ref": "#/$defs/RuleKey"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        }
+      ],
+      "description": "A key set (RULE-10): `\"any\"`, or 1 to 16 keys, any of which matches."
+    },
     "LanguageEntry": {
       "additionalProperties": false,
       "description": "One language a page or text run may name (REQ-2215).",
@@ -1663,6 +2008,31 @@
       ],
       "type": "string"
     },
+    "LookName": {
+      "description": "A look (ANIM-6).",
+      "oneOf": [
+        {
+          "const": "normal",
+          "description": "No look is forced: the pointer decides it.",
+          "type": "string"
+        },
+        {
+          "const": "hover",
+          "description": "The hover look.",
+          "type": "string"
+        },
+        {
+          "const": "pressed",
+          "description": "The pressed look.",
+          "type": "string"
+        },
+        {
+          "const": "alternative",
+          "description": "The alternative look.",
+          "type": "string"
+        }
+      ]
+    },
     "Magazine": {
       "additionalProperties": false,
       "description": "A magazine of the index (REQ-1477).",
@@ -1717,9 +2087,43 @@
         "naplps",
         "request_state",
         "end_state",
-        "offer_remember"
+        "offer_remember",
+        "rules",
+        "query_state",
+        "frame",
+        "animate",
+        "sprites",
+        "naplps_objects",
+        "sprite_sheet",
+        "timeline",
+        "timeline_stop"
       ],
       "type": "string"
+    },
+    "Mods": {
+      "additionalProperties": false,
+      "description": "Which modifier keys a key trigger needs (RULE-9): it matches when\n`(mods AND mask) = value`, on the input protocol's modifier bits\n(DOC-1935: Shift 1, Alt 2, Control 4, Super 8, Hyper 16, Meta 32, Caps\nLock 64, Num Lock 128). Mask 0 ignores modifiers.",
+      "properties": {
+        "mask": {
+          "description": "The bits compared.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "description": "What they must be.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mask",
+        "value"
+      ],
+      "type": "object"
     },
     "MouseAction": {
       "description": "What the mouse did.",
@@ -1746,6 +2150,173 @@
         }
       ]
     },
+    "NaplpsObject": {
+      "additionalProperties": false,
+      "description": "A NAPLPS object (ANIM-11): a numbered object in the layer NeoTeletext\nkeeps over a NAPLPS picture.",
+      "properties": {
+        "alternative": {
+          "default": null,
+          "description": "The macro drawn as its alternative look, or null.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 32,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cover": {
+          "default": null,
+          "description": "A region's cover: the colour-map entry that fills it while it is\nhidden; null for a macro object.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "detectable": {
+          "description": "Whether pointer triggers see it.",
+          "type": "boolean"
+        },
+        "frames": {
+          "description": "A macro object's frames, 1 to 16 macro codes; empty for a region.",
+          "items": {
+            "format": "uint8",
+            "maximum": 127,
+            "minimum": 32,
+            "type": "integer"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "height": {
+          "description": "Its height, 1 to 480.",
+          "format": "uint16",
+          "maximum": 480,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hover": {
+          "default": null,
+          "description": "The macro drawn as its hover look, or null.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 32,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/NaplpsObjectKind",
+          "description": "A macro object or a region."
+        },
+        "layer": {
+          "description": "Its layer, 1 to 3.",
+          "format": "uint8",
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "number": {
+          "description": "Its number, distinct within the message.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "order": {
+          "description": "Its order within the layer, lowest drawn first.",
+          "format": "int32",
+          "maximum": 127,
+          "minimum": -128,
+          "type": "integer"
+        },
+        "origin_x": {
+          "description": "Where the rectangle's top left lies in the macro's own drawing; 0\nfor a region.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "origin_y": {
+          "description": "See `origin_x`.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "pressed": {
+          "default": null,
+          "description": "The macro drawn as its pressed look, or null.",
+          "format": "uint8",
+          "maximum": 127,
+          "minimum": 32,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shown": {
+          "description": "Whether it is shown.",
+          "type": "boolean"
+        },
+        "width": {
+          "description": "Its width, 1 to 640.",
+          "format": "uint16",
+          "maximum": 640,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x": {
+          "description": "The left of its rectangle, in the picture's 640 by 480 pixels.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "y": {
+          "description": "The top of its rectangle.",
+          "format": "int32",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "kind",
+        "shown",
+        "detectable",
+        "layer",
+        "order",
+        "x",
+        "y",
+        "width",
+        "height",
+        "origin_x",
+        "origin_y",
+        "frames"
+      ],
+      "type": "object"
+    },
+    "NaplpsObjectKind": {
+      "description": "What a NAPLPS object is (ANIM-11).",
+      "oneOf": [
+        {
+          "const": "macro",
+          "description": "Drawn by executing its frame's macro.",
+          "type": "string"
+        },
+        {
+          "const": "region",
+          "description": "A rectangle of the stream's own picture, covered while hidden.",
+          "type": "string"
+        }
+      ]
+    },
     "NumberLink": {
       "additionalProperties": false,
       "description": "A page number on the page that leads elsewhere (`LK`).",
@@ -1767,6 +2338,62 @@
         "target"
       ],
       "type": "object"
+    },
+    "ObjectRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnyWord",
+          "description": "Any object: the rule fires once for each object concerned."
+        },
+        {
+          "description": "One object.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      ],
+      "description": "An animation object's number, 1 to 65,535, or `\"any\"` in a pointer\ntrigger (RULE-12): a teletext sprite, a ReGIS numbered drawing or a\nNAPLPS object of the sub-page shown."
+    },
+    "ObjectSource": {
+      "description": "Where a sprite's frame, a teletext object, is defined (EN 300 706\nclause 13).",
+      "oneOf": [
+        {
+          "const": "local",
+          "description": "The page's own packets X/26.",
+          "type": "string"
+        },
+        {
+          "const": "public",
+          "description": "The page's Public Object Page.",
+          "type": "string"
+        },
+        {
+          "const": "global",
+          "description": "Its Global Public Object Page.",
+          "type": "string"
+        }
+      ]
+    },
+    "ObjectType": {
+      "description": "The type of a teletext object (EN 300 706 clause 13.2).",
+      "oneOf": [
+        {
+          "const": "active",
+          "description": "An active object.",
+          "type": "string"
+        },
+        {
+          "const": "adaptive",
+          "description": "An adaptive object.",
+          "type": "string"
+        },
+        {
+          "const": "passive",
+          "description": "A passive object.",
+          "type": "string"
+        }
+      ]
     },
     "OperatorLevel": {
       "description": "An operator's log line's level.",
@@ -2108,6 +2735,65 @@
       ],
       "type": "object"
     },
+    "PageRule": {
+      "additionalProperties": false,
+      "description": "A rule (RULE-3): one trigger, at most one condition and at most 16\nactions.",
+      "properties": {
+        "do": {
+          "description": "Its actions, run in written order. A rule with none has `echo`.",
+          "items": {
+            "$ref": "#/$defs/RuleAction"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "echo": {
+          "default": false,
+          "description": "A `send` of the trigger's own event after its last action.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Its state when the page opens.",
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name, by which `input` and `rule_event` name it."
+        },
+        "on": {
+          "$ref": "#/$defs/RuleTrigger",
+          "description": "The trigger."
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What must hold for it to fire, or null; null for a `becomes`\ntrigger, which carries its own condition."
+        }
+      },
+      "required": [
+        "name",
+        "on",
+        "do"
+      ],
+      "type": "object"
+    },
+    "PageWord": {
+      "description": "`\"page\"`.",
+      "oneOf": [
+        {
+          "const": "page",
+          "description": "The whole page's picture.",
+          "type": "string"
+        }
+      ]
+    },
     "ParameterDirection": {
       "description": "Which way a parameter step moves (controllers 96 and 97).",
       "oneOf": [
@@ -2119,6 +2805,26 @@
         {
           "const": "decrement",
           "description": "Data decrement, controller 97.",
+          "type": "string"
+        }
+      ]
+    },
+    "PointerProperty": {
+      "description": "What `pointer` reads.",
+      "oneOf": [
+        {
+          "const": "over",
+          "description": "1 while the pointer is over the page, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "x",
+          "description": "Its x pixel in the picture, 0 while it is not over the page.",
+          "type": "string"
+        },
+        {
+          "const": "y",
+          "description": "Its y pixel.",
           "type": "string"
         }
       ]
@@ -3223,6 +3929,68 @@
             },
             {
               "additionalProperties": false,
+              "description": "A local synth7 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth7_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth7Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "A bank of synth7 voices, which synth7 sounds name (SRV-19, SRV-27).",
               "properties": {
                 "bank": {
@@ -3444,6 +4212,68 @@
                 "generation",
                 "until_us",
                 "events"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A local synth106 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth106_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth106Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
               ],
               "type": "object"
             },
@@ -3675,6 +4505,68 @@
             },
             {
               "additionalProperties": false,
+              "description": "A local synth60 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth60_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth60Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "A bank of synth60 patches (SRV-19, SRV-32).",
               "properties": {
                 "bank": {
@@ -3896,6 +4788,68 @@
                 "generation",
                 "until_us",
                 "events"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A local synthD sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synthd_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/SynthDEvent"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
               ],
               "type": "object"
             },
@@ -4127,6 +5081,68 @@
             },
             {
               "additionalProperties": false,
+              "description": "A local synth53 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth53_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth53Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "A bank of synth53 programs, one group (SRV-19, SRV-38).",
               "properties": {
                 "bank": {
@@ -4353,6 +5369,68 @@
             },
             {
               "additionalProperties": false,
+              "description": "A local synth52 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth52_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth53Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "A bank of synth52 programs, one group (SRV-19, SRV-38).",
               "properties": {
                 "bank": {
@@ -4574,6 +5652,68 @@
                 "generation",
                 "until_us",
                 "events"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A local synth51 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth51_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth53Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
               ],
               "type": "object"
             },
@@ -4831,6 +5971,81 @@
             },
             {
               "additionalProperties": false,
+              "description": "A local synth8 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "key_mode": {
+                  "$ref": "#/$defs/Synth8KeyMode",
+                  "description": "How the keyboard plays the upper and lower patches (S8-18)."
+                },
+                "kind": {
+                  "const": "synth8_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth8Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "split_key": {
+                  "description": "The lowest key of the upper patch in the split mode, 0 to 127;\nsent, and unused, in the others.",
+                  "format": "uint8",
+                  "maximum": 127,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "key_mode",
+                "split_key",
+                "banks",
+                "setup"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "A bank of synth8 patches (SRV-19, SRV-41).",
               "properties": {
                 "bank": {
@@ -5052,6 +6267,68 @@
                 "generation",
                 "until_us",
                 "events"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A local synth80 sound, which the receiver renders and a page's rules play (RULE-61).",
+              "properties": {
+                "banks": {
+                  "description": "The handles of its banks, bank index 0 first: at least one.",
+                  "items": {
+                    "format": "uint8",
+                    "maximum": 255,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "connections": {
+                  "$ref": "#/$defs/Connections",
+                  "description": "Who it is for."
+                },
+                "generation": {
+                  "description": "Its generation.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "handle": {
+                  "description": "Its handle.",
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "synth80_local",
+                  "type": "string"
+                },
+                "setup": {
+                  "description": "What is applied, in order, when the instrument is made: at\nmost 64 events, each with `time_us` 0, which must fit one\nblock.",
+                  "items": {
+                    "$ref": "#/$defs/Synth80Event"
+                  },
+                  "maxItems": 64,
+                  "type": "array"
+                },
+                "type": {
+                  "const": "sound",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "kind",
+                "connections",
+                "handle",
+                "generation",
+                "banks",
+                "setup"
               ],
               "type": "object"
             },
@@ -5734,8 +7011,403 @@
             "connection"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Gives a page its rule table, or removes it (RULE-35).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "table": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleTable"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The table, or null."
+            },
+            "type": {
+              "const": "rules",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "table"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks one connection for one page's local state (RULE-38).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page, which the connection has selected."
+            },
+            "request": {
+              "description": "The program's own number for the question.",
+              "format": "uint64",
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "query_state",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "page",
+            "request"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Begins or ends an atomic frame of a sub-page (ANIM-2, ANIM-21).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "mark": {
+              "$ref": "#/$defs/FrameMarkName",
+              "description": "Begin or end."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "frame",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "mark"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Operations on the animation state of a sub-page's objects (ANIM-6).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "ops": {
+              "description": "The operations, applied in order.",
+              "items": {
+                "$ref": "#/$defs/AnimationOp"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, or 3F7F for whichever sub-page of the page is shown."
+            },
+            "type": {
+              "const": "animate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "ops"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A sub-page's teletext sprites (ANIM-7).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sprites": {
+              "description": "The sprites.",
+              "items": {
+                "$ref": "#/$defs/Sprite"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "sprites",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "sprites"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A sub-page's NAPLPS objects (ANIM-11).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "objects": {
+              "description": "The objects.",
+              "items": {
+                "$ref": "#/$defs/NaplpsObject"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page: never 3F7F, which names none."
+            },
+            "type": {
+              "const": "naplps_objects",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "objects"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bytes of a page's sprite sheet (ANIM-17).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "data": {
+              "$ref": "#/$defs/Base64",
+              "description": "The bytes, exact base64."
+            },
+            "kind": {
+              "$ref": "#/$defs/SheetKindName",
+              "description": "Which renderer it is for."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "restart": {
+              "default": false,
+              "description": "Begin the sheet again: a new generation.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "sprite_sheet",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A timeline of operations, which the server plays (ANIM-21).",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "id": {
+              "description": "Its number, by which `timeline_stop` names it.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "loop_ticks": {
+              "default": null,
+              "description": "The ticks after which it begins again, more than every step's\ntick; null to play once.",
+              "format": "uint64",
+              "maximum": 216000,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "steps": {
+              "description": "The steps, in ascending order of `tick`.",
+              "items": {
+                "$ref": "#/$defs/TimelineStep"
+              },
+              "maxItems": 1024,
+              "minItems": 1,
+              "type": "array"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-page, or 3F7F for whichever sub-page of the page is shown."
+            },
+            "type": {
+              "const": "timeline",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "sub",
+            "id",
+            "steps"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stops a timeline.",
+          "properties": {
+            "connections": {
+              "$ref": "#/$defs/Connections",
+              "description": "Who it is for."
+            },
+            "id": {
+              "description": "The timeline's number.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "type": {
+              "const": "timeline_stop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connections",
+            "page",
+            "id"
+          ],
+          "type": "object"
         }
       ]
+    },
+    "RectDeclaration": {
+      "additionalProperties": false,
+      "description": "A rectangle's declaration (RULE-13), in the pixels of the sub-page's\npicture from its top left: a teletext page is 480 by 500, a ReGIS\npicture 800 by 480, a NAPLPS picture 640 by 480.",
+      "properties": {
+        "height": {
+          "description": "The height, at least 1.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name; never `page`."
+        },
+        "width": {
+          "description": "The width, at least 1.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x": {
+          "description": "The left edge.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "description": "The top edge.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
     },
     "RefusedSound": {
       "additionalProperties": false,
@@ -6093,6 +7765,1830 @@
           "const": "midi_file_too_large",
           "description": "A Standard MIDI File past a bound of MIDI-117 or MIDI-119.",
           "type": "string"
+        },
+        {
+          "const": "rules_over_limit",
+          "description": "A rule table over a limit the schema cannot state (RULE-39): more\nthan 8 terms, 16 nodes or 3 levels in a condition, more than 64\ndistinct values or targets, or an encoded table over 8,184 bytes.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_rules",
+          "description": "A rule table with a shape fault the schema cannot state (RULE-39),\nor one the receivers' own decoder refuses.",
+          "type": "string"
+        },
+        {
+          "const": "unknown_name",
+          "description": "A rule, variable, timer or rectangle name the table does not\ndeclare.",
+          "type": "string"
+        },
+        {
+          "const": "duplicate_name",
+          "description": "A name declared twice within its kind.",
+          "type": "string"
+        },
+        {
+          "const": "unknown_parameter",
+          "description": "A synthesizer `field` the named family does not have.",
+          "type": "string"
+        },
+        {
+          "const": "too_frequent",
+          "description": "A `query_state` within one second of the last for that connection\nand page.",
+          "type": "string"
+        },
+        {
+          "const": "not_answered",
+          "description": "A `query_state` that got no answer (RULE-38).",
+          "type": "string"
+        },
+        {
+          "const": "frame_order",
+          "description": "A frame's end with no begin, or a begin inside a frame (ANIM-21).",
+          "type": "string"
+        },
+        {
+          "const": "frame_too_large",
+          "description": "A frame whose records pass 262,144 bytes: what it held is sent\nunframed.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_animation",
+          "description": "An animation operation outside its range, or on \"any\".",
+          "type": "string"
+        },
+        {
+          "const": "invalid_sprites",
+          "description": "Sprites the engine's reader refuses.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_naplps_objects",
+          "description": "NAPLPS objects the engine's reader refuses.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_sheet",
+          "description": "A sprite sheet that a renderer refuses, or that draws.",
+          "type": "string"
+        },
+        {
+          "const": "sheet_too_large",
+          "description": "A sprite sheet over 65,536 bytes.",
+          "type": "string"
+        },
+        {
+          "const": "too_many_timelines",
+          "description": "A seventeenth timeline playing for a page.",
+          "type": "string"
+        }
+      ]
+    },
+    "RuleAction": {
+      "description": "One local effect of a rule (RULE-20, RULE-35), by `action`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A MIDI message to a local sound.",
+          "properties": {
+            "action": {
+              "const": "midi",
+              "type": "string"
+            },
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "message": {
+              "$ref": "#/$defs/RuleMidi",
+              "description": "The message."
+            }
+          },
+          "required": [
+            "action",
+            "channel",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts a sound.",
+          "properties": {
+            "action": {
+              "const": "play",
+              "type": "string"
+            },
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "fade_ms": {
+              "description": "The fade in, 0 to 10,000 milliseconds.",
+              "format": "uint16",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gain": {
+              "description": "The gain, 0 to 100.",
+              "format": "uint8",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "generation": {
+              "description": "Its generation.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "handle": {
+              "description": "The sound's handle.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "loop": {
+              "description": "It loops.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "action",
+            "channel",
+            "handle",
+            "generation",
+            "gain",
+            "fade_ms",
+            "loop"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stops an audio channel.",
+          "properties": {
+            "action": {
+              "const": "stop",
+              "type": "string"
+            },
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "fade_ms": {
+              "description": "The fade out, 0 to 10,000 milliseconds.",
+              "format": "uint16",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "channel",
+            "fade_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes an audio channel's gain.",
+          "properties": {
+            "action": {
+              "const": "gain",
+              "type": "string"
+            },
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "fade_ms": {
+              "description": "The ramp, 0 to 10,000 milliseconds.",
+              "format": "uint16",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gain": {
+              "description": "The gain, 0 to 100.",
+              "format": "uint8",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "channel",
+            "gain",
+            "fade_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Makes a control or an object shown.",
+          "properties": {
+            "action": {
+              "const": "show",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Makes it hidden.",
+          "properties": {
+            "action": {
+              "const": "hide",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Forces a look on a control or an object.",
+          "properties": {
+            "action": {
+              "const": "look",
+              "type": "string"
+            },
+            "look": {
+              "$ref": "#/$defs/LookName",
+              "description": "The look."
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "look"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Sets a variable.",
+          "properties": {
+            "action": {
+              "const": "set",
+              "type": "string"
+            },
+            "value": {
+              "description": "The constant.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "variable": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The variable's name."
+            }
+          },
+          "required": [
+            "action",
+            "variable",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Adds to a variable.",
+          "properties": {
+            "action": {
+              "const": "add",
+              "type": "string"
+            },
+            "amount": {
+              "description": "The constant.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "variable": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The variable's name."
+            }
+          },
+          "required": [
+            "action",
+            "variable",
+            "amount"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts or restarts a timer.",
+          "properties": {
+            "action": {
+              "const": "start_timer",
+              "type": "string"
+            },
+            "timer": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The timer's name; the page timer cannot be started or stopped."
+            }
+          },
+          "required": [
+            "action",
+            "timer"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stops a timer.",
+          "properties": {
+            "action": {
+              "const": "stop_timer",
+              "type": "string"
+            },
+            "timer": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The timer's name; the page timer cannot be started or stopped."
+            }
+          },
+          "required": [
+            "action",
+            "timer"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Switches rules on.",
+          "properties": {
+            "action": {
+              "const": "enable",
+              "type": "string"
+            },
+            "rules": {
+              "description": "The rules' names.",
+              "items": {
+                "$ref": "#/$defs/RuleName"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "action",
+            "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Switches rules off.",
+          "properties": {
+            "action": {
+              "const": "disable",
+              "type": "string"
+            },
+            "rules": {
+              "description": "The rules' names.",
+              "items": {
+                "$ref": "#/$defs/RuleName"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "action",
+            "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reports to the page's program.",
+          "properties": {
+            "action": {
+              "const": "send",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleValue"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The value reported, or null for the trigger's own event."
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves an object.",
+          "properties": {
+            "action": {
+              "const": "move",
+              "type": "string"
+            },
+            "relative": {
+              "default": false,
+              "description": "Whether `x` and `y` are added to the position in force.",
+              "type": "boolean"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            },
+            "x": {
+              "description": "Across.",
+              "format": "int32",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            },
+            "y": {
+              "description": "Down.",
+              "format": "int32",
+              "maximum": 32767,
+              "minimum": -32768,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Sets an object's layer and order.",
+          "properties": {
+            "action": {
+              "const": "order",
+              "type": "string"
+            },
+            "layer": {
+              "default": null,
+              "description": "The layer, 0 to 3, or null to keep it.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "order": {
+              "description": "The order within the layer, lowest drawn first.",
+              "format": "int32",
+              "maximum": 127,
+              "minimum": -128,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "order"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Shows one frame of an object.",
+          "properties": {
+            "action": {
+              "const": "frame",
+              "type": "string"
+            },
+            "frame": {
+              "description": "The frame, 0 to 15.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "frame"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cycles an object's frames.",
+          "properties": {
+            "action": {
+              "const": "cycle",
+              "type": "string"
+            },
+            "first": {
+              "description": "The first frame.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last": {
+              "description": "The last frame, at least `first`.",
+              "format": "uint8",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "once": {
+              "default": false,
+              "description": "Stop at `last` rather than begin again.",
+              "type": "boolean"
+            },
+            "period": {
+              "description": "Ticks a frame.",
+              "format": "uint16",
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One object."
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "first",
+            "last",
+            "period"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stops an object's cycle at the frame shown.",
+          "properties": {
+            "action": {
+              "const": "stop_cycle",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object; `stop_cycle` takes an object only."
+            }
+          },
+          "required": [
+            "action",
+            "target"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuleCondition": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "True when all of its 2 to 8 children are.",
+          "properties": {
+            "and": {
+              "description": "The children.",
+              "items": {
+                "$ref": "#/$defs/RuleCondition"
+              },
+              "maxItems": 8,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when any of its 2 to 8 children is.",
+          "properties": {
+            "or": {
+              "description": "The children.",
+              "items": {
+                "$ref": "#/$defs/RuleCondition"
+              },
+              "maxItems": 8,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when its child is false.",
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/RuleCondition",
+              "description": "The child."
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A value compared with a constant.",
+          "properties": {
+            "op": {
+              "$ref": "#/$defs/CompareOp",
+              "description": "How it is compared."
+            },
+            "read": {
+              "$ref": "#/$defs/RuleValue",
+              "description": "What is read."
+            },
+            "value": {
+              "description": "With what.",
+              "format": "int32",
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "read",
+            "op",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when `low ≤ value ≤ high`.",
+          "properties": {
+            "in_range": {
+              "description": "`[low, high]`, `low` at most `high`.",
+              "items": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": -2147483648,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "read": {
+              "$ref": "#/$defs/RuleValue",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "read",
+            "in_range"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when the value equals one of 1 to 8 constants.",
+          "properties": {
+            "in_set": {
+              "description": "The constants.",
+              "items": {
+                "format": "int32",
+                "maximum": 2147483647,
+                "minimum": -2147483648,
+                "type": "integer"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "read": {
+              "$ref": "#/$defs/RuleValue",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "read",
+            "in_set"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when the two targets' bounding rectangles share a pixel\n(RULE-19).",
+          "properties": {
+            "overlaps": {
+              "description": "The two targets.",
+              "items": {
+                "$ref": "#/$defs/RuleTarget"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "overlaps"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "True when the first target's bounding rectangle lies wholly within\nthe second's.",
+          "properties": {
+            "inside": {
+              "description": "The two targets.",
+              "items": {
+                "$ref": "#/$defs/RuleTarget"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "inside"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A condition (RULE-18): a tree of at most 16 nodes, of which at most 8\nare terms, with `and`, `or` and `not` nested at most 3 deep. Every\ncomparison is of a value with a constant."
+    },
+    "RuleEventBody": {
+      "description": "What a `rule_event` reports.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The rule fired, on `open`, `close`, `becomes`, `every` or `after`.",
+          "properties": {
+            "kind": {
+              "const": "fired",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A `send` of a value: what was read, as the table names it, and its\nreading in the tick's snapshot.",
+          "properties": {
+            "kind": {
+              "const": "value",
+              "type": "string"
+            },
+            "read": {
+              "$ref": "#/$defs/RuleValue",
+              "description": "What was read."
+            },
+            "value": {
+              "description": "Its reading.",
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "read",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuleKey": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "A character key: the character the active keyboard layout gives the\nkey without Shift, a letter in lower case.",
+          "properties": {
+            "char": {
+              "description": "One Unicode scalar value.",
+              "maxLength": 1,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "char"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A named key, by its name in the engine's table.",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/KeyName",
+              "description": "The name, such as `Enter` or `ArrowLeft`."
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A physical key: the key that carries the character on a United\nStates layout, whatever the active layout.",
+          "properties": {
+            "physical": {
+              "description": "One Unicode scalar value.",
+              "maxLength": 1,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "physical"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "One key (RULE-10), named in one of the input protocol's three ways."
+    },
+    "RuleMidi": {
+      "description": "The one MIDI channel voice message of a `midi` action (RULE-21), by\n`event`: a family's event shapes, without a time.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`9n key velocity`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16: the part.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "note_on",
+              "type": "string"
+            },
+            "key": {
+              "description": "The key, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "velocity": {
+              "description": "The velocity, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "key",
+            "velocity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`8n key velocity`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16: the part.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "note_off",
+              "type": "string"
+            },
+            "key": {
+              "description": "The key, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "velocity": {
+              "description": "The velocity, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "key",
+            "velocity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`Bn controller value`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "controller": {
+              "description": "The controller, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "event": {
+              "const": "control_change",
+              "type": "string"
+            },
+            "value": {
+              "description": "Its value, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "controller",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`Cn program`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "program_change",
+              "type": "string"
+            },
+            "program": {
+              "description": "The program, 0 to 127.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "program"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`En lsb msb`.",
+          "properties": {
+            "channel": {
+              "description": "The MIDI channel, 1 to 16.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "const": "pitch_bend",
+              "type": "string"
+            },
+            "value": {
+              "description": "The bend, 0 to 16,383; 8,192 is none.",
+              "format": "uint16",
+              "maximum": 16383,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "channel",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuleName": {
+      "description": "A rule's, a variable's, a timer's or a rectangle's name (RULE-36): distinct within its kind in a table, and never sent to a receiver.",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "type": "string"
+    },
+    "RuleTable": {
+      "additionalProperties": false,
+      "description": "A page's rule table (RULE-2, RULE-35): one for a page, for all its\nsub-pages.",
+      "properties": {
+        "rects": {
+          "description": "The rectangles.",
+          "items": {
+            "$ref": "#/$defs/RectDeclaration"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "rules": {
+          "description": "The rules, in rule order.",
+          "items": {
+            "$ref": "#/$defs/PageRule"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "subpages": {
+          "description": "The rules switched off for a sub-page.",
+          "items": {
+            "$ref": "#/$defs/SubpageRules"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "timers": {
+          "description": "The timers, beside the page timer.",
+          "items": {
+            "$ref": "#/$defs/TimerDeclaration"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "variables": {
+          "description": "The page variables.",
+          "items": {
+            "$ref": "#/$defs/VariableDeclaration"
+          },
+          "maxItems": 32,
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "type": "object"
+    },
+    "RuleTarget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PageWord",
+          "description": "The whole page's picture."
+        },
+        {
+          "additionalProperties": false,
+          "description": "A teletext control of the page.",
+          "properties": {
+            "control": {
+              "$ref": "#/$defs/ControlRef",
+              "description": "Which."
+            }
+          },
+          "required": [
+            "control"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An animation object of the sub-page shown.",
+          "properties": {
+            "object": {
+              "$ref": "#/$defs/ObjectRef",
+              "description": "Which."
+            }
+          },
+          "required": [
+            "object"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A rectangle the table declares.",
+          "properties": {
+            "rect": {
+              "$ref": "#/$defs/RuleName",
+              "description": "Its name."
+            }
+          },
+          "required": [
+            "rect"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "Something on the page (RULE-12): `\"page\"`, `{\"control\": n}`,\n`{\"object\": n}` or `{\"rect\": \"name\"}`. A control or an object may be\n`\"any\"` in the six pointer triggers and nowhere else."
+    },
+    "RuleTrigger": {
+      "description": "A rule's trigger (RULE-9, RULE-35), by `event`: the event that can\nmake the rule fire.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A key of the set is pressed.",
+          "properties": {
+            "event": {
+              "const": "key",
+              "type": "string"
+            },
+            "keys": {
+              "$ref": "#/$defs/KeySet",
+              "description": "The keys."
+            },
+            "mods": {
+              "$ref": "#/$defs/Mods",
+              "description": "The modifier keys it needs."
+            },
+            "repeat": {
+              "default": false,
+              "description": "Whether each automatic repeat fires too.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A key of the set is released, or lost.",
+          "properties": {
+            "event": {
+              "const": "key_up",
+              "type": "string"
+            },
+            "keys": {
+              "$ref": "#/$defs/KeySet",
+              "description": "The keys."
+            },
+            "mods": {
+              "$ref": "#/$defs/Mods",
+              "description": "The modifier keys it needs."
+            }
+          },
+          "required": [
+            "event",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A button or a contact goes down inside the target.",
+          "properties": {
+            "button": {
+              "$ref": "#/$defs/ButtonChoice",
+              "description": "Which button."
+            },
+            "event": {
+              "const": "press",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A button or a contact that went down inside the target comes up.",
+          "properties": {
+            "button": {
+              "$ref": "#/$defs/ButtonChoice",
+              "description": "Which button."
+            },
+            "event": {
+              "const": "release",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The pointer comes inside the target.",
+          "properties": {
+            "event": {
+              "const": "enter",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The pointer goes outside the target, or leaves the page.",
+          "properties": {
+            "event": {
+              "const": "leave",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The wheel turns with the pointer inside the target.",
+          "properties": {
+            "event": {
+              "const": "wheel",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The pointer moves to another pixel inside the target.",
+          "properties": {
+            "event": {
+              "const": "move",
+              "type": "string"
+            },
+            "held": {
+              "default": false,
+              "description": "Only while a button is down.",
+              "type": "boolean"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "Where."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The page opens: page tick 0.",
+          "properties": {
+            "event": {
+              "const": "open",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The page stops being shown.",
+          "properties": {
+            "event": {
+              "const": "close",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Text arrives that is not a key: a paste, an input method's\ncomposition or its committed text.",
+          "properties": {
+            "event": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The page gains the keyboard.",
+          "properties": {
+            "event": {
+              "const": "focus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The page loses the keyboard.",
+          "properties": {
+            "event": {
+              "const": "blur",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A condition becomes true.",
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/RuleCondition",
+              "description": "The condition whose becoming true fires the rule."
+            },
+            "event": {
+              "const": "becomes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "condition"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Each so many ticks after a timer started.",
+          "properties": {
+            "event": {
+              "const": "every",
+              "type": "string"
+            },
+            "ticks": {
+              "description": "How many ticks, sixty a second.",
+              "format": "uint64",
+              "maximum": 216000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "timer": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The timer's name, or null for the page timer, which runs from the\npage's opening."
+            }
+          },
+          "required": [
+            "event",
+            "ticks"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Once, so many ticks after a timer started.",
+          "properties": {
+            "event": {
+              "const": "after",
+              "type": "string"
+            },
+            "ticks": {
+              "description": "How many ticks, sixty a second.",
+              "format": "uint64",
+              "maximum": 216000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "timer": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The timer's name, or null for the page timer, which runs from the\npage's opening."
+            }
+          },
+          "required": [
+            "event",
+            "ticks"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RuleValue": {
+      "description": "Something a condition or a `send` reads (RULE-23 to RULE-28), by `of`.\nEvery value is a signed 32-bit integer.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A page variable.",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The variable's name."
+            },
+            "of": {
+              "const": "variable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "of",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Whether a key is down.",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/RuleKey",
+              "description": "The key."
+            },
+            "of": {
+              "const": "key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "of",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Whether a pointer button is down.",
+          "properties": {
+            "button": {
+              "description": "The button: 0 left, 1 middle, 2 right.",
+              "format": "uint8",
+              "maximum": 2,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "of": {
+              "const": "button",
+              "type": "string"
+            }
+          },
+          "required": [
+            "of",
+            "button"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Where the pointer is.",
+          "properties": {
+            "of": {
+              "const": "pointer",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/PointerProperty",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "of",
+            "property"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "How many keys are down, 0 to 16.",
+          "properties": {
+            "of": {
+              "const": "keys_down",
+              "type": "string"
+            }
+          },
+          "required": [
+            "of"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A timer's state.",
+          "properties": {
+            "name": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "The timer's name, or null for the page timer."
+            },
+            "of": {
+              "const": "timer",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/TimerProperty",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "of",
+            "property"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The state of a control or an object.",
+          "properties": {
+            "of": {
+              "const": "target",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/TargetProperty",
+              "description": "What is read."
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "One control or one object."
+            }
+          },
+          "required": [
+            "of",
+            "target",
+            "property"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The sound on an audio channel.",
+          "properties": {
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "of": {
+              "const": "sound",
+              "type": "string"
+            },
+            "property": {
+              "$ref": "#/$defs/SoundProperty",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "of",
+            "channel",
+            "property"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A synthesizer's state.",
+          "properties": {
+            "channel": {
+              "description": "The audio channel, 0 to 3.",
+              "format": "uint8",
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "controller": {
+              "description": "The controller, with `controller` only.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "family": {
+              "$ref": "#/$defs/SynthFamily",
+              "description": "The synthesizer expected there."
+            },
+            "field": {
+              "description": "The patch field's name, with `field` only: one of the family's\nreadable fields (page-rules.md appendix A).",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "key": {
+              "description": "The key, with `note` and `velocity` only.",
+              "format": "uint8",
+              "maximum": 127,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "of": {
+              "const": "synth",
+              "type": "string"
+            },
+            "part": {
+              "description": "The part, 1 to 16; for synth6581 and synth8580 the voice, 1 to 3.",
+              "format": "uint8",
+              "maximum": 16,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "property": {
+              "$ref": "#/$defs/SynthProperty",
+              "description": "What is read."
+            }
+          },
+          "required": [
+            "of",
+            "channel",
+            "family",
+            "part",
+            "property"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RulesFaultName": {
+      "description": "A fault a receiver reports of a page's table (RULE-48).",
+      "oneOf": [
+        {
+          "const": "undecodable",
+          "description": "The receiver could not decode the table and refused it whole: the\npage has no table in that view.",
+          "type": "string"
+        },
+        {
+          "const": "tick_overrun",
+          "description": "A tick passed 256 actions, and further firings in it were dropped.",
+          "type": "string"
+        },
+        {
+          "const": "sends_dropped",
+          "description": "Sends dropped by the receiver's send budget.",
+          "type": "string"
+        },
+        {
+          "const": "events_dropped",
+          "description": "Input events dropped from a full queue.",
+          "type": "string"
+        },
+        {
+          "const": "actions_skipped",
+          "description": "Actions skipped for a missing target or sound.",
+          "type": "string"
+        },
+        {
+          "const": "query_dropped",
+          "description": "A state query dropped.",
+          "type": "string"
+        },
+        {
+          "const": "local_overrun",
+          "description": "A local sound stopped for overrunning its time.",
+          "type": "string"
+        },
+        {
+          "const": "animation_slowed",
+          "description": "Animation slowed by its budget.",
+          "type": "string"
         }
       ]
     },
@@ -6261,7 +9757,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 13,
+              "const": 14,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -6417,7 +9913,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Input on a page (DOC-1969).",
+          "description": "Input on a page (DOC-1969), which a rule of the page's table sent\n(RULE-37).",
           "properties": {
             "connection": {
               "description": "The connection.",
@@ -6438,9 +9934,30 @@
               "$ref": "#/$defs/PageNumber",
               "description": "The page on screen when it happened: the event's stamp, which is the\nconnection's selection, or for a release the page that held it\n(REQ-1557). Focus and raw text carry no stamp, and are for the\nselection as it stands."
             },
+            "rule": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The name of the rule of the page's table that sent it (RULE-37)."
+            },
             "sub": {
               "$ref": "#/$defs/SubCode",
               "description": "The sub-code on screen when it happened."
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuleTarget"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The target the pointer was inside, for a pointer trigger whose rule\nnamed a control, an object or a rectangle; else null."
+            },
+            "tick": {
+              "description": "The page tick at which the rule fired.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "type": {
               "const": "input",
@@ -6453,7 +9970,207 @@
             "page",
             "sub",
             "lost",
+            "rule",
+            "tick",
             "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A rule with no input event fired and sent, or sent a value\n(RULE-37).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "event": {
+              "$ref": "#/$defs/RuleEventBody",
+              "description": "What it reports."
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page on screen."
+            },
+            "rule": {
+              "$ref": "#/$defs/RuleName",
+              "description": "The rule's name."
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code on screen."
+            },
+            "tick": {
+              "description": "The page tick at which it fired.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "rule_event",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "page",
+            "sub",
+            "rule",
+            "tick",
+            "event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The answer to `query_state` (RULE-38).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "enabled": {
+              "description": "The names of the rules enabled, in rule order.",
+              "items": {
+                "$ref": "#/$defs/RuleName"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "request": {
+              "description": "The `request` of the `query_state` it answers.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code on screen."
+            },
+            "table": {
+              "description": "Whether the page has a table in that view.",
+              "type": "boolean"
+            },
+            "targets": {
+              "description": "Every control and object the table names, in the order first named.",
+              "items": {
+                "$ref": "#/$defs/TargetState"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "tick": {
+              "description": "The page tick of the snapshot reported.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timers": {
+              "additionalProperties": false,
+              "description": "Each timer's state, by its name.",
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,31}$": {
+                  "$ref": "#/$defs/TimerState"
+                }
+              },
+              "type": "object"
+            },
+            "type": {
+              "const": "page_state",
+              "type": "string"
+            },
+            "values": {
+              "description": "Every distinct value the table's conditions and sends read, in the\norder first read.",
+              "items": {
+                "$ref": "#/$defs/ValueReading"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "variables": {
+              "additionalProperties": false,
+              "description": "Each variable's value, by its name.",
+              "patternProperties": {
+                "^[a-z][a-z0-9_]{0,31}$": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "page",
+            "sub",
+            "request",
+            "tick",
+            "table",
+            "variables",
+            "timers",
+            "enabled",
+            "targets",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A receiver's report of a fault of a page's table (RULE-48).",
+          "properties": {
+            "connection": {
+              "description": "The connection.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "count": {
+              "description": "How many times since the receiver's last report of it.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "fault": {
+              "$ref": "#/$defs/RulesFaultName",
+              "description": "The fault."
+            },
+            "generation": {
+              "description": "The generation of the table the receiver holds, as the server\nnumbers each table it sends that connection for the page.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page."
+            },
+            "type": {
+              "const": "rules_fault",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "connection",
+            "page",
+            "generation",
+            "fault",
+            "count"
           ],
           "type": "object"
         },
@@ -6883,6 +10600,21 @@
       ],
       "type": "object"
     },
+    "SheetKindName": {
+      "description": "Which renderer a sprite sheet is for.",
+      "oneOf": [
+        {
+          "const": "regis",
+          "description": "ReGIS: hidden drawings, ending with a commit.",
+          "type": "string"
+        },
+        {
+          "const": "naplps",
+          "description": "NAPLPS: macros, DRCS characters and textures.",
+          "type": "string"
+        }
+      ]
+    },
     "SoundKind": {
       "description": "Every `kind` of `sound`: the 42 synthesizer kinds (server.md\nSRV-3), the six of Opus and PCM and the three commands (SRV-46).",
       "oneOf": [
@@ -6962,6 +10694,11 @@
           "type": "string"
         },
         {
+          "const": "synth7_local",
+          "description": "A local synth7 sound, which the receiver renders and a page's rules play (RULE-61).",
+          "type": "string"
+        },
+        {
           "const": "synth7_bank",
           "description": "A bank of synth7 voices, which synth7 sounds name (SRV-19, SRV-27).",
           "type": "string"
@@ -6979,6 +10716,11 @@
         {
           "const": "synth106_events",
           "description": "A live synth106 sound's next events (SRV-18).",
+          "type": "string"
+        },
+        {
+          "const": "synth106_local",
+          "description": "A local synth106 sound, which the receiver renders and a page's rules play (RULE-61).",
           "type": "string"
         },
         {
@@ -7002,6 +10744,11 @@
           "type": "string"
         },
         {
+          "const": "synth60_local",
+          "description": "A local synth60 sound, which the receiver renders and a page's rules play (RULE-61).",
+          "type": "string"
+        },
+        {
           "const": "synth60_bank",
           "description": "A bank of synth60 patches (SRV-19, SRV-32).",
           "type": "string"
@@ -7019,6 +10766,11 @@
         {
           "const": "synthd_events",
           "description": "A live synthD sound's next events (SRV-18).",
+          "type": "string"
+        },
+        {
+          "const": "synthd_local",
+          "description": "A local synthD sound, which the receiver renders and a page's rules play (RULE-61).",
           "type": "string"
         },
         {
@@ -7042,6 +10794,11 @@
           "type": "string"
         },
         {
+          "const": "synth53_local",
+          "description": "A local synth53 sound, which the receiver renders and a page's rules play (RULE-61).",
+          "type": "string"
+        },
+        {
           "const": "synth53_bank",
           "description": "A bank of synth53 programs, one group (SRV-19, SRV-38).",
           "type": "string"
@@ -7059,6 +10816,11 @@
         {
           "const": "synth52_events",
           "description": "A live synth52 sound's next events (SRV-18).",
+          "type": "string"
+        },
+        {
+          "const": "synth52_local",
+          "description": "A local synth52 sound, which the receiver renders and a page's rules play (RULE-61).",
           "type": "string"
         },
         {
@@ -7082,6 +10844,11 @@
           "type": "string"
         },
         {
+          "const": "synth51_local",
+          "description": "A local synth51 sound, which the receiver renders and a page's rules play (RULE-61).",
+          "type": "string"
+        },
+        {
           "const": "synth51_bank",
           "description": "A bank of synth51 programs, one group (SRV-19, SRV-38).",
           "type": "string"
@@ -7102,6 +10869,11 @@
           "type": "string"
         },
         {
+          "const": "synth8_local",
+          "description": "A local synth8 sound, which the receiver renders and a page's rules play (RULE-61).",
+          "type": "string"
+        },
+        {
           "const": "synth8_bank",
           "description": "A bank of synth8 patches (SRV-19, SRV-41).",
           "type": "string"
@@ -7119,6 +10891,11 @@
         {
           "const": "synth80_events",
           "description": "A live synth80 sound's next events (SRV-18).",
+          "type": "string"
+        },
+        {
+          "const": "synth80_local",
+          "description": "A local synth80 sound, which the receiver renders and a page's rules play (RULE-61).",
           "type": "string"
         },
         {
@@ -7179,6 +10956,148 @@
           "type": "object"
         }
       ]
+    },
+    "SoundProperty": {
+      "description": "What `sound` reads (RULE-27).",
+      "oneOf": [
+        {
+          "const": "playing",
+          "description": "1 while any sound plays on the channel in this view, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "level",
+          "description": "The channel's output level over the last tick, 0 to 255, linear.",
+          "type": "string"
+        },
+        {
+          "const": "handle",
+          "description": "The handle of the sound playing, or −1 when none plays.",
+          "type": "string"
+        },
+        {
+          "const": "gain",
+          "description": "The channel's gain as last commanded, 0 to 100.",
+          "type": "string"
+        },
+        {
+          "const": "local",
+          "description": "1 while the sound playing is a local sound, else 0.",
+          "type": "string"
+        }
+      ]
+    },
+    "Sprite": {
+      "additionalProperties": false,
+      "description": "A teletext sprite (ANIM-7): a numbered placement of teletext objects\non a sub-page, which the receiver draws over the page and can move,\nshow, hide, order and cycle.",
+      "properties": {
+        "column": {
+          "description": "The column of its origin, −39 to 39.",
+          "format": "int32",
+          "maximum": 39,
+          "minimum": -39,
+          "type": "integer"
+        },
+        "detectable": {
+          "description": "Whether pointer triggers see it.",
+          "type": "boolean"
+        },
+        "frames": {
+          "description": "Its frames, 1 to 16.",
+          "items": {
+            "$ref": "#/$defs/SpriteFrame"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "height": {
+          "description": "Its height in cells, 1 to 25.",
+          "format": "uint8",
+          "maximum": 25,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "layer": {
+          "description": "Its layer, 1 to 3.",
+          "format": "uint8",
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "number": {
+          "description": "Its number, distinct within the message: the object number the\nrule table and `animate` name it by.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "order": {
+          "description": "Its order within the layer, lowest drawn first.",
+          "format": "int32",
+          "maximum": 127,
+          "minimum": -128,
+          "type": "integer"
+        },
+        "row": {
+          "description": "The row of its origin, −24 to 24.",
+          "format": "int32",
+          "maximum": 24,
+          "minimum": -24,
+          "type": "integer"
+        },
+        "shown": {
+          "description": "Whether it is shown.",
+          "type": "boolean"
+        },
+        "width": {
+          "description": "Its width in cells, 1 to 40.",
+          "format": "uint8",
+          "maximum": 40,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "shown",
+        "detectable",
+        "layer",
+        "order",
+        "column",
+        "row",
+        "width",
+        "height",
+        "frames"
+      ],
+      "type": "object"
+    },
+    "SpriteFrame": {
+      "additionalProperties": false,
+      "description": "One frame of a sprite: a teletext object, named as an Object Invocation\ntriplet names it (EN 300 706 Table 28).",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ObjectType",
+          "description": "Its type."
+        },
+        "number": {
+          "description": "Its number, 0 to 511.",
+          "format": "uint16",
+          "maximum": 511,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/ObjectSource",
+          "description": "Where the object is defined."
+        }
+      },
+      "required": [
+        "source",
+        "kind",
+        "number"
+      ],
+      "type": "object"
     },
     "Standard": {
       "additionalProperties": false,
@@ -7321,6 +11240,29 @@
       },
       "required": [
         "sub"
+      ],
+      "type": "object"
+    },
+    "SubpageRules": {
+      "additionalProperties": false,
+      "description": "The rules switched off while one sub-page is shown (RULE-17).",
+      "properties": {
+        "off": {
+          "description": "The names of the rules that are off while it is shown.",
+          "items": {
+            "$ref": "#/$defs/RuleName"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "sub": {
+          "$ref": "#/$defs/SubCode",
+          "description": "The sub-page: never 3F7F, and named once in a table."
+        }
+      },
+      "required": [
+        "sub",
+        "off"
       ],
       "type": "object"
     },
@@ -7584,6 +11526,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -7594,6 +11537,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -8052,6 +11996,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -8972,6 +12917,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -8982,6 +12928,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -9440,6 +13387,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -11295,6 +15243,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -11305,6 +15254,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -11763,6 +15713,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -13084,6 +17035,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -13094,6 +17046,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -13552,6 +17505,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -16853,6 +20807,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -16863,6 +20818,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -17321,6 +21277,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -19542,6 +23499,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -19552,6 +23510,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -20030,6 +23989,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -21351,6 +25311,7 @@
           "description": "A program change, with its bank select where given.",
           "properties": {
             "bank_lsb": {
+              "default": null,
               "description": "Bank select's least significant byte (controller 32), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -21361,6 +25322,7 @@
               ]
             },
             "bank_msb": {
+              "default": null,
               "description": "Bank select's most significant byte (controller 0), or none.",
               "format": "uint8",
               "maximum": 127,
@@ -21819,6 +25781,7 @@
               "description": "The file, exact base64: 14 to 1,048,576 bytes once decoded."
             },
             "channel_map": {
+              "default": null,
               "description": "Entry n for the file's channel n + 1: the sound's channel 1 to 16 it\nplays on, or null to drop that channel's messages. Without a map each\nmessage keeps its channel (MIDI-116).",
               "items": {
                 "format": "uint8",
@@ -22900,6 +26863,207 @@
         }
       ]
     },
+    "SynthFamily": {
+      "description": "The synthesizer a `synth` value expects on the audio channel\n(RULE-28): when the sound playing there is another's, every property\nreads 0.",
+      "enum": [
+        "synth6581",
+        "synth8580",
+        "synth7",
+        "synth106",
+        "synth60",
+        "synthd",
+        "synth53",
+        "synth52",
+        "synth51",
+        "synth8",
+        "synth80"
+      ],
+      "type": "string"
+    },
+    "SynthProperty": {
+      "description": "What `synth` reads (RULE-28).",
+      "oneOf": [
+        {
+          "const": "program",
+          "description": "The part's program, 0 to 127.",
+          "type": "string"
+        },
+        {
+          "const": "notes",
+          "description": "How many of the part's keys are down.",
+          "type": "string"
+        },
+        {
+          "const": "note",
+          "description": "1 while `key` is down on the part, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "velocity",
+          "description": "The velocity of `key`'s note on; 0 while it is up.",
+          "type": "string"
+        },
+        {
+          "const": "field",
+          "description": "The present value of the patch field `field` on the part.",
+          "type": "string"
+        },
+        {
+          "const": "envelope_stage",
+          "description": "Of the part's newest voice: 0 idle, 1 attack, 2 decay, 3 sustain,\n4 release.",
+          "type": "string"
+        },
+        {
+          "const": "envelope_level",
+          "description": "The same voice's amplitude envelope, 0 to 255.",
+          "type": "string"
+        },
+        {
+          "const": "voices",
+          "description": "How many of the instrument's voices are not idle.",
+          "type": "string"
+        },
+        {
+          "const": "controller",
+          "description": "The last value of controller `controller` on the part.",
+          "type": "string"
+        },
+        {
+          "const": "bend",
+          "description": "The part's pitch bend, 0 to 16,383, 8,192 at rest.",
+          "type": "string"
+        }
+      ]
+    },
+    "TargetProperty": {
+      "description": "What `target` reads (RULE-26).",
+      "oneOf": [
+        {
+          "const": "exists",
+          "description": "1 when it exists on the sub-page shown, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "shown",
+          "description": "1 while it is shown.",
+          "type": "string"
+        },
+        {
+          "const": "frame",
+          "description": "Its frame in force, 0 to 15.",
+          "type": "string"
+        },
+        {
+          "const": "x",
+          "description": "Its position across, in its renderer's units; a control's first\ncolumn.",
+          "type": "string"
+        },
+        {
+          "const": "y",
+          "description": "Its position down; a control's row.",
+          "type": "string"
+        },
+        {
+          "const": "look",
+          "description": "The look in force: 0 normal, 1 hover, 2 pressed, 3 alternative.",
+          "type": "string"
+        },
+        {
+          "const": "layer",
+          "description": "Its layer, 0 to 3.",
+          "type": "string"
+        },
+        {
+          "const": "order",
+          "description": "Its order within the layer.",
+          "type": "string"
+        },
+        {
+          "const": "cycling",
+          "description": "1 while its frames cycle.",
+          "type": "string"
+        },
+        {
+          "const": "inside",
+          "description": "1 while the pointer is inside it.",
+          "type": "string"
+        }
+      ]
+    },
+    "TargetState": {
+      "additionalProperties": false,
+      "description": "A control's or an object's state in `page_state`.",
+      "properties": {
+        "cycling": {
+          "description": "Whether its frames cycle.",
+          "type": "boolean"
+        },
+        "exists": {
+          "description": "Whether it exists on the sub-page shown.",
+          "type": "boolean"
+        },
+        "frame": {
+          "description": "Its frame in force.",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "layer": {
+          "description": "Its layer.",
+          "format": "uint8",
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "look": {
+          "$ref": "#/$defs/LookName",
+          "description": "The look in force."
+        },
+        "order": {
+          "description": "Its order within the layer.",
+          "format": "int8",
+          "maximum": 127,
+          "minimum": -128,
+          "type": "integer"
+        },
+        "shown": {
+          "description": "Whether it is shown.",
+          "type": "boolean"
+        },
+        "target": {
+          "$ref": "#/$defs/RuleTarget",
+          "description": "The control or the object."
+        },
+        "x": {
+          "description": "Its position across, in its renderer's units.",
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "y": {
+          "description": "Its position down.",
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "target",
+        "exists",
+        "shown",
+        "look",
+        "frame",
+        "x",
+        "y",
+        "layer",
+        "order",
+        "cycling"
+      ],
+      "type": "object"
+    },
     "TextLevel": {
       "description": "The presentation level a page's text is written for (REQ-2151).",
       "oneOf": [
@@ -23004,6 +27168,88 @@
       ],
       "type": "object"
     },
+    "TimelineStep": {
+      "additionalProperties": false,
+      "description": "One step of a timeline: operations at a tick.",
+      "properties": {
+        "ops": {
+          "description": "The operations, applied in order.",
+          "items": {
+            "$ref": "#/$defs/AnimationOp"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "tick": {
+          "description": "The tick, sixty a second, from the timeline's start.",
+          "format": "uint64",
+          "maximum": 216000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tick",
+        "ops"
+      ],
+      "type": "object"
+    },
+    "TimerDeclaration": {
+      "additionalProperties": false,
+      "description": "A timer's declaration (RULE-15).",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name; never `page`."
+        },
+        "running": {
+          "description": "Whether it runs from the page's opening.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "running"
+      ],
+      "type": "object"
+    },
+    "TimerProperty": {
+      "description": "What `timer` reads.",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "1 while it runs, else 0.",
+          "type": "string"
+        },
+        {
+          "const": "elapsed",
+          "description": "The ticks since it started, 0 while it is stopped.",
+          "type": "string"
+        }
+      ]
+    },
+    "TimerState": {
+      "additionalProperties": false,
+      "description": "A timer's state in `page_state`.",
+      "properties": {
+        "elapsed": {
+          "description": "The ticks since it started; 0 while it is stopped.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running": {
+          "description": "Whether it runs.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "running",
+        "elapsed"
+      ],
+      "type": "object"
+    },
     "Triplet": {
       "additionalProperties": false,
       "description": "A triplet, by its fields (EN 300 706 clause 12.3.1).",
@@ -23036,6 +27282,64 @@
         "data"
       ],
       "type": "object"
+    },
+    "ValueReading": {
+      "additionalProperties": false,
+      "description": "A value's reading in `page_state`.",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/RuleValue",
+          "description": "What was read, as the table names it."
+        },
+        "value": {
+          "description": "Its reading in the answering tick's snapshot.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "read",
+        "value"
+      ],
+      "type": "object"
+    },
+    "VariableDeclaration": {
+      "additionalProperties": false,
+      "description": "A page variable's declaration (RULE-14): `min ≤ initial ≤ max`.",
+      "properties": {
+        "initial": {
+          "description": "Its value when the page opens.",
+          "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "max": {
+          "description": "The greatest.",
+          "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "min": {
+          "description": "The least value it holds.",
+          "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/RuleName",
+          "description": "Its name."
+        }
+      },
+      "required": [
+        "name",
+        "min",
+        "max",
+        "initial"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -23048,5 +27352,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 13"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 14"
 }

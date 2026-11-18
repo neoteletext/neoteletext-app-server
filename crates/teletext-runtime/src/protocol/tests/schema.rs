@@ -5,7 +5,7 @@ use alloc::format;
 use super::super::{PROTOCOL, schema};
 
 /// Where the published schema is, from this crate.
-const PUBLISHED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../protocol/schema-13.json");
+const PUBLISHED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../protocol/schema-14.json");
 /// Set to write the schema afresh rather than compare it.
 const BLESS: &str = "TELETEXT_BLESS_SCHEMA";
 
@@ -25,16 +25,26 @@ fn the_published_schema_is_the_one_the_types_generate() {
 }
 
 /// SRV-2, SRV-3: every kind once among the `sound` message's variants,
-/// and once in the closed list `SoundKind` that `refused` names.
+/// and once in the closed list `SoundKind` that `refused` names. The
+/// synthesizers have 42 kinds and, since protocol 14, nine local sounds
+/// (page-rules.md RULE-61).
 #[test]
 fn the_schema_lists_every_kind_once() {
-    let text = serde_json::to_string(&schema()).unwrap();
+    let schema = schema();
+    let listed = serde_json::to_string(&schema["$defs"]["SoundKind"]).unwrap();
+    let messages = schema["$defs"]["ProgramMessage"]["oneOf"].as_array().unwrap();
+    let sound = messages.iter().find(|message| message["properties"]["type"]["const"] == "sound").unwrap();
+    let kinds: alloc::vec::Vec<&str> =
+        sound["oneOf"].as_array().unwrap().iter().map(|branch| branch["properties"]["kind"]["const"].as_str().unwrap()).collect();
     for kind in crate::protocol::SoundKind::ALL {
         let quoted = alloc::format!("\"const\":\"{}\"", kind.name());
-        assert_eq!(text.matches(&quoted).count(), 2, "{}", kind.name());
+        assert_eq!(listed.matches(&quoted).count(), 1, "{}", kind.name());
+        assert_eq!(kinds.iter().filter(|name| **name == kind.name()).count(), 1, "{}", kind.name());
     }
     let synthesizers = crate::protocol::SoundKind::ALL.iter().filter(|kind| kind.name().starts_with("synth")).count();
-    assert_eq!(synthesizers, 42);
+    assert_eq!(synthesizers, 42 + 9);
+    let local = crate::protocol::SoundKind::ALL.iter().filter(|kind| kind.name().ends_with("_local")).count();
+    assert_eq!(local, 9);
 }
 
 /// SRV-3, REQ-1475: every sound kind's branch refuses an unknown field, as
@@ -85,7 +95,7 @@ fn names(schema: &serde_json::Value, name: &str) -> alloc::vec::Vec<alloc::strin
         .collect()
 }
 
-/// SRV-2: one protocol 13 holds viewer state's messages (VS-351 to VS-353)
+/// SRV-2: one protocol holds viewer state's messages (VS-351 to VS-353)
 /// and the synthesizers' (SRV-47, SRV-48, SRV-51), no name twice in any of
 /// the program's and the server's messages, the kinds and the rules, and
 /// none of the synthesizers' names among viewer state's.

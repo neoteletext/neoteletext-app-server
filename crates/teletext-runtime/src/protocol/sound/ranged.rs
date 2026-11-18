@@ -46,7 +46,8 @@ impl Visitor<'_> for Whole {
 macro_rules! ranged {
     ($(#[$meta:meta])* $name:ident, $inner:ty, $format:literal) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, serde::Serialize)]
+        #[serde(transparent)]
         pub struct $name<const LEAST: $inner, const MOST: $inner>(pub $inner);
 
         impl<const LEAST: $inner, const MOST: $inner> $name<LEAST, MOST> {
@@ -98,6 +99,69 @@ ranged!(
     u64,
     "uint64"
 );
+
+/// Reads a signed integer of any JSON form serde gives, as `i64`.
+struct Signed {
+    least: i32,
+    most: i32,
+}
+
+impl Signed {
+    /// The error of a value outside the range, in the reader's form.
+    fn outside<E: de::Error>(&self, value: impl fmt::Display) -> E {
+        E::custom(format!("{INNER_PATH}{INNER_PATH}OutOfRange{INNER_PATH}{value}: {} to {}", self.least, self.most))
+    }
+}
+
+impl Visitor<'_> for Signed {
+    type Value = i32;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "an integer from {} to {}", self.least, self.most)
+    }
+
+    fn visit_i64<E: de::Error>(self, value: i64) -> Result<i32, E> {
+        i32::try_from(value).ok().filter(|value| (self.least..=self.most).contains(value)).ok_or_else(|| self.outside(value))
+    }
+
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<i32, E> {
+        i64::try_from(value).map_err(|_| self.outside(value)).and_then(|value| self.visit_i64(value))
+    }
+}
+
+/// An `i32` from `LEAST` to `MOST`: what the rule table's signed fields
+/// are (page-rules.md RULE-35), whatever their width in the record.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct I32In<const LEAST: i32, const MOST: i32>(pub i32);
+
+impl<const LEAST: i32, const MOST: i32> I32In<LEAST, MOST> {
+    /// The value.
+    #[must_use]
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+impl<'de, const LEAST: i32, const MOST: i32> Deserialize<'de> for I32In<LEAST, MOST> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_i64(Signed { least: LEAST, most: MOST }).map(Self)
+    }
+}
+
+impl<const LEAST: i32, const MOST: i32> JsonSchema for I32In<LEAST, MOST> {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        format!("I32In_{LEAST}_{MOST}").into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": "integer", "format": "int32", "minimum": LEAST, "maximum": MOST })
+    }
+}
 
 /// A MIDI data byte, 0 to 127 (MIDI 1.0 4.2, printed page 4).
 pub type Data = U8In<0, 127>;

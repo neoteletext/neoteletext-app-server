@@ -1,0 +1,8 @@
+{"type":"frame","connections":"all","page":"150","sub":"0001","mark":"begin"}
+{"type":"frame","connections":"all","page":"150","sub":"0001","mark":"end"}
+{"type":"animate","connections":"all","page":"150","sub":"0001","ops":[{"action":"move","target":{"object":10},"x":120,"y":80,"relative":false},{"action":"cycle","target":{"object":10},"first":0,"last":3,"period":6,"once":false},{"action":"hide","target":{"object":20}},{"action":"reset","target":{"object":21}}]}
+{"type":"sprites","connections":"all","page":"160","sub":"0001","sprites":[{"number":1,"shown":true,"detectable":false,"layer":2,"order":0,"column":10,"row":5,"width":4,"height":3,"frames":[{"source":"local","kind":"passive","number":0},{"source":"local","kind":"passive","number":1}]}]}
+{"type":"naplps_objects","connections":"all","page":"170","sub":"0001","objects":[{"number":1,"kind":"macro","shown":true,"detectable":true,"layer":2,"order":0,"x":300,"y":200,"width":64,"height":64,"origin_x":0,"origin_y":416,"frames":[32,33],"cover":null,"hover":34,"pressed":null,"alternative":null},{"number":2,"kind":"region","shown":true,"detectable":true,"layer":1,"order":0,"x":0,"y":440,"width":640,"height":40,"origin_x":0,"origin_y":0,"frames":[],"cover":0,"hover":null,"pressed":null,"alternative":null}]}
+{"type":"sprite_sheet","connections":"all","page":"150","kind":"regis","data":"RChTMShWMCksQyk=","restart":true}
+{"type":"timeline","connections":"all","page":"150","sub":"0001","id":1,"loop_ticks":null,"steps":[{"tick":0,"ops":[{"action":"show","target":{"object":10}}]},{"tick":30,"ops":[{"action":"move","target":{"object":10},"x":8,"y":0,"relative":true}]}]}
+{"type":"timeline_stop","connections":"all","page":"150","id":1}
