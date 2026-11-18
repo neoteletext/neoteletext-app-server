@@ -199,7 +199,7 @@ ssh "$target" 'set -e
 
 say "the channels file, the service, its socket and the container's Caddy"
 # default_rules (neoteletext-common's page-rules.md RULE-53): under push
-# protocol 9 a page sends its channel only the input its rule table asks
+# protocol 10 a page sends its channel only the input its rule table asks
 # for. The nine channels deployed on 18 November 2026 are given
 # "send_all", the default table that sends every kind of input as push
 # protocol 8 did, until each sends tables of its own; a channel written
