@@ -28,6 +28,7 @@ use super::{
 };
 
 mod instrument;
+mod rules;
 
 /// Why a message was refused: what `refused` carries back.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -147,10 +148,12 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_connection(&root.field("connection"), *connection)
         }
         ProgramMessage::EndState(_) => Ok(()),
-        ProgramMessage::Rules(rules) => check_connections(&root.field("connections"), &rules.connections),
+        ProgramMessage::Rules(rules) => check_rules(&root, rules).map(|_| ()),
         ProgramMessage::QueryState(query) => check_connection(&root.field("connection"), query.connection),
         ProgramMessage::Frame(frame) => check_connections(&root.field("connections"), &frame.connections).and_then(|()| check_shown_subpage(&root, frame.sub)),
-        ProgramMessage::Animate(animate) => check_connections(&root.field("connections"), &animate.connections),
+        ProgramMessage::Animate(animate) => {
+            check_connections(&root.field("connections"), &animate.connections).and_then(|()| rules::operations(&root.field("ops"), &animate.ops).map(|_| ()))
+        }
         ProgramMessage::Sprites(sprites) => {
             check_connections(&root.field("connections"), &sprites.connections).and_then(|()| check_shown_subpage(&root, sprites.sub))
         }
@@ -812,6 +815,22 @@ fn check_log(root: &Path<'_>, log: &Log) -> Checked {
     check_text(&root.field("text"), &log.text, 1, super::OPERATOR_LOG_CHARACTERS)
 }
 
+/// `rules`: who it is for, and its table as the engine holds it, encoded
+/// and checked with the engine's crate (page-rules.md RULE-39, RULE-59).
+fn check_rules(root: &Path<'_>, message: &super::RulesMessage) -> Result<Option<crate::rules::Compiled>, Fault> {
+    check_connections(&root.field("connections"), &message.connections)?;
+    message.table.0.as_deref().map(|table| rules::compile(&root.field("table"), table)).transpose()
+}
+
+/// The table of a `rules` message, ready to send, or none for null: what
+/// [`message`] checked.
+///
+/// # Errors
+/// The first fault of RULE-39.
+pub(crate) fn compiled(message: &super::RulesMessage) -> Result<Option<crate::rules::Compiled>, Refusal> {
+    check_rules(&Path::Root, message).map_err(|fault| Refusal { message: Some(MessageType::Rules), path: fault.path, rule: fault.rule, detail: fault.detail })
+}
+
 /// The most ReGIS one message may carry: a megabyte, a quarter of all the
 /// contents a receiver's numbered drawings may hold.
 const MOST_REGIS_BYTES: usize = 1024 * 1024;
@@ -913,6 +932,18 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
             && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR, TYPE_NAPLPS].contains(kind)
         {
             let detail = "a record of a sub-page's ReGIS or NAPLPS goes in a regis, regis_links, regis_cursor or naplps message, which checks it";
+            return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
+        }
+        // Nor a record of a page's rule table or of animation
+        // (page-rules.md RULE-39, animation.md ANIM-21): each goes in its
+        // own message, which names, checks and keeps what it carries.
+        if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
+            && fragment.index == 0
+            && let Some(kind) = fragment.data.get(1)
+            && (neoteletext_web::records::TYPE_RULES..=neoteletext_web::records::TYPE_FRAME).contains(kind)
+        {
+            let detail =
+                "a record of a rule table or of animation goes in a rules, query_state, animate, sprites, naplps_objects, sprite_sheet or frame message";
             return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
         }
         // Nor an audio record (TODO-6475): a sound's OBJECT, DATA and CONTROL

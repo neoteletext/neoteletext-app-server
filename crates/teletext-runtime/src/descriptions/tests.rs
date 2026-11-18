@@ -31,6 +31,7 @@ fn channel() -> Channel {
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        default_rules: crate::channel::DefaultRules::None,
     };
     let mut channel = Channel::new(config, &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);

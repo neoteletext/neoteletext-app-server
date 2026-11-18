@@ -38,6 +38,7 @@ pub mod landing;
 mod page;
 pub mod protocol;
 mod records;
+pub mod rules;
 mod sound;
 pub mod stats;
 mod text;

@@ -36,6 +36,9 @@ tracing-subscriber.workspace = true
 # tokio's own clock that tests stop and move on, for the keepalive's
 # timings (`connection/tests.rs`); no other crate.
 tokio = { workspace = true, features = ["test-util"] }
+# The target a rule event names, for the tests that write a viewer's input
+# as a receiver of push protocol 9 does (page-rules.md RULE-46).
+neoteletext-rules.workspace = true
 
 [lints]
 workspace = true

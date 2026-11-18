@@ -131,34 +131,32 @@ fn a_regis_record_in_raw_packets_is_refused() {
 }
 
 /// PICK (the engine's REQ-6337): the drawing under the pointer reaches the
-/// program as an input of kind `pick`, with the page and sub-code it was
-/// stamped with; one stamped with another page is dropped as any input is.
+/// program as an input of kind `pick`, after the pointer event it follows
+/// and with that event's rule and tick (page-rules.md RULE-37), with the
+/// page and sub-code it was stamped with; one stamped with a page that is
+/// not on screen is dropped as any input is.
 #[test]
 fn pick_reaches_the_program() {
+    use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Pick, Point, Stamp};
     // Drawing 12 at (20, -6) within it, (412, 180) in the picture, after 7 commits.
-    let payload = |page_low: u8| [0x80 | page_low, 0x02, 0, 12, 40, 11, 0x9C, 0x03, 0xB4, 0x01, 0, 0, 0, 7];
+    let pressed = |on: Stamp| {
+        let at = Point { column: 7, row: 9, pixels: None, mods: 0 };
+        let press = Item::Event(Event::Mouse(Mouse { on, action: MouseAction::Press, button: 0, at, device: Device::Mouse }));
+        [press, Item::Event(Event::Pick(Pick { on, drawing: 12, x: 20, y: -6, picture_x: 412, picture_y: 180, commits: 7 }))]
+    };
     let mut channel: Channel = answered();
-    let on = payload(0);
-    assert_eq!((ON.page, ON.sub), (0x100, 0));
-    channel.received(CONNECTION, &extension(0x46, &on), 5);
+    channel.received(CONNECTION, &super::message(&channel, CONNECTION, &pressed(ON)), 5);
     let effects = channel.take_effects();
-    let picks = inputs(&effects);
-    assert_eq!(picks.len(), 1);
-    assert_eq!(picks[0]["page"], json!("100"));
-    assert_eq!(picks[0]["event"], json!({"kind": "pick", "drawing": 12, "x": 20, "y": -6, "picture_x": 412, "picture_y": 180, "commits": 7}));
+    let heard = inputs(&effects);
+    assert_eq!(heard.len(), 2, "the press, then its pick");
+    assert_eq!(heard[0]["event"]["kind"], json!("mouse"));
+    assert_eq!(heard[1]["page"], json!("100"));
+    assert_eq!(heard[1]["event"], json!({"kind": "pick", "drawing": 12, "x": 20, "y": -6, "picture_x": 412, "picture_y": 180, "commits": 7}));
+    assert_eq!((&heard[1]["rule"], &heard[1]["tick"]), (&heard[0]["rule"], &heard[0]["tick"]));
+    assert_eq!(heard[1]["rule"], json!("press"));
     // Page 101 is not on screen.
-    let elsewhere = payload(1);
-    channel.received(CONNECTION, &extension(0x46, &elsewhere), 6);
+    channel.received(CONNECTION, &super::message(&channel, CONNECTION, &pressed(Stamp { page: 0x101, sub: 0 })), 6);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
-}
-
-/// An extension event of `kind` carrying `payload` as the receiver writes
-/// it: `0xFF`, the type, the length and the payload (DEC-1444), so that a
-/// payload the engine's reader refuses can be sent.
-fn extension(kind: u8, payload: &[u8]) -> Vec<u8> {
-    let mut bytes = alloc::vec![neoteletext_input::event::EVENT, kind, u8::try_from(payload.len()).unwrap()];
-    bytes.extend_from_slice(payload);
-    bytes
 }
 
 /// The records in `bytes`, each as its type and body, reassembled from
@@ -270,24 +268,23 @@ fn drawing_links_and_cursor_records_in_raw_packets_are_refused() {
 
 /// `DRAWING_HOVER` (the engine's REQ-6369): the pointer coming onto a
 /// drawing and going off it reach the program as inputs of kind
-/// `drawing_hover`; one stamped with another page, and one the engine's
-/// reader would refuse, are dropped.
+/// `drawing_hover`, from the default table's `drawing_in` and
+/// `drawing_out` rules (page-rules.md RULE-53); one stamped with a page
+/// that is not on screen is dropped.
 #[test]
 fn drawing_hover_reaches_the_program() {
-    // Page 100, sub-code 0000; the flags; drawing 12; 7 commits.
-    let payload = |page_low: u8, flags: u8, drawing: u8| [0x80 | page_low, 0x02, 0, flags, drawing, 0, 0, 0, 7];
+    use neoteletext_input::event::{Event, Item, Stamp};
+    let hover = |on: Stamp, leave: bool| [Item::Event(Event::DrawingHover { on, leave, drawing: 12, commits: 7 })];
     let mut channel: Channel = answered();
-    for (flags, leave) in [(0, false), (1, true)] {
-        let on = payload(0, flags, 12);
-        channel.received(CONNECTION, &extension(0x47, &on), 5);
+    for (leave, rule) in [(false, "drawing_in"), (true, "drawing_out")] {
+        channel.received(CONNECTION, &super::message(&channel, CONNECTION, &hover(ON, leave)), 5);
         let hovers = inputs(&channel.take_effects());
         assert_eq!(hovers.len(), 1);
         assert_eq!(hovers[0]["event"], json!({"kind": "drawing_hover", "drawing": 12, "leave": leave, "commits": 7}));
+        assert_eq!(hovers[0]["rule"], json!(rule));
     }
-    for bad in [payload(1, 0, 12), payload(0, 2, 12), payload(0, 0, 0)] {
-        channel.received(CONNECTION, &extension(0x47, &bad), 6);
-        assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "{bad:?}");
-    }
+    channel.received(CONNECTION, &super::message(&channel, CONNECTION, &hover(Stamp { page: 0x101, sub: 0 }, false)), 6);
+    assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
 }
 
 /// The renderer's REQ-6367: looks that lead back to their drawing are a

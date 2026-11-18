@@ -15,7 +15,7 @@ use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
 use neoteletext_web::viewer_state;
 use serde_json::{Value, json};
 
-use super::{ANY, CONNECTION, Channel, ChannelConfig, Effect, InitialPage, ON, connecteds, hello, key, line, message, select, sent_to, told};
+use super::{ANY, CONNECTION, Channel, ChannelConfig, Effect, InitialPage, ON, bare, connecteds, hello, key, line, message, select, sent_to, told};
 use crate::viewer::testing::{random, secret};
 use crate::viewer::tests::sign;
 use crate::viewer::{
@@ -38,6 +38,9 @@ fn config(address: &str) -> ChannelConfig {
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        // A key press is heard, as a gesture (VS-212): the pages have the
+        // default table.
+        default_rules: crate::channel::DefaultRules::SendAll,
     }
 }
 
@@ -76,7 +79,7 @@ fn challenges(effects: &[Effect], connection: u64) -> Vec<([u8; CHALLENGE_BYTES]
 /// A connection opened and said HELLO: its opening challenge.
 fn open(channel: &mut Channel, connection: u64, now: u64) -> [u8; CHALLENGE_BYTES] {
     channel.opened(connection, None, now);
-    channel.received(connection, &message(&[hello()]), now);
+    channel.received(connection, &message(channel, connection, &[hello()]), now);
     let sent = challenges(&channel.take_effects(), connection);
     assert_eq!(sent.len(), 1, "one challenge after WELCOME");
     assert!(!sent[0].1, "the opening challenge does not ask to create");
@@ -86,11 +89,11 @@ fn open(channel: &mut Channel, connection: u64, now: u64) -> [u8; CHALLENGE_BYTE
 /// The proof of `seed` for `challenge` on `address`, as one message.
 fn proof(seed: &[u8; 32], lifetime: Lifetime, challenge: &[u8; CHALLENGE_BYTES], address: &str) -> Vec<u8> {
     let (public_key, signature) = sign(seed, lifetime, challenge, address);
-    message(&[Item::Event(Event::StateProof(StateProof { algorithm: Algorithm::Ed25519, lifetime, public_key: &public_key, signature: &signature }))])
+    bare(&[Item::Event(Event::StateProof(StateProof { algorithm: Algorithm::Ed25519, lifetime, public_key: &public_key, signature: &signature }))])
 }
 
 fn none(reason: NoneReason) -> Vec<u8> {
-    message(&[Item::Event(Event::StateNone(reason))])
+    bare(&[Item::Event(Event::StateNone(reason))])
 }
 
 /// The lines of `effects` of type `kind`.
@@ -103,7 +106,7 @@ fn lines_of(effects: &[Effect], kind: &str) -> Vec<Value> {
 fn proven(channel: &mut Channel, connection: u64, seed: &[u8; 32], now: u64) -> Value {
     let challenge = open(channel, connection, now);
     channel.received(connection, &proof(seed, Lifetime::Visit, &challenge, ADDRESS), now);
-    channel.received(connection, &message(&[select(0x100, 0)]), now);
+    channel.received(connection, &message(channel, connection, &[select(0x100, 0)]), now);
     let lines = connecteds(&channel.take_effects());
     assert_eq!(lines.len(), 1, "{lines:?}");
     lines[0]["viewer"].clone()
@@ -136,13 +139,13 @@ fn connected_waits_for_the_answer_and_carries_the_handle() {
 fn a_connection_without_a_proof_has_no_viewer() {
     let mut channel = channel_at(ADDRESS, &secret());
     open(&mut channel, 1, 0);
-    channel.received(1, &message(&[select(0x100, ANY)]), 0);
+    channel.received(1, &message(&channel, 1, &[select(0x100, ANY)]), 0);
     let lines = connecteds(&channel.take_effects());
     assert_eq!((&lines[0]["viewer"], &lines[0]["remembered"]), (&Value::Null, &json!(false)));
 
     open(&mut channel, 2, 0);
     channel.received(2, &none(NoneReason::Stateless), 0);
-    channel.received(2, &message(&[select(0x100, ANY)]), 0);
+    channel.received(2, &message(&channel, 2, &[select(0x100, ANY)]), 0);
     assert_eq!(connecteds(&channel.take_effects())[0]["viewer"], Value::Null);
 
     let challenge = open(&mut channel, 3, 0);
@@ -164,7 +167,7 @@ fn a_failed_or_unasked_proof_is_refused_and_the_connection_stays() {
     let mut channel = channel_at(ADDRESS, &secret());
     let challenge = open(&mut channel, CONNECTION, 0);
     channel.received(CONNECTION, &proof(&ALICE, Lifetime::Visit, &challenge, "http://127.0.0.1/other/"), 0);
-    channel.received(CONNECTION, &message(&[select(0x100, ANY)]), 0);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[select(0x100, ANY)]), 0);
     let effects = channel.take_effects();
     assert_eq!(connecteds(&effects)[0]["viewer"], Value::Null);
     assert!(!effects.iter().any(|effect| matches!(effect, Effect::Close { .. })), "not closed for that alone");
@@ -203,22 +206,22 @@ fn one_key_is_one_handle_on_its_channel_alone() {
     let mut elsewhere = channel_at(other, &secret());
     let challenge = open(&mut elsewhere, 1, 0);
     elsewhere.received(1, &proof(&ALICE, Lifetime::Visit, &challenge, other), 0);
-    elsewhere.received(1, &message(&[select(0x100, 0)]), 0);
+    elsewhere.received(1, &message(&elsewhere, 1, &[select(0x100, 0)]), 0);
     let there = connecteds(&elsewhere.take_effects())[0]["viewer"].clone();
     assert!(is_handle(&there));
     assert_ne!(there, first, "channels cannot relate one another's handles");
 }
 
 /// A key press on page 100, which is a gesture (VS-212).
-fn press() -> Vec<u8> {
-    message(&[key(ON, Action::Press, false)])
+fn press(channel: &Channel) -> Vec<u8> {
+    message(channel, CONNECTION, &[key(ON, Action::Press, false)])
 }
 
 /// A connection with no viewer on page 100, told to its program.
 fn anonymous(channel: &mut Channel, connection: u64, now: u64) {
     open(channel, connection, now);
     channel.received(connection, &none(NoneReason::NoKey), now);
-    channel.received(connection, &message(&[select(0x100, 0)]), now);
+    channel.received(connection, &message(channel, connection, &[select(0x100, 0)]), now);
     let _ = channel.take_effects();
 }
 
@@ -240,7 +243,7 @@ fn a_state_request_needs_a_recent_gesture() {
     anonymous(&mut channel, CONNECTION, 0);
     channel.from_program(&request_state(CONNECTION), 1);
     assert_eq!(refusal(&channel.take_effects()), Some(json!("no_gesture")), "no input yet");
-    channel.received(CONNECTION, &press(), 100);
+    channel.received(CONNECTION, &press(&channel), 100);
     channel.from_program(&request_state(CONNECTION), 100 + STATE_GESTURE_MS + 1);
     assert_eq!(refusal(&channel.take_effects()), Some(json!("no_gesture")), "7,001 ms after");
     channel.from_program(&request_state(CONNECTION), 100 + STATE_GESTURE_MS);
@@ -254,7 +257,7 @@ fn a_state_request_needs_a_recent_gesture() {
     assert_eq!(began.len(), 1);
     assert!(is_handle(&began[0]["viewer"]));
     assert_eq!((&began[0]["connection"], &began[0]["remembered"]), (&json!(CONNECTION), &json!(false)));
-    channel.received(CONNECTION, &press(), 7_300);
+    channel.received(CONNECTION, &press(&channel), 7_300);
     channel.from_program(&request_state(CONNECTION), 7_300);
     assert_eq!(refusal(&channel.take_effects()), Some(json!("has_viewer")));
     channel.from_program(&request_state(9), 7_300);
@@ -267,12 +270,12 @@ fn a_state_request_needs_a_recent_gesture() {
 fn a_state_request_not_granted_says_why() {
     let mut channel = channel_at(ADDRESS, &secret());
     anonymous(&mut channel, CONNECTION, 0);
-    channel.received(CONNECTION, &press(), 1);
+    channel.received(CONNECTION, &press(&channel), 1);
     channel.from_program(&request_state(CONNECTION), 1);
     let _ = channel.take_effects();
     channel.received(CONNECTION, &none(NoneReason::Declined), 2);
     assert_eq!(lines_of(&channel.take_effects(), "state_refused"), [json!({"type": "state_refused", "connection": CONNECTION, "reason": "declined"})]);
-    channel.received(CONNECTION, &press(), 3);
+    channel.received(CONNECTION, &press(&channel), 3);
     channel.from_program(&request_state(CONNECTION), 3);
     let _ = channel.take_effects();
     channel.deadline(3 + STATE_ANSWER_MS);
@@ -285,7 +288,7 @@ fn a_state_request_not_granted_says_why() {
 fn challenges_are_bounded() {
     let mut channel = channel_at(ADDRESS, &secret());
     anonymous(&mut channel, CONNECTION, 0);
-    channel.received(CONNECTION, &press(), 1);
+    channel.received(CONNECTION, &press(&channel), 1);
     channel.from_program(&request_state(CONNECTION), 1);
     channel.from_program(&request_state(CONNECTION), 1);
     assert_eq!(lines_of(&channel.take_effects(), "state_refused")[0]["reason"], json!("rate"), "one outstanding");
@@ -295,13 +298,13 @@ fn challenges_are_bounded() {
     while sent < MOST_CHALLENGES_PER_CONNECTION_PER_MINUTE {
         channel.received(CONNECTION, &none(NoneReason::NoKey), now);
         now += 1;
-        channel.received(CONNECTION, &press(), now);
+        channel.received(CONNECTION, &press(&channel), now);
         channel.from_program(&request_state(CONNECTION), now);
         assert_eq!(challenges(&channel.take_effects(), CONNECTION).len(), 1);
         sent += 1;
     }
     channel.received(CONNECTION, &none(NoneReason::NoKey), now);
-    channel.received(CONNECTION, &press(), now);
+    channel.received(CONNECTION, &press(&channel), now);
     channel.from_program(&request_state(CONNECTION), now);
     let effects = channel.take_effects();
     assert_eq!(challenges(&effects, CONNECTION).len(), 0);
@@ -367,7 +370,7 @@ fn a_forgotten_key_leaves_and_an_offered_key_begins() {
     let handle = proven(&mut channel, CONNECTION, &ALICE, 0);
     channel.received(CONNECTION, &none(NoneReason::Forgotten), 1);
     assert_eq!(lines_of(&channel.take_effects(), "viewer_left"), [json!({"type": "viewer_left", "connection": CONNECTION})]);
-    channel.received(CONNECTION, &message(&[Item::Event(Event::StateOffer)]), 1 + crate::viewer::STATE_OFFER_INTERVAL_MS);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[Item::Event(Event::StateOffer)]), 1 + crate::viewer::STATE_OFFER_INTERVAL_MS);
     let sent = challenges(&channel.take_effects(), CONNECTION);
     assert_eq!(sent.len(), 1, "an offer is challenged");
     channel.received(CONNECTION, &proof(&BOB, Lifetime::Visit, &sent[0].0, ADDRESS), 20_000);
@@ -403,10 +406,10 @@ fn new_viewers_from_one_address_are_bounded() {
     let mut prove = |channel: &mut Channel, seed: [u8; 32], now: u64| {
         connection += 1;
         channel.opened(connection, address, now);
-        channel.received(connection, &message(&[hello()]), now);
+        channel.received(connection, &message(channel, connection, &[hello()]), now);
         let challenge = challenges(&channel.take_effects(), connection)[0].0;
         channel.received(connection, &proof(&seed, Lifetime::Visit, &challenge, ADDRESS), now);
-        channel.received(connection, &message(&[select(0x100, 0)]), now);
+        channel.received(connection, &message(channel, connection, &[select(0x100, 0)]), now);
         connecteds(&channel.take_effects())[0]["viewer"].clone()
     };
     let bound = usize::try_from(MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR).unwrap();

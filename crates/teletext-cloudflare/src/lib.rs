@@ -316,6 +316,7 @@ impl ChannelObject {
             epoch_at_start_ms: started_ms,
             other_addresses: Vec::new(),
             wheel: false,
+            default_rules: teletext_runtime::channel::DefaultRules::None,
         };
         let channel = Channel::new(config, &secret, Box::new(WebCrypto));
         let mut live = Live {

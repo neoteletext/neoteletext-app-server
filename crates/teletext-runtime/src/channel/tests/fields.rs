@@ -16,7 +16,7 @@ const DOT: (u32, u32) = (91, 187);
 const CELL: (u32, u32) = (7, 9);
 
 fn event_of(channel: &mut Channel, item: Item<'_>, now: u64) -> Value {
-    channel.received(CONNECTION, &message(&[item]), now);
+    channel.received(CONNECTION, &message(channel, CONNECTION, &[item]), now);
     let lines = inputs(&channel.take_effects());
     assert_eq!(lines.len(), 1, "{lines:?}");
     lines[0]["event"].clone()
@@ -87,7 +87,7 @@ fn a_dot_outside_its_cell_is_dropped() {
     for dot in outside {
         for item in [pointer(MouseAction::Press, 0, Some(dot), 0), pointer(MouseAction::Move, 0, Some(dot), 0), wheel(dot)] {
             let mut channel = selected();
-            channel.received(CONNECTION, &message(&[item]), 1);
+            channel.received(CONNECTION, &message(&channel, CONNECTION, &[item]), 1);
             assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0], "{dot:?} {item:?}");
         }
     }
@@ -124,17 +124,19 @@ fn compose_reaches_a_program() {
 }
 
 /// COMPOSE is stamped, and is input like any other: one aimed at a page no
-/// longer selected is dropped (REQ-1557), and it counts nothing (DOC-1943).
+/// longer selected is dropped (REQ-1557). Under push protocol 9 it comes
+/// inside a `RULE_EVENT`, which counts one whatever it carries (page-rules.md
+/// RULE-46, DOC-1943), so it is acknowledged as any message is.
 #[test]
-fn compose_is_held_to_its_stamp_and_counts_nothing() {
+fn compose_is_held_to_its_stamp_and_counts_as_its_rule_event() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[Item::Event(Event::Compose { on: OTHER, cursor: 0, text: "a" })]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[Item::Event(Event::Compose { on: OTHER, cursor: 0, text: "a" })]), 1);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
     assert_eq!(channel.stats().stale_input, 1);
-    channel.received(CONNECTION, &message(&[Item::Event(Event::Compose { on: ON, cursor: 0, text: "a" })]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[Item::Event(Event::Compose { on: ON, cursor: 0, text: "a" })]), 2);
     assert_eq!(inputs(&channel.take_effects()).len(), 1);
     channel.deadline(2 + ACKNOWLEDGEMENT_WAIT_MS);
-    assert_eq!(sends(&channel.take_effects()), 0, "no acknowledgement");
+    assert_eq!(sends(&channel.take_effects()), 1, "one cursor record acknowledges both");
 }
 
 /// A lost release has no modifiers and no dot to give: nothing was pressed
@@ -142,9 +144,9 @@ fn compose_is_held_to_its_stamp_and_counts_nothing() {
 #[test]
 fn a_lost_release_has_no_modifiers_or_dot() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[pointer(MouseAction::Press, 0, Some(DOT), HELD)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[pointer(MouseAction::Press, 0, Some(DOT), HELD)]), 1);
     let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&[pointer(MouseAction::Gone, 1, Some(DOT), HELD)]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[pointer(MouseAction::Gone, 1, Some(DOT), HELD)]), 2);
     let lines = inputs(&channel.take_effects());
     let event = &lines[0]["event"];
     assert_eq!((&event["action"], &event["mods"], &event["px"], &event["py"]), (&json!("release"), &json!(0), &Value::Null, &Value::Null));

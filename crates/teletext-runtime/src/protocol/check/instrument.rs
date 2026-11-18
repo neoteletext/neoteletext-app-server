@@ -52,6 +52,15 @@ pub(super) fn check(root: &Path<'_>, sound: &Sound) -> Option<Checked> {
         Sound::Synth53Live(live) | Sound::Synth52Live(live) | Sound::Synth51Live(live) => live_banks(root, &live.connections, &live.banks),
         Sound::Synth8Live(live) => live_banks(root, &live.connections, &live.banks),
         Sound::Synth80Live(live) => live_banks(root, &live.connections, &live.banks),
+        Sound::Synth7Local(local) => local_sound::<Synth7Family>(root, &local.connections, &local.banks, &local.setup),
+        Sound::Synth106Local(local) => local_sound::<Synth106Family>(root, &local.connections, &local.banks, &local.setup),
+        Sound::Synth60Local(local) => local_sound::<Synth60Family>(root, &local.connections, &local.banks, &local.setup),
+        Sound::SynthDLocal(local) => local_sound::<SynthDFamily>(root, &local.connections, &local.banks, &local.setup),
+        Sound::Synth53Local(local) | Sound::Synth52Local(local) | Sound::Synth51Local(local) => {
+            local_sound::<Synth53Family>(root, &local.connections, &local.banks, &local.setup)
+        }
+        Sound::Synth8Local(local) => local_sound::<Synth8Family>(root, &local.connections, &local.banks, &local.setup),
+        Sound::Synth80Local(local) => local_sound::<Synth80Family>(root, &local.connections, &local.banks, &local.setup),
         Sound::Synth7Events(events) => live_events::<Synth7Family>(root, &events.connections, &events.events, events.until_us.get()),
         Sound::Synth106Events(events) => live_events::<Synth106Family>(root, &events.connections, &events.events, events.until_us.get()),
         Sound::Synth60Events(events) => live_events::<Synth60Family>(root, &events.connections, &events.events, events.until_us.get()),
@@ -213,6 +222,22 @@ fn live_banks(root: &Path<'_>, connections: &crate::protocol::Connections, banks
         return Err(fault(&root.field("banks"), Rule::TooLong, format!("SRV-58: {} banks, at most {MOST_SOUND_BANKS}", banks.len())));
     }
     Ok(())
+}
+
+/// A local sound (page-rules.md RULE-61): its banks as a live sound's, and
+/// a setup of at most 64 events, each at time 0, since the setup is applied
+/// at once when the instrument is made.
+fn local_sound<F: NoteFamily>(root: &Path<'_>, connections: &crate::protocol::Connections, banks: &[u8], setup: &[F::Event]) -> Checked
+where
+    F::PatchEvent: PatchShape,
+{
+    live_banks(root, connections, banks)?;
+    let path = root.field("setup");
+    note_events::<F>(&path, setup, Some(crate::protocol::MOST_SETUP_EVENTS), None)?;
+    match setup.iter().position(|event| F::time_us(event) != 0) {
+        Some(late) => Err(fault(&path.item(late).field("time_us"), Rule::OutOfRange, "RULE-61: every event of a local sound's setup is at time 0".to_string())),
+        None => Ok(()),
+    }
 }
 
 fn live_events<F: NoteFamily>(root: &Path<'_>, connections: &crate::protocol::Connections, events: &[F::Event], until_us: u64) -> Checked

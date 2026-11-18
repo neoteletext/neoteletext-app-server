@@ -47,6 +47,22 @@ fn bytes_of(item: &Item<'_>) -> Vec<u8> {
     bytes
 }
 
+/// The rules of the channel's default table (page-rules.md RULE-53) that
+/// send a key's press, its release, text and a move, by their numbers.
+const KEYS: u8 = 0;
+const KEYS_UP: u8 = 1;
+const TEXT: u8 = 2;
+const MOVE: u8 = 5;
+
+/// `carried`, one input event, as a receiver of push protocol 9 sends it:
+/// inside the `RULE_EVENT` of the rule that sent it (RULE-46), at the first
+/// table the connection was sent for the page.
+fn sent_by(rule: u8, carried: &[u8]) -> Vec<u8> {
+    use neoteletext_input::rules::{RuleBody, RuleEvent};
+    let event = RuleEvent { on: ON, generation: 1, rule, tick: 0, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(carried) };
+    bytes_of(&Item::Event(Event::RuleEvent(event)))
+}
+
 /// Each move a place of its own among its neighbours, on the rows above
 /// [`LATEST_ROW`], where only the last goes.
 fn moved(position: u32) -> Vec<u8> {
@@ -54,15 +70,16 @@ fn moved(position: u32) -> Vec<u8> {
     let at = Point { column: position % COLUMNS, row, pixels: None, mods: 0 };
     let bytes = bytes_of(&Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
     assert!(bytes.len() <= MAX_MOVE_BYTES);
-    bytes
+    sent_by(MOVE, &bytes)
 }
 
 fn key(action: Action) -> Vec<u8> {
-    bytes_of(&Item::Event(Event::Key(Key { on: ON, action, key: KeyCode::Character('a'), mods: 0, text: None, base: None, lost: false })))
+    let rule = if action == Action::Release { KEYS_UP } else { KEYS };
+    sent_by(rule, &bytes_of(&Item::Event(Event::Key(Key { on: ON, action, key: KeyCode::Character('a'), mods: 0, text: None, base: None, lost: false }))))
 }
 
 fn paste(text: &str) -> Vec<u8> {
-    bytes_of(&Item::Event(Event::Paste { on: ON, text }))
+    sent_by(TEXT, &bytes_of(&Item::Event(Event::Paste { on: ON, text })))
 }
 
 /// A channel whose program is this test, at the end of a socket, with one
@@ -78,6 +95,7 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
         program: Program::Socket(path.clone()),
         initial_page: InitialPage::new(apps::DEFAULT_INITIAL_PAGE).unwrap(),
         wheel: false,
+        default_rules: teletext_runtime::channel::DefaultRules::None,
     })
     .unwrap();
     let config = ChannelConfig {
@@ -87,6 +105,8 @@ async fn opened(name: &str) -> (Hub, BufReader<UnixStream>, mpsc::Receiver<hub::
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        // The program hears every kind of input (RULE-53).
+        default_rules: teletext_runtime::channel::DefaultRules::SendAll,
     };
     let hub = hub::spawn(
         name,

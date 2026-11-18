@@ -42,6 +42,7 @@ fn config() -> ChannelConfig {
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        default_rules: crate::channel::DefaultRules::None,
     }
 }
 
@@ -52,7 +53,7 @@ fn viewers(selections: &[(u64, u16, u16)]) -> Channel {
     channel.program_started(0);
     for &(connection, page, sub) in selections {
         channel.opened(connection, None, 0);
-        channel.received(connection, &message(&[hello(), select(page, sub)]), 0);
+        channel.received(connection, &message(&channel, connection, &[hello(), select(page, sub)]), 0);
     }
     let _ = channel.take_effects();
     channel
@@ -158,7 +159,7 @@ fn a_connection_opened_later_is_sent_nothing_of_it() {
     channel.from_program(&line(&json!({"type": "author_log", "connections": "all", "level": "W", "text": "slow", "page": null})), 1);
     let _ = channel.take_effects();
     channel.opened(2, None, 2);
-    channel.received(2, &message(&[hello(), select(0x100, 0)]), 2);
+    channel.received(2, &message(&channel, 2, &[hello(), select(0x100, 0)]), 2);
     let effects = channel.take_effects();
     assert!(!record_types(&sent_to(&effects, 2)).contains(&TYPE_LOG), "and its WELCOME is all it is sent");
 }
@@ -245,7 +246,7 @@ fn a_sub_page_list_reaches_the_page_once_a_version() {
 fn the_first_sub_page_answers_a_page_selection_and_becomes_it() {
     for (sub, text) in [(0, "0000"), (3, "0003")] {
         let mut channel = channel();
-        channel.received(super::CONNECTION, &message(&[select(0x100, ANY)]), 0);
+        channel.received(super::CONNECTION, &message(&channel, super::CONNECTION, &[select(0x100, ANY)]), 0);
         let lines = told(&channel.take_effects());
         let asked = lines.iter().filter(|line| line["type"] == "selected").collect::<Vec<_>>();
         assert_eq!(asked.len(), 1, "{lines:?}");
@@ -278,7 +279,7 @@ fn stepping_is_one_selection_and_one_sub_page() {
     let mut channel = viewers(&[(1, 0x100, 0)]);
     channel.from_program(&answer(1, 1, &subpage()), 1);
     let _ = channel.take_effects();
-    channel.received(1, &message(&[select(0x100, 1)]), 2);
+    channel.received(1, &message(&channel, 1, &[select(0x100, 1)]), 2);
     let lines = told(&channel.take_effects());
     assert_eq!(lines.iter().map(|line| line["type"].as_str().unwrap()).collect::<Vec<_>>(), ["selected"], "the same page: no `left`");
     assert_eq!((&lines[0]["sub"], &lines[0]["request"]), (&json!("0001"), &json!(2)));
@@ -305,8 +306,8 @@ fn a_page_of_the_most_sub_pages_costs_one_sub_page_and_its_list() {
         let read: Vec<u16> = lists(&bytes).into_iter().flat_map(|(_, part)| part).collect();
         assert_eq!(read, subs().take(count).collect::<Vec<_>>(), "{count}");
 
-        channel.received(1, &message(&[select(0x200, ANY)]), 2);
-        channel.received(1, &message(&[select(0x100, ANY)]), 3);
+        channel.received(1, &message(&channel, 1, &[select(0x200, ANY)]), 2);
+        channel.received(1, &message(&channel, 1, &[select(0x100, ANY)]), 3);
         let _ = channel.take_effects();
         channel.from_program(&answer(1, 3, &subpage()), 4);
         channel.from_program(&list(1, 3, subs().take(count)), 4);
@@ -324,10 +325,10 @@ fn a_second_connection_hears_nothing_of_the_firsts_selection() {
     channel.program_started(0);
     for connection in [1, 2] {
         channel.opened(connection, None, 0);
-        channel.received(connection, &message(&[hello(), select(0x200, 0)]), 0);
+        channel.received(connection, &message(&channel, connection, &[hello(), select(0x200, 0)]), 0);
     }
     let _ = channel.take_effects();
-    channel.received(1, &message(&[select(0x100, ANY)]), 1);
+    channel.received(1, &message(&channel, 1, &[select(0x100, ANY)]), 1);
     channel.from_program(&answer(1, 2, &subpage()), 2);
     let effects = channel.take_effects();
     assert_eq!(headers(&sent_to(&effects, 1)), [(0, true)]);
@@ -441,7 +442,7 @@ fn a_later_version_goes_as_what_changed() {
 fn another_sub_code_goes_whole_and_is_kept_instead() {
     let mut channel = viewers(&[(1, 0x100, ANY)]);
     channel.from_program(&answer(1, 1, &subpage()), 1);
-    channel.received(1, &message(&[select(0x100, 1)]), 2);
+    channel.received(1, &message(&channel, 1, &[select(0x100, 1)]), 2);
     let _ = channel.take_effects();
     assert!(channel.connections[&1].shown.is_none(), "a selection drops what was kept");
     channel.from_program(&answer(1, 2, &sub_page("100", "0001")), 3);
@@ -459,13 +460,13 @@ fn another_sub_code_goes_whole_and_is_kept_instead() {
 fn the_first_frame_after_a_selection_is_whole() {
     let mut channel = viewers(&[(1, 0x100, 0)]);
     channel.from_program(&answer(1, 1, &subpage()), 1);
-    channel.received(1, &message(&[select(0x200, 0)]), 2);
-    channel.received(1, &message(&[select(0x100, 0)]), 3);
+    channel.received(1, &message(&channel, 1, &[select(0x200, 0)]), 2);
+    channel.received(1, &message(&channel, 1, &[select(0x100, 0)]), 3);
     let _ = channel.take_effects();
     channel.from_program(&answer(1, 3, &subpage()), 4);
     assert_eq!(headers(&sent_to(&channel.take_effects(), 1)), [(0, true)], "the same sub-page, selected again");
     channel.opened(2, None, 5);
-    channel.received(2, &message(&[hello(), select(0x100, 0)]), 5);
+    channel.received(2, &message(&channel, 2, &[hello(), select(0x100, 0)]), 5);
     let _ = channel.take_effects();
     channel.from_program(&answer(2, 1, &subpage()), 6);
     assert_eq!(headers(&sent_to(&channel.take_effects(), 2)), [(0, true)], "a new connection");
@@ -480,7 +481,7 @@ fn two_tabs_keep_their_own_sub_page() {
     channel.program_started(0);
     for connection in [1, 2] {
         channel.opened(connection, None, 0);
-        channel.received(connection, &message(&[hello(), select(0x100, 0)]), 0);
+        channel.received(connection, &message(&channel, connection, &[hello(), select(0x100, 0)]), 0);
     }
     let _ = channel.take_effects();
     let page = without_links();
@@ -658,30 +659,36 @@ fn a_closed_connection_is_gone_at_once() {
     let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     channel.opened(1, None, 0);
-    channel.received(1, &message(&[hello(), select(0x100, 0)]), 0);
+    channel.received(1, &message(&channel, 1, &[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
     channel.closed(1, 10);
     assert_eq!(told(&channel.take_effects()), [json!({"type": "left", "connection": 1, "page": "100"}), json!({"type": "gone", "connection": 1})]);
     assert_eq!(channel.next_wake(), None, "nothing waits for the viewer to come back");
     channel.opened(2, None, 20);
-    channel.received(2, &message(&[hello(), select(0x100, 0)]), 20);
+    channel.received(2, &message(&channel, 2, &[hello(), select(0x100, 0)]), 20);
     let lines = connecteds(&channel.take_effects());
     assert_eq!((&lines[0]["connection"], &lines[0]["viewer"]), (&json!(2), &Value::Null));
 }
 
 /// REQ-1643: a pointer's column past 39 is a protocol error, and 39 is not: no
-/// message carries a column beyond the page's 40.
+/// message carries a column beyond the page's 40. Under push protocol 9
+/// the MOUSE is inside its rule's `RULE_EVENT`, which is refused whole.
 #[test]
 fn a_column_past_39_is_a_protocol_error() {
-    /// A MOUSE press on page 100 at column 39, row 9, from the shared table's
-    /// `mouse_press`, and the same at column 40.
-    const LAST_COLUMN: [u8; 9] = [0xFF, 0x02, 0x80, 0x02, 0x00, 0x00, 0x00, 39, 9];
-    const PAST_IT: [u8; 9] = [0xFF, 0x02, 0x80, 0x02, 0x00, 0x00, 0x00, 40, 9];
+    use neoteletext_input::event::{Device, Event, Item, Mouse, MouseAction, Point};
     let mut channel = selected();
-    channel.received(super::CONNECTION, &LAST_COLUMN, 1);
+    let at = Point { column: 39, row: 9, pixels: None, mods: 0 };
+    let press = Item::Event(Event::Mouse(Mouse { on: super::ON, action: MouseAction::Press, button: 0, at, device: Device::Mouse }));
+    let last_column = message(&channel, super::CONNECTION, &[press]);
+    // The MOUSE ends the message: its column, then its row.
+    let (column, row) = (last_column.len() - 2, last_column.len() - 1);
+    assert_eq!((last_column[column], last_column[row]), (39, 9));
+    let mut past_it = last_column.clone();
+    past_it[column] = 40;
+    channel.received(super::CONNECTION, &last_column, 1);
     let lines = inputs(&channel.take_effects());
     assert_eq!(lines[0]["event"]["column"], json!(39));
-    channel.received(super::CONNECTION, &PAST_IT, 2);
+    channel.received(super::CONNECTION, &past_it, 2);
     assert_eq!(channel.take_effects(), [Effect::Close { connection: super::CONNECTION, code: neoteletext_web::consts::CLOSE_BROKE_PROTOCOL }]);
 }
 
@@ -690,7 +697,7 @@ fn a_column_past_39_is_a_protocol_error() {
 #[test]
 fn a_selection_of_no_page_ends_its_updates() {
     let mut channel = answered();
-    channel.received(super::CONNECTION, &message(&[select(0, ANY)]), 1);
+    channel.received(super::CONNECTION, &message(&channel, super::CONNECTION, &[select(0, ANY)]), 1);
     let lines = told(&channel.take_effects());
     assert_eq!(lines[0]["type"], json!("left"));
     channel.from_program(&change(&changed(&subpage())), 2);
@@ -818,7 +825,7 @@ fn a_long_run_of_frames_is_cut_into_messages_before_headers() {
 fn start_is_the_first_line_a_started_program_hears() {
     let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.opened(1, None, 0);
-    channel.received(1, &message(&[hello(), select(0x100, 0)]), 0);
+    channel.received(1, &message(&channel, 1, &[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
     channel.program_started(1);
     let types: Vec<Value> = told(&channel.take_effects()).iter().map(|line| line["type"].clone()).collect();
@@ -894,7 +901,7 @@ fn the_kits_fixture_channel_is_served_as_the_kit_means_it() {
     let mut channel = Channel::new(config(), &crate::viewer::testing::secret(), crate::viewer::testing::random());
     channel.program_started(0);
     channel.opened(1, None, 0);
-    channel.received(1, &message(&[hello(), select(0, ANY)]), 0);
+    channel.received(1, &message(&channel, 1, &[hello(), select(0, ANY)]), 0);
     let told_first = told(&channel.take_effects());
     assert_eq!((&told_first[0]["type"], &told_first[1]["type"], &told_first[1]["selection"]), (&json!("start"), &json!("connected"), &Value::Null));
     let feed = |channel: &mut Channel, line: &Value, now: u64| {
@@ -913,7 +920,7 @@ fn the_kits_fixture_channel_is_served_as_the_kit_means_it() {
     let script: [(u16, u16, &[usize], u16); 5] =
         [(0x101, ANY, &[1, 2], 1), (0x101, 2, &[3], 2), (0x102, ANY, &[4], 0), (0x103, ANY, &[5], 0), (0x104, ANY, &[6], 0)];
     for (now, (page, sub, answers, shown)) in (2_u64..).zip(script) {
-        channel.received(1, &message(&[select(page, sub)]), now);
+        channel.received(1, &message(&channel, 1, &[select(page, sub)]), now);
         let asked = told(&channel.take_effects());
         let selected = asked.iter().find(|line| line["type"] == "selected").unwrap();
         assert_eq!(&selected["request"], &lines[answers[0]]["request"], "the server numbers its selections as the kit expects");
@@ -990,7 +997,7 @@ fn the_bytes_on_the_wire_for_each_action_on_a_page_of_the_most_sub_pages() {
     let published = wire_bytes(&effects, 1);
 
     // 2. The viewer selects page 100: one sub-page and the list of all.
-    channel.received(1, &message(&[select(0x100, ANY)]), 2);
+    channel.received(1, &message(&channel, 1, &[select(0x100, ANY)]), 2);
     let _ = channel.take_effects();
     channel.from_program(&answer(1, 2, &full(subs[0])), 3);
     channel.from_program(&list(1, 2, subs.iter().copied()), 3);
@@ -999,7 +1006,7 @@ fn the_bytes_on_the_wire_for_each_action_on_a_page_of_the_most_sub_pages() {
     let list_records = lists(&sent_to(&effects, 1)).len();
 
     // 3. The viewer steps to the next sub-page; the list's version is held.
-    channel.received(1, &message(&[select(0x100, subs[1])]), 4);
+    channel.received(1, &message(&channel, 1, &[select(0x100, subs[1])]), 4);
     let _ = channel.take_effects();
     channel.from_program(&answer(1, 3, &full(subs[1])), 5);
     let stepping = wire_bytes(&channel.take_effects(), 1);

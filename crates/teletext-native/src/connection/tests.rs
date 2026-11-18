@@ -31,6 +31,7 @@ fn connected() -> DuplexStream {
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        default_rules: teletext_runtime::channel::DefaultRules::None,
     };
     let channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(SystemRandomSource::new()));
     let hub = spawn("test", channel, Instant::now(), None, Arc::new(ServerStats::default()));

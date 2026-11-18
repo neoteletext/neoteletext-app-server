@@ -178,6 +178,15 @@ impl Sounds {
                 if self.synths.is_bank(*handle) {
                     return Err(refuse("handle", Rule::NotListed, "MIDI-55: a bank is never played"));
                 }
+                // RULE-60, RULE-61: a local sound belongs to a page, ends
+                // when the page is no longer open, and has no end of its
+                // own to loop at or to follow.
+                if self.synths.is_local(*handle, *generation) {
+                    let held = |given: bool, path: &str, detail: &str| if given { Err(refuse(path, Rule::OutOfRange, detail)) } else { Ok(()) };
+                    held(page.is_none(), "page", "RULE-61: a local sound is played with a page")?;
+                    held(*r#loop, "loop", "RULE-61: a local sound is played with loop false")?;
+                    held(*after, "after", "RULE-61: a local sound is played with after false")?;
+                }
                 let mut flags = 0;
                 if *r#loop {
                     flags |= FLAG_LOOP;
@@ -329,6 +338,17 @@ macro_rules! live_sound {
     }};
 }
 
+/// A note family's local sound (page-rules.md RULE-61): its setup's
+/// events placed, all at time 0.
+macro_rules! local_sound {
+    ($self:ident, $sound:ident, $targets:ident, $synth:ident, $family:ty, $keys:expr) => {{
+        let settings = Settings { chip: None, keys: $keys, banks: $sound.banks.clone() };
+        let mut timed = Vec::new();
+        synth::place_notes::<$family>($synth, &$sound.setup, "setup", &mut timed)?;
+        $self.synths.local($synth, $sound.handle, $sound.generation, &settings, timed, $targets)
+    }};
+}
+
 macro_rules! events_sound {
     ($self:ident, $sound:ident, $targets:ident, $now:ident, $kind:ident, $synth:ident, $family:ty) => {{
         let mut timed = Vec::new();
@@ -410,6 +430,15 @@ impl Sounds {
             Sound::Synth53Live(live) | Sound::Synth52Live(live) | Sound::Synth51Live(live) => live_sound!(self, live, targets, kind, synth, None),
             Sound::Synth8Live(live) => live_sound!(self, live, targets, kind, synth, Some(keys(live.key_mode, live.split_key.get()))),
             Sound::Synth80Live(live) => live_sound!(self, live, targets, kind, synth, None),
+            Sound::Synth7Local(local) => local_sound!(self, local, targets, synth, Synth7Family, None),
+            Sound::Synth106Local(local) => local_sound!(self, local, targets, synth, Synth106Family, None),
+            Sound::Synth60Local(local) => local_sound!(self, local, targets, synth, Synth60Family, None),
+            Sound::SynthDLocal(local) => local_sound!(self, local, targets, synth, SynthDFamily, None),
+            Sound::Synth53Local(local) | Sound::Synth52Local(local) | Sound::Synth51Local(local) => {
+                local_sound!(self, local, targets, synth, Synth53Family, None)
+            }
+            Sound::Synth8Local(local) => local_sound!(self, local, targets, synth, Synth8Family, Some(keys(local.key_mode, local.split_key.get()))),
+            Sound::Synth80Local(local) => local_sound!(self, local, targets, synth, Synth80Family, None),
             Sound::Synth7Events(events) => events_sound!(self, events, targets, now, kind, synth, Synth7Family),
             Sound::Synth106Events(events) => events_sound!(self, events, targets, now, kind, synth, Synth106Family),
             Sound::Synth60Events(events) => events_sound!(self, events, targets, now, kind, synth, Synth60Family),

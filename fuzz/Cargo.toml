@@ -21,12 +21,12 @@ teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
 # The engine's input writer, to write viewer state's messages as a
 # receiver does.
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "1e7ea051df3f0227d2834110894ba183123d6c9d", default-features = false }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "d0b66cc6a490a46c41a3064a16f9c767e69f5cfd", default-features = false }
 # Ed25519 signing, to make proofs that verify (DEC-6471, approved by name).
 ring = { version = "=0.17.14", default-features = false }
 # The engine's base64, to write the packets as a program does; its records
 # reader, to find the challenges; its signed bytes.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "1e7ea051df3f0227d2834110894ba183123d6c9d", default-features = false }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "d0b66cc6a490a46c41a3064a16f9c767e69f5cfd", default-features = false }
 
 [profile.release]
 debug = 1

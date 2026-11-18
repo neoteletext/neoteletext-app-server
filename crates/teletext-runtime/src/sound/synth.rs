@@ -487,6 +487,9 @@ struct Live {
 pub(crate) struct Synths {
     banks: BTreeMap<u8, Bank>,
     live: BTreeMap<u8, Live>,
+    /// The handles that name a local sound, and its generation
+    /// (page-rules.md RULE-61): `play` of one is held to a page.
+    locals: BTreeMap<u8, u16>,
     sent_banks: BTreeMap<ConnectionId, BTreeSet<(u8, u16)>>,
 }
 
@@ -509,6 +512,57 @@ impl Synths {
     pub(crate) fn replaced(&mut self, handle: u8) {
         self.banks.remove(&handle);
         self.live.remove(&handle);
+        self.locals.remove(&handle);
+    }
+
+    /// Whether `handle` at `generation` names a local sound (RULE-61).
+    pub(crate) fn is_local(&self, handle: u8, generation: u16) -> bool {
+        self.locals.get(&handle) == Some(&generation)
+    }
+
+    /// A local sound (page-rules.md RULE-60, RULE-61): an OBJECT that says
+    /// so (tag 9) and its one block, the setup, every event at tick 0. A
+    /// receiver makes the instrument itself and plays it from a page's
+    /// rules; the server sends it no blocks after this one.
+    pub(crate) fn local(
+        &mut self,
+        synth: Synth,
+        handle: u8,
+        generation: u16,
+        settings: &Settings,
+        mut timed: Vec<Timed>,
+        targets: &[ConnectionId],
+    ) -> Result<Sent, Refused> {
+        let family = synth.family;
+        if let Some(late) = timed.iter().find(|event| event.tick != 0) {
+            return Err(refuse(format!("{}.time_us", late.path), Rule::OutOfRange, "RULE-61: every event of a local sound's setup is at time 0"));
+        }
+        // A bank dump is refused in a setup as in a live sound: a local
+        // sound names its banks (MIDI-58).
+        lift(family, &mut timed, true)?;
+        self.check_banks(synth, &settings.banks, 0)?;
+        let images = self.images(&settings.banks);
+        let image_slices: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
+        let banks = Banks::new(&image_slices);
+        let mut tracker = Tracker::new(synth, &banks);
+        let written = resolve_and_track(synth, &mut tracker, &banks, timed)?;
+        let events: Vec<&Timed> = written.iter().collect();
+        // RULE-61: a setup that does not fit its one block is `block_full`.
+        let (block, _) = write_block(family, 0, &[], &events)?;
+        let mut encoded = Encoded::local(handle, generation, family.codec(), &block).map_err(encode_fault)?;
+        settings.apply(synth, &mut encoded);
+        let mut records = alloc::vec![encoded.object_record().map_err(encode_fault)?];
+        records.extend(encoded.data_records());
+        // Only now, with nothing refused, does any table change (SRV-49).
+        self.replaced(handle);
+        self.locals.insert(handle, generation);
+        let mut sent = Sent::default();
+        for &connection in targets {
+            let mut out = self.banks_for(connection, &settings.banks);
+            out.extend(records.iter().cloned());
+            sent.add(connection, out);
+        }
+        Ok(sent)
     }
 
     /// The banks a sound names, checked against the bank table (SRV-58,

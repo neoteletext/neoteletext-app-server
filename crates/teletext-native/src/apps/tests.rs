@@ -42,7 +42,7 @@ fn a_channel_may_name_its_initial_page() {
 }
 
 fn spec(folder: &str, program: Program) -> ChannelSpec {
-    ChannelSpec { folder: folder.to_owned(), name: "Test".to_owned(), program, initial_page: home(), wheel: false }
+    ChannelSpec { folder: folder.to_owned(), name: "Test".to_owned(), program, initial_page: home(), wheel: false, default_rules: DefaultRules::None }
 }
 
 /// DEC-1694 rule 2: a folder named like a place in a channel belongs to the
@@ -70,7 +70,7 @@ fn the_channels_file_names_each_program() {
     let file = folder.join("channels.json");
     std::fs::write(
         &file,
-        br#"{"channels":[{"folder":"hackaday","name":"Hackaday","command":["uv","run","main.py"],"directory":"channels/hackaday"},{"folder":"showcase","command":["node","main.ts"],"wheel":true},{"folder":"own","socket":"sockets/own.sock"}]}"#,
+        br#"{"channels":[{"folder":"hackaday","name":"Hackaday","command":["uv","run","main.py"],"directory":"channels/hackaday"},{"folder":"showcase","command":["node","main.ts"],"wheel":true,"default_rules":"send_all"},{"folder":"own","socket":"sockets/own.sock","default_rules":"none"}]}"#,
     )
     .unwrap();
     let specs = read_channels(&file).unwrap();
@@ -86,6 +86,8 @@ fn the_channels_file_names_each_program() {
                 },
                 initial_page: home(),
                 wheel: false,
+                // RULE-53: `none` when the entry says nothing.
+                default_rules: DefaultRules::None,
             },
             ChannelSpec {
                 folder: "showcase".to_owned(),
@@ -93,13 +95,15 @@ fn the_channels_file_names_each_program() {
                 program: Program::Command { command: vec!["node".to_owned(), "main.ts".to_owned()], directory: folder.join("") },
                 initial_page: home(),
                 wheel: true,
+                default_rules: DefaultRules::SendAll,
             },
             ChannelSpec {
                 folder: "own".to_owned(),
                 name: "own".to_owned(),
                 program: Program::Socket(folder.join("sockets/own.sock")),
                 initial_page: home(),
-                wheel: false
+                wheel: false,
+                default_rules: DefaultRules::None,
             },
         ]
     );
@@ -110,6 +114,8 @@ fn the_channels_file_names_each_program() {
         br#"{"channels":[{"folder":"a","command":["x"]},{"folder":"a","command":["y"]}]}"#,
         br#"{"channel":[]}"#,
         br#"{"channels":[{"folder":"a","command":["x"],"wheel":"yes"}]}"#,
+        br#"{"channels":[{"folder":"a","command":["x"],"default_rules":"all"}]}"#,
+        br#"{"channels":[{"folder":"a","command":["x"],"default_rules":true}]}"#,
     ] {
         std::fs::write(&file, bad).unwrap();
         assert!(read_channels(&file).is_err(), "{}", String::from_utf8_lossy(bad));

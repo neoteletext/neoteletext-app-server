@@ -313,3 +313,180 @@ fn a_bank_is_read_only_by_its_own_model() {
     channel.from_program(&message("synth106_live", json!({"handle": HANDLE, "generation": 0, "banks": [BANK]})), 3);
     assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
 }
+
+/// The bank of `kind` among the shared examples, as a bank of `as_kind` at
+/// `handle` for the test's connection.
+fn example_bank(kind: &str, as_kind: &str, handle: u8) -> Vec<u8> {
+    let found = crate::protocol::tests::synth::examples()
+        .iter()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["message"].clone())
+        .find(|message| message["kind"] == kind)
+        .unwrap_or_else(|| panic!("no example of {kind}"));
+    let mut bank = found;
+    bank["kind"] = json!(as_kind);
+    bank["handle"] = json!(handle);
+    bank["connections"] = json!([CONNECTION]);
+    // synth60's panel has one switch synth106's has not (S106-22).
+    if as_kind == "synth60_bank" {
+        bank["bank"]["patches"][0]["sub_switch"] = json!(true);
+    }
+    line(&bank)
+}
+
+/// The local sound's bank's handle, and its own, as RULE-61's example has
+/// them.
+const LOCAL_BANK: u8 = 2;
+const LOCAL: u8 = 1;
+
+/// RULE-61's example: a local synth106 sound whose setup is program
+/// change 0.
+fn local_synth106(setup: &Value) -> Vec<u8> {
+    message("synth106_local", json!({"handle": LOCAL, "generation": 1, "banks": [LOCAL_BANK], "setup": setup}))
+}
+
+fn program_change(time_us: u64) -> Value {
+    json!({"event": "program_change", "channel": 1, "program": 0, "time_us": time_us})
+}
+
+fn play(page: &Value, looped: bool, after: bool) -> Vec<u8> {
+    message("play", json!({"channel": 0, "handle": LOCAL, "generation": 1, "gain": 100, "fade_ms": 5, "duck": 0, "loop": looped, "after": after, "page": page}))
+}
+
+/// REQ-6532, RULE-60, RULE-61, RULE-85: a local sound is announced as an
+/// OBJECT that says it is local (tag 9), byte for byte the engine's wire
+/// vector of RULE-61's example, and its one block, the setup; nothing
+/// more of it is ever sent.
+#[test]
+fn a_local_sound_is_its_object_and_its_setup() {
+    let mut channel = answered();
+    channel.from_program(&example_bank("synth106_bank", "synth106_bank", LOCAL_BANK), 1);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
+    let first = first_record(&channel);
+    channel.from_program(&local_synth106(&json!([program_change(0)])), 2);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [Value; 0]);
+    // The setup block: program change 0 on channel 1 at tick 0 (MIDI-23).
+    let setup = [0x00, 0xC0, 0x00];
+    let mut sound = Sound::local(LOCAL, 1, Codec::Synth106, &setup).unwrap();
+    sound.banks = alloc::vec![LOCAL_BANK];
+    let row = neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "object" && row.name == "local_sound").unwrap();
+    let (vector, length) = neoteletext_web::wire_vectors::bytes_of(row.value).unwrap();
+    assert_eq!(sound.object_record().unwrap(), vector[..length], "the engine's vector of RULE-61's example, which names no variant");
+    // The server names the variant of every sound of the synth106 family
+    // (MIDI-48 tag 5): 0, synth106, which is also what no tag means.
+    sound.variant = Some(0);
+    let object = sound.object_record().unwrap();
+    assert_eq!(object.len(), length + 3, "the vector and the variant's tag, length and value");
+    assert!(object.windows(3).any(|tag| tag == [neoteletext_audio::record::TAG_LOCAL, 1, 1]), "tag 9, one byte, 1");
+    let mut records = alloc::vec![object];
+    records.extend(sound.data_records());
+    assert_eq!(records.len(), 2, "the OBJECT and the one DATA record of its setup");
+    assert_eq!(sent_to(&effects, CONNECTION), audio(&records, first));
+    assert_eq!(built(&effects), [] as [Value; 0], "it is no stored music: nothing was built from events");
+    channel.deadline(60_000);
+    assert_eq!(sent_to(&channel.take_effects(), CONNECTION), [] as [u8; 0], "no blocks follow");
+}
+
+/// REQ-6532, RULE-61: each family that plays notes has its local sound,
+/// announced with tag 9 and its family's codec; the synth6581 family,
+/// which takes register writes, has none.
+#[test]
+fn every_note_family_has_a_local_sound() {
+    let families = [
+        ("synth7_local", "synth7_bank", "synth7_bank", Codec::Synth7, json!({})),
+        ("synth106_local", "synth106_bank", "synth106_bank", Codec::Synth106, json!({})),
+        ("synth60_local", "synth106_bank", "synth60_bank", Codec::Synth106, json!({})),
+        ("synthd_local", "synthd_bank", "synthd_bank", Codec::SynthD, json!({})),
+        ("synth53_local", "synth53_bank", "synth53_bank", Codec::Synth53, json!({})),
+        ("synth52_local", "synth53_bank", "synth52_bank", Codec::Synth53, json!({})),
+        ("synth51_local", "synth53_bank", "synth51_bank", Codec::Synth53, json!({})),
+        ("synth80_local", "synth80_bank", "synth80_bank", Codec::Synth80, json!({})),
+    ];
+    for (kind, bank_example, bank_kind, codec, settings) in families {
+        let mut channel = answered();
+        channel.from_program(&example_bank(bank_example, bank_kind, LOCAL_BANK), 1);
+        assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0], "{bank_kind}");
+        let mut fields = settings;
+        fields["handle"] = json!(LOCAL);
+        fields["generation"] = json!(1);
+        fields["banks"] = json!([LOCAL_BANK]);
+        fields["setup"] = json!([program_change(0)]);
+        channel.from_program(&message(kind, fields), 2);
+        let effects = channel.take_effects();
+        assert_eq!(refusals(&effects), [] as [Value; 0], "{kind}");
+        let sent = sent_to(&effects, CONNECTION);
+        assert_eq!(record_types(&sent), [TYPE_OBJECT, TYPE_DATA], "{kind}");
+        let object = neoteletext_audio::idl::fragment(&neoteletext_core::packet::Packet { bytes: sent[..42].try_into().unwrap() }).unwrap().unwrap();
+        // Record version, type, a two-byte length, then the OBJECT's body:
+        // its handle, its generation and its codec (MIDI-48).
+        assert_eq!(object.data[4], LOCAL, "{kind}");
+        assert!(object.data.contains(&codec.code()), "{kind}: codec {}", codec.code());
+    }
+    // synth8, whose bank is the tests' own, with its keyboard's settings.
+    let mut channel = answered();
+    channel.from_program(&bank(), 1);
+    let _ = channel.take_effects();
+    let first = first_record(&channel);
+    let local = json!({"handle": HANDLE, "generation": 1, "key_mode": "split", "split_key": 60, "banks": [BANK], "setup": []});
+    channel.from_program(&message("synth8_local", local), 2);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [Value; 0]);
+    let mut sound = Sound::local(HANDLE, 1, Codec::Synth8, &[]).unwrap();
+    sound.banks = alloc::vec![BANK];
+    sound.keys = Some([SYNTH8_KEYS_SPLIT, 60]);
+    let mut records = alloc::vec![sound.object_record().unwrap()];
+    records.extend(sound.data_records());
+    assert_eq!(sent_to(&effects, CONNECTION), audio(&records, first), "an empty setup is an empty block");
+    // No kind of the synth6581 family is local.
+    for kind in ["synth6581_local", "synth8580_local"] {
+        channel.from_program(&message(kind, json!({"handle": 3, "generation": 1, "banks": [BANK], "setup": []})), 3);
+        let refused = refusals(&channel.take_effects());
+        assert_eq!((&refused[0]["rule"], &refused[0]["path"]), (&json!("not_listed"), &json!("kind")), "{kind}");
+    }
+}
+
+/// REQ-6532, RULE-61: a local sound's setup is at most 64 events, each at
+/// time 0, that fit one block; and `play` of a local sound names a page,
+/// with `loop` and `after` false.
+#[test]
+fn a_local_sound_is_refused_as_it_must_be() {
+    let mut channel = answered();
+    channel.from_program(&example_bank("synth106_bank", "synth106_bank", LOCAL_BANK), 1);
+    let _ = channel.take_effects();
+    let refused_as = |channel: &mut Channel, line: &[u8]| {
+        channel.from_program(line, 2);
+        let effects = channel.take_effects();
+        assert_eq!(sent_to(&effects, CONNECTION), [] as [u8; 0], "nothing of a refused message is sent");
+        let refused = refusals(&effects);
+        (refused[0]["rule"].as_str().unwrap().to_string(), refused[0]["path"].as_str().unwrap().to_string())
+    };
+    let named = |rule: &str, path: &str| (rule.to_string(), path.to_string());
+    // An event after time 0.
+    assert_eq!(refused_as(&mut channel, &local_synth106(&json!([program_change(0), program_change(20_000)]))), named("out_of_range", "setup[1].time_us"));
+    // A 65th event.
+    let many: Vec<Value> = (0..65).map(|_| program_change(0)).collect();
+    assert_eq!(refused_as(&mut channel, &local_synth106(&json!(many))), named("too_long", "setup"));
+    // 64 events that do not fit one block: eleven control changes each.
+    let long: Vec<Value> = (0..64).map(|_| json!({"event": "raw", "time_us": 0, "bytes": base64(&[0xB0, 7, 100].repeat(11))})).collect();
+    assert_eq!(refused_as(&mut channel, &local_synth106(&json!(long))).0, "block_full");
+    // No bank named, and a bank that is not one.
+    let no_bank = message("synth106_local", json!({"handle": LOCAL, "generation": 1, "banks": [], "setup": []}));
+    assert_eq!(refused_as(&mut channel, &no_bank), named("too_short", "banks"));
+    let unknown = message("synth106_local", json!({"handle": LOCAL, "generation": 1, "banks": [77], "setup": []}));
+    assert_eq!(refused_as(&mut channel, &unknown).0, "unknown_bank");
+    // Played without a page, looping, or after the sound playing.
+    channel.from_program(&local_synth106(&json!([program_change(0)])), 3);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
+    assert_eq!(refused_as(&mut channel, &play(&Value::Null, false, false)), named("out_of_range", "page"));
+    assert_eq!(refused_as(&mut channel, &play(&json!("101"), true, false)), named("out_of_range", "loop"));
+    assert_eq!(refused_as(&mut channel, &play(&json!("101"), false, true)), named("out_of_range", "after"));
+    channel.from_program(&play(&json!("101"), false, false), 4);
+    let effects = channel.take_effects();
+    assert_eq!(refusals(&effects), [] as [Value; 0], "RULE-61's example of play");
+    assert_eq!(record_types(&sent_to(&effects, CONNECTION)), [neoteletext_audio::record::TYPE_CONTROL]);
+    // Another sound on the handle is no longer local: it plays as any does.
+    channel.from_program(&message("synth106_live", json!({"handle": LOCAL, "generation": 1, "banks": [LOCAL_BANK]})), 5);
+    let _ = channel.take_effects();
+    channel.from_program(&play(&Value::Null, true, false), 6);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0]);
+}

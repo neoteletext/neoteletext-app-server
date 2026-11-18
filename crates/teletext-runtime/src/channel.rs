@@ -39,15 +39,18 @@ use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
 use crate::protocol::{
-    self, ANY_SUBPAGE, Budgets, Connected, ConnectionId, Connections, Describe, Description, Gone, InputMessage, Left, OperatorLevel, PageNumber,
-    ProgramMessage, Refusal, Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, Standard, Start,
+    self, ANY_SUBPAGE, Budgets, Connected, ConnectionId, Connections, Describe, Description, Gone, Left, OperatorLevel, PageNumber, ProgramMessage, Refusal,
+    Replaced, RequestNumber, Rule, Selected, Selection, ServerMessage, Standard, Start,
 };
 use crate::records;
 use crate::sound::Sounds;
 use crate::stats::{ChannelStats, count};
 use crate::viewer::{HandleSecret, RandomSource};
 
+mod rules;
 mod viewers;
+
+pub use rules::DefaultRules;
 
 /// The service number audio and input records are sent on (the
 /// reference channel's, DOC-1951).
@@ -179,6 +182,9 @@ pub struct ChannelConfig {
     /// receiver gives it the wheel there rather than stepping a page's
     /// sub-pages with it. It shapes the default table and nothing else.
     pub wheel: bool,
+    /// What a page has for a connection the program gave no table of its
+    /// own (page-rules.md RULE-53).
+    pub default_rules: DefaultRules,
 }
 
 /// How much a report matters to the server's operator, as a log ranks it
@@ -302,8 +308,8 @@ struct Connection {
     /// The capabilities WELCOME agreed, once HELLO has come.
     agreed: Option<u32>,
     /// The focus last given before the program knew the connection or its
-    /// selection: true for `FOCUS_IN`.
-    focus_untold: Option<bool>,
+    /// selection: true for `FOCUS_IN`, with the rule that sent it.
+    focus_untold: Option<(bool, rules::Sender)>,
     /// The selection and query a page redirect gave, until the receiver's
     /// next SELECT, which repeats it.
     redirected: Option<(Selection, Option<String>)>,
@@ -312,6 +318,14 @@ struct Connection {
     /// What it holds: keys and buttons down, whose releases the program is
     /// owed if the page loses the input (REQ-207).
     held: Held,
+    /// The rule that sent the press of each thing held, which a release
+    /// the server gives for it names (RULE-37).
+    pressed_by: Vec<(Released, rules::Sender)>,
+    /// The rule that sent each pointer's latest move, by its contact, for
+    /// when the move leaves its pace.
+    moved_by: Vec<(u8, rules::Sender)>,
+    /// The rule tables it was given and sent (RULE-40).
+    rules: rules::PageTables,
     /// Where the pointer last was, column and row: a lost button's place.
     pointer: (u8, u8),
     /// Its moves, each paced and the latest kept (REQ-1360). A slot a
@@ -388,6 +402,9 @@ impl Connection {
             redirected: None,
             acked: 0,
             held: Held::new(),
+            pressed_by: Vec::new(),
+            moved_by: Vec::new(),
+            rules: rules::PageTables::default(),
             pointer: (0, 0),
             moves: Pacer::new(),
             record_id: 0,
@@ -510,6 +527,9 @@ pub struct Channel {
     stale_reported_at: Option<u64>,
     /// What the channel's pages show the web, for a short time (REQ-1728).
     descriptions: Descriptions,
+    /// The channel's default table, for a page a connection was given no
+    /// table of (RULE-53); none when the configuration says `none`.
+    default_table: Option<Arc<crate::rules::Compiled>>,
 }
 
 impl Channel {
@@ -530,8 +550,13 @@ impl Channel {
                 ),
             })
             .collect();
+        let default_table = match config.default_rules {
+            DefaultRules::SendAll => crate::rules::Compiled::send_all(config.wheel).map(Arc::new),
+            DefaultRules::None => None,
+        };
         Self {
             viewers,
+            default_table,
             config,
             program: false,
             answered: false,
@@ -666,9 +691,12 @@ impl Channel {
         let contact = if let Event::Touch(touch) = event { touch.id } else { MOUSE_CONTACT };
         let item = Item::Event(event);
         let (Some(on), Some(moved)) = (input::stamp(&item), Input::of(&item).and_then(|input| input.event())) else { return };
+        let sender =
+            self.connections.get(&connection).and_then(|state| state.moved_by.iter().find(|(held, _)| *held == contact)).map(|(_, sender)| sender.clone());
+        let Some(sender) = sender else { return };
         if self.program {
             count(&mut self.stats.lines_to_application);
-            let message = input_message(connection, PageNumber(on.page), protocol::SubCode(on.sub), false, moved);
+            let message = sender.input(connection, PageNumber(on.page), protocol::SubCode(on.sub), false, moved);
             self.effects.push(Effect::MoveToProgram { connection, contact, line: protocol::line(&ServerMessage::Input(message)) });
         }
     }
@@ -834,10 +862,10 @@ impl Channel {
     fn tell_focus(&mut self, connection: ConnectionId) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         let (true, Some(selection)) = (state.announced, state.selection) else { return };
-        let Some(focused) = state.focus_untold.take() else { return };
+        let Some((focused, sender)) = state.focus_untold.take() else { return };
         let event = if focused { protocol::InputEvent::Focus } else { protocol::InputEvent::Blur };
         count(&mut self.stats.inputs);
-        self.tell(&ServerMessage::Input(input_message(connection, selection.page, selection.sub, false, event)));
+        self.tell(&ServerMessage::Input(sender.input(connection, selection.page, selection.sub, false, event)));
     }
 
     /// A connection the host numbered `connection` opened, from `address`
@@ -859,6 +887,7 @@ impl Channel {
     pub fn closed(&mut self, connection: ConnectionId, now: u64) {
         self.flush_moves(connection, now);
         self.release_held(connection);
+        self.unanswered_queries(connection, None);
         let Some(state) = self.connections.remove(&connection) else { return };
         self.stats.left();
         self.sounds.forget(connection);
@@ -944,6 +973,7 @@ impl Channel {
         for (connection, records) in self.sounds.due(now) {
             self.records(&[connection], &records);
         }
+        self.late_queries(now);
     }
 
     /// Tells `connection` its selection ended with `status` (DOC-1961):
@@ -972,7 +1002,8 @@ impl Channel {
         // A move's time is in microseconds: this is the first millisecond at
         // or after it.
         let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
-        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).chain(self.sounds.next_due()).min()
+        let queries = self.connections.values().filter_map(|state| state.rules.next_due());
+        dues.chain(expiry).chain(moves).chain(self.descriptions.next_due()).chain(self.sounds.next_due()).chain(queries).min()
     }
 
     /// Takes one item of `connection`'s input; false for one out of the
@@ -982,19 +1013,23 @@ impl Channel {
     /// TOUCH was not.
     fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) -> bool {
         let Some(state) = self.connections.get_mut(&connection) else { return true };
-        let in_order = match (item, state.agreed) {
-            (Item::Event(Event::Hello { .. }), agreed) => agreed.is_none(),
-            (_, None) => false,
-            (Item::Event(Event::Select(..)), Some(agreed)) => agreed & SELECT_CAP != 0,
-            (Item::Event(Event::Mouse(mouse)), Some(agreed)) => mouse.device != Device::Touch || agreed & TOUCH_CAP != 0,
-            (Item::Event(Event::Touch(_)), Some(agreed)) => agreed & TOUCH_CAP != 0,
+        // The viewer's input a rule sent (RULE-46): under push protocol 9 it
+        // comes only inside a RULE_EVENT, and the engine's reader refuses
+        // one at the top level (REQ-6523).
+        let carried = if let Item::Event(Event::RuleEvent(event)) = item { event.input() } else { None };
+        let in_order = match (item, carried.as_ref().map(|(inner, _)| inner), state.agreed) {
+            (Item::Event(Event::Hello { .. }), _, agreed) => agreed.is_none(),
+            (_, _, None) => false,
+            (Item::Event(Event::Select(..)), _, Some(agreed)) => agreed & SELECT_CAP != 0,
+            (_, Some(Item::Event(Event::Mouse(mouse))), Some(agreed)) => mouse.device != Device::Touch || agreed & TOUCH_CAP != 0,
+            (_, Some(Item::Event(Event::Touch(_))), Some(agreed)) => agreed & TOUCH_CAP != 0,
             _ => true,
         };
         if !in_order {
             return false;
         }
         state.acked = state.acked.wrapping_add(u16::try_from(units(item) & 0xFFFF).unwrap_or(0));
-        if !input::is_move(item) {
+        if !carried.as_ref().is_some_and(|(inner, _)| input::is_move(inner)) {
             self.flush_moves(connection, now);
         }
         match *item {
@@ -1004,7 +1039,12 @@ impl Channel {
                 self.selected(connection, select.page, select.sub, parameters, now);
             }
             Item::Event(ref event @ (Event::StateProof(_) | Event::StateNone(_) | Event::StateOffer)) => self.state_message(connection, event, now),
-            _ => self.input(connection, item, now),
+            Item::Event(Event::RuleEvent(ref event)) => self.rule_event(connection, event, carried, now),
+            Item::Event(Event::PageState(ref state)) => self.page_state(connection, state),
+            Item::Event(Event::RulesFault(fault)) => self.rules_fault(connection, fault),
+            // The session's other events (RESIZE, RESUME) ask nothing of a
+            // program.
+            _ => {}
         }
         true
     }
@@ -1017,7 +1057,7 @@ impl Channel {
     /// connection holds, and focus is always acted on (REQ-1553: neither
     /// touches the selection). Raw text, which cannot carry a stamp, is for
     /// the selection as it stands.
-    fn input(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) {
+    fn input(&mut self, connection: ConnectionId, item: &Item<'_>, sender: &rules::Sender, now: u64) {
         let Some(state) = self.connections.get_mut(&connection) else { return };
         let selection = state.selection;
         let stamp = input::stamp(item);
@@ -1036,6 +1076,7 @@ impl Channel {
             if touch.action == MouseAction::Gone {
                 state.moves.forget(usize::from(touch.id));
             } else if touch.action == MouseAction::Move {
+                rules::keep(&mut state.moved_by, touch.id, sender);
                 let offered = state.moves.offer(Event::Touch(touch), microseconds(now));
                 count(&mut self.stats.inputs);
                 if let Offer::Now(event) = offered {
@@ -1048,6 +1089,7 @@ impl Channel {
             if mouse.action == MouseAction::Gone {
                 state.moves.forget(0);
             } else if mouse.action == MouseAction::Move {
+                rules::keep(&mut state.moved_by, MOUSE_CONTACT, sender);
                 let offered = state.moves.offer(Event::Mouse(mouse), microseconds(now));
                 count(&mut self.stats.inputs);
                 if let Offer::Now(event) = offered {
@@ -1061,6 +1103,9 @@ impl Channel {
         state.held.take(item, &mut |released, on| owed.push((released, on)));
         let let_go = before != state.held;
         self.lost(connection, owed);
+        if let Some(state) = self.connections.get_mut(&connection) {
+            rules::held_by(&mut state.pressed_by, item, sender);
+        }
         // A late release of what a selection change already let go.
         if elsewhere && !let_go {
             return;
@@ -1073,7 +1118,7 @@ impl Channel {
             && let Some(state) = self.connections.get_mut(&connection)
             && (!state.announced || state.selection.is_none())
         {
-            state.focus_untold = Some(matches!(input, Input::FocusIn));
+            state.focus_untold = Some((matches!(input, Input::FocusIn), sender.clone()));
             return;
         }
         let Some(event) = input.event() else { return };
@@ -1087,7 +1132,7 @@ impl Channel {
             self.gesture(connection, now);
         }
         let lost = input::marked_lost(item);
-        self.tell(&ServerMessage::Input(input_message(connection, PageNumber(page), protocol::SubCode(sub), lost, event)));
+        self.tell(&ServerMessage::Input(sender.input(connection, PageNumber(page), protocol::SubCode(sub), lost, event)));
     }
 
     /// Input dropped for its stamp: counted, and the operator told at most
@@ -1113,11 +1158,15 @@ impl Channel {
     /// Gives the program the releases `owed`, marked lost, each for the page
     /// that held it (REQ-207).
     fn lost(&mut self, connection: ConnectionId, owed: Vec<(Released, Stamp)>) {
-        let Some(at) = self.connections.get(&connection).map(|state| state.pointer) else { return };
         for (released, on) in owed {
+            let Some(state) = self.connections.get_mut(&connection) else { return };
+            let at = state.pointer;
+            // A release is given for a press some rule sent, and names that
+            // rule (RULE-37): a program hears nothing no rule asked for.
+            let Some(sender) = rules::take_held(&mut state.pressed_by, released) else { continue };
             let Some(event) = input::lost_release(released, at) else { continue };
             count(&mut self.stats.inputs);
-            self.tell(&ServerMessage::Input(input_message(connection, PageNumber(on.page), protocol::SubCode(on.sub), true, event)));
+            self.tell(&ServerMessage::Input(sender.input(connection, PageNumber(on.page), protocol::SubCode(on.sub), true, event)));
         }
     }
 
@@ -1159,6 +1208,9 @@ impl Channel {
             let Some(before) = state.selection.take() else { return };
             state.parameters = None;
             state.shown = None;
+            state.rules.left();
+            self.unanswered_queries(connection, None);
+            let Some(state) = self.connections.get_mut(&connection) else { return };
             state.ending = Ending::Answered;
             if state.announced {
                 self.tell(&ServerMessage::Left(Left { connection, page: before.page }));
@@ -1210,6 +1262,10 @@ impl Channel {
         state.regis = None;
         state.naplps = None;
         let announced = state.announced;
+        // The page's table goes before anything of the page (RULE-40).
+        self.unanswered_queries(connection, Some(selection.page.0));
+        self.place_rules(connection, selection.page.0);
+        let Some(state) = self.connections.get_mut(&connection) else { return };
         if announced {
             state.request = state.request.saturating_add(1);
         }
@@ -1406,16 +1462,13 @@ impl Channel {
                     self.send(connection, Arc::clone(&bytes));
                 }
             }
-            other => self.act_on_rules(&other),
+            ProgramMessage::Rules(message) => self.rules(&message)?,
+            ProgramMessage::QueryState(query) => self.query_state(query, now)?,
+            // Read and checked; what each does comes with the records of
+            // animation (REQ-6533).
+            other => self.log(Level::Debug, "animation_message", format!("{:?} was read and is not yet acted on", other.kind())),
         }
         Ok(())
-    }
-
-    /// The messages of the page rule table and of animation (REQ-6532,
-    /// REQ-6533): read and checked here; what each does comes with the
-    /// engine that has their records.
-    fn act_on_rules(&mut self, message: &ProgramMessage) {
-        self.log(Level::Debug, "rules_message", format!("{:?} was read and is not yet acted on", message.kind()));
     }
 
     /// The connections named whose selection shows a sub-page: who what a
@@ -1575,6 +1628,7 @@ impl Channel {
     fn send_page(&mut self, targets: &[ConnectionId], named: bool, request: Option<RequestNumber>, page: &protocol::Page) {
         let encoded = crate::page::encode(page);
         let (number, sub) = (page.page.0, page.sub.0);
+        let default_table = self.default_table.clone();
         let mut sends: Vec<(ConnectionId, Vec<u8>)> = Vec::new();
         let mut faults: Vec<String> = Vec::new();
         for &connection in targets {
@@ -1602,11 +1656,18 @@ impl Channel {
                 _ => Change::Whole,
             };
             state.shown = Some(Shown { page: number, sub, packets: encoded.packets.clone(), cursor: encoded.cursor, links: page.link_extension.clone() });
-            let mut bytes = match change {
-                Change::Nothing => continue,
-                Change::Whole => encoded.packets.concat(),
-                Change::Rows(bytes) => bytes,
-            };
+            // The page's table before the page (RULE-40), for a selection
+            // that came to be this page by the program's answer.
+            let mut bytes = state.rules.place(number, default_table.as_ref(), &mut state.record_id);
+            match change {
+                Change::Nothing if bytes.is_empty() => continue,
+                Change::Nothing => {
+                    sends.push((connection, bytes));
+                    continue;
+                }
+                Change::Whole => bytes.extend_from_slice(&encoded.packets.concat()),
+                Change::Rows(rows) => bytes.extend_from_slice(&rows),
+            }
             count(&mut self.stats.pages_sent);
             match records::sub_page_links(page, &mut state.record_id) {
                 Ok(links) => bytes.extend_from_slice(&links),
@@ -1642,11 +1703,6 @@ impl Channel {
             self.send(connection, Arc::from(bytes));
         }
     }
-}
-
-/// An `input` message, which names the rule that sent it (RULE-37).
-fn input_message(connection: ConnectionId, page: PageNumber, sub: protocol::SubCode, lost: bool, event: protocol::InputEvent) -> InputMessage {
-    InputMessage { connection, page, sub, lost, rule: protocol::RuleName(String::from("keys")), tick: 0, target: None, event }
 }
 
 /// What `description` shows the web: nothing unless it says public, which the

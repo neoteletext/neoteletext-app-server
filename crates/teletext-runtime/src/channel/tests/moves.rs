@@ -15,9 +15,10 @@ const FLOOD_MS_APART: u64 = 1;
 /// least common multiple.
 const CELLS_REPEAT: u32 = 200;
 
-/// When [`selected`]'s channel next wakes with no move waiting: its selection's
-/// deadline, since the tests' program answers nothing.
-const NOTHING_MOVING: Option<u64> = Some(PROGRAM_REPLY_LIMIT_MS);
+/// Whether no move of any connection waits for its pace.
+fn no_move_waits(channel: &Channel) -> bool {
+    channel.connections.values().all(|state| state.moves.due().is_none())
+}
 
 /// A move to a dot of its own, inside its cell, as a receiver sends it
 /// (DOC-1946): its column and row show which it was. The cells repeat every
@@ -59,18 +60,19 @@ fn a_flood_of_moves_reaches_a_program_at_the_pace() {
     for position in 1..=u32::try_from(SECOND_MS / FLOOD_MS_APART).unwrap() {
         now += FLOOD_MS_APART;
         wake(&mut channel, now);
-        channel.received(CONNECTION, &message(&[moved_to(position)]), now);
+        channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(position)]), now);
         heard.extend(inputs(&channel.take_effects()));
     }
     let pace = usize::try_from(MOVES_PER_SECOND).unwrap();
     assert!(heard.len() <= pace, "{} moves in a second", heard.len());
     assert!(heard.len() >= pace - 2, "{} moves in a second: the pace is 60, not less", heard.len());
+    assert!(!no_move_waits(&channel), "the latest waits its turn");
     let wake_at = channel.next_wake().expect("the latest waits its turn");
     channel.deadline(wake_at);
     let last = inputs(&channel.take_effects());
     assert_eq!(last.len(), 1, "{last:?}");
     assert_eq!(cell(&last[0]), (0, 0), "the thousandth move, not one before it: {last:?}");
-    assert_eq!(channel.next_wake(), NOTHING_MOVING, "nothing runs while the pointer is still");
+    assert!(no_move_waits(&channel), "nothing runs while the pointer is still");
 }
 
 /// DOC-1945: any other event brings the move waiting first, so that a release
@@ -78,10 +80,10 @@ fn a_flood_of_moves_reaches_a_program_at_the_pace() {
 #[test]
 fn a_release_brings_the_move_that_ended_the_drag_first() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Press, 0)]), 1);
-    channel.received(CONNECTION, &message(&[moved_to(1), moved_to(2), moved_to(3)]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[mouse(ON, MouseAction::Press, 0)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1), moved_to(2), moved_to(3)]), 2);
     let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&[mouse(ON, MouseAction::Release, 0)]), 3);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[mouse(ON, MouseAction::Release, 0)]), 3);
     let lines = inputs(&channel.take_effects());
     let order: Vec<_> = lines.iter().map(kind_and_action).collect();
     assert_eq!(order, [("mouse", "move"), ("mouse", "release")], "{lines:?}");
@@ -92,9 +94,9 @@ fn a_release_brings_the_move_that_ended_the_drag_first() {
 #[test]
 fn a_key_is_never_held_behind_a_move() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[moved_to(1), moved_to(2)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1), moved_to(2)]), 1);
     let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&[key(ON, Action::Press, false)]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[key(ON, Action::Press, false)]), 2);
     let lines = inputs(&channel.take_effects());
     let order: Vec<_> = lines.iter().map(kind_and_action).collect();
     assert_eq!(order, [("mouse", "move"), ("key", "press")], "{lines:?}");
@@ -104,9 +106,9 @@ fn a_key_is_never_held_behind_a_move() {
 #[test]
 fn a_selection_brings_the_move_first() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[moved_to(1), moved_to(2)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1), moved_to(2)]), 1);
     let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&[select(0x200, 0)]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[select(0x200, 0)]), 2);
     let lines = told(&channel.take_effects());
     let order: Vec<&str> = lines.iter().map(|line| line["type"].as_str().unwrap()).collect();
     assert_eq!(order, ["input", "left", "selected"], "{lines:?}");
@@ -117,7 +119,7 @@ fn a_selection_brings_the_move_first() {
 #[test]
 fn a_connection_that_closes_sends_its_last_move() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[moved_to(1), moved_to(2)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1), moved_to(2)]), 1);
     let _ = channel.take_effects();
     channel.closed(CONNECTION, 2);
     assert_eq!(inputs(&channel.take_effects()).len(), 1);
@@ -128,30 +130,32 @@ fn a_connection_that_closes_sends_its_last_move() {
 #[test]
 fn an_unchanged_position_is_not_told_again() {
     let mut channel = selected();
-    channel.received(CONNECTION, &message(&[moved_to(1)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1)]), 1);
     assert_eq!(inputs(&channel.take_effects()).len(), 1);
-    channel.received(CONNECTION, &message(&[moved_to(2), moved_to(1)]), 2);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(2), moved_to(1)]), 2);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
-    assert_eq!(channel.next_wake(), NOTHING_MOVING, "nothing is left waiting");
-    channel.received(CONNECTION, &message(&[moved_to(1)]), SECOND_MS);
+    assert!(no_move_waits(&channel), "nothing is left waiting");
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1)]), SECOND_MS);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
 }
 
-/// REQ-1360: a move counts no input units and is never acknowledged, whether
-/// it goes at once or waits.
+/// Under push protocol 9 a move comes inside its rule's `RULE_EVENT`, which
+/// counts one whatever it carries (page-rules.md RULE-46, DOC-1943): the
+/// moves are acknowledged together, by one cursor record, whether each went
+/// to the program at once or waited (REQ-1360, REQ-1334).
 #[test]
-fn moves_are_never_acknowledged() {
+fn moves_are_acknowledged_as_their_rule_events() {
     let mut channel = selected();
     for position in 1..=3 {
-        channel.received(CONNECTION, &message(&[moved_to(position)]), u64::from(position));
+        channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(position)]), u64::from(position));
     }
     let _ = channel.take_effects();
-    let mut now = SECOND_MS;
-    while let Some(wake_at) = channel.next_wake().filter(|_| channel.next_wake() != NOTHING_MOVING) {
+    let mut now = 0;
+    while let Some(wake_at) = channel.next_wake().filter(|wake_at| *wake_at <= SECOND_MS) {
         now = now.max(wake_at);
         channel.deadline(now);
     }
-    assert_eq!(sends(&channel.take_effects()), 0, "no cursor record for moves");
+    assert_eq!(sends(&channel.take_effects()), 1, "one cursor record for the three");
 }
 
 /// A move stamped with a page no longer selected is dropped and counted,
@@ -161,10 +165,10 @@ fn a_move_on_another_page_is_dropped() {
     let mut channel = selected();
     let at = Point { column: 1, row: 1, pixels: None, mods: 0 };
     let stale = Item::Event(Event::Mouse(Mouse { on: OTHER, action: MouseAction::Move, button: 0, at, device: Device::Mouse }));
-    channel.received(CONNECTION, &message(&[stale]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[stale]), 1);
     assert_eq!(inputs(&channel.take_effects()), [] as [Value; 0]);
     assert_eq!(channel.stats().stale_input, 1);
-    assert_eq!(channel.next_wake(), NOTHING_MOVING);
+    assert!(no_move_waits(&channel));
 }
 
 /// A connection's and not its viewer's: two tabs have a pointer
@@ -174,10 +178,10 @@ fn each_connection_has_a_pace_of_its_own() {
     const SECOND: u64 = CONNECTION + 1;
     let mut channel = selected();
     channel.opened(SECOND, None, 0);
-    channel.received(SECOND, &message(&[hello(), select(0x100, 0)]), 0);
+    channel.received(SECOND, &message(&channel, SECOND, &[hello(), select(0x100, 0)]), 0);
     let _ = channel.take_effects();
-    channel.received(CONNECTION, &message(&[moved_to(1)]), 1);
-    channel.received(SECOND, &message(&[moved_to(2)]), 1);
+    channel.received(CONNECTION, &message(&channel, CONNECTION, &[moved_to(1)]), 1);
+    channel.received(SECOND, &message(&channel, SECOND, &[moved_to(2)]), 1);
     let lines = inputs(&channel.take_effects());
     let connections: Vec<_> = lines.iter().map(|line| line["connection"].as_u64().unwrap()).collect();
     assert_eq!(connections, [CONNECTION, SECOND]);

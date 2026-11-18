@@ -31,6 +31,9 @@ fuzz_target!(|data: &[u8]| {
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
         wheel: false,
+        // Every page has the default table, so that input is acted on
+        // (page-rules.md RULE-53).
+        default_rules: teletext_runtime::channel::DefaultRules::SendAll,
     };
     let mut channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(Counting(0)));
     channel.program_started(0);

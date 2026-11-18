@@ -228,6 +228,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
             epoch_at_start_ms,
             other_addresses: Vec::new(),
             wheel: spec.wheel,
+            default_rules: spec.default_rules,
         };
         let link = apps::start(spec)?;
         let mut channel = Channel::new(config, &secret, Box::new(SystemRandomSource::default()));

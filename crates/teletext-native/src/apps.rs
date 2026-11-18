@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use neoteletext_web::map::Place;
 use teletext_runtime::InitialPage;
+use teletext_runtime::channel::DefaultRules;
 use teletext_runtime::json::{self, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
@@ -134,9 +135,13 @@ pub struct ChannelSpec {
     pub program: Program,
     /// The page its viewers start on.
     pub initial_page: InitialPage,
-    /// It uses the mouse wheel over its pages (`"wheel": true`), so its
-    /// `channel.ttx` says so (the browser's DEC-6447).
+    /// It uses the mouse wheel over its pages (`"wheel": true`): its
+    /// default rule table then has the `wheel` rule (page-rules.md
+    /// RULE-53).
     pub wheel: bool,
+    /// What a page has for a connection its program gave no rule table of
+    /// its own (`"default_rules"`, RULE-53).
+    pub default_rules: DefaultRules,
 }
 
 /// The page a channel's viewers start on when its entry names none: the
@@ -150,7 +155,7 @@ const PAGE_DIGITS: usize = 3;
 const HEXADECIMAL: u32 = 16;
 
 /// Reads the channels file: `{"channels":[{"folder","name","command":[…],
-/// "directory","initial_page","wheel"}]}`, or `"socket"` in place of `"command"` and
+/// "directory","initial_page","wheel","default_rules"}]}`, or `"socket"` in place of `"command"` and
 /// `"directory"`, or, for a program that connects over a WebSocket,
 /// `"secret_variable"` or `"secret_file"`, the environment variable or file
 /// that holds the channel's secret, never the secret itself (REQ-1044). A
@@ -159,7 +164,12 @@ const HEXADECIMAL: u32 = 16;
 /// page the channel's viewers start on, [`DEFAULT_INITIAL_PAGE`] when left
 /// out (TODO-2135 item 11: `channel.ttx` reports it, so it can vary).
 /// `wheel`, true or false and false when left out, says the channel uses
-/// the mouse wheel over its pages (the browser's DEC-6447).
+/// the mouse wheel over its pages. `default_rules`, `"none"` or
+/// `"send_all"` and `"none"` when left out, says what a page has for a
+/// connection its program gave no rule table: none, so that the page sends
+/// its channel no input, or the default table, which sends every kind of
+/// input as push protocol 8 did, with the wheel when `wheel` is true
+/// (page-rules.md RULE-53, REQ-6523).
 ///
 /// # Errors
 /// A file that cannot be read or is not a valid channels file.
@@ -216,7 +226,12 @@ pub fn read_channels(path: &Path) -> Result<Vec<ChannelSpec>, String> {
             None => false,
             Some(value) => value.boolean().ok_or_else(|| format!("{}: {folder}'s wheel is true or false", path.display()))?,
         };
-        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program, initial_page, wheel });
+        let default_rules = match item.get("default_rules").map(Value::text) {
+            None | Some(Some("none")) => DefaultRules::None,
+            Some(Some("send_all")) => DefaultRules::SendAll,
+            Some(_) => return Err(format!("{}: {folder}'s default_rules is \"none\" or \"send_all\"", path.display())),
+        };
+        specs.push(ChannelSpec { name: text("name").unwrap_or_else(|| folder.clone()), folder, program, initial_page, wheel, default_rules });
     }
     Ok(specs)
 }
