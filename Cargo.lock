@@ -455,7 +455,7 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=2
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "neoteletext-audio-instruments",
  "neoteletext-core",
@@ -464,17 +464,17 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-instruments"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "naplps",
  "neoteletext-core",
@@ -485,7 +485,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "neoteletext-core",
 ]
@@ -493,7 +493,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -503,12 +503,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-opus"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 
 [[package]]
 name = "neoteletext-picture"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "neoteletext-core",
  "neoteletext-formats",
@@ -517,12 +517,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-rules"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=cf95e761211895d114a92194214a9171394e0a56#cf95e761211895d114a92194214a9171394e0a56"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=63d65dbc5610ec6ac1dd561a45d75c63a618bdf1#63d65dbc5610ec6ac1dd561a45d75c63a618bdf1"
 dependencies = [
  "embedded-io",
  "neoteletext-audio",
