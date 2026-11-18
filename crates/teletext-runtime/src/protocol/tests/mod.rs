@@ -26,7 +26,7 @@ mod reply;
 mod schema;
 mod sound;
 mod subpages;
-mod synth;
+pub(crate) mod synth;
 
 /// The line a program would send for `value`.
 pub(crate) fn line(value: &Value) -> Vec<u8> {

@@ -36,10 +36,15 @@ pub(crate) const fn sysex_kind(_bytes: &[u8]) -> Option<(u8, SysexKind)> {
     None
 }
 
-/// Whether a message is a bank dump to lift (SRV-63). TEMPORARY: none,
-/// until the engine's bank reader is pinned.
-pub(crate) const fn bank_dump(_bytes: &[u8]) -> Option<u8> {
-    None
+/// Whether a message is a bank dump to lift (SRV-63). TEMPORARY: a
+/// message longer than an event, which only a bank dump may be, is refused
+/// as unavailable until the engine's bank reader is pinned; a shorter one
+/// is none.
+pub(crate) fn bank_dump(bytes: &[u8]) -> Result<Option<u8>, FamilyFault> {
+    if bytes.len() > neoteletext_audio::midi::MOST_SYSTEM_EXCLUSIVE_BYTES {
+        return Err(FamilyFault::unavailable(Rule::InvalidBank, "synth7", "bank dump reader"));
+    }
+    Ok(None)
 }
 
 /// Checks a bank image (SRV-60). TEMPORARY: carried after the generic

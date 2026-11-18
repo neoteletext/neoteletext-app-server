@@ -121,11 +121,11 @@ impl Family {
     /// dumps, which a stored sound's music lifts into a bank (SRV-63):
     /// `Some` with the group it fills, so that one group's dumps make one
     /// bank (the synth53 family), or 0.
-    pub(crate) fn bank_dump(self, bytes: &[u8]) -> Option<u8> {
+    pub(crate) fn bank_dump(self, bytes: &[u8]) -> Result<Option<u8>, FamilyFault> {
         match self {
             Self::Synth7 => synth7::bank_dump(bytes),
             Self::Synth53 => synth53::bank_dump(bytes),
-            Self::Synth6581 | Self::Synth106 | Self::SynthD | Self::Synth8 | Self::Synth80 => None,
+            Self::Synth6581 | Self::Synth106 | Self::SynthD | Self::Synth8 | Self::Synth80 => Ok(None),
         }
     }
 

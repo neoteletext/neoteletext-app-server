@@ -31,6 +31,7 @@ mod moves;
 mod naplps;
 mod regis;
 mod sound;
+mod synth;
 
 /// The connection and session of a test.
 const CONNECTION: u64 = 1;

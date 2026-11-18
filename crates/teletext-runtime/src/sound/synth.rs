@@ -173,7 +173,7 @@ pub(crate) fn lift(family: Family, timed: &mut Vec<Timed>, live: bool) -> Result
             noted = true;
         }
         if let Wire::Sysex(bytes) = &event.wire {
-            if let Some(group) = family.bank_dump(bytes) {
+            if let Some(group) = family.bank_dump(bytes).map_err(|fault| family_fault(&event.path, fault))? {
                 if live || noted {
                     return Err(refuse(
                         &event.path,
