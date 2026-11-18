@@ -19,7 +19,14 @@ const PROGRAM: u8 = 2;
 const OPENING: [u8; 18] = *b"\xFF\x09\x07\x80\x80\x88\x02\xFF\x40\x08100/0000";
 
 fuzz_target!(|data: &[u8]| {
-    let config = ChannelConfig { name: "Fuzz".into(), address: "http://127.0.0.1/fuzz/".into(), initial_page: InitialPage::new(0x100).unwrap(), epoch_at_start_ms: 0, session_grace_ms: SESSION_GRACE_MS };
+    let config = ChannelConfig {
+        name: "Fuzz".into(),
+        address: "http://127.0.0.1/fuzz/".into(),
+        initial_page: InitialPage::new(0x100).unwrap(),
+        epoch_at_start_ms: 0,
+        session_grace_ms: SESSION_GRACE_MS,
+        wheel: false,
+    };
     let mut channel = Channel::new(config);
     channel.program_started(0);
     channel.opened(1, 1, Vec::new(), 0);

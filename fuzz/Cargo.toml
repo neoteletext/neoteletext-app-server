@@ -61,8 +61,29 @@ doc = false
 bench = false
 
 [[bin]]
-name = "instrument_sound"
-path = "fuzz_targets/instrument_sound.rs"
+name = "synth_sound"
+path = "fuzz_targets/synth_sound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "synth_live"
+path = "fuzz_targets/synth_live.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "synth_patch"
+path = "fuzz_targets/synth_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "midi_file"
+path = "fuzz_targets/midi_file.rs"
 test = false
 doc = false
 bench = false
