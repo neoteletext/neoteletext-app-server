@@ -70,34 +70,97 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
+/// The name of each example's rows in the shared wire vectors (RULE-85),
+/// in the order of the examples' file: RULE-35's example, the eight worked
+/// examples of section 7.5, and the music player's table of RULE-93.
+const VECTOR_NAMES: [&str; 10] =
+    ["rule_35", "example_1", "example_2", "example_3", "example_4", "example_5", "example_6", "example_7", "example_8", "music_player"];
+
+/// What each example's rows stand for, in the order of [`VECTOR_NAMES`].
+const VECTOR_MEANINGS: [&str; 10] = [
+    "the table of RULE-35's example",
+    "worked example 1 of section 7.5",
+    "worked example 2 of section 7.5",
+    "worked example 3 of section 7.5",
+    "worked example 4 of section 7.5",
+    "worked example 5 of section 7.5",
+    "worked example 6 of section 7.5",
+    "worked example 7 of section 7.5",
+    "worked example 8 of section 7.5",
+    "the music player's table of RULE-93",
+];
+
+/// The page every row of the shared wire vectors is for (RULE-85): page
+/// 101, sub-code 0001.
+const VECTOR_PAGE: (&str, &str) = ("101", "0001");
+/// The generation and the record id the vectors' RULES records carry.
+const VECTOR_GENERATION: u16 = 1;
+
+/// `example` for the vectors' page, 101/0001: a table's image holds no
+/// page, but a group's `play` and every command's body name the table's.
+fn on_the_vectors_page(example: &Value) -> Value {
+    let mut moved = example.clone();
+    moved["page"] = json!(VECTOR_PAGE.0);
+    moved["sub"] = json!(VECTOR_PAGE.1);
+    moved
+}
+
 /// RULE-35, RULE-59, RULE-85 (REQ-6532): every worked example and the music
-/// player's table are accepted, and the image each encodes to decodes with
-/// the receivers' crate and encodes again to the same bytes. The images are
-/// kept as vectors (`TELETEXT_BLESS_RULES=1` writes them).
+/// player's table are accepted at their own pages, and the image each
+/// encodes to decodes with the receivers' crate and encodes again to the
+/// same bytes. For page 101/0001, the page of the shared wire vectors, the
+/// image and the RULES record it travels in are the `rules` and `records`
+/// rows of neoteletext-common's `wire-vectors.tsv`, which this file holds
+/// a copy of, in that file's columns (`TELETEXT_BLESS_RULES=1` writes it;
+/// the check script holds it equal to the shared file's rows).
 #[test]
 fn every_worked_example_encodes_and_decodes_the_same() {
-    let mut vectors = String::from("# page\tsub\timage, as the server encodes each worked example of page-rules.md 7.5, RULE-35 and RULE-93\n");
-    for example in examples() {
-        let table = compiled(&example).unwrap_or_else(|refusal| panic!("refused {example}: {refusal}"));
-        let image = table.image();
-        let page = u16::from_str_radix(example["page"].as_str().unwrap(), 16).unwrap();
-        let sub = u16::from_str_radix(example["sub"].as_str().unwrap(), 16).unwrap();
-        let mut decoded = alloc::boxed::Box::new(neoteletext_rules::Table::new(page, sub));
-        neoteletext_rules::decode(image, page, sub, neoteletext_web::records::body_check, &mut decoded).unwrap();
-        let mut again = alloc::vec![0_u8; limits::MAX_TABLE_BYTES];
-        let length = neoteletext_rules::encode(&decoded, neoteletext_web::records::body_check, &mut again).unwrap();
-        assert_eq!(&again[..length], image, "{}", example["page"]);
-        vectors.push_str(example["page"].as_str().unwrap());
-        vectors.push('\t');
-        vectors.push_str(example["sub"].as_str().unwrap());
-        vectors.push('\t');
-        vectors.push_str(&hex(image));
-        vectors.push('\n');
+    use core::fmt::Write as _;
+    let mut vectors =
+        String::from("# The rules and records rows of neoteletext-common's wire-vectors.tsv that the server writes (RULE-85): kind, name, value, meaning.\n");
+    let mut records_rows = String::new();
+    for ((example, name), meaning) in examples().into_iter().zip(VECTOR_NAMES).zip(VECTOR_MEANINGS) {
+        for at in [example.clone(), on_the_vectors_page(&example)] {
+            let table = compiled(&at).unwrap_or_else(|refusal| panic!("refused {name} at {}: {refusal}", at["page"]));
+            let image = table.image();
+            let page = u16::from_str_radix(at["page"].as_str().unwrap(), 16).unwrap();
+            let sub = u16::from_str_radix(at["sub"].as_str().unwrap(), 16).unwrap();
+            let mut decoded = alloc::boxed::Box::new(neoteletext_rules::Table::new(page, sub));
+            neoteletext_rules::decode(image, page, sub, neoteletext_web::records::body_check, &mut decoded).unwrap();
+            let mut again = alloc::vec![0_u8; limits::MAX_TABLE_BYTES];
+            let length = neoteletext_rules::encode(&decoded, neoteletext_web::records::body_check, &mut again).unwrap();
+            assert_eq!(&again[..length], image, "{name} at {}", at["page"]);
+        }
+        let table = compiled(&on_the_vectors_page(&example)).unwrap();
+        let records = table.records(VECTOR_GENERATION, &mut 0);
+        let packets: Vec<String> = records.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().map(|packet| hex(packet)).collect();
+        // Each image fits one RULES record (RULE-41).
+        assert!(table.image().len() <= limits::MAX_TABLE_FRAGMENT, "{name}");
+        let _ = writeln!(vectors, "rules\t{name}\t{}\tthe image of {meaning} for page 101/0001", hex(table.image()));
+        let _ = writeln!(
+            records_rows,
+            "records\trules_{name}\t{}\tpage 101 sub 0001 generation {VECTOR_GENERATION}: the whole image of the rules row {name}, in one record",
+            packets.join(" ")
+        );
     }
+    vectors.push_str(&records_rows);
     if std::env::var_os(BLESS).is_some() {
         std::fs::write(VECTORS, &vectors).unwrap();
     }
     assert_eq!(std::fs::read_to_string(VECTORS).unwrap(), vectors, "the vectors are not what the examples encode to: run with {BLESS}=1");
+}
+
+/// RULE-85: the records this file's rows are written with are the
+/// engine's, as the shared file's default table's record shows: the
+/// server's RULES record of the default table at generation 1 and record
+/// id 0 is that row byte for byte.
+#[test]
+fn the_vectors_records_are_written_as_the_engines() {
+    let row = neoteletext_web::wire_vectors::vectors().find(|row| row.kind == "records" && row.name == "rules_default_send_all").unwrap();
+    let table = crate::rules::Compiled::send_all(false, 0x101, 1).unwrap();
+    let records = table.records(VECTOR_GENERATION, &mut 0);
+    let packets: Vec<String> = records.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>().0.iter().map(|packet| hex(packet)).collect();
+    assert_eq!(packets.join(" "), row.value);
 }
 
 /// RULE-93 (REQ-6541, DEC-6635): the music player's table is sixteen

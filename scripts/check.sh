@@ -54,6 +54,30 @@ check_kit_fixture() {
         fail "$KIT_FIXTURE_COPY differs from the kit's test/fixtures/hello.jsonl at $KIT_FIXTURE_FROM; copy that file, or name in scripts/check.sh the commit the copy is from"
 }
 
+# neoteletext-common's repository, and the commit whose wire-vectors.tsv
+# holds the rules and records rows the server's protocol tests write
+# (RULE-85): crates/teletext-runtime/src/protocol/tests/rules-vectors.tsv
+# is held equal to those rows of it by the tests, which write the file,
+# and by this step, so a change to either fails until both agree.
+common="${NEOTELETEXT_COMMON:-$HOME/devel/neoteletext-common}"
+readonly RULES_VECTORS_FROM="ba39b431c6dbc2db64f67330cb07cc503771e3a4"
+readonly RULES_VECTORS_COPY="crates/teletext-runtime/src/protocol/tests/rules-vectors.tsv"
+common_git() { env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C "$common" "$@"; }
+
+check_rules_vectors() {
+    step "$RULES_VECTORS_COPY is neoteletext-common's wire-vectors.tsv rows at ${RULES_VECTORS_FROM:0:7}"
+    common_git rev-parse --git-dir >/dev/null 2>&1 || fail "neoteletext-common's repository is needed at $common (or NEOTELETEXT_COMMON) to check the rules vectors"
+    common_git cat-file -e "$RULES_VECTORS_FROM:wire-vectors.tsv" 2>/dev/null || fail "$common has no wire-vectors.tsv at $RULES_VECTORS_FROM"
+    local ours theirs
+    ours="$(grep -v '^#' "$RULES_VECTORS_COPY")"
+    [[ -n "$ours" ]] || fail "$RULES_VECTORS_COPY has no rows"
+    # The shared file's rows of the same kinds and names, in its order.
+    theirs="$(common_git show "$RULES_VECTORS_FROM:wire-vectors.tsv" |
+        awk -F '\t' 'NR == FNR { wanted[$1 FS $2] = 1; next } ($1 FS $2) in wanted' <(printf '%s\n' "$ours") -)"
+    [[ "$ours" == "$theirs" ]] ||
+        fail "$RULES_VECTORS_COPY differs from neoteletext-common's wire-vectors.tsv at ${RULES_VECTORS_FROM:0:7}: carry the rows across, or name in scripts/check.sh the commit they agree at"
+}
+
 . scripts/gate.sh
 
 . scripts/tools.sh
@@ -120,6 +144,7 @@ check_limit_figures() {
 check_workspace() {
     check_engine_pin
     check_limit_figures
+    check_rules_vectors
     check_kit_fixture
     check_no_agent_text
     step "lockfiles up to date"
