@@ -11,7 +11,7 @@ use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use neoteletext_audio::encode::{Command, Sound as Encoded};
+use neoteletext_audio::encode::{Command, LiveEncoder, Sound as Encoded};
 use neoteletext_audio::record::{FLAG_AFTER_CURRENT, FLAG_LOOP};
 use neoteletext_audio::{CHANNELS, Codec, IMA_BLOCK_LARGE, IMA_BLOCK_SMALL, OPUS_RATE};
 use neoteletext_opus::{DecodeError, Decoder, FRAME_SAMPLES, PacketError};
@@ -127,7 +127,13 @@ impl Sounds {
             }
             Sound::Blocks(BlocksSound { handle, generation, rate, first, pcm, .. }) => {
                 let sound = Encoded::live(*handle, *generation, Codec::ImaAdpcm, *rate, IMA_BLOCK_LARGE).map_err(encoding)?;
-                Ok(sound.live_records(*first, &samples(pcm)))
+                // Each message's blocks are encoded from its own samples, the
+                // last padded with silence, as before the engine kept an
+                // encoder's state between calls (its DEC-2467).
+                let mut encoder = LiveEncoder::new(&sound, *first).map_err(encoding)?;
+                let mut records = encoder.records(&samples(pcm));
+                records.extend(encoder.finish());
+                Ok(records)
             }
             Sound::Play(PlaySound { channel, handle, generation, gain, fade_ms, r#loop, after, duck, page, .. }) => {
                 let mut flags = 0;
