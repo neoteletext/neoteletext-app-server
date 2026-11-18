@@ -3079,6 +3079,12 @@
         }
       ]
     },
+    "NaplpsLabel": {
+      "description": "What a screen reader says for a NAPLPS object (ANIM-11): plain text of at most 64 bytes of UTF-8, no control character; empty is no label.",
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$",
+      "type": "string"
+    },
     "NaplpsObject": {
       "additionalProperties": false,
       "description": "A NAPLPS object (ANIM-11): a numbered object in the layer NeoTeletext\nkeeps over a NAPLPS picture.",
@@ -3141,6 +3147,17 @@
         "kind": {
           "$ref": "#/$defs/NaplpsObjectKind",
           "description": "A macro object or a region."
+        },
+        "label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NaplpsLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a screen reader says for it, or null for nothing."
         },
         "layer": {
           "description": "Its layer, 1 to 3.",
@@ -3245,6 +3262,13 @@
           "type": "string"
         }
       ]
+    },
+    "NaplpsTitle": {
+      "description": "A NAPLPS picture's title (ANIM-11): plain text of 1 to 64 bytes of UTF-8, no control character.",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$",
+      "type": "string"
     },
     "NumberLink": {
       "additionalProperties": false,
@@ -8220,12 +8244,17 @@
               "description": "Who it is for."
             },
             "objects": {
-              "description": "The objects.",
+              "description": "The objects: exactly one with `one`.",
               "items": {
                 "$ref": "#/$defs/NaplpsObject"
               },
               "maxItems": 64,
               "type": "array"
+            },
+            "one": {
+              "default": false,
+              "description": "Redefine the one object given, keeping the others and the title.",
+              "type": "boolean"
             },
             "page": {
               "$ref": "#/$defs/PageNumber",
@@ -8234,6 +8263,17 @@
             "sub": {
               "$ref": "#/$defs/SubCode",
               "description": "The sub-page: never 3F7F, which names none."
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NaplpsTitle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The picture's title, or null for none; never with `one`."
             },
             "type": {
               "const": "naplps_objects",
@@ -9683,12 +9723,28 @@
           "description": "The page's NAPLPS objects.",
           "properties": {
             "objects": {
-              "description": "The objects.",
+              "description": "The objects: exactly one with `one`.",
               "items": {
                 "$ref": "#/$defs/NaplpsObject"
               },
               "maxItems": 64,
               "type": "array"
+            },
+            "one": {
+              "default": false,
+              "description": "Redefine the one object given, keeping the others and the title.",
+              "type": "boolean"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NaplpsTitle"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The picture's title, or null for none; never with `one`."
             },
             "type": {
               "const": "naplps_objects",
