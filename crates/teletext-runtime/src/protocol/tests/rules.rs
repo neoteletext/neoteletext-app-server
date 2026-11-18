@@ -27,6 +27,22 @@ const VECTORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/protocol/tests/r
 /// Set to write the vectors afresh rather than compare them.
 const BLESS: &str = "TELETEXT_BLESS_RULES";
 
+/// The animation messages of animation.md ANIM-21, one a line.
+pub(crate) const ANIMATION_EXAMPLES: &str = include_str!("animation-examples.jsonl");
+
+/// REQ-6533, ANIM-21: every example of animation.md's messages is read.
+#[test]
+fn every_example_of_animation_is_read() {
+    let kinds: Vec<String> = ANIMATION_EXAMPLES
+        .lines()
+        .map(|line| {
+            let message = read(line.as_bytes()).unwrap_or_else(|refusal| panic!("{refusal}: {line}"));
+            format!("{:?}", message.kind())
+        })
+        .collect();
+    assert_eq!(kinds, ["Frame", "Frame", "Animate", "Sprites", "NaplpsObjects", "SpriteSheet", "Timeline", "TimelineStop"]);
+}
+
 /// The examples, read.
 fn examples() -> Vec<Value> {
     EXAMPLES.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
