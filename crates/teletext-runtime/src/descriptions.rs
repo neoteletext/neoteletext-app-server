@@ -63,6 +63,10 @@ pub struct PublicPage {
     /// height: a teletext page's at the engine's size, a ReGIS or NAPLPS
     /// picture's at its language's own (renderer parity PAR-26).
     pub picture: Option<Picture>,
+    /// The picture's own title, for the landing page's `alt` (PAR-26): a
+    /// ReGIS picture's `D(T'...')` or a kept NAPLPS picture's objects'
+    /// title; none gives the page's title.
+    pub alt: Option<String>,
 }
 
 /// A public page's picture: a PNG, its width and its height.

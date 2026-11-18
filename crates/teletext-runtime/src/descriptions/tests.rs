@@ -497,6 +497,40 @@ fn a_described_kept_naplps_picture_is_drawn_on_the_raster() {
     assert_eq!((png.to_vec(), width, height), drawn_png(crate::kept::PictureLanguage::Naplps, &stream));
 }
 
+/// PAR-26 verification 4: the landing page names the picture's own title
+/// as `alt`, the ReGIS picture's `D(T'...')` committed (`docs/regis-v2.md`, "Title"),
+/// in place of the page's title.
+#[test]
+fn a_regis_pictures_own_title_is_the_landing_pages_alt() {
+    let titled = [RED_LEFT, b"D(T'Harbour',C)".as_slice()].concat();
+    let picture = json!({"language": "regis", "data": crate::protocol::tests::base64(&titled)});
+    let answer = answered_with(&with(&public_description("Red", "x"), "/picture", picture)).unwrap();
+    assert_eq!(answer.alt.as_deref(), Some("Harbour"));
+    let (page, _) = shown("100", &Some(answer));
+    assert!(page.contains("width=\"800\" height=\"480\" alt=\"Harbour\""), "{page}");
+}
+
+/// PAR-26 verification 4: a kept NAPLPS picture's title comes with its
+/// objects (ANIM-11, DEC-6638 item 3) and is the landing page's `alt`.
+#[test]
+fn a_kept_naplps_pictures_title_is_the_landing_pages_alt() {
+    let mut channel = channel();
+    let stream = [0x0E, 0x3E, 0x5C, 0x24, 0x40, 0x40, 0x40, 0x31, 0x52, 0x47, 0x47];
+    let kept =
+        json!({"type": "naplps", "connections": "kept", "page": PAGE_TEXT, "sub": "0001", "restart": true, "data": crate::protocol::tests::base64(&stream)});
+    let objects = json!({"type": "naplps_objects", "connections": "kept", "page": PAGE_TEXT, "sub": "0001", "objects": [], "title": "Jukebox"});
+    channel.from_program(&line(&kept), 0);
+    channel.from_program(&line(&objects), 0);
+    channel.describe(1, PAGE, 1);
+    let _ = channel.take_effects();
+    channel.from_program(&line(&with(&public_description("t", "x"), "/picture", json!({"kept": "0001"}))), 2);
+    let found = answers(&channel.take_effects());
+    let answer = found[0].1.clone().unwrap();
+    assert_eq!(answer.alt.as_deref(), Some("Jukebox"));
+    let (page, _) = shown("100", &Some(answer));
+    assert!(page.contains("alt=\"Jukebox\""), "{page}");
+}
+
 /// PAR-26 verification 3: each refusal.
 #[test]
 fn a_description_picture_with_nothing_kept_or_refused_bytes_is_refused() {

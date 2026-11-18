@@ -173,6 +173,10 @@ pub(crate) struct Drawn {
     pub colours: Vec<[u8; 3]>,
     /// NAPLPS: the screen colour its border lines take (REQ-5819).
     pub border: Option<u8>,
+    /// ReGIS: the picture's own title, `D(T'...')`, as the last commit left
+    /// it, for a public page's `alt` (PAR-26). A NAPLPS picture's title
+    /// comes with its objects, outside the stream, so it is none here.
+    pub title: Option<String>,
 }
 
 impl Drawn {
@@ -200,7 +204,8 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             let _ = terminal.finish(&mut screen);
             let canvas = screen.displayed();
             let colours = terminal.palette().colours().to_vec();
-            Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours, border: None })
+            let title = terminal.title();
+            Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours, border: None, title })
         }
         PictureLanguage::Naplps => {
             let (mut terminal, mut canvas) = naplps_terminal()?;
@@ -217,7 +222,7 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             };
             let colours = terminal.palette().colours().to_vec();
             let (width, height) = (presented.width() as usize, presented.height() as usize);
-            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours, border: Some(terminal.screen_colour()) })
+            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours, border: Some(terminal.screen_colour()), title: None })
         }
     }
 }

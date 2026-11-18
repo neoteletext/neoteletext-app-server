@@ -1700,15 +1700,15 @@ impl Channel {
 /// What `description` shows the web: nothing unless it says public, which the
 /// protocol's check has seen gives all three.
 /// `drawn` is the picture `description.picture` gave, drawn (PAR-26),
-/// in place of `content`'s.
-fn public_page(description: Description, drawn: Option<crate::descriptions::Picture>) -> Option<PublicPage> {
+/// in place of `content`'s, with the picture's own title for `alt`.
+fn public_page(description: Description, drawn: Option<(crate::descriptions::Picture, Option<String>)>) -> Option<PublicPage> {
     let Description { public: true, title: Some(title), text: Some(text), content: Some(content), picture, .. } = description else { return None };
     let teletext = || {
         let (width, height) = neoteletext_image::raster::picture_size();
         crate::page::picture(&content).map(|png| (png, width, height))
     };
-    let picture = if picture.is_some() { drawn } else { teletext() };
-    Some(PublicPage { title, text, picture })
+    let (picture, alt) = if picture.is_some() { drawn.map_or((None, None), |(png, alt)| (Some(png), alt)) } else { (teletext(), None) };
+    Some(PublicPage { title, text, picture, alt })
 }
 
 fn wide(count: usize) -> u64 {

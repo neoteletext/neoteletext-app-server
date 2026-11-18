@@ -555,13 +555,14 @@ impl Channel {
 impl Channel {
     /// The picture a description gives (PAR-26), drawn as the browser
     /// draws it with its shown objects composed, as a PNG at its language's
-    /// own size; none when it gives none, or the PNG passes
-    /// `MOST_PICTURE_BYTES`.
+    /// own size, with the picture's own title for the page's `alt`: a ReGIS
+    /// picture's `D(T'...')`, a kept NAPLPS picture's objects' title; none
+    /// when it gives none, or the PNG passes `MOST_PICTURE_BYTES`.
     ///
     /// # Errors
     /// `not_kept` for a kept picture of a sub-code with nothing kept; the
     /// receiver's refusal of the bytes (`invalid_regis`, `invalid_naplps`).
-    pub(super) fn description_picture(&self, description: &protocol::Description) -> Result<Option<crate::descriptions::Picture>, Refusal> {
+    pub(super) fn description_picture(&self, description: &protocol::Description) -> Result<Option<(crate::descriptions::Picture, Option<String>)>, Refusal> {
         let kind = MessageType::Description;
         let refuse = |path: &str, rule: Rule, detail: String| Refusal { message: Some(kind), path: path.to_string(), rule, detail };
         let (Some(picture), true) = (&description.picture, description.public) else { return Ok(None) };
@@ -570,7 +571,11 @@ impl Channel {
                 let (page, sub) = (description.page.0, name.kept.0);
                 let kept = self.kept.get(page, sub).ok_or_else(|| refuse("picture.kept", Rule::NotKept, format!("nothing is kept of {page:03X}/{sub:04X}")))?;
                 let objects = kept.objects.as_ref().map(|objects| objects.objects.as_slice());
-                crate::fallback::draw(kept.language, &kept.stream, objects)
+                let title = kept.objects.as_ref().and_then(|objects| objects.title.as_ref()).map(|title| title.0.clone());
+                crate::fallback::draw(kept.language, &kept.stream, objects).map(|mut drawn| {
+                    drawn.title = drawn.title.take().or(title);
+                    drawn
+                })
             }
             protocol::DescriptionPicture::Bytes(bytes) => {
                 let language = match bytes.language {
@@ -585,7 +590,7 @@ impl Channel {
         let drawn = drawn.map_err(|fault| refuse("picture", Rule::WrongType, fault))?;
         Ok(crate::fallback::png(&drawn)
             .filter(|(png, _, _)| png.len() <= crate::descriptions::MOST_PICTURE_BYTES)
-            .map(|(png, width, height)| (alloc::sync::Arc::from(png), width, height)))
+            .map(|(png, width, height)| ((alloc::sync::Arc::from(png), width, height), drawn.title)))
     }
 }
 
