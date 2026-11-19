@@ -16,9 +16,8 @@
 //! **Readers** (TODO-6836, TODO-6837). Each kept picture's stream is read
 //! by the receiver's reader as it comes, and the reader is kept to read
 //! the next append. Readers are counted at what they hold
-//! ([`Checker::held_bytes`]: a ReGIS reader as its renderer reports it,
-//! measured again after every append it takes; a NAPLPS reader at the
-//! most it can hold). When holding one would pass `MOST_KEPT_COST`, the
+//! ([`Checker::held_bytes`]: each reader as its renderer reports it,
+//! measured again after every append it takes). When holding one would pass `MOST_KEPT_COST`, the
 //! readers of the pictures least recently written are let go; and a
 //! reader that refused an append, having read bytes that are not kept, is
 //! let go too. A picture without its reader is still kept and shown, but
@@ -90,63 +89,20 @@ pub const NAPLPS_WORK_PER_FALLBACK_BYTE: u64 = 8;
 /// channel's connections together (PAR-25).
 pub const MOST_FALLBACK_POOL_BYTES: usize = 16_777_216;
 
-/// The DRCS characters and texture masks a NAPLPS stream can define, and
-/// the one being defined (ANSI X3.110-1983 sections 6.2.3 and 6.2.4): the
-/// count the NAPLPS validator's documented bound uses.
-const NAPLPS_MASKS: usize = 96 + 4 + 1;
-/// Bytes of one point while a NAPLPS polygon runs: two 32-bit coordinates.
-const NAPLPS_POINT_BYTES: usize = 8;
-/// What a reader holds besides its definitions: its fixed state, the
-/// allocator's bookkeeping and the pages a resident size is counted in.
-/// The NAPLPS renderer's own memory test allows the same margin
-/// (`tests/validator_memory.rs`, `FIXED_MARGIN`).
-const READER_FIXED_ALLOWANCE: usize = 262_144;
-/// The bookkeeping an allocation may cost besides its bytes, as the ReGIS
-/// renderer counts it (its `limits::ALLOCATION_OVERHEAD_BYTES`).
-const ALLOCATION_OVERHEAD_BYTES: usize = regis::limits::ALLOCATION_OVERHEAD_BYTES;
-/// The positions of each of a stroke font's two sets: codes 2/1 to 7/14
-/// (ANSI X3.110-1983 section 6.1; the NAPLPS renderer's `font` module).
-const STROKE_FONT_POSITIONS: usize = 0x7E - 0x21 + 1;
-/// Bytes of one stroke segment, `[x1, y1, x2, y2]` (`naplps::Glyph`).
-const STROKE_SEGMENT_BYTES: usize = 4;
-/// The most the receiver's stroke font holds in a NAPLPS reader
-/// (TODO-6845, DEC-6851): both sets' positions, each glyph at the
-/// renderer's `font::MAX_SEGMENTS` segments in an allocation of its own.
-const NAPLPS_FONT_BYTES: usize = size_of::<naplps::StrokeFont>()
-    + 2 * STROKE_FONT_POSITIONS * (size_of::<Option<naplps::Glyph>>() + naplps::font::MAX_SEGMENTS * STROKE_SEGMENT_BYTES + ALLOCATION_OVERHEAD_BYTES)
-    + 2 * ALLOCATION_OVERHEAD_BYTES;
-/// The sets a NAPLPS reader is given: the joined sets, 44 to 51 (PAR-3,
-/// PAR-14).
-const JOINED_SET_COUNT: usize = (*JOINED_SETS.end() - *JOINED_SETS.start() + 1) as usize;
-/// What one joined set's stand-in holds in a NAPLPS reader: one-pixel
-/// glyphs and the joining data (two allocations).
-const JOINED_SET_STAND_IN_BYTES: usize =
-    size_of::<naplps::BitmapSet>() + naplps::bitmap::BITMAP_SET_CODES * (size_of::<u16>() + size_of::<naplps::JoiningType>()) + 2 * ALLOCATION_OVERHEAD_BYTES;
-/// The most a `naplps::Validator` holds, from the renderer's own limits
-/// (its documentation, PAR-15): the macros, the copies of one while they
-/// nest, every DRCS character and texture at the largest mask, a PDI's
-/// operands and its points, the receiver's stroke font and the joined
-/// sets' stand-ins it is given (TODO-6845), and the fixed state. Its
-/// definitions cost a stream almost nothing (seven bytes define a
-/// 16,384-byte DRCS character), and the renderer reports no figure for
-/// what a reader holds, so a reader is counted at this whatever its
-/// stream (TODO-6836).
-pub const NAPLPS_READER_BYTES: usize = naplps::limits::MAX_ALL_MACRO_BYTES
-    + naplps::limits::MAX_MACRO_DEPTH * naplps::limits::MAX_MACRO_BYTES
-    + NAPLPS_MASKS * (naplps::limits::MASK_SIDE as usize * naplps::limits::MASK_SIDE as usize)
-    + naplps::limits::MAX_PDI_BYTES
-    + naplps::limits::MAX_VERTICES * NAPLPS_POINT_BYTES
-    + NAPLPS_FONT_BYTES
-    + JOINED_SET_COUNT * JOINED_SET_STAND_IN_BYTES
-    + READER_FIXED_ALLOWANCE;
-/// What a box holding a reader costs besides the reader's own figure.
-const READER_BOX_BYTES: usize = ALLOCATION_OVERHEAD_BYTES;
+/// What a box holding a reader costs besides the reader's own figure: the
+/// allocator's bookkeeping of one allocation, as both renderers count it
+/// (their `limits::ALLOCATION_OVERHEAD_BYTES`, asserted equal).
+const READER_BOX_BYTES: usize = regis::limits::ALLOCATION_OVERHEAD_BYTES;
+const _: () = assert!(regis::limits::ALLOCATION_OVERHEAD_BYTES == naplps::limits::ALLOCATION_OVERHEAD_BYTES);
 
 // One reader at the most a ReGIS renderer says it can hold (its
 // `MAX_HELD_BYTES`, DEC-6850) and a whole stream fit `MOST_KEPT_COST`
 // alone, so every stream within `MOST_KEPT_STREAM_BYTES` can be kept.
 const _: () = assert!(regis::limits::MAX_HELD_BYTES + READER_BOX_BYTES + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
-const _: () = assert!(NAPLPS_READER_BYTES + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
+// The same for NAPLPS without the stroke font and joined sets it is given,
+// whose figures are known only once they are built (the renderer's
+// `MAX_HELD_BYTES`, TODO-6854); `kept::tests` checks it with them.
+const _: () = assert!(naplps::limits::MAX_HELD_BYTES + READER_BOX_BYTES + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
 
 /// A picture language.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -199,14 +155,18 @@ impl Checker {
         }
     }
 
-    /// The memory it holds, in bytes (TODO-6845): a ReGIS reader as its
-    /// renderer reports it (`regis::Validator::held_bytes`, DEC-6850), which
-    /// grows and shrinks with what the stream defines; a NAPLPS reader at
-    /// [`NAPLPS_READER_BYTES`], since its renderer reports no figure.
+    /// The memory it holds, in bytes (TODO-6845, TODO-6860): each reader as
+    /// its renderer reports it, which grows and shrinks with what the stream
+    /// defines, and the box it is kept in. A ReGIS reader is
+    /// `regis::Validator::held_bytes` (DEC-6850); a NAPLPS reader
+    /// `naplps::Validator::held_bytes` (DEC-6858), which counts the stroke
+    /// font and the joined sets it is given and is never more than the
+    /// renderer's `MAX_HELD_BYTES` besides them. Callers ask again after
+    /// every message the reader reads.
     pub(crate) fn held_bytes(&self) -> usize {
         match self {
             Self::Regis(validator) => validator.held_bytes().saturating_add(READER_BOX_BYTES),
-            Self::Naplps(_) => NAPLPS_READER_BYTES,
+            Self::Naplps(validator) => validator.held_bytes().saturating_add(READER_BOX_BYTES),
         }
     }
 
@@ -309,7 +269,7 @@ impl Checker {
 }
 
 /// A NAPLPS reader as the receiver's is (DEC-6851, TODO-6845): on the
-/// receiver's 480 by 462 canvas (`Validator::new`), with the receiver's
+/// receiver's 480 by 460 canvas (`Validator::new`, RAS-11), with the receiver's
 /// stroke font, whose strokes' pixel work it counts, and the joined sets 44
 /// to 51 with their joining data, which decide when a held letter is drawn.
 /// Only a set's joining data matters to a validator, so each joined set is

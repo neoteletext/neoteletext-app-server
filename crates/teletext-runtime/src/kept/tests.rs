@@ -9,12 +9,23 @@ extern crate std;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{Checker, Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, NAPLPS_READER_BYTES, PictureLanguage, StreamChange};
+use super::{
+    Checker, Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, PictureLanguage, READER_BOX_BYTES, StreamChange,
+    naplps_validator,
+};
 use crate::protocol::Rule;
 
 /// What a new ReGIS reader holds, as its renderer reports it (TODO-6845).
 fn regis_reader() -> usize {
     Checker::new(PictureLanguage::Regis).held_bytes()
+}
+
+/// What a NAPLPS reader holds after reading `stream`, as its renderer
+/// reports it (TODO-6860).
+fn naplps_reader_after(stream: &[u8]) -> usize {
+    let mut checker = Checker::new(PictureLanguage::Naplps);
+    checker.feed(stream).unwrap();
+    checker.held_bytes()
 }
 
 /// What a ReGIS reader holds after reading `stream`.
@@ -125,26 +136,49 @@ fn the_cost_counts_each_stream_and_its_reader_and_most_kept_cost_is_kept_and_one
     assert_eq!(refused.path, "cursor");
 }
 
-/// TODO-6836: a NAPLPS reader is counted at what it can hold, which seven
-/// bytes of a definition can make 16,384, so the heaviest NAPLPS pictures
-/// hold no more than `MOST_KEPT_COST` together, however many are kept (the
-/// ignored test below keeps `MOST_KEPT_PICTURES` of them).
+/// TODO-6860, DEC-6858: a NAPLPS reader is counted at what its renderer
+/// says it holds (`naplps::Validator::held_bytes`), measured again after
+/// each append, and never more than the renderer's `MAX_HELD_BYTES` besides
+/// the stroke font and joined sets it is given. An ordinary picture's
+/// reader is some tens of kilobytes; the heaviest stream known, seven bytes
+/// a 16,384-byte DRCS character, makes it over a megabyte, and pictures of
+/// it let the others' readers go for room. Counted at a fixed 2,177,456
+/// bytes before, fifteen pictures of any stream held every reader there was
+/// room for.
 #[test]
-fn a_naplps_pictures_reader_is_counted_at_what_it_can_hold() {
-    let heaviest = heaviest_naplps();
+fn a_naplps_pictures_reader_is_counted_at_what_its_stream_defines() {
+    let fresh = Checker::new(PictureLanguage::Naplps).held_bytes();
+    let validator = naplps_validator();
+    let given = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).unwrap().held_bytes()
+        + super::JOINED_SETS.map(|_| naplps::BitmapSet::new(1, 1).unwrap().held_bytes()).sum::<usize>();
+    assert_eq!(fresh, validator.held_bytes() + READER_BOX_BYTES, "the renderer's figure and the box");
+    assert!(fresh <= naplps::limits::MAX_HELD_BYTES + given + READER_BOX_BYTES, "a new reader holds {fresh} bytes, given {given}");
+    // RAS-1, TODO-6854: the most a reader holds, with what it is given, and
+    // a whole stream fit MOST_KEPT_COST alone, so every stream within
+    // MOST_KEPT_STREAM_BYTES can be kept.
+    assert!(naplps::limits::MAX_HELD_BYTES + fresh + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
     let mut kept = KeptPictures::default();
-    kept.stream(0x100, 0, PictureLanguage::Naplps, true, &heaviest).unwrap();
-    assert!(kept.cost() >= NAPLPS_READER_BYTES, "its reader is counted: {}", kept.cost());
-    assert_eq!(NAPLPS_READER_BYTES, 2_177_456, "the renderer's documented 1,851,392 bytes, the stroke font, the joined sets and the fixed allowance");
-    // Twice as many as the cost holds readers for.
-    let pictures = 2 * MOST_KEPT_COST / NAPLPS_READER_BYTES;
-    for sub in 1..u16::try_from(pictures).unwrap() {
-        kept.stream(0x100, sub, PictureLanguage::Naplps, true, &heaviest).unwrap();
+    kept.stream(0x100, 0, PictureLanguage::Naplps, true, b"Hello").unwrap();
+    assert_eq!(kept.cost(), 5 + naplps_reader_after(b"Hello"), "a short stream's reader as it holds");
+    let heaviest = heaviest_naplps();
+    kept.stream(0x100, 0, PictureLanguage::Naplps, false, &heaviest).unwrap();
+    let mut whole = Vec::from(&b"Hello"[..]);
+    whole.extend_from_slice(&heaviest);
+    let held = naplps_reader_after(&whole);
+    assert!(held > 1_000_000 && held <= naplps::limits::MAX_HELD_BYTES + fresh, "the definitions are held: {held}");
+    assert_eq!(kept.cost(), whole.len() + held, "measured again after the append");
+    // Twice as many such pictures as the cost holds readers for: the
+    // readers of the oldest are let go, and the cost stays within
+    // MOST_KEPT_COST.
+    let pictures = 2 * MOST_KEPT_COST / held;
+    for sub in 1..=u16::try_from(pictures).unwrap() {
+        kept.stream(0x100, sub, PictureLanguage::Naplps, true, &whole).unwrap();
     }
-    let streams = pictures * heaviest.len();
-    assert!(kept.cost() <= MOST_KEPT_COST);
-    assert_eq!(kept.cost(), streams + kept.readers_held() * NAPLPS_READER_BYTES, "each reader held counted whole");
-    assert_eq!(kept.readers_held(), (MOST_KEPT_COST - streams) / NAPLPS_READER_BYTES, "as many readers as the room left holds");
+    assert!(kept.cost() <= MOST_KEPT_COST, "{}", kept.cost());
+    let streams = (pictures + 1) * whole.len();
+    assert_eq!(kept.cost(), streams + kept.readers_held() * held, "each reader held counted as it holds");
+    assert_eq!(kept.readers_held(), (MOST_KEPT_COST - streams) / held, "as many readers as the room left holds");
+    std::println!("a new NAPLPS reader holds {fresh} bytes, the heaviest stream's {held}; {} of {} readers held", kept.readers_held(), pictures + 1);
 }
 
 /// TODO-6837 and PAR-16: a refused message leaves what was kept; the
@@ -176,9 +210,10 @@ fn a_refused_append_leaves_the_picture_shown_and_taking_no_append_until_restarte
 #[test]
 fn a_picture_whose_reader_was_let_go_for_room_is_begun_again() {
     let mut kept = KeptPictures::default();
-    let pictures = u16::try_from(MOST_KEPT_COST / NAPLPS_READER_BYTES + 1).unwrap();
+    let heaviest = heaviest_naplps();
+    let pictures = u16::try_from(MOST_KEPT_COST / naplps_reader_after(&heaviest) + 1).unwrap();
     for sub in 0..pictures {
-        kept.stream(0x100, sub, PictureLanguage::Naplps, true, b"Hello").unwrap();
+        kept.stream(0x100, sub, PictureLanguage::Naplps, true, &heaviest).unwrap();
     }
     let refused = kept.stream(0x100, 0, PictureLanguage::Naplps, false, b" world").unwrap_err();
     assert_eq!(refused.path, "restart");
@@ -196,8 +231,19 @@ fn resident() -> usize {
     kilobytes.saturating_mul(1024)
 }
 
-/// TODO-6836 step 4: `MOST_KEPT_PICTURES` of the heaviest NAPLPS pictures
-/// grow the process's resident size by no more than `MOST_KEPT_COST`.
+/// TODO-6836 step 4, TODO-6860: `MOST_KEPT_PICTURES` of the heaviest NAPLPS
+/// pictures grow the process's resident size by no more than
+/// `MOST_KEPT_COST` and one reader read beside the one it replaces, as the
+/// ReGIS test below allows: the cost counts what readers hold between
+/// messages (`naplps::Validator::held_bytes`), and a reader holds more
+/// while it reads. Measured 19 November 2026 (release, `x86_64` Linux): one
+/// heaviest reader in a fresh process grows the resident size by 2,494,464
+/// bytes against its count of 1,650,136, and each further one by 1,642,291 on average
+/// against the same count (40 readers: 66,650,112 against 66,005,440), so
+/// the count is an upper bound of what a reader keeps and the peak of
+/// reading is about one and a half readers; 512 pictures counted
+/// 33,370,848 bytes with 20 readers held and grew it by 36,098,048, so the
+/// allowance is two readers at the renderer's `MAX_HELD_BYTES`.
 /// Ignored, since it measures the whole process: run it alone, `cargo test
 /// --release -p teletext-runtime --lib
 /// kept::tests::kept_naplps_pictures_hold_no_more_than_their_cost --
@@ -218,7 +264,8 @@ fn kept_naplps_pictures_hold_no_more_than_their_cost() {
         kept.cost(),
         kept.readers_held()
     );
-    assert!(growth <= MOST_KEPT_COST, "the resident size grew by {growth} bytes, past MOST_KEPT_COST");
+    let allowance = MOST_KEPT_COST + 2 * naplps::limits::MAX_HELD_BYTES;
+    assert!(growth <= allowance, "the resident size grew by {growth} bytes, past MOST_KEPT_COST and a reader read beside the one it replaces");
 }
 
 /// TODO-6845, DEC-6850: a ReGIS picture's reader is counted at what its
