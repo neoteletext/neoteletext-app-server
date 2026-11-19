@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! teletext-load --url ws://HOST:PORT/FOLDER/push --mode hold    [--connections N] [--page 105] [--seconds 60]
+//!               [--caps none|regis|naplps] [--metrics HOST:PORT] [--sources N] [--open-rate R]
 //! teletext-load --url ws://HOST:PORT/FOLDER/push --mode churn   [--rate R] [--page 100] [--seconds 60]
 //! teletext-load --url ws://HOST:PORT/FOLDER/push --mode answers [--connections N] [--pages 100,101,102] [--selections S] [--rounds R]
 //! ```
@@ -13,7 +14,17 @@
 //! - **hold** (decision 7): opens many connections and holds them; each
 //!   frame of `--page` is grouped with the same frame at the other
 //!   connections, and the spread between its first and last arrival is the
-//!   fan-out time.
+//!   fan-out time. With `--metrics`, the server's administration address,
+//!   each report also gives the server's resident memory and what it grew
+//!   by for each connection open since the run began (REQ-1023,
+//!   TODO-6518). With `--caps`, each connection also agrees ReGIS or NAPLPS,
+//!   so that a program may send it its own picture stream (PAR-23).
+//!   With `--sources`, the connections come from that many loopback
+//!   addresses, 127.0.0.1 upwards, so that more connections than one
+//!   address's ephemeral ports can be held to a server on the loopback.
+//!   `--open-rate` is how many connections are opened a second (10,000
+//!   unless given), so that a program answering each one's `connected` is
+//!   not given them faster than it answers.
 //! - **churn** (TODO-1301): opens `--rate` connections a second, each of
 //!   which takes its first answer and closes.
 //! - **answers** (TODO-1521, REQ-1481): each connection selects `--pages`
@@ -48,7 +59,7 @@ use neoteletext_core::ecc::{Status, hamming84_decode};
 use neoteletext_core::packet::Packet;
 use neoteletext_input::MAX_MESSAGE;
 use neoteletext_input::VERSION;
-use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP};
 use neoteletext_input::event::{Event, Item, Select, write};
 use neoteletext_input::state::NoneReason;
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
@@ -63,6 +74,18 @@ const REPORT: Duration = Duration::from_secs(5);
 /// Connections opened at a time, so the listener's backlog is not
 /// overrun.
 const BATCH: usize = 500;
+/// Connections `hold` opens a second unless `--open-rate` says otherwise:
+/// a [`BATCH`] every 50 milliseconds.
+const DEFAULT_OPEN_RATE: u64 = 10_000;
+/// The most of the metrics answer read: the server's whole `/metrics`
+/// text is a few kilobytes, and what is read from outside is bounded.
+const MOST_METRICS_BYTES: usize = 1 << 20;
+/// The family whose value is the server's resident memory, in bytes.
+const RESIDENT_MEMORY: &str = "process_resident_memory_bytes";
+/// The loopback network's first address, 127.0.0.1, as its four bytes.
+const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
+/// The loopback addresses `--sources` may name: 127.0.0.1 to 127.0.0.254.
+const MOST_SOURCES: usize = 254;
 /// The sub-code that asks for a page's first sub-page (DOC-1753).
 const ANY_SUB_PAGE: u16 = 0x3F7F;
 /// The longest a selection is waited for before it counts as unanswered:
@@ -73,6 +96,11 @@ const ANSWER_WAIT: Duration = Duration::from_secs(30);
 const BINARY_FRAME: u8 = 0x82;
 /// The first byte of a close frame (FIN and opcode 8).
 const CLOSE_FRAME: u8 = 0x88;
+/// A ping frame's first byte (FIN and opcode 9): the server pings an idle
+/// connection and closes it when no pong comes (RFC 6455 section 5.5.2).
+const PING_FRAME: u8 = 0x89;
+/// A pong frame's first byte (FIN and opcode 10), the answer to a ping.
+const PONG_FRAME: u8 = 0x8A;
 /// The mask bit of a frame's second byte, which a client must set.
 const MASKED: u8 = 0x80;
 /// The 7-bit length's marker of a 16-bit length that follows.
@@ -102,6 +130,14 @@ struct Arguments {
     rounds: usize,
     rate: u64,
     seconds: u64,
+    /// Capabilities HELLO adds to the cursor and SELECT.
+    caps: u32,
+    /// The server's administration address, for its resident memory.
+    metrics: Option<String>,
+    /// How many loopback addresses the connections come from.
+    sources: usize,
+    /// Connections `hold` opens a second.
+    open_rate: u64,
 }
 
 fn arguments() -> Result<Arguments, String> {
@@ -109,6 +145,7 @@ fn arguments() -> Result<Arguments, String> {
     let (mut mode, mut connections, mut page, mut seconds, mut rate, mut selections, mut rounds) =
         (Mode::Hold, 100_usize, 0x105_u16, 60_u64, 10_u64, 100_usize, 1_usize);
     let mut pages = vec![0x100_u16];
+    let (mut caps, mut metrics, mut sources, mut open_rate) = (0_u32, None, 1_usize, DEFAULT_OPEN_RATE);
     let hexadecimal = |value: &str| u16::from_str_radix(value, 16).map_err(|_| format!("{value} is not a page in hexadecimal, such as 105"));
     let mut list = std::env::args().skip(1);
     while let Some(argument) = list.next() {
@@ -130,6 +167,19 @@ fn arguments() -> Result<Arguments, String> {
             "--rounds" => rounds = value.parse().map_err(|_| "--rounds is a number")?,
             "--rate" => rate = value.parse().map_err(|_| "--rate is a number of connections a second")?,
             "--seconds" => seconds = value.parse().map_err(|_| "--seconds is a number")?,
+            "--caps" => {
+                caps = match value.as_str() {
+                    "none" => 0,
+                    "regis" => REGIS_CAP,
+                    "naplps" => NAPLPS_CAP,
+                    other => return Err(format!("--caps is none, regis or naplps, not {other}")),
+                }
+            }
+            "--metrics" => metrics = Some(value),
+            "--open-rate" => open_rate = value.parse().ok().filter(|&rate| rate > 0).ok_or("--open-rate is a number of connections a second")?,
+            "--sources" => {
+                sources = value.parse().ok().filter(|count| (1..=MOST_SOURCES).contains(count)).ok_or("--sources is a number from 1 to 254")?;
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -139,7 +189,22 @@ fn arguments() -> Result<Arguments, String> {
     if pages.is_empty() || rate == 0 {
         return Err("--pages needs a page and --rate more than 0".to_owned());
     }
-    Ok(Arguments { host: host.to_owned(), path: format!("/{path}"), mode, connections, page, pages, selections, rounds, rate, seconds })
+    Ok(Arguments {
+        host: host.to_owned(),
+        path: format!("/{path}"),
+        mode,
+        connections,
+        page,
+        pages,
+        selections,
+        rounds,
+        rate,
+        seconds,
+        caps,
+        metrics,
+        sources,
+        open_rate,
+    })
 }
 
 /// Arrivals of each frame of the page watched, by its content, as times
@@ -170,14 +235,26 @@ async fn hold(arguments: Arguments) {
     let bytes = Arc::new(AtomicU64::new(0));
     let arrivals: Arrivals = Arc::new(Mutex::new(BTreeMap::new()));
     let arguments = Arc::new(arguments);
+    let resident_before = match &arguments.metrics {
+        Some(address) => match resident_memory(address).await {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                eprintln!("teletext-load: {error}");
+                return;
+            }
+        },
+        None => None,
+    };
     for batch in (0..arguments.connections).collect::<Vec<_>>().chunks(BATCH) {
         let mut opening = Vec::new();
-        for _ in batch {
+        for &number in batch {
             let (arguments, open, messages, bytes, arrivals) =
                 (Arc::clone(&arguments), Arc::clone(&open), Arc::clone(&messages), Arc::clone(&bytes), Arc::clone(&arrivals));
-            opening.push(tokio::spawn(async move { held(&arguments, start, &open, &messages, &bytes, &arrivals).await }));
+            opening.push(tokio::spawn(async move { held(&arguments, number, start, &open, &messages, &bytes, &arrivals).await }));
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let batch_size = u64::try_from(batch.len()).unwrap_or(u64::MAX);
+        let gap = Duration::from_millis(batch_size.saturating_mul(1_000).checked_div(arguments.open_rate).unwrap_or(0));
+        tokio::time::sleep(gap).await;
         drop(opening);
     }
     let deadline = start.checked_add(Duration::from_secs(arguments.seconds)).unwrap_or(start);
@@ -195,10 +272,21 @@ async fn hold(arguments: Arguments) {
             }
             done
         };
+        let open_now = open.load(Ordering::Relaxed);
+        let memory = match (&arguments.metrics, resident_before) {
+            (Some(address), Some(before)) => match resident_memory(address).await {
+                Ok(now) => format!(
+                    "  server resident {now} bytes, {} a connection",
+                    now.saturating_sub(before).checked_div(open_now).map_or_else(|| "none".to_owned(), |each| each.to_string())
+                ),
+                Err(error) => format!("  server resident unknown: {error}"),
+            },
+            _ => String::new(),
+        };
         println!(
-            "{:>5}s open {:>7}  messages/s {:>9}  bytes/s {:>11}  fan-out of page {:03X}, last frames: {:?} ms",
+            "{:>5}s open {:>7}  messages/s {:>9}  bytes/s {:>11}  fan-out of page {:03X}, last frames: {:?} ms{memory}",
             start.elapsed().as_secs(),
-            open.load(Ordering::Relaxed),
+            open_now,
             now_messages.saturating_sub(last_messages).checked_div(REPORT.as_secs()).unwrap_or(0),
             now_bytes.saturating_sub(last_bytes).checked_div(REPORT.as_secs()).unwrap_or(0),
             arguments.page,
@@ -208,8 +296,8 @@ async fn hold(arguments: Arguments) {
     }
 }
 
-async fn held(arguments: &Arguments, start: Instant, open: &AtomicU64, messages: &AtomicU64, bytes: &AtomicU64, arrivals: &Arrivals) {
-    let Some(mut connection) = Connection::open(arguments).await else { return };
+async fn held(arguments: &Arguments, number: usize, start: Instant, open: &AtomicU64, messages: &AtomicU64, bytes: &AtomicU64, arrivals: &Arrivals) {
+    let Some(mut connection) = Connection::open_from(arguments, number).await else { return };
     if !connection.select(arguments.page, true).await {
         return;
     }
@@ -323,12 +411,30 @@ fn report(what: &str, times: &mut [Duration]) {
 struct Connection {
     stream: TcpStream,
     buffer: Vec<u8>,
+    /// The capabilities HELLO gives besides the cursor and SELECT.
+    caps: u32,
 }
 
 impl Connection {
     /// Connects and upgrades, or `None`.
     async fn open(arguments: &Arguments) -> Option<Self> {
-        let mut stream = TcpStream::connect(&arguments.host).await.ok()?;
+        Self::open_from(arguments, 0).await
+    }
+
+    /// Connects from the loopback address `number` picks among
+    /// `--sources`, and upgrades, or `None`.
+    async fn open_from(arguments: &Arguments, number: usize) -> Option<Self> {
+        let mut stream = if arguments.sources > 1 {
+            let target = tokio::net::lookup_host(&arguments.host).await.ok()?.next()?;
+            let [first, second, third, fourth] = LOOPBACK;
+            let offset = u8::try_from(number.checked_rem(arguments.sources)?).ok()?;
+            let source = std::net::SocketAddr::from(([first, second, third, fourth.checked_add(offset)?], 0));
+            let socket = tokio::net::TcpSocket::new_v4().ok()?;
+            socket.bind(source).ok()?;
+            socket.connect(target).await.ok()?
+        } else {
+            TcpStream::connect(&arguments.host).await.ok()?
+        };
         let _ = stream.set_nodelay(true);
         let request = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n\r\n",
@@ -349,7 +455,7 @@ impl Connection {
                     return None;
                 }
                 buffer.drain(..end.saturating_add(4));
-                return Some(Self { stream, buffer });
+                return Some(Self { stream, buffer, caps: arguments.caps });
             }
         }
     }
@@ -359,7 +465,7 @@ impl Connection {
         let Some(selection) = Select::new(page, ANY_SUB_PAGE) else { return false };
         let mut items = Vec::new();
         if hello {
-            items.push(Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP, agent: None }));
+            items.push(Item::Event(Event::Hello { version: VERSION, caps: CURSOR_CAP | SELECT_CAP | self.caps, agent: None }));
             // The answer to the challenge that follows WELCOME, given before
             // it comes, as a client that keeps no state may (VS-202, VS-501).
             items.push(Item::Event(Event::StateNone(NoneReason::Stateless)));
@@ -398,12 +504,19 @@ impl Connection {
         .flatten()
     }
 
-    /// The next whole message from the server, or `None` when it ends.
+    /// The next whole message from the server, or `None` when it ends. A
+    /// ping is answered with its pong, as a receiver does, so that a
+    /// connection held for minutes stays open.
     async fn next_message(&mut self) -> Option<Vec<u8>> {
         let mut chunk = vec![0_u8; 16 * 1024];
         loop {
             if let Some((payload, used)) = server_frame(&self.buffer) {
+                let first = self.buffer.first().copied();
                 self.buffer.drain(..used);
+                if first == Some(PING_FRAME) {
+                    self.stream.write_all(&client_frame(PONG_FRAME, &payload)).await.ok()?;
+                    continue;
+                }
                 return Some(payload);
             }
             let count = self.stream.read(&mut chunk).await.ok()?;
@@ -420,6 +533,43 @@ impl Connection {
         let _ = self.stream.shutdown().await;
         sent
     }
+}
+
+/// The server's resident memory in bytes, from `process_resident_memory_bytes`
+/// of the `/metrics` its administration address `address` serves.
+///
+/// # Errors
+/// What failed: the connection, an answer past [`MOST_METRICS_BYTES`], or
+/// one without the figure.
+async fn resident_memory(address: &str) -> Result<u64, String> {
+    let mut stream = TcpStream::connect(address).await.map_err(|error| format!("metrics at {address}: {error}"))?;
+    let request = format!("GET /metrics HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.map_err(|error| format!("metrics at {address}: {error}"))?;
+    let mut answer = Vec::new();
+    let mut chunk = vec![0_u8; 16 * 1024];
+    loop {
+        let count = stream.read(&mut chunk).await.map_err(|error| format!("metrics at {address}: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        answer.extend_from_slice(chunk.get(..count).unwrap_or(&[]));
+        if answer.len() > MOST_METRICS_BYTES {
+            return Err(format!("metrics at {address}: the answer passes {MOST_METRICS_BYTES} bytes"));
+        }
+    }
+    resident_in(&String::from_utf8_lossy(&answer)).ok_or_else(|| format!("metrics at {address}: no {RESIDENT_MEMORY} in the answer"))
+}
+
+/// The value of [`RESIDENT_MEMORY`] in a metrics text, if it has one.
+fn resident_in(text: &str) -> Option<u64> {
+    text.lines().find_map(|line| line.strip_prefix(RESIDENT_MEMORY)?.strip_prefix(' ')?.trim().parse::<f64>().ok()).and_then(whole_bytes)
+}
+
+/// A figure of the metrics text as whole bytes: none when it is negative,
+/// not finite, or not a whole number within `u64`.
+fn whole_bytes(value: f64) -> Option<u64> {
+    let text = format!("{value:.0}");
+    (value.is_finite() && value >= 0.0).then(|| text.parse().ok()).flatten()
 }
 
 /// A client's frame of `payload`, masked with a zero key, as a client must
@@ -483,4 +633,24 @@ fn nibble(byte: u8) -> Option<u8> {
 
 fn hash(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resident_in;
+
+    #[test]
+    fn the_resident_memory_is_read_from_the_metrics_text() {
+        let text = "# HELP process_resident_memory_bytes Resident memory.\n# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes 12345678\nteletext_connections 3\n";
+        assert_eq!(resident_in(text), Some(12_345_678));
+        assert_eq!(resident_in("process_resident_memory_bytes 1.5e9\n"), Some(1_500_000_000));
+    }
+
+    #[test]
+    fn a_text_without_the_figure_or_with_a_malformed_one_gives_none() {
+        assert_eq!(resident_in("teletext_connections 3\n"), None);
+        assert_eq!(resident_in("process_resident_memory_bytes many\n"), None);
+        assert_eq!(resident_in("process_resident_memory_bytes -4\n"), None);
+        assert_eq!(resident_in("process_resident_memory_bytes_total 4\n"), None);
+    }
 }
