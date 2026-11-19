@@ -180,3 +180,26 @@ fn streams_kept_for_fallbacks_are_bounded_by_the_pool() {
         .any(|effect| matches!(effect, Effect::Log { event: "fallback_dropped", text, .. } if text.contains("MOST_KEPT_STREAM_BYTES")));
     assert!(passed);
 }
+
+/// TODO-6839: a channel's fallback drawings draw at most
+/// `MOST_FALLBACK_BYTES_PER_SECOND` of stream a second, each counted as its
+/// stream's bytes and `FALLBACK_DRAWING_FLOOR_BYTES`: of two streams of
+/// `MOST_KEPT_STREAM_BYTES` changed together one is drawn at once, the
+/// other a second later, never skipped.
+#[test]
+fn fallback_drawings_are_bounded_by_the_bytes_they_draw_a_second() {
+    use crate::kept::{FALLBACK_DRAWING_FLOOR_BYTES, MOST_FALLBACK_BYTES_PER_SECOND};
+    const { assert!(2 * (MOST_KEPT_STREAM_BYTES + FALLBACK_DRAWING_FLOOR_BYTES) > MOST_FALLBACK_BYTES_PER_SECOND, "two do not fit in a second") };
+    let mut channel = empty();
+    let _ = arrive(&mut channel, 1, NEITHER, 0);
+    let _ = arrive(&mut channel, 2, NEITHER, 0);
+    let before = channel.fallbacks_drawn();
+    let full = alloc::vec![b' '; MOST_KEPT_STREAM_BYTES];
+    channel.from_program(&picture("regis", &json!([1]), true, &full), 1);
+    channel.from_program(&picture("regis", &json!([2]), true, &full), 1);
+    assert_eq!(channel.fallbacks_drawn(), before + 1, "one drawn at once");
+    let _ = channel.take_effects();
+    assert_eq!(channel.next_wake(), Some(1 + 1_000), "the other a second after the first");
+    channel.deadline(1 + 1_000);
+    assert_eq!(channel.fallbacks_drawn(), before + 2, "and drawn then");
+}

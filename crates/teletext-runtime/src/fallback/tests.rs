@@ -126,3 +126,65 @@ fn the_fallback_composes_a_naplps_pictures_shown_objects() {
     assert!(left.iter().copied().filter(|code| *code == FULL_BLOCK).map(usize::from).count() > 5, "{drawn:?}");
     assert!(!right.contains(&FULL_BLOCK), "{drawn:?}");
 }
+
+/// A NAPLPS operand pair of 256ths, three bytes (ANSI X3.110-1983 section
+/// 5.3.2.2.3), as the test above writes it.
+fn naplps_pair(x: u16, y: u16) -> [u8; 3] {
+    let byte = |shift: u16| 0x40 | ((((x >> shift) & 7) as u8) << 3) | (((y >> shift) & 7) as u8);
+    [byte(6), byte(3), byte(0)]
+}
+
+/// TODO-6839: the time of one fallback drawing of the costliest streams
+/// this test knows, against `MOST_FALLBACK_RENDERS_PER_SECOND` and
+/// `MOST_FALLBACK_BYTES_PER_SECOND`. Ignored, since it times: run it in a
+/// release build, `cargo test --release -p teletext-runtime --lib
+/// fallback::tests::the_costliest_fallback_drawings_are_timed -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore = "a benchmark: run by hand in a release build, with --ignored --nocapture"]
+fn the_costliest_fallback_drawings_are_timed() {
+    use crate::kept::MOST_KEPT_STREAM_BYTES;
+    use std::time::Instant;
+    /// A whole-screen filled polygon (manual chapter 11).
+    const REGIS_FILL: &[u8] = b"P[0,0]F(V[799,0][799,479][0,479][0,0])";
+    /// Numbered drawings of whole-screen fills whose composition the
+    /// renderer's `MAX_REBUILD_WORK` still allows (measured: 150 fail).
+    const REGIS_DRAWINGS: u16 = 100;
+    /// NAPLPS whole-screen fills drawn to time one, the stream's cost
+    /// being linear in them.
+    const NAPLPS_FILLS: usize = 1_000;
+    let mut regis = std::vec::Vec::new();
+    while regis.len() + REGIS_FILL.len() < MOST_KEPT_STREAM_BYTES / 2 {
+        regis.extend_from_slice(REGIS_FILL);
+    }
+    for number in 1..=REGIS_DRAWINGS {
+        regis.extend_from_slice(std::format!("D(B{number})").as_bytes());
+        regis.extend_from_slice(REGIS_FILL);
+        regis.extend_from_slice(b"D(E)");
+    }
+    regis.extend_from_slice(b"D(C)");
+    while regis.len() + REGIS_FILL.len() <= MOST_KEPT_STREAM_BYTES {
+        regis.extend_from_slice(REGIS_FILL);
+    }
+    let start = Instant::now();
+    rows(PictureLanguage::Regis, &regis, None).unwrap();
+    std::println!("ReGIS: {} bytes of whole-screen fills and {REGIS_DRAWINGS} numbered drawings: {:?} a drawing", regis.len(), start.elapsed());
+    // SO, then POINT SET at the origin and RECTANGLE (FILLED) over the
+    // whole unit screen (sections 5.3.3.1 and 5.3.3.4), again and again.
+    let mut naplps = std::vec![0x0E];
+    for _ in 0..NAPLPS_FILLS {
+        naplps.push(0x24);
+        naplps.extend(naplps_pair(0, 0));
+        naplps.push(0x31);
+        naplps.extend(naplps_pair(255, 191));
+    }
+    let start = Instant::now();
+    rows(PictureLanguage::Naplps, &naplps, None).unwrap();
+    let elapsed = start.elapsed();
+    let per_byte = elapsed / u32::try_from(naplps.len()).unwrap();
+    std::println!(
+        "NAPLPS: {NAPLPS_FILLS} whole-screen fills, {} bytes: {elapsed:?}, so {per_byte:?} a byte and about {:?} for {MOST_KEPT_STREAM_BYTES} bytes",
+        naplps.len(),
+        per_byte * u32::try_from(MOST_KEPT_STREAM_BYTES).unwrap()
+    );
+}

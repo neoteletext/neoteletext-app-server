@@ -7,8 +7,10 @@
 //! once in `FALLBACK_INTERVAL_MS`, its last change always drawn within that
 //! interval; a kept picture's fallback is drawn once and shared by every
 //! connection showing it. A channel draws at most
-//! `MOST_FALLBACK_RENDERS_PER_SECOND` a second, sustained: a drawing over
-//! that budget is drawn late, never wrong and never skipped. For a stream
+//! `MOST_FALLBACK_RENDERS_PER_SECOND` a second, sustained, and at most
+//! `MOST_FALLBACK_BYTES_PER_SECOND` of stream, each drawing counted as its
+//! stream's bytes and `FALLBACK_DRAWING_FLOOR_BYTES` (TODO-6839): a drawing
+//! over that budget is drawn late, never wrong and never skipped. For a stream
 //! sent to such a connection itself, the server keeps the bytes it did not
 //! send, at most `MOST_KEPT_STREAM_BYTES` a connection and
 //! `MOST_FALLBACK_POOL_BYTES` for the channel; past either the stream is
@@ -24,11 +26,25 @@ use neoteletext_web::base64;
 
 use super::{Channel, Level};
 use crate::fallback::{FIRST_ROW, MosaicRows};
-use crate::kept::{FALLBACK_INTERVAL_MS, MOST_FALLBACK_POOL_BYTES, MOST_FALLBACK_RENDERS_PER_SECOND, MOST_KEPT_STREAM_BYTES, PictureLanguage};
+use crate::kept::{
+    FALLBACK_DRAWING_FLOOR_BYTES, FALLBACK_INTERVAL_MS, MOST_FALLBACK_BYTES_PER_SECOND, MOST_FALLBACK_POOL_BYTES, MOST_FALLBACK_RENDERS_PER_SECOND,
+    MOST_KEPT_STREAM_BYTES, PictureLanguage,
+};
 use crate::protocol::{self, ConnectionId, NaplpsObject};
 
-/// The window `MOST_FALLBACK_RENDERS_PER_SECOND` counts over.
+/// The window `MOST_FALLBACK_RENDERS_PER_SECOND` and
+/// `MOST_FALLBACK_BYTES_PER_SECOND` count over.
 const RENDER_WINDOW_MS: u64 = 1_000;
+
+// The longest stream a fallback draws fits the byte budget alone, so every
+// drawing is made in the end.
+const _: () = assert!(MOST_KEPT_STREAM_BYTES + FALLBACK_DRAWING_FLOOR_BYTES <= MOST_FALLBACK_BYTES_PER_SECOND);
+
+/// What a drawing of a stream of `length` bytes counts against
+/// `MOST_FALLBACK_BYTES_PER_SECOND`.
+const fn drawing_cost(length: usize) -> usize {
+    length.saturating_add(FALLBACK_DRAWING_FLOOR_BYTES)
+}
 
 /// When one picture's fallback is drawn.
 #[derive(Default)]
@@ -71,8 +87,9 @@ pub(super) struct OwnPicture {
 pub(super) struct Fallbacks {
     /// Each kept picture's, by page and sub-code.
     kept: BTreeMap<(u16, u16), Drawing>,
-    /// When the channel drew, within the last second.
-    renders: VecDeque<u64>,
+    /// When the channel drew within the last second, and what each drawing
+    /// counted.
+    renders: VecDeque<(u64, usize)>,
     /// Every drawing made, for the operator and the tests.
     pub(super) drawn: u64,
 }
@@ -83,20 +100,24 @@ impl Fallbacks {
         self.kept.values().filter_map(|drawing| drawing.due).min()
     }
 
-    /// Whether the channel may draw at `now`, and if not when it may.
-    fn budget(&mut self, now: u64) -> Result<(), u64> {
-        while self.renders.front().is_some_and(|&at| now.saturating_sub(at) >= RENDER_WINDOW_MS) {
+    /// Whether the channel may make a drawing counted as `cost` at `now`,
+    /// and if not when it may try again.
+    fn budget(&mut self, now: u64, cost: usize) -> Result<(), u64> {
+        while self.renders.front().is_some_and(|&(at, _)| now.saturating_sub(at) >= RENDER_WINDOW_MS) {
             self.renders.pop_front();
         }
         let most = usize::try_from(MOST_FALLBACK_RENDERS_PER_SECOND).unwrap_or(usize::MAX);
+        let spent = self.renders.iter().fold(0_usize, |sum, &(_, counted)| sum.saturating_add(counted));
         match self.renders.front() {
-            Some(&oldest) if self.renders.len() >= most => Err(oldest.saturating_add(RENDER_WINDOW_MS)),
+            Some(&(oldest, _)) if self.renders.len() >= most || spent.saturating_add(cost) > MOST_FALLBACK_BYTES_PER_SECOND => {
+                Err(oldest.saturating_add(RENDER_WINDOW_MS))
+            }
             _ => Ok(()),
         }
     }
 
-    fn spend(&mut self, now: u64) {
-        self.renders.push_back(now);
+    fn spend(&mut self, now: u64, cost: usize) {
+        self.renders.push_back((now, cost));
         self.drawn = self.drawn.saturating_add(1);
     }
 }
@@ -249,7 +270,8 @@ impl Channel {
         let due_kept: Vec<(u16, u16)> =
             self.fallbacks.kept.iter().filter(|(_, drawing)| drawing.due.is_some_and(|due| due <= now)).map(|(key, _)| *key).collect();
         for (page, sub) in due_kept {
-            if let Err(later) = self.fallbacks.budget(now) {
+            let cost = drawing_cost(self.kept.get(page, sub).map_or(0, |picture| picture.stream.len()));
+            if let Err(later) = self.fallbacks.budget(now, cost) {
                 if let Some(drawing) = self.fallbacks.kept.get_mut(&(page, sub)) {
                     drawing.due = Some(later);
                 }
@@ -262,7 +284,7 @@ impl Channel {
             let objects = picture.objects.as_ref().map(|objects| objects.objects.as_slice());
             let drawn = crate::fallback::rows(picture.language, &picture.stream, objects);
             let language = picture.language;
-            self.fallbacks.spend(now);
+            self.fallbacks.spend(now, cost);
             let rows = match drawn {
                 Ok(rows) => rows,
                 Err(fault) => {
@@ -292,7 +314,8 @@ impl Channel {
             .map(|(&id, _)| id)
             .collect();
         for connection in due_own {
-            if let Err(later) = self.fallbacks.budget(now) {
+            let cost = drawing_cost(self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()).map_or(0, |own| own.stream.len()));
+            if let Err(later) = self.fallbacks.budget(now, cost) {
                 if let Some(own) = self.connections.get_mut(&connection).and_then(|state| state.own_picture.as_mut()) {
                     own.drawing.due = Some(later);
                 }
@@ -301,7 +324,7 @@ impl Channel {
             let Some(own) = self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()) else { continue };
             let (page, sub) = (own.page, own.sub);
             let drawn = crate::fallback::rows(own.language, &own.stream, own.objects.as_deref());
-            self.fallbacks.spend(now);
+            self.fallbacks.spend(now, cost);
             let rows = match drawn {
                 Ok(rows) => rows,
                 Err(fault) => {
