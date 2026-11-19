@@ -205,7 +205,7 @@ impl Sounds {
                     flags,
                     duck: *duck,
                     page: page.map(|page| page.0),
-                    magazine: None,
+                    music: None,
                 };
                 Ok(alloc::vec![command.record()])
             }
@@ -436,7 +436,7 @@ impl Sounds {
 }
 
 /// A command that belongs to its audio channel alone, a stop or a set gain:
-/// it names no sound, no page and no magazine.
+/// it names no sound, no page and no level of music.
 const fn channel_command(channel: u8, sequence: u16, operation: u8, gain: u8, fade_ms: u16) -> Command {
-    Command { channel, sequence, operation, handle: 0, generation: 0, gain, fade_ms, flags: 0, duck: 0, page: None, magazine: None }
+    Command { channel, sequence, operation, handle: 0, generation: 0, gain, fade_ms, flags: 0, duck: 0, page: None, music: None }
 }

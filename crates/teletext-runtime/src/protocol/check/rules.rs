@@ -609,7 +609,7 @@ impl Scope<'_> {
             flags: 0,
             duck: 0,
             page: Some(self.page),
-            magazine: None,
+            music: None,
         };
         match sound {
             GroupSound::Play(play) => {
