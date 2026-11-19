@@ -214,7 +214,10 @@ say "the channels file, the service, its socket and the container's Caddy"
 # for. The nine channels deployed on 18 November 2026 are given
 # "send_all", the default table that sends every kind of input as push
 # protocol 8 did, until each sends tables of its own; a channel written
-# since is given none, and musicplayer is the first.
+# since is given none, and musicplayer is the first. regisgallery's
+# program handles no input at all, so since 19 November 2026 it is given
+# none either: a page that requests no events keeps the wheel stepping
+# its sub-pages over the picture (DEC-6633 item 2).
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com","default_rules":"send_all"},
@@ -222,7 +225,7 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday","default_rules":"send_all"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite","default_rules":"send_all"},
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo","wheel":true,"default_rules":"send_all"},
-  {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery","default_rules":"send_all"},
+  {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
   {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo","wheel":true,"default_rules":"send_all"},
   {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo","default_rules":"send_all"},
   {"folder":"audio","name":"Audio demo","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-audiodemo","default_rules":"send_all"},
