@@ -315,7 +315,7 @@ fn a_naplps_stream_past_the_work_allowance_is_refused_naming_it() {
     let refused = kept.stream(0x100, 0, PictureLanguage::Naplps, true, &stream).unwrap_err();
     assert_eq!(refused.rule, Rule::InvalidNaplps, "{}", refused.detail);
     assert!(refused.detail.starts_with("bytes left unprocessed at the pixel work limit"), "{}", refused.detail);
-    assert!(refused.detail.contains("WORK_CAP (28385280) and WORK_PER_BYTE (16) a byte"), "{}", refused.detail);
+    assert!(refused.detail.contains("WORK_CAP (28262400) and WORK_PER_BYTE (16) a byte"), "{}", refused.detail);
     assert!(kept.get(0x100, 0).is_none());
     // Within it, the reader counts the work the receiver will spend: a
     // drawing is made once its operands end, at the next opcode, so two
