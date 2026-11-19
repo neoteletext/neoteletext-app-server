@@ -1170,3 +1170,114 @@ fn a_kept_picture_reaches_receivers_through_real_sockets() {
     assert!(row24.starts_with(b"Fastext row of the program"), "{row24:?}");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// A program that draws snapshots by the shell's `case` on the page
+/// (REQ-6900): page 100 with `content`, 200 declined (and described as not
+/// public), and anything else never answered, logging what it hears.
+fn drawing_snapshots(heard: &Path, content: &str) -> String {
+    let not_public = r#"{"type":"description","page":"200","public":false}"#;
+    format!(
+        r#"read -r _; while read -r line; do printf '%s\n' "$line" >> {heard}; case "$line" in *'"type":"snapshot"'*) number=$(printf '%s' "$line" | sed 's/.*"snapshot":\([0-9]*\).*/\1/'); case "$line" in *'"page":"100"'*) printf '{{"type":"snapshot_page","snapshot":%s,"page":%s}}\n' "$number" '{content}';; *'"page":"200"'*) printf '{{"type":"snapshot_declined","snapshot":%s}}\n' "$number";; esac;; *'"describe"'*'"200"'*) printf '%s\n' '{not_public}';; esac; done"#,
+        heard = heard.display()
+    )
+}
+
+/// The engine's snapshot request (REQ-6879) for `page`, `sub`, sent on a
+/// push connection as one binary message, as the browser's snapshot
+/// fetcher sends it.
+fn send_snapshot_request(stream: &mut TcpStream, page: u16, sub: u16) {
+    let mut payload = [0_u8; neoteletext_input::MAX_MESSAGE];
+    let length = neoteletext_input::snapshot::write_request(page, sub, &mut payload).unwrap();
+    let size = u8::try_from(length).unwrap();
+    // A masked final binary frame of a short length (RFC 6455 section 5.2),
+    // with a mask of zeros.
+    stream.write_all(&[BINARY_FINAL, 0x80 | size, 0, 0, 0, 0]).unwrap();
+    stream.write_all(&payload[..length]).unwrap();
+}
+
+/// Everything the server sends `stream` until its Close: the bytes and the
+/// close code.
+fn until_closed(stream: &mut TcpStream) -> (Vec<u8>, u16) {
+    stream.set_read_timeout(Some(WITHIN)).unwrap();
+    let mut bytes = Vec::new();
+    loop {
+        let mut head = [0_u8; 2];
+        stream.read_exact(&mut head).unwrap();
+        let length = match head[1] & 0x7F {
+            126 => {
+                let mut extended = [0_u8; 2];
+                stream.read_exact(&mut extended).unwrap();
+                usize::from(u16::from_be_bytes(extended))
+            }
+            127 => {
+                let mut extended = [0_u8; 8];
+                stream.read_exact(&mut extended).unwrap();
+                usize::try_from(u64::from_be_bytes(extended)).unwrap()
+            }
+            short => usize::from(short),
+        };
+        let mut payload = vec![0_u8; length];
+        stream.read_exact(&mut payload).unwrap();
+        if head[0] & 0x0F == CLOSE {
+            return (bytes, u16::from_be_bytes([payload[0], payload[1]]));
+        }
+        bytes.extend_from_slice(&payload);
+    }
+}
+
+/// What a snapshot connection was sent: the capabilities WELCOME agreed, its
+/// DENIED's status if any, whether any packet showed a page header, and the
+/// close code.
+fn snapshot_of(address: &str, page: u16, sub: u16) -> (u32, Option<u16>, bool, u16) {
+    let (mut stream, set_cookie) = push(address);
+    assert_eq!(set_cookie, None);
+    send_snapshot_request(&mut stream, page, sub);
+    let (bytes, code) = until_closed(&mut stream);
+    let mut reader = RecordReader::new();
+    let mut buffer = [0; neoteletext_input::control::FRAGMENT_DATA];
+    let (mut caps, mut denied, mut header) = (0, None, false);
+    for packet in bytes.as_chunks::<PACKET_BYTES>().0 {
+        let packet = Packet { bytes: *packet };
+        if let Some(Ok(neoteletext_input::control::Control::Welcome { caps: agreed, .. })) = neoteletext_input::control::from_packet(&packet, &mut buffer) {
+            caps = agreed;
+        }
+        if let RecordRead::Record(ChannelRecord::Denied(record)) = reader.push(&packet) {
+            denied = Some(record.status);
+        }
+        header |= neoteletext_core::packet::decode_address(&packet).is_ok_and(|address| address.number == 0);
+    }
+    (caps, denied, header, code)
+}
+
+/// REQ-6881, REQ-6882, REQ-6900 end to end, over real sockets and a real
+/// program: a snapshot the program draws is its page, closed normally; two
+/// of one place ask it once; a declined one of a page not public is DENIED
+/// 404, and so is one the program never answers, after its wait and the
+/// description's; the program is never told `connected` or anything of a
+/// receiver, and the channel counts no viewer.
+#[test]
+fn a_snapshot_is_drawn_by_the_program_declined_or_unanswered() {
+    use neoteletext_input::caps::SNAPSHOT_OFFER;
+    let folder = scratch("snapshots");
+    let heard = folder.join("heard");
+    let file = channel_in(&folder, "ch", &drawing_snapshots(&heard, &blank_subpage()));
+    let server = serve(&["--channels", &file.display().to_string()], &[], Stdio::null());
+    until_status(&server.address, &settings("ch"), 200);
+    // The program has started once it has been told `start`.
+    until_heard(&heard, |_| true);
+    let drawn = snapshot_of(&server.address, 0x100, 0x3F7F);
+    assert_eq!(drawn, (SNAPSHOT_OFFER, None, true, neoteletext_web::consts::CLOSE_NORMAL), "the program's page");
+    assert_eq!(snapshot_of(&server.address, 0x100, 0x3F7F), drawn, "the same, kept");
+    let declined = snapshot_of(&server.address, 0x200, 0x3F7F);
+    assert_eq!((declined.1, declined.2, declined.3), (Some(404), false, neoteletext_web::consts::CLOSE_NORMAL));
+    let started = Instant::now();
+    let silent = snapshot_of(&server.address, 0x300, 0x3F7F);
+    assert_eq!((silent.1, silent.3), (Some(404), neoteletext_web::consts::CLOSE_NORMAL));
+    assert!(started.elapsed() >= Duration::from_millis(2_000), "after the program's wait");
+    let told = until_heard(&heard, |told| told.matches("\"describe\"").count() >= 2);
+    assert_eq!(told.matches("\"type\":\"snapshot\"").count(), 3, "page 100 once, 200 and 300: {told}");
+    for never in ["\"connected\"", "\"selected\"", "\"gone\"", "\"left\"", "\"viewer\"", "\"input\""] {
+        assert!(!told.contains(never), "{never}: {told}");
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}
