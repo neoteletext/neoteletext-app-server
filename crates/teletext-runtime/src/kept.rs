@@ -12,6 +12,17 @@
 //!
 //! What is kept is bounded and refused at its bounds, never evicted
 //! (PAR-17): a program that needs room forgets a picture.
+//!
+//! **Readers** (TODO-6836, TODO-6837). Each kept picture's stream is read
+//! by the receiver's reader as it comes, and the reader is kept to read
+//! the next append. Readers are counted at what they can hold
+//! ([`reader_bytes`]). When holding one would pass `MOST_KEPT_COST`, the
+//! readers of the pictures least recently written are let go; and a
+//! reader that refused an append, having read bytes that are not kept, is
+//! let go too. A picture without its reader is still kept and shown, but
+//! takes no append until the program begins it again with `restart`: the
+//! server never reads a kept stream again, which would cost what every
+//! message of it cost together.
 
 use alloc::collections::BTreeMap;
 use alloc::format;
@@ -27,21 +38,86 @@ pub const MOST_KEPT_STREAM_BYTES: usize = neoteletext_formats::picture_text::MAX
 /// The pages and sub-codes with a kept picture, for one channel (PAR-17).
 pub const MOST_KEPT_PICTURES: usize = 512;
 /// The cost of all of a channel's kept pictures (PAR-17): each stream's
-/// bytes counted twice, for the bytes and its validator's copy of what it
-/// holds, plus each companion's message bytes as received. A quarter of
-/// the Cloudflare host's 128 MB for one channel.
+/// bytes, its reader's memory as [`reader_bytes`] states it, and each
+/// companion's message bytes as received. A quarter of the Cloudflare
+/// host's 128 MB for one channel.
 pub const MOST_KEPT_COST: usize = 33_554_432;
+/// The memory of the readers of every stream a program sends to
+/// connections themselves (PAR-23), each as [`reader_bytes`] states it,
+/// for all of a channel's connections together; a restart that would pass
+/// it is refused. A quarter of the Cloudflare host's 128 MB, as
+/// `MOST_KEPT_COST` is (TODO-6836).
+pub const MOST_CONNECTION_READER_BYTES: usize = 33_554_432;
 /// The least time between two fallback drawings of one picture (PAR-25).
 pub const FALLBACK_INTERVAL_MS: u64 = 500;
 /// The fallback drawings of one channel a second, sustained (PAR-25).
 pub const MOST_FALLBACK_RENDERS_PER_SECOND: u32 = 20;
+/// The stream bytes a channel's fallback drawings may draw in a second,
+/// each drawing counted as its stream's bytes and
+/// `FALLBACK_DRAWING_FLOOR_BYTES` (TODO-6839). Measured on 19 November
+/// 2026 (release build, `x86_64` Linux, chunko): one ReGIS drawing of a
+/// 1 MiB stream of whole-screen fills takes 89 ms, at the renderer's
+/// `WORK_CAP`, and with numbered drawings composed up to
+/// `MAX_REBUILD_WORK` 98 ms; twenty of those a second would take two
+/// processor cores. Two mebibytes a second hold a channel's ReGIS
+/// fallbacks to about a quarter of one core. A NAPLPS drawing is not
+/// bounded in time by it, since its renderer has no pixel work cap (about
+/// 295 microseconds a byte of whole-screen fills; TODO-6844, TODO-6845).
+pub const MOST_FALLBACK_BYTES_PER_SECOND: usize = 2_097_152;
+/// What a fallback drawing is counted as besides its stream's bytes: the
+/// composition of its numbered drawings, which a short stream can make as
+/// dear as a long one's drawing (measured 19 November 2026: 100 numbered
+/// drawings of whole-screen fills, 4,800 bytes of stream, drawn and
+/// composed in 19 ms, what about 220 KB of base fills cost), rounded up
+/// to a quarter of a mebibyte.
+pub const FALLBACK_DRAWING_FLOOR_BYTES: usize = 262_144;
 /// The bytes of per-connection streams kept for fallbacks, for all of a
 /// channel's connections together (PAR-25).
 pub const MOST_FALLBACK_POOL_BYTES: usize = 16_777_216;
 
-/// What a stream's validator holds besides the bytes is at most the bytes
-/// (PAR-17's reason), so a stream costs twice its length.
-const STREAM_COST_FACTOR: usize = 2;
+/// The DRCS characters and texture masks a NAPLPS stream can define, and
+/// the one being defined (ANSI X3.110-1983 sections 6.2.3 and 6.2.4): the
+/// count the NAPLPS validator's documented bound uses.
+const NAPLPS_MASKS: usize = 96 + 4 + 1;
+/// Bytes of one point while a NAPLPS polygon runs: two 32-bit coordinates.
+const NAPLPS_POINT_BYTES: usize = 8;
+/// What a reader holds besides its definitions: its fixed state, the
+/// allocator's bookkeeping and the pages a resident size is counted in.
+/// The NAPLPS renderer's own memory test allows the same margin
+/// (`tests/validator_memory.rs`, `FIXED_MARGIN`).
+const READER_FIXED_ALLOWANCE: usize = 262_144;
+/// The most a `naplps::Validator` holds, from the renderer's own limits
+/// (its documentation, PAR-15): the macros, the copies of one while they
+/// nest, every DRCS character and texture at the largest mask, a PDI's
+/// operands and its points, and the fixed state. 2,113,536 bytes. Its
+/// definitions cost a stream almost nothing (seven bytes define a
+/// 16,384-byte DRCS character), so a reader is counted at this whatever
+/// its stream (TODO-6836).
+pub const NAPLPS_READER_BYTES: usize = naplps::limits::MAX_ALL_MACRO_BYTES
+    + naplps::limits::MAX_MACRO_DEPTH * naplps::limits::MAX_MACRO_BYTES
+    + NAPLPS_MASKS * (naplps::limits::MASK_SIDE as usize * naplps::limits::MASK_SIDE as usize)
+    + naplps::limits::MAX_PDI_BYTES
+    + naplps::limits::MAX_VERTICES * NAPLPS_POINT_BYTES
+    + READER_FIXED_ALLOWANCE;
+/// What a `regis::Validator` holds besides what its stream defines: its
+/// own 15,296 bytes and the copies of the 26 macrographs and the three
+/// loaded sets that the machine, the last commit and the drawings' player
+/// keep (`docs/regis-v2.md` of the ReGIS renderer, rule 4: 16,384 bytes of
+/// macrographs and 2,880 of loaded sets each). Measured 19 November 2026
+/// at 83,476 bytes of resident size a validator with every macrograph
+/// filled and two commits; rounded up to 128 KiB. What the stream defines
+/// (numbered drawings, their contents) is not counted here: the renderer
+/// reports no figure for it (TODO-6836; the ReGIS renderer's TODO-6843, then the server's TODO-6845).
+pub const REGIS_READER_BYTES: usize = 131_072;
+
+/// The memory a reader of `language` is counted as holding (TODO-6836).
+#[must_use]
+pub const fn reader_bytes(language: PictureLanguage) -> usize {
+    match language {
+        PictureLanguage::Regis => REGIS_READER_BYTES,
+        PictureLanguage::Naplps => NAPLPS_READER_BYTES,
+    }
+}
 
 /// A picture language.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -176,10 +252,14 @@ pub(crate) struct KeptPicture {
     pub language: PictureLanguage,
     /// Every byte since its last restart, in order.
     pub stream: Vec<u8>,
-    /// The length of each message's bytes, in order: the pieces the
-    /// checker read, so that it can be read again as it was.
-    pieces: Vec<usize>,
-    checker: Checker,
+    /// The receiver's reader, having read `stream`; none once it was let
+    /// go, and then why.
+    checker: Result<Checker, Released>,
+    /// When it was last written, by [`KeptPictures`]'s count of writes: the
+    /// pictures written longest ago let their readers go first.
+    written: u64,
+    /// The NAPLPS macros `stream` defines, as its reader last reported.
+    defined: Option<[bool; MACRO_CODES]>,
     pub objects: Option<KeptObjects>,
     /// Each companion's message bytes as received, for the cost.
     objects_cost: usize,
@@ -198,8 +278,9 @@ impl KeptPicture {
         Self {
             language,
             stream: Vec::new(),
-            pieces: Vec::new(),
-            checker: Checker::new(language),
+            checker: Ok(Checker::new(language)),
+            written: 0,
+            defined: None,
             objects: None,
             objects_cost: 0,
             links: None,
@@ -211,29 +292,40 @@ impl KeptPicture {
         }
     }
 
-    /// What it costs (PAR-17).
-    fn cost(&self) -> usize {
-        self.stream.len().saturating_mul(STREAM_COST_FACTOR).saturating_add(self.objects_cost).saturating_add(self.links_cost).saturating_add(self.cursor_cost)
+    /// What its companions cost.
+    const fn companions_cost(&self) -> usize {
+        self.objects_cost.saturating_add(self.links_cost).saturating_add(self.cursor_cost)
     }
 
-    /// Its checker read from the start again, after a refusal left it
-    /// having read bytes that are not kept.
-    fn reread(&mut self) {
-        self.checker = Checker::new(self.language);
-        let mut at = 0_usize;
-        for &length in &self.pieces {
-            let end = at.saturating_add(length);
-            if let Some(piece) = self.stream.get(at..end) {
-                let _ = self.checker.feed(piece);
-            }
-            at = end;
-        }
+    /// What its reader is counted as holding: none once it is let go.
+    const fn reader_cost(&self) -> usize {
+        if self.checker.is_ok() { reader_bytes(self.language) } else { 0 }
+    }
+
+    /// What it costs besides its reader.
+    const fn content_cost(&self) -> usize {
+        self.stream.len().saturating_add(self.companions_cost())
+    }
+
+    /// What it costs (PAR-17, TODO-6836).
+    const fn cost(&self) -> usize {
+        self.content_cost().saturating_add(self.reader_cost())
     }
 
     /// The NAPLPS macros its stream has defined.
-    pub(crate) fn defined_macros(&self) -> Option<[bool; MACRO_CODES]> {
-        self.checker.defined_macros()
+    pub(crate) const fn defined_macros(&self) -> Option<[bool; MACRO_CODES]> {
+        self.defined
     }
+}
+
+/// Why a kept picture's reader was let go.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Released {
+    /// It refused an append, having read part of it.
+    Refused,
+    /// Its room was wanted under `MOST_KEPT_COST` by a picture written
+    /// later.
+    ForRoom,
 }
 
 /// Why something cannot be kept.
@@ -274,6 +366,8 @@ pub(crate) enum Companion {
 #[derive(Default)]
 pub(crate) struct KeptPictures {
     pictures: BTreeMap<(u16, u16), KeptPicture>,
+    /// Counts the writes, to order the pictures by their last.
+    writes: u64,
 }
 
 impl KeptPictures {
@@ -285,6 +379,39 @@ impl KeptPictures {
     /// What all of them cost.
     pub(crate) fn cost(&self) -> usize {
         self.pictures.values().fold(0_usize, |sum, picture| sum.saturating_add(picture.cost()))
+    }
+
+    /// What every picture but `key`'s costs besides its reader: the least
+    /// they can be made to cost, by letting their readers go.
+    fn others_content_cost(&self, key: (u16, u16)) -> usize {
+        self.pictures.iter().filter(|(other, _)| **other != key).fold(0_usize, |sum, (_, picture)| sum.saturating_add(picture.content_cost()))
+    }
+
+    /// The readers held, for the tests.
+    #[cfg(test)]
+    pub(crate) fn readers_held(&self) -> usize {
+        self.pictures.values().filter(|picture| picture.checker.is_ok()).count()
+    }
+
+    /// `key`'s picture was just written: it is the most recent, and the
+    /// readers of the pictures written longest ago are let go until the
+    /// whole cost is within `MOST_KEPT_COST` (TODO-6836).
+    fn written(&mut self, key: (u16, u16)) {
+        self.writes = self.writes.wrapping_add(1);
+        let writes = self.writes;
+        if let Some(picture) = self.pictures.get_mut(&key) {
+            picture.written = writes;
+        }
+        while self.cost() > MOST_KEPT_COST {
+            let oldest = self
+                .pictures
+                .iter()
+                .filter(|(other, picture)| **other != key && picture.checker.is_ok())
+                .min_by_key(|(_, picture)| picture.written)
+                .map(|(other, _)| *other);
+            let Some(picture) = oldest.and_then(|other| self.pictures.get_mut(&other)) else { break };
+            picture.checker = Err(Released::ForRoom);
+        }
     }
 
     /// The kept picture of `page` and `sub` in `language`, made empty if
@@ -311,21 +438,26 @@ impl KeptPictures {
     }
 
     /// Bytes of a kept stream (PAR-16, PAR-17): appended, or with
-    /// `restart` a new kept generation. A stream is counted by its bytes.
+    /// `restart` a new kept generation. A stream is counted by its bytes
+    /// and its reader's memory.
     ///
     /// # Errors
     /// `wrong_picture_language`, a bound of PAR-17, or the receiver's
-    /// reader's refusal; nothing is kept then.
+    /// reader's refusal; nothing is kept then. Once its reader has refused
+    /// an append, a kept picture refuses every append until it is begun
+    /// again with `restart` (TODO-6837).
     pub(crate) fn stream(&mut self, page: u16, sub: u16, language: PictureLanguage, restart: bool, bytes: &[u8]) -> Result<(StreamChange, Notes), KeptRefusal> {
-        let other_cost = self.pictures.iter().filter(|(key, _)| **key != (page, sub)).fold(0_usize, |sum, (_, picture)| sum.saturating_add(picture.cost()));
-        let existing = self.pictures.get(&(page, sub));
+        let key = (page, sub);
+        let existing = self.pictures.get(&key);
         let kept_before = existing.filter(|picture| !restart && picture.language == language);
         let length = kept_before.map_or(0, |picture| picture.stream.len()).saturating_add(bytes.len());
         if length > MOST_KEPT_STREAM_BYTES {
             return Err(KeptRefusal::over("data", "MOST_KEPT_STREAM_BYTES", MOST_KEPT_STREAM_BYTES));
         }
-        let companions = kept_before.map_or(0, |picture| picture.cost().saturating_sub(picture.stream.len().saturating_mul(STREAM_COST_FACTOR)));
-        let cost = other_cost.saturating_add(length.saturating_mul(STREAM_COST_FACTOR)).saturating_add(companions);
+        // The others' readers may be let go for room; this one's reader is
+        // needed to read the bytes.
+        let companions = kept_before.map_or(0, KeptPicture::companions_cost);
+        let cost = self.others_content_cost(key).saturating_add(length).saturating_add(reader_bytes(language)).saturating_add(companions);
         if cost > MOST_KEPT_COST {
             return Err(KeptRefusal::over("data", "MOST_KEPT_COST", MOST_KEPT_COST));
         }
@@ -335,22 +467,41 @@ impl KeptPictures {
             let mut checker = Checker::new(language);
             let notes = checker.feed(bytes).map_err(|refused| KeptRefusal { path: "data", rule: refused.rule, detail: refused.detail })?;
             let picture = self.entry(page, sub, language, true, "data")?;
-            picture.checker = checker;
+            picture.defined = checker.defined_macros();
+            picture.checker = Ok(checker);
             picture.stream = bytes.to_vec();
-            picture.pieces = alloc::vec![bytes.len()];
             picture.version = picture.version.wrapping_add(1);
+            self.written(key);
             return Ok((StreamChange::Restarted, notes));
         }
         let picture = self.entry(page, sub, language, false, "data")?;
-        match picture.checker.feed(bytes) {
+        let checker = match picture.checker.as_mut() {
+            Ok(checker) => checker,
+            Err(released) => {
+                let why = match released {
+                    Released::Refused => "its reader refused an earlier append",
+                    Released::ForRoom => "its reader was let go to make room under MOST_KEPT_COST for pictures written since",
+                };
+                return Err(KeptRefusal {
+                    path: "restart",
+                    rule: Rule::KeptOverLimit,
+                    detail: format!("the kept picture of {page:03X}/{sub:04X} takes no append, since {why}; begin it again with restart"),
+                });
+            }
+        };
+        match checker.feed(bytes) {
             Ok(notes) => {
+                picture.defined = checker.defined_macros();
                 picture.stream.extend_from_slice(bytes);
-                picture.pieces.push(bytes.len());
                 picture.version = picture.version.wrapping_add(1);
+                self.written(key);
                 Ok((StreamChange::Appended, notes))
             }
             Err(refused) => {
-                picture.reread();
+                // The reader has read bytes that are not kept: it no longer
+                // reads as a receiver given the kept stream would, and is
+                // let go rather than read again (TODO-6837).
+                picture.checker = Err(Released::Refused);
                 Err(KeptRefusal { path: "data", rule: refused.rule, detail: refused.detail })
             }
         }
@@ -374,8 +525,11 @@ impl KeptPictures {
         };
         // A `one` adds to the objects' cost; a whole set replaces it.
         let one = matches!(companion, Companion::Objects { one: true, .. });
-        let added = if one { line_bytes } else { line_bytes.saturating_sub(before) };
-        if self.cost().saturating_add(added) > MOST_KEPT_COST {
+        let key = (page, sub);
+        let own = self.pictures.get(&key).filter(|picture| picture.language == language);
+        let companion_after = if one { before.saturating_add(line_bytes) } else { line_bytes };
+        let after = own.map_or(reader_bytes(language), KeptPicture::cost).saturating_sub(before).saturating_add(companion_after);
+        if self.others_content_cost(key).saturating_add(after) > MOST_KEPT_COST {
             return Err(KeptRefusal::over(path, "MOST_KEPT_COST", MOST_KEPT_COST));
         }
         let picture = self.entry(page, sub, language, false, path)?;
@@ -407,6 +561,7 @@ impl KeptPictures {
             }
         }
         picture.version = picture.version.wrapping_add(1);
+        self.written(key);
         Ok(())
     }
 
