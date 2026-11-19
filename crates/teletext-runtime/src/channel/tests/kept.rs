@@ -386,3 +386,32 @@ fn picture_records_go_only_to_connections_that_agreed_their_language() {
     let got: Vec<bool> = [1, 2, 3].iter().map(|&connection| !picture_types(&sent_to(&effects, connection)).is_empty()).collect();
     assert_eq!(got, [false, false, true]);
 }
+
+/// TODO-6836: every connection's own NAPLPS stream holds a reader of up to
+/// `NAPLPS_READER_BYTES`; the readers of a channel's connections stop at
+/// `MOST_CONNECTION_READER_BYTES`, and a restart past it is refused naming
+/// it, while a restart that replaces readers already held is not.
+#[test]
+fn the_readers_of_connections_own_streams_stop_at_their_bound() {
+    use crate::kept::{MOST_CONNECTION_READER_BYTES, NAPLPS_READER_BYTES};
+    let mut channel = empty();
+    let room = u64::try_from(MOST_CONNECTION_READER_BYTES / NAPLPS_READER_BYTES).unwrap();
+    assert!(room > 1, "more than one connection's reader fits");
+    for connection in 1..=room + 1 {
+        let _ = arrive(&mut channel, connection, BOTH, 0);
+    }
+    for connection in 1..=room {
+        channel.from_program(&picture("naplps", &json!([connection]), true, b"Hello"), 1);
+        assert_eq!(refusals(&mut channel), [], "connection {connection}'s reader fits");
+    }
+    channel.from_program(&picture("naplps", &json!([room + 1]), true, b"Hello"), 2);
+    let refused = refusals(&mut channel);
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].0, "kept_over_limit");
+    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (33554432) would be passed"), "{refused:?}");
+    assert!(sent_to(&channel.take_effects(), room + 1).is_empty(), "nothing was sent to it");
+    // Begun again, the readers held are replaced, not added to.
+    let all: Vec<u64> = (1..=room).collect();
+    channel.from_program(&picture("naplps", &json!(all), true, b"Again"), 3);
+    assert_eq!(refusals(&mut channel), []);
+}

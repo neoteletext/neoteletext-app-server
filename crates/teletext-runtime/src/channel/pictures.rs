@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use neoteletext_input::caps::{NAPLPS_CAP, REGIS_CAP};
 
 use super::{Channel, Connection, Level};
-use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, Notes, PictureLanguage, StreamChange};
+use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, PictureLanguage, StreamChange};
 use crate::protocol::{
     self, AuthorLevel, AuthorLog, ConnectionId, Connections, DrawingLink, MessageType, NaplpsObjects, PictureAudience, ProgramMessage, Refusal, Rule,
     ServerMessage,
@@ -355,6 +355,14 @@ impl Channel {
             .into_iter()
             .filter(|connection| self.connections.get(connection).is_some_and(|state| state.agrees(language)))
             .collect();
+        if restart {
+            self.room_for_readers(language, &targets).map_err(|detail| Refusal {
+                message: Some(kind),
+                path: "connections".to_string(),
+                rule: Rule::KeptOverLimit,
+                detail,
+            })?;
+        }
         let mut notes: Notes = Vec::new();
         for connection in &targets {
             let Some(state) = self.connections.get_mut(connection) else { continue };
@@ -382,6 +390,31 @@ impl Channel {
         }
         self.send_records(&targets, kind, Some(page), |state| state.own_records(language, bytes))?;
         self.author_notes(&targets, page, notes);
+        Ok(())
+    }
+
+    /// Whether a restart of `targets`' streams of `language`, each with a
+    /// new reader, keeps the readers of every connection's own streams
+    /// within `MOST_CONNECTION_READER_BYTES` (PAR-23, TODO-6836); the
+    /// readers the restart replaces are not counted.
+    ///
+    /// # Errors
+    /// The bound's detail when it would be passed.
+    fn room_for_readers(&self, language: PictureLanguage, targets: &[ConnectionId]) -> Result<(), String> {
+        let held = self.connections.iter().fold(0_usize, |sum, (id, state)| {
+            let languages = [PictureLanguage::Regis, PictureLanguage::Naplps];
+            languages
+                .into_iter()
+                .filter(|&held_language| held_language != language || !targets.contains(id))
+                .filter(|&held_language| state.stream(held_language).is_some_and(|stream| stream.checker.is_some()))
+                .fold(sum, |sum, held_language| sum.saturating_add(kept::reader_bytes(held_language)))
+        });
+        let wanted = held.saturating_add(targets.len().saturating_mul(kept::reader_bytes(language)));
+        if wanted > MOST_CONNECTION_READER_BYTES {
+            return Err(format!(
+                "MOST_CONNECTION_READER_BYTES ({MOST_CONNECTION_READER_BYTES}) would be passed: the readers of streams sent to connections themselves would hold {wanted} bytes"
+            ));
+        }
         Ok(())
     }
 
