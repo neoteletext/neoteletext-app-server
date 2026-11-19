@@ -372,6 +372,26 @@ fn the_socket_unit_is_installed_and_names_the_services_address() {
     assert!(deploy.contains("enable --now neoteletext.socket"));
 }
 
+/// The deployment's proxy path: caddyrouter proxies `app.neottx.com` straight
+/// to the socket's address, trusted as the server's one proxy by the address
+/// it connects from, and the container's Caddy no longer proxies the server.
+#[test]
+fn caddyrouter_proxies_the_server_directly_and_is_its_trusted_proxy() {
+    let unit = include_str!("../../../deploy/ionos/neoteletext.socket");
+    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let router = include_str!("../../../deploy/ionos/caddyrouter.caddy");
+    let container = include_str!("../../../deploy/ionos/Caddyfile");
+    let address = unit.lines().find_map(|line| line.strip_prefix("ListenStream=")).unwrap();
+    let block =
+        router.split("\napp.neottx.com {\n").nth(1).and_then(|rest| rest.split("\n}\n").next()).expect("caddyrouter has a block for app.neottx.com alone");
+    let proxied: Vec<&str> = block.lines().filter_map(|line| line.trim().strip_prefix("reverse_proxy ")).collect();
+    assert_eq!(proxied, [format!("http://{address}")], "app.neottx.com goes to the socket and nowhere else");
+    let (host_side, _) = address.split_once(':').unwrap();
+    assert_eq!(host_side, "10.70.0.18", "the socket is on the container's veth address, which create_container.sh fixes");
+    assert!(deploy.contains("--trusted-proxy 10.70.0.17"), "caddyrouter connects from the host's side of the veth");
+    assert!(!container.contains("app.neottx.com:") && !container.contains("8090"), "the container's Caddy proxies nothing to the server");
+}
+
 /// DEC-1759 lesson 18: an upgrade that carries `Origin` is a web page's
 /// script, and is refused, whatever it offers. Lesson 14: an upgrade that does
 /// not offer this version's subprotocol is refused and told what is spoken.

@@ -1,10 +1,13 @@
 # Caddy inside the neoteletext container, as the lockinatime container's
 # is. caddyrouter terminates TLS and proxies neottx.com and neoteletext.com,
-# with their www and app names, to this server at 10.70.0.18:8080 (an unprivileged
-# port: inside the container's user namespace even CAP_NET_BIND_SERVICE
-# cannot bind 80), passing the original Host header. Nothing here is
-# reachable from the internet directly: the container has its own network
-# namespace and only the host routes to it. HSTS is never set.
+# with www.neottx.com and app.neoteletext.com, to this Caddy at
+# 10.70.0.18:8080 (an unprivileged port: inside the container's user
+# namespace even CAP_NET_BIND_SERVICE cannot bind 80), passing the original
+# Host header. app.neottx.com, the NeoTeletext server, does not come here:
+# caddyrouter proxies it to the server's own socket (neoteletext.socket).
+# Nothing here is reachable from the internet directly: the container has
+# its own network namespace and only the host routes to it. HSTS is never
+# set.
 {
 	admin unix//run/caddy/admin.sock
 	auto_https off
@@ -43,18 +46,6 @@ http://www.neottx.com:8080 {
 # The bare domain and the old names go to it; temporary while the names settle.
 http://neottx.com:8080, http://neoteletext.com:8080, http://www.neoteletext.com:8080 {
 	redir https://www.neottx.com{uri} 302
-}
-
-# The NeoTeletext server, its origin app.neottx.com: its channels' files and
-# their push WebSockets, which must be on the channel's own origin.
-http://app.neottx.com:8080 {
-	# The server keys its per-address limits on the viewer's address, which
-	# it takes from this header only from its trusted proxy, this Caddy.
-	# {client_ip} is the address the front proxy vouches for
-	# (trusted_proxies above), never one a client wrote itself.
-	reverse_proxy 127.0.0.1:8090 {
-		header_up X-Forwarded-For {client_ip}
-	}
 }
 
 # The server's first name goes to its origin.

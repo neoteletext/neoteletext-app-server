@@ -3,16 +3,26 @@
 # queue and is answered once the server runs, where a socket of the server's
 # own would refuse it (requirement 5.6, REQ-1041).
 #
+# caddyrouter, on the host's side of the container's veth (10.70.0.17),
+# connects here directly: no Caddy in the container sits between, so each
+# viewer costs one proxy's sockets and memory, not two. The address is the
+# container's veth address, which only the host's network namespace reaches:
+# the host forwards nothing to it from the internet or from the other
+# containers. FreeBind lets the socket bind before the network has given
+# the container that address at boot.
+#
 # A connection here starts the service, so stopping the server for good
 # means stopping this unit too. A changed address needs
 # `systemctl restart neoteletext.socket`: restarting the service keeps the
-# socket it has.
+# socket it has. deploy/ionos/deploy.sh does it when this file changed.
 [Unit]
 Description=NeoTeletext app server's listening socket
 
 [Socket]
-# The service's --listen names the same address; tests/lifecycle.rs asserts it.
-ListenStream=127.0.0.1:8090
+# The service's --listen names the same address, and caddyrouter.caddy
+# proxies app.neottx.com to it; tests/lifecycle.rs asserts both.
+ListenStream=10.70.0.18:8090
+FreeBind=true
 
 [Install]
 WantedBy=sockets.target

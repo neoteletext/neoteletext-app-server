@@ -1,11 +1,11 @@
 # BEGIN neoteletext (~/devel/neoteletext-app-server/deploy/ionos/deploy.sh
 # replaces everything to END). The neoteletext nspawn container, with its own
-# network namespace; Caddy inside it listens on 10.70.0.18:8080: the static
-# site on www.neottx.com, the NeoTeletext server on app.neottx.com, and
-# redirects from neottx.com and the neoteletext.com names. TLS terminates here.
-neottx.com, www.neottx.com, app.neottx.com, neoteletext.com, www.neoteletext.com, app.neoteletext.com {
-	reverse_proxy http://10.70.0.18:8080
-	encode zstd gzip
+# network namespace. TLS terminates here. app.neottx.com, the NeoTeletext
+# server, goes straight to the server's socket at 10.70.0.18:8090; the other
+# names go to Caddy inside the container at 10.70.0.18:8080: the static site
+# on www.neottx.com and the redirects from neottx.com and the neoteletext.com
+# names.
+(neoteletext_log) {
 	log {
 		output file /var/log/caddy/neoteletext.com.log {
 			roll_size 10MB
@@ -14,5 +14,20 @@ neottx.com, www.neottx.com, app.neottx.com, neoteletext.com, www.neoteletext.com
 		}
 		format json
 	}
+}
+# The server keys its per-address limits on the viewer's address, which it
+# takes from the last X-Forwarded-For entry when the peer is its trusted
+# proxy, this Caddy (--trusted-proxy 10.70.0.17). With no trusted_proxies
+# here, Caddy drops whatever X-Forwarded-For a client sent and writes the
+# address it connected from, so a client cannot name another address.
+app.neottx.com {
+	reverse_proxy http://10.70.0.18:8090
+	encode zstd gzip
+	import neoteletext_log
+}
+neottx.com, www.neottx.com, neoteletext.com, www.neoteletext.com, app.neoteletext.com {
+	reverse_proxy http://10.70.0.18:8080
+	encode zstd gzip
+	import neoteletext_log
 }
 # END neoteletext

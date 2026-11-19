@@ -19,10 +19,10 @@
 #      backed up first and never replaced (REQ-1057);
 #   3. the channels file, the service and its socket (a restart refuses no
 #      connection, REQ-1041), and the container's Caddy, which serves the
-#      home page on neoteletext.com and www and proxies app.neoteletext.com
-#      to the server;
-#   4. caddyrouter's site block for the three names, checked as a candidate
-#      before the live Caddyfile changes.
+#      home page on www.neottx.com and the redirects;
+#   4. caddyrouter's site blocks, checked as a candidate before the live
+#      Caddyfile changes: app.neottx.com straight to the server's socket at
+#      10.70.0.18:8090, the other names to the container's Caddy.
 # DNS is not touched here: the three names are A records, DNS only, to the
 # host (74.208.133.103), as lockinatime.com's are.
 #
@@ -232,6 +232,9 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"musicplayer","name":"Music player","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-musicplayer"}
 ]}
 EOF
+# A socket whose address changed must itself restart (its unit's comment).
+# shellcheck disable=SC2029
+socket_changed=$(ssh "$target" "sudo cmp -s - /etc/systemd/system/neoteletext.socket && echo no || echo yes" < "$here/neoteletext.socket")
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.service >/dev/null" <<EOF
 [Unit]
@@ -245,8 +248,11 @@ Requires=neoteletext.socket
 User=ubuntu
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # What survives a restart (teletext-server requirement 5.2), in /var/lib/neoteletext.
+# Viewers come from caddyrouter, the host's side of the veth, whose
+# X-Forwarded-For names each viewer; the administration listener stays on
+# the container's loopback, which nothing outside the container reaches.
 StateDirectory=neoteletext
-ExecStart=$app/bin/teletext-server --listen 127.0.0.1:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 127.0.0.1
+ExecStart=$app/bin/teletext-server --listen 10.70.0.18:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 10.70.0.17
 Restart=on-failure
 # The server stops within 10 s of SIGTERM (requirement 5.1).
 TimeoutStopSec=15
@@ -256,7 +262,9 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 ssh "$target" "sudo tee /etc/caddy/Caddyfile >/dev/null" < "$here/Caddyfile"
+# shellcheck disable=SC2029
 ssh "$target" "set -e; sudo systemctl daemon-reload
+    if [ $socket_changed = yes ] && systemctl is-active --quiet neoteletext.socket; then sudo systemctl restart neoteletext.socket; fi
     # Once, the first time: a server that bound the address itself must go
     # before the socket can. After that the socket stays open and only the
     # service restarts, so no connection is refused.
@@ -267,7 +275,7 @@ ssh "$target" "set -e; sudo systemctl daemon-reload
     sudo runuser -u caddy -- caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || { echo 'the container Caddyfile does not validate' >&2; exit 1; }
     sudo systemctl enable caddy >/dev/null 2>&1; sudo systemctl restart caddy"
 
-say "caddyrouter: the neoteletext site block"
+say "caddyrouter: the neoteletext site blocks"
 # The block between its BEGIN and END lines is replaced whole (or the first
 # deploy's unmarked neoteletext.com block, to its closing brace, or
 # appended), in a candidate that must validate before the live Caddyfile
@@ -291,6 +299,6 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
     sudo systemctl reload caddy && echo "replaced and reloaded"' < "$here/caddyrouter.caddy"
 
 say "inside the container"
-ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://127.0.0.1:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
-    for h in www.neottx.com neottx.com app.neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://127.0.0.1:8090/$c/channel.ttx; done'
+ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://10.70.0.18:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
+    for h in www.neottx.com neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
+    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://10.70.0.18:8090/$c/channel.ttx; done'
