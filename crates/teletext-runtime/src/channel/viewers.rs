@@ -496,8 +496,12 @@ impl Channel {
     /// The time has come: challenges not answered in time end (VS-202,
     /// VS-205), and idle viewers past [`VIEWER_IDLE_MS`] go (VS-303).
     pub(super) fn viewer_deadline(&mut self, now: u64) {
-        let expired: Vec<ConnectionId> =
-            self.connections.iter().filter(|(_, state)| state.viewer.due().is_some_and(|due| due <= now)).map(|(&connection, _)| connection).collect();
+        let expired: Vec<ConnectionId> = self
+            .connections
+            .due(now)
+            .into_iter()
+            .filter(|connection| self.connections.get(connection).is_some_and(|state| state.viewer.due().is_some_and(|due| due <= now)))
+            .collect();
         for connection in expired {
             self.refused(connection, StateRefusal::Timeout, now);
         }

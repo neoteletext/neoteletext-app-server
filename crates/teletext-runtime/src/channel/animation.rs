@@ -236,8 +236,12 @@ impl Channel {
     /// The frames open past their time are ended by the server (ANIM-2):
     /// a frame delays a picture and never hides one.
     pub(super) fn late_frames(&mut self, now: u64) {
-        let late: Vec<ConnectionId> =
-            self.connections.iter().filter(|(_, state)| state.animation.next_due().is_some_and(|due| due <= now)).map(|(&connection, _)| connection).collect();
+        let late: Vec<ConnectionId> = self
+            .connections
+            .due(now)
+            .into_iter()
+            .filter(|connection| self.connections.get(connection).is_some_and(|state| state.animation.next_due().is_some_and(|due| due <= now)))
+            .collect();
         for connection in late {
             self.log(Level::Warn, "frame_not_ended", format!("connection {connection}'s frame was not ended within {FRAME_LIMIT_MS} ms: the server ended it"));
             self.end_frame(connection);

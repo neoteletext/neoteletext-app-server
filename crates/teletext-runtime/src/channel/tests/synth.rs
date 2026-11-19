@@ -56,7 +56,7 @@ fn built(effects: &[Effect]) -> Vec<Value> {
 }
 
 fn first_record(channel: &Channel) -> u8 {
-    channel.connections[&CONNECTION].record_id
+    channel.connections.get(&CONNECTION).unwrap().record_id
 }
 
 fn audio(records: &[Vec<u8>], first: u8) -> Vec<u8> {

@@ -30,7 +30,7 @@ use alloc::vec::Vec;
 
 use neoteletext_web::base64;
 
-use super::{Channel, Level};
+use super::{Channel, Connection, Level};
 use crate::fallback::{FIRST_ROW, MosaicRows};
 use crate::kept::{
     FALLBACK_DRAWING_FLOOR_BYTES, FALLBACK_INTERVAL_MS, MOST_FALLBACK_BYTES_PER_SECOND, MOST_FALLBACK_POOL_BYTES, MOST_FALLBACK_RENDERS_PER_SECOND,
@@ -90,6 +90,13 @@ fn spent_cost(language: PictureLanguage, length: usize, work: Option<u64>) -> us
 }
 
 /// When one picture's fallback is drawn.
+impl Connection {
+    /// When its own picture's fallback is next to be drawn, if it has one.
+    pub(super) fn own_fallback_due(&self) -> Option<u64> {
+        self.own_picture.as_ref().and_then(|own| own.drawing.due)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Drawing {
     /// Its rows as last drawn.
@@ -356,9 +363,9 @@ impl Channel {
         }
         let due_own: Vec<ConnectionId> = self
             .connections
-            .iter()
-            .filter(|(_, state)| state.own_picture.as_ref().is_some_and(|own| own.drawing.due.is_some_and(|due| due <= now)))
-            .map(|(&id, _)| id)
+            .due(now)
+            .into_iter()
+            .filter(|id| self.connections.get(id).and_then(Connection::own_fallback_due).is_some_and(|due| due <= now))
             .collect();
         for connection in due_own {
             let cost = self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()).map_or(0, |own| {
@@ -389,13 +396,6 @@ impl Channel {
                 self.show_fallback(connection, &rows);
             }
         }
-    }
-
-    /// The earliest fallback drawing due, of the channel's and its
-    /// connections'.
-    pub(super) fn next_fallback(&self) -> Option<u64> {
-        let own = self.connections.values().filter_map(|state| state.own_picture.as_ref().and_then(|own| own.drawing.due));
-        own.chain(self.fallbacks.next_due()).min()
     }
 
     /// Sends `connection` its sub-page shown with `rows`: what changed of

@@ -409,7 +409,8 @@ impl Channel {
     /// The state queries past their time are refused (RULE-38).
     pub(super) fn late_queries(&mut self, now: u64) {
         let mut late = Vec::new();
-        for (&connection, state) in &mut self.connections {
+        for connection in self.connections.due(now) {
+            let Some(state) = self.connections.get_mut(&connection) else { continue };
             let (due, waiting) = core::mem::take(&mut state.rules.queries).into_iter().partition(|query| query.due <= now);
             state.rules.queries = waiting;
             late.extend(Vec::into_iter(due).map(|query| (connection, query)));

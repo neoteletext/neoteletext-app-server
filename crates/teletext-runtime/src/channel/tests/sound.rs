@@ -51,7 +51,7 @@ fn audio(records: &[Vec<u8>], first: u8) -> Vec<u8> {
 
 /// The record number the next record on a connection takes.
 fn next_record(channel: &Channel) -> u8 {
-    channel.connections[&CONNECTION].record_id
+    channel.connections.get(&CONNECTION).unwrap().record_id
 }
 
 /// The refusals in `effects`, with their details.

@@ -134,7 +134,7 @@ fn refusals(effects: &[Effect]) -> usize {
 
 /// What connection `connection` of `channel` has selected: page and sub-code.
 fn selection(channel: &Channel, connection: u64) -> Option<(u16, u16)> {
-    channel.connections[&connection].selection.map(|selection| (selection.page.0, selection.sub.0))
+    channel.connections.get(&connection).unwrap().selection.map(|selection| (selection.page.0, selection.sub.0))
 }
 
 /// REQ-1473 verification 1, 2 and 3: a message reaches the connections it
@@ -444,12 +444,12 @@ fn another_sub_code_goes_whole_and_is_kept_instead() {
     channel.from_program(&answer(1, 1, &subpage()), 1);
     channel.received(1, &message(&channel, 1, &[select(0x100, 1)]), 2);
     let _ = channel.take_effects();
-    assert!(channel.connections[&1].shown.is_none(), "a selection drops what was kept");
+    assert!(channel.connections.get(&1).unwrap().shown.is_none(), "a selection drops what was kept");
     channel.from_program(&answer(1, 2, &sub_page("100", "0001")), 3);
     assert_eq!(headers(&sent_to(&channel.take_effects(), 1)), [(1, true)]);
     channel.from_program(&change(&changed(&sub_page("100", "0001"))), 4);
     assert_eq!(numbers(&sent_to(&channel.take_effects(), 1)).first().copied(), Some(0));
-    let kept = channel.connections[&1].shown.as_ref().unwrap();
+    let kept = channel.connections.get(&1).unwrap().shown.as_ref().unwrap();
     assert_eq!((kept.page, kept.sub), (0x100, 1));
 }
 
@@ -503,7 +503,7 @@ fn two_tabs_keep_their_own_sub_page() {
 fn nothing_is_kept_after_a_connection_closes() {
     let mut channel = viewers(&[(1, 0x100, 0), (2, 0x100, 0)]);
     channel.from_program(&answer(1, 1, &subpage()), 1);
-    assert!(channel.connections[&1].shown.is_some());
+    assert!(channel.connections.get(&1).unwrap().shown.is_some());
     channel.closed(1, 2);
     assert!(!channel.connections.contains_key(&1));
     assert_eq!(channel.connections.values().filter(|state| state.shown.is_some()).count(), 0);
@@ -514,7 +514,7 @@ fn nothing_is_kept_after_a_connection_closes() {
 #[test]
 fn a_starting_channel_has_nothing_to_show_until_its_program_answers() {
     let mut channel = viewers(&[(1, 0x100, 0)]);
-    assert!(channel.connections[&1].shown.is_none());
+    assert!(channel.connections.get(&1).unwrap().shown.is_none());
     channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
     assert_eq!(headers(&sent_to(&channel.take_effects(), 1)), [] as [(u16, bool); 0]);
     channel.from_program(&answer(1, 1, &subpage()), ACKNOWLEDGEMENT_WAIT_MS);

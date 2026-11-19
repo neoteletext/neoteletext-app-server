@@ -432,6 +432,7 @@ fn the_readers_of_connections_own_streams_stop_at_their_bound() {
         channel.closed(connection, 4);
     }
     assert_eq!(channel.connection_readers_held(), fonts.held_bytes(), "only the shared font and sets are left");
+    assert!(channel.connections.settled_wakes_are_current(), "every connection's wake is in the order as it is");
     assert_eq!(channel.connection_readers_counted(), channel.connection_readers_held());
 }
 
@@ -488,6 +489,7 @@ fn fifty_thousand_connections_each_take_their_own_ordinary_pictures() {
     assert_eq!(refusals(&mut channel), []);
     let held = channel.connection_readers_held();
     assert_eq!(held, channel.connection_readers_counted());
+    assert!(channel.connections.settled_wakes_are_current());
     std::println!(
         "{connections} connections opened in {opened:?}; their own NAPLPS and ReGIS streams read in {:?}; the readers hold {held} bytes",
         started.elapsed().checked_sub(opened).unwrap()

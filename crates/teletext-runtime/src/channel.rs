@@ -12,7 +12,6 @@
 //! (REQ-1473), as checked teletext packets (REQ-1480, REQ-1462).
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -51,6 +50,7 @@ mod animation;
 mod fallback;
 mod pictures;
 mod rules;
+mod table;
 mod viewers;
 
 pub use rules::DefaultRules;
@@ -383,6 +383,27 @@ struct Connection {
 }
 
 impl Connection {
+    /// The earliest time this connection needs the channel's deadline, if
+    /// any: its program's answer, its first selection, its acknowledgement,
+    /// its viewer-state challenge, a paced move (whose time is in
+    /// microseconds: the first millisecond at or after it), a rule table's
+    /// query, an open frame and its own fallback drawing. Every one of them
+    /// is this connection's own state, so it changes only when the
+    /// connection does ([`table::ConnectionTable`]).
+    fn wake(&self) -> Option<u64> {
+        self.ending
+            .due()
+            .into_iter()
+            .chain(self.first_selection_due)
+            .chain(self.acknowledgement_due)
+            .chain(self.viewer.due())
+            .chain(self.moves.due().map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND)))
+            .chain(self.rules.next_due())
+            .chain(self.animation.next_due())
+            .chain(self.own_fallback_due())
+            .min()
+    }
+
     fn new(address: Option<core::net::IpAddr>, now: u64) -> Self {
         Self {
             viewer: viewers::Slot::new(address),
@@ -461,7 +482,7 @@ pub struct Channel {
     /// The page the program was asked about to learn that it answers, until
     /// it does, which no visitor need be waiting for.
     readiness_page: Option<u16>,
-    connections: BTreeMap<ConnectionId, Connection>,
+    connections: table::ConnectionTable,
     /// The viewers it knows (DEC-6471).
     viewers: viewers::Viewers,
     sounds: Sounds,
@@ -526,7 +547,7 @@ impl Channel {
             program: false,
             answered: false,
             readiness_page: None,
-            connections: BTreeMap::new(),
+            connections: table::ConnectionTable::default(),
             sounds: Sounds::default(),
             effects,
             stats: ChannelStats::default(),
@@ -918,17 +939,22 @@ impl Channel {
     /// time are given up (REQ-1481).
     pub fn deadline(&mut self, now: u64) {
         self.viewer_deadline(now);
-        let held: Vec<ConnectionId> =
-            self.connections.iter().filter(|(_, state)| state.first_selection_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
+        let held: Vec<ConnectionId> = self
+            .connections
+            .due(now)
+            .into_iter()
+            .filter(|id| self.connections.get(id).is_some_and(|state| state.first_selection_due.is_some_and(|due| due <= now)))
+            .collect();
         for connection in held {
             self.end_hold(connection, now);
         }
         let mut late: Vec<(ConnectionId, String)> = Vec::new();
-        for (connection, state) in &mut self.connections {
+        for connection in self.connections.due(now) {
+            let Some(state) = self.connections.get_mut(&connection) else { continue };
             if state.ending.due().is_some_and(|due| due <= now) {
                 state.ending = Ending::Answered;
                 let unanswered = if state.replied { "no page for selected" } else { "no reply to connected" };
-                late.push((*connection, format!("connection {connection}: {unanswered}")));
+                late.push((connection, format!("connection {connection}: {unanswered}")));
             }
         }
         // The viewer is told the channel is unavailable, and the connection
@@ -940,13 +966,18 @@ impl Channel {
         for visitor in self.descriptions.late(now) {
             self.effects.push(Effect::Described { visitor, answer: None });
         }
-        let unacknowledged: Vec<ConnectionId> =
-            self.connections.iter().filter(|(_, state)| state.acknowledgement_due.is_some_and(|due| due <= now)).map(|(&id, _)| id).collect();
+        let unacknowledged: Vec<ConnectionId> = self
+            .connections
+            .due(now)
+            .into_iter()
+            .filter(|id| self.connections.get(id).is_some_and(|state| state.acknowledgement_due.is_some_and(|due| due <= now)))
+            .collect();
         for connection in unacknowledged {
             self.acknowledge(connection);
         }
         let mut paced: Vec<(ConnectionId, Event<'static>)> = Vec::new();
-        for (&connection, state) in &mut self.connections {
+        for connection in self.connections.due(now) {
+            let Some(state) = self.connections.get_mut(&connection) else { continue };
             state.moves.take_due(microseconds(now), &mut |event| paced.push((connection, event)));
         }
         for (connection, event) in paced {
@@ -978,27 +1009,19 @@ impl Channel {
         }
     }
 
-    /// When the channel next needs [`Channel::deadline`].
+    /// When the channel next needs [`Channel::deadline`]: the earliest of
+    /// its own times and its connections', which the connections' table
+    /// keeps in order (TODO-6895).
     #[must_use]
-    pub fn next_wake(&self) -> Option<u64> {
-        let expiry = self.viewers.next_due();
-        let dues = self
-            .connections
-            .values()
-            .flat_map(|state| state.ending.due().into_iter().chain(state.first_selection_due).chain(state.acknowledgement_due).chain(state.viewer.due()));
-        // A move's time is in microseconds: this is the first millisecond at
-        // or after it.
-        let moves = self.connections.values().filter_map(|state| state.moves.due()).map(|due| due.div_ceil(MICROSECONDS_PER_MILLISECOND));
-        let queries = self.connections.values().filter_map(|state| state.rules.next_due());
-        let frames = self.connections.values().filter_map(|state| state.animation.next_due());
-        dues.chain(expiry)
-            .chain(moves)
+    pub fn next_wake(&mut self) -> Option<u64> {
+        let connections = self.connections.next_wake();
+        connections
+            .into_iter()
+            .chain(self.viewers.next_due())
             .chain(self.descriptions.next_due())
             .chain(self.sounds.next_due())
-            .chain(queries)
-            .chain(frames)
             .chain(self.timelines.next_due())
-            .chain(self.next_fallback())
+            .chain(self.fallbacks.next_due())
             .min()
     }
 
