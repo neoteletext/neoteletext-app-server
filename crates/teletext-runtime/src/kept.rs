@@ -28,6 +28,7 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use neoteletext_core::glyphs::{JOINED_SETS, JoiningClass, joining};
@@ -47,11 +48,39 @@ pub const MOST_KEPT_PICTURES: usize = 512;
 pub const MOST_KEPT_COST: usize = 33_554_432;
 /// The memory of the readers of every stream a program sends to
 /// connections themselves (PAR-23), each as [`Checker::held_bytes`]
-/// states it after the message it read, for all of a channel's
-/// connections together; a message that would pass it is refused. A
-/// quarter of the Cloudflare host's 128 MB, as `MOST_KEPT_COST` is
-/// (TODO-6836, TODO-6845).
-pub const MOST_CONNECTION_READER_BYTES: usize = 33_554_432;
+/// states it after the message it read, with the [`ReaderFonts`] they
+/// share counted once, for all of a channel's connections together; a
+/// message that would pass it is refused (TODO-6836, TODO-6845).
+///
+/// Derived for the native host (TODO-6895): at least
+/// [`CONNECTIONS_WITH_OWN_PICTURES`] connections of one channel must each
+/// be able to hold its own stream of an ordinary page. Measured on 19
+/// November 2026 (`x86_64` Linux, the renderers' `held_bytes` with the
+/// reader's box): an ordinary NAPLPS page's reader holds 1,160 bytes (a
+/// page of text, the corpus's and the samples' median), the median ReGIS
+/// demonstration page's 15,151 and the largest ordinary one's 60,927. The
+/// median ReGIS page sets the figure: [`ORDINARY_READER_BYTES`] for each of
+/// the connections is 50,000 times 16,384, 819,200,000 bytes, rounded up
+/// to a gibibyte, within which about 70,800 median ReGIS readers fit, the
+/// channel's every connection (`MOST_VIEWERS_PER_CHANNEL`) with an
+/// ordinary NAPLPS one, or 17,600 of the largest ordinary ReGIS page. The
+/// budget's basis: a native host serving 50,000 viewers of one channel
+/// gives that channel about two gigabytes, the readers' gibibyte and about
+/// 13 to 16 KB of each connection's own state (measured at 10,000 and
+/// 30,000 connections with `teletext-load`). The Cloudflare host's Durable
+/// Object has 128 MB in all, so a WebAssembly build keeps a quarter of
+/// that, as `MOST_KEPT_COST` does.
+pub const MOST_CONNECTION_READER_BYTES: usize = if cfg!(target_family = "wasm") { 33_554_432 } else { 1_073_741_824 };
+/// The connections of one channel, each with its own stream of an
+/// ordinary page, that [`MOST_CONNECTION_READER_BYTES`] must hold on the
+/// native host (TODO-6895).
+pub const CONNECTIONS_WITH_OWN_PICTURES: usize = 50_000;
+/// What an ordinary page's reader is allowed in deriving
+/// [`MOST_CONNECTION_READER_BYTES`]: the median ReGIS demonstration page's
+/// 15,151 bytes, measured, rounded up to 16 KiB; an ordinary NAPLPS
+/// page's is 1,160.
+pub const ORDINARY_READER_BYTES: usize = 16_384;
+const _: () = assert!(cfg!(target_family = "wasm") || CONNECTIONS_WITH_OWN_PICTURES * ORDINARY_READER_BYTES <= MOST_CONNECTION_READER_BYTES);
 /// The least time between two fallback drawings of one picture (PAR-25).
 pub const FALLBACK_INTERVAL_MS: u64 = 500;
 /// The fallback drawings of one channel a second, sustained (PAR-25).
@@ -147,11 +176,12 @@ pub(crate) struct CheckRefusal {
 pub(crate) type Notes = Vec<String>;
 
 impl Checker {
-    /// A new one, for a stream begun again.
-    pub(crate) fn new(language: PictureLanguage) -> Self {
+    /// A new one, for a stream begun again, given the channel's shared
+    /// `fonts`.
+    pub(crate) fn new(language: PictureLanguage, fonts: &ReaderFonts) -> Self {
         match language {
             PictureLanguage::Regis => Self::Regis(alloc::boxed::Box::new(regis::Validator::new())),
-            PictureLanguage::Naplps => Self::Naplps(alloc::boxed::Box::new(naplps_validator())),
+            PictureLanguage::Naplps => Self::Naplps(alloc::boxed::Box::new(fonts.naplps_validator())),
         }
     }
 
@@ -159,10 +189,11 @@ impl Checker {
     /// its renderer reports it, which grows and shrinks with what the stream
     /// defines, and the box it is kept in. A ReGIS reader is
     /// `regis::Validator::held_bytes` (DEC-6850); a NAPLPS reader
-    /// `naplps::Validator::held_bytes` (DEC-6858), which counts the stroke
-    /// font and the joined sets it is given and is never more than the
-    /// renderer's `MAX_HELD_BYTES` besides them. Callers ask again after
-    /// every message the reader reads.
+    /// `naplps::Validator::held_bytes` (DEC-6858), never more than the
+    /// renderer's `MAX_HELD_BYTES`; the stroke font and the joined sets it
+    /// is given are the channel's [`ReaderFonts`], shared by every reader
+    /// and counted once by whoever totals the readers (TODO-6895). Callers
+    /// ask again after every message the reader reads.
     pub(crate) fn held_bytes(&self) -> usize {
         match self {
             Self::Regis(validator) => validator.held_bytes().saturating_add(READER_BOX_BYTES),
@@ -268,35 +299,70 @@ impl Checker {
     }
 }
 
-/// A NAPLPS reader as the receiver's is (DEC-6851, TODO-6845): on the
-/// receiver's 480 by 460 canvas (`Validator::new`, RAS-11), with the receiver's
-/// stroke font, whose strokes' pixel work it counts, and the joined sets 44
-/// to 51 with their joining data, which decide when a held letter is drawn.
-/// Only a set's joining data matters to a validator, so each joined set is
-/// a stand-in of one-pixel glyphs; the font and the sets are this build's,
-/// so a refusal of them is a fault of the build and leaves the reader
-/// without them, which counts the stream's end the same.
-fn naplps_validator() -> naplps::Validator {
-    let mut validator = naplps::Validator::new();
-    if let Ok(font) = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT) {
-        validator.set_font(font);
-    }
-    for number in JOINED_SETS {
-        let Ok(mut set) = naplps::BitmapSet::new(1, 1) else { continue };
-        for code in FIRST_MACRO_CODE..=LAST_SET_CODE {
-            let Some(joined) = joining(number, code) else { continue };
-            let kind = match joined.class {
-                JoiningClass::None => naplps::JoiningType::None,
-                JoiningClass::Right => naplps::JoiningType::Right,
-                JoiningClass::Dual => naplps::JoiningType::Dual,
-                JoiningClass::Transparent => naplps::JoiningType::Transparent,
-            };
-            let _ = set.set_joining(code, kind);
-        }
-        let _ = validator.set_teletext_set(number, set);
-    }
-    validator
+/// What a channel's NAPLPS readers are given, built once and shared by
+/// every one of them (TODO-6895): the receiver's stroke font, whose
+/// strokes' pixel work a reader counts, and the joined sets 44 to 51 with
+/// their joining data, which decide when a held letter is drawn (DEC-6851,
+/// TODO-6845). Only a set's joining data matters to a validator, so each
+/// joined set is a stand-in of one-pixel glyphs. Each reader held its own
+/// copy before, 20,208 of an ordinary page's 32,568 bytes. The font and the
+/// sets are this build's, so a refusal of them is a fault of the build and
+/// leaves the readers without them, which counts the stream's end the same.
+#[derive(Clone)]
+pub(crate) struct ReaderFonts {
+    font: Option<Arc<naplps::StrokeFont>>,
+    joined: Vec<(u8, Arc<naplps::BitmapSet>)>,
 }
+
+impl Default for ReaderFonts {
+    fn default() -> Self {
+        let font = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).ok().map(Arc::new);
+        let joined = JOINED_SETS
+            .into_iter()
+            .filter_map(|number| {
+                let mut set = naplps::BitmapSet::new(1, 1).ok()?;
+                for code in FIRST_MACRO_CODE..=LAST_SET_CODE {
+                    let Some(joined) = joining(number, code) else { continue };
+                    let kind = match joined.class {
+                        JoiningClass::None => naplps::JoiningType::None,
+                        JoiningClass::Right => naplps::JoiningType::Right,
+                        JoiningClass::Dual => naplps::JoiningType::Dual,
+                        JoiningClass::Transparent => naplps::JoiningType::Transparent,
+                    };
+                    let _ = set.set_joining(code, kind);
+                }
+                Some((number, Arc::new(set)))
+            })
+            .collect();
+        Self { font, joined }
+    }
+}
+
+impl ReaderFonts {
+    /// A NAPLPS reader as the receiver's is: on the receiver's 480 by 460
+    /// canvas (`Validator::new`, RAS-11), given the shared font and sets.
+    pub(crate) fn naplps_validator(&self) -> naplps::Validator {
+        let mut validator = naplps::Validator::new();
+        if let Some(font) = &self.font {
+            validator.set_font(Arc::clone(font));
+        }
+        for (number, set) in &self.joined {
+            let _ = validator.set_teletext_set(*number, Arc::clone(set));
+        }
+        validator
+    }
+
+    /// What the font and the sets hold, counted once for every reader that
+    /// shares them: each as its renderer states it, in its shared
+    /// allocation.
+    pub(crate) fn held_bytes(&self) -> usize {
+        let shared = |held: usize| held.saturating_add(ARC_COUNT_BYTES).saturating_add(READER_BOX_BYTES);
+        self.joined.iter().map(|(_, set)| shared(set.held_bytes())).fold(self.font.as_ref().map_or(0, |font| shared(font.held_bytes())), usize::saturating_add)
+    }
+}
+
+/// The two reference counts an `Arc`'s allocation holds before its value.
+const ARC_COUNT_BYTES: usize = 2 * size_of::<usize>();
 
 /// The last code of a provided set (REQ-6668).
 const LAST_SET_CODE: u8 = 0x7F;
@@ -346,8 +412,8 @@ pub(crate) struct KeptPicture {
 }
 
 impl KeptPicture {
-    fn new(language: PictureLanguage) -> Self {
-        Self::with_checker(language, Checker::new(language))
+    fn new(language: PictureLanguage, fonts: &ReaderFonts) -> Self {
+        Self::with_checker(language, Checker::new(language, fonts))
     }
 
     /// An empty one whose reader is `checker`.
@@ -463,9 +529,16 @@ pub(crate) struct KeptPictures {
     pictures: BTreeMap<(u16, u16), KeptPicture>,
     /// Counts the writes, to order the pictures by their last.
     writes: u64,
+    /// What every reader of the channel is given, shared (TODO-6895).
+    fonts: ReaderFonts,
 }
 
 impl KeptPictures {
+    /// The font and sets every reader of the channel shares.
+    pub(crate) const fn fonts(&self) -> &ReaderFonts {
+        &self.fonts
+    }
+
     /// The kept picture of a page and sub-code.
     pub(crate) fn get(&self, page: u16, sub: u16) -> Option<&KeptPicture> {
         self.pictures.get(&(page, sub))
@@ -525,9 +598,10 @@ impl KeptPictures {
         if !self.pictures.contains_key(&(page, sub)) && self.pictures.len() >= MOST_KEPT_PICTURES {
             return Err(KeptRefusal::over(path, "MOST_KEPT_PICTURES", MOST_KEPT_PICTURES));
         }
-        let picture = self.pictures.entry((page, sub)).or_insert_with(|| KeptPicture::new(language));
+        let fonts = &self.fonts;
+        let picture = self.pictures.entry((page, sub)).or_insert_with(|| KeptPicture::new(language, fonts));
         if restart || picture.language != language {
-            *picture = KeptPicture::new(language);
+            *picture = KeptPicture::new(language, fonts);
         }
         Ok(picture)
     }
@@ -558,7 +632,7 @@ impl KeptPictures {
         // A restart refused by its bytes must keep what was kept: it is
         // read on a checker of its own first.
         if restart || existing.is_none() {
-            let mut checker = Checker::new(language);
+            let mut checker = Checker::new(language, &self.fonts);
             if over(checker.held_bytes()) {
                 return Err(KeptRefusal::over("data", "MOST_KEPT_COST", MOST_KEPT_COST));
             }
@@ -641,7 +715,8 @@ impl KeptPictures {
         let key = (page, sub);
         let own = self.pictures.get(&key).filter(|picture| picture.language == language);
         let companion_after = if one { before.saturating_add(line_bytes) } else { line_bytes };
-        let after = own.map_or_else(|| Checker::new(language).held_bytes(), KeptPicture::cost).saturating_sub(before).saturating_add(companion_after);
+        let after =
+            own.map_or_else(|| Checker::new(language, &self.fonts).held_bytes(), KeptPicture::cost).saturating_sub(before).saturating_add(companion_after);
         if self.others_content_cost(key).saturating_add(after) > MOST_KEPT_COST {
             return Err(KeptRefusal::over(path, "MOST_KEPT_COST", MOST_KEPT_COST));
         }

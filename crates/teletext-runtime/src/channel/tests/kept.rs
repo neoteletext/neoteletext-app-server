@@ -4,6 +4,8 @@
 //! connection's own, `forget_picture`, NAPLPS links and cursor, the
 //! server's NAPLPS check, and the capability bits.
 
+extern crate std;
+
 use alloc::vec::Vec;
 
 use neoteletext_core::consts::PACKET_BYTES;
@@ -387,40 +389,109 @@ fn picture_records_go_only_to_connections_that_agreed_their_language() {
     assert_eq!(got, [false, false, true]);
 }
 
-/// TODO-6836, TODO-6860: every connection's own NAPLPS stream holds a
-/// reader, counted at what its renderer says it holds
-/// (`naplps::Validator::held_bytes`, DEC-6858); the readers of a channel's
-/// connections stop at `MOST_CONNECTION_READER_BYTES`, and a restart past
-/// it is refused naming it, while a restart that replaces readers already
-/// held is not. An ordinary page's reader is some tens of kilobytes, so
-/// hundreds of connections' own NAPLPS streams fit, where fifteen did when
-/// each was counted at a fixed 2,177,456 bytes.
+/// TODO-6836, TODO-6895: every connection's own stream holds a reader,
+/// counted at what its renderer says it holds; the readers of a channel's
+/// connections, with the font and sets they share counted once, stop at
+/// `MOST_CONNECTION_READER_BYTES`, and a restart past it is refused naming
+/// it, while a restart that replaces readers already held is not. Streams
+/// of thousands of numbered drawings reach it within some hundreds of
+/// connections; ordinary pages' do not before the channel's every
+/// connection (the next test).
 #[test]
 fn the_readers_of_connections_own_streams_stop_at_their_bound() {
     use crate::kept::{Checker, MOST_CONNECTION_READER_BYTES, PictureLanguage};
-    let mut checker = Checker::new(PictureLanguage::Naplps);
-    checker.feed(b"Hello").unwrap();
-    let ordinary = checker.held_bytes();
+    let fonts = crate::kept::tests::fonts();
+    let heavy = crate::kept::tests::regis_drawings(8_000);
+    let mut checker = Checker::new(PictureLanguage::Regis, fonts);
+    checker.feed(&heavy).unwrap();
+    let held = checker.held_bytes();
+    let room = u64::try_from((MOST_CONNECTION_READER_BYTES - fonts.held_bytes()) / held).unwrap();
+    assert!(room > 15 && room < 1_000, "{room} connections' readers of {held} bytes fit");
     let mut channel = empty();
-    let room = u64::try_from(MOST_CONNECTION_READER_BYTES / ordinary).unwrap();
-    assert!(room > 15, "{room} connections' readers of {ordinary} bytes fit");
     for connection in 1..=room + 1 {
         let _ = arrive(&mut channel, connection, BOTH, 0);
     }
     for connection in 1..=room {
-        channel.from_program(&picture("naplps", &json!([connection]), true, b"Hello"), 1);
+        channel.from_program(&picture("regis", &json!([connection]), true, &heavy), 1);
         assert_eq!(refusals(&mut channel), [], "connection {connection}'s reader fits");
     }
-    channel.from_program(&picture("naplps", &json!([room + 1]), true, b"Hello"), 2);
+    assert_eq!(channel.connection_readers_held(), channel.connection_readers_counted(), "the running total is every reader's");
+    channel.from_program(&picture("regis", &json!([room + 1]), true, &heavy), 2);
     let refused = refusals(&mut channel);
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].0, "kept_over_limit");
-    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (33554432) would be passed"), "{refused:?}");
+    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (1073741824) would be passed"), "{refused:?}");
     assert!(sent_to(&channel.take_effects(), room + 1).is_empty(), "nothing was sent to it");
     // Begun again, the readers held are replaced, not added to.
     let all: Vec<u64> = (1..=room).collect();
-    channel.from_program(&picture("naplps", &json!(all), true, b"Again"), 3);
+    channel.from_program(&picture("regis", &json!(all), true, b"P[1,1]"), 3);
     assert_eq!(refusals(&mut channel), []);
+    assert_eq!(channel.connection_readers_held(), channel.connection_readers_counted(), "the running total is every reader's");
+    // Gone, a connection's readers leave the total.
+    for connection in 1..=room {
+        channel.closed(connection, 4);
+    }
+    assert_eq!(channel.connection_readers_held(), fonts.held_bytes(), "only the shared font and sets are left");
+    assert_eq!(channel.connection_readers_counted(), channel.connection_readers_held());
+}
+
+/// The NAPLPS page of text and the ReGIS page the scale test sends: a
+/// page of the demonstration channel (`gallery`, 497 bytes: numbered
+/// drawings, placed copies and a clip), whose reader is the median of the
+/// demonstration pages'.
+const ORDINARY_REGIS: &[u8] = b"S(E)W(I7)P[20,30]T(S2)'ReGIS v2: numbered drawings'D(B3)W(I3)F(V[0,0][59,0][59,59][0,59])W(I0)P[22,20]T'3'D(E)D(S3(V0))D(B1)W(I4)F(V[0,0][799,0][799,399][0,399])D(E)D(S1(L-10,Y80,C(X20,Y20,W760,H360)))D(S10(R3,X100,Y150),S11(R3,X200,Y150),S12(R3,X300,Y150))D(B20)W(I7)T(S1)'Three placed copies of one hidden master'D(E)D(S20(X100,Y240))D(S30(X500,Y150,C(X0,Y0,W120,H60)))D(B31)W(I2)C[+50]D(E)D(S31(P30,X60,Y60))D(B40)W(I7)T(S1)\"A circle cut by its parent's clip rectangle\"D(E)D(S40(X380,Y270))D(C)";
+/// A NAPLPS page of text, as a program writes one.
+const ORDINARY_NAPLPS: &[u8] = b"Hello, a page of text in the default font";
+
+/// TODO-6895: the readers' bound holds `CONNECTIONS_WITH_OWN_PICTURES`
+/// connections' readers of ordinary pages, of either language, with room.
+#[test]
+fn the_bound_holds_fifty_thousand_connections_readers_of_ordinary_pages() {
+    use crate::kept::{CONNECTIONS_WITH_OWN_PICTURES, Checker, MOST_CONNECTION_READER_BYTES, ORDINARY_READER_BYTES, PictureLanguage};
+    let fonts = crate::kept::tests::fonts();
+    let read = |language: PictureLanguage, bytes: &[u8]| {
+        let mut checker = Checker::new(language, fonts);
+        checker.feed(bytes).unwrap();
+        checker.held_bytes()
+    };
+    let (regis, naplps) = (read(PictureLanguage::Regis, ORDINARY_REGIS), read(PictureLanguage::Naplps, ORDINARY_NAPLPS));
+    std::println!("an ordinary ReGIS page's reader holds {regis} bytes, a NAPLPS page of text's {naplps}");
+    assert!(regis <= ORDINARY_READER_BYTES, "{regis}");
+    assert!(naplps <= ORDINARY_READER_BYTES / 8, "{naplps}");
+    assert!(fonts.held_bytes() + CONNECTIONS_WITH_OWN_PICTURES * regis <= MOST_CONNECTION_READER_BYTES);
+}
+
+/// TODO-6895, run by hand (`cargo test --release -p teletext-runtime --
+/// --ignored fifty_thousand`): 50,000 connections of one channel each take
+/// their own stream of an ordinary page, of NAPLPS and then of ReGIS, and
+/// none is refused; the running total of their readers is every reader's.
+/// It prints the time, which the per-message count over every connection
+/// made grow with the square of the connections.
+#[test]
+#[ignore = "opens 50,000 connections; run in a release build by hand, as REQ-1023's verification names"]
+fn fifty_thousand_connections_each_take_their_own_ordinary_pictures() {
+    use crate::kept::CONNECTIONS_WITH_OWN_PICTURES;
+    let connections = u64::try_from(CONNECTIONS_WITH_OWN_PICTURES).unwrap();
+    let mut channel = empty();
+    let started = std::time::Instant::now();
+    for connection in 1..=connections {
+        let _ = arrive(&mut channel, connection, BOTH, 0);
+    }
+    let opened = started.elapsed();
+    for connection in 1..=connections {
+        channel.from_program(&picture("naplps", &json!([connection]), true, ORDINARY_NAPLPS), 1);
+        channel.from_program(&picture("regis", &json!([connection]), true, ORDINARY_REGIS), 1);
+        if connection % 1_000 == 0 {
+            assert_eq!(refusals(&mut channel), [], "up to connection {connection}");
+        }
+    }
+    assert_eq!(refusals(&mut channel), []);
+    let held = channel.connection_readers_held();
+    assert_eq!(held, channel.connection_readers_counted());
+    std::println!(
+        "{connections} connections opened in {opened:?}; their own NAPLPS and ReGIS streams read in {:?}; the readers hold {held} bytes",
+        started.elapsed().checked_sub(opened).unwrap()
+    );
 }
 
 /// TODO-6860, DEC-6858: a connection's own NAPLPS stream's reader is
@@ -431,19 +502,20 @@ fn the_readers_of_connections_own_streams_stop_at_their_bound() {
 #[test]
 fn connections_own_naplps_readers_are_counted_at_what_their_streams_define() {
     use crate::kept::{Checker, MOST_CONNECTION_READER_BYTES, PictureLanguage};
+    let fonts = crate::kept::tests::fonts();
     let small = {
-        let mut checker = Checker::new(PictureLanguage::Naplps);
+        let mut checker = Checker::new(PictureLanguage::Naplps, fonts);
         checker.feed(b"Hello").unwrap();
         checker.held_bytes()
     };
     let heavy = crate::kept::tests::heaviest_naplps();
-    let mut checker = Checker::new(PictureLanguage::Naplps);
+    let mut checker = Checker::new(PictureLanguage::Naplps, fonts);
     checker.feed(b"Hello").unwrap();
     checker.feed(&heavy).unwrap();
     let held = checker.held_bytes();
     // Two connections keep their small streams beside the heavy ones.
-    let room = u64::try_from((MOST_CONNECTION_READER_BYTES - 2 * small) / held).unwrap();
-    assert!(room > 1 && room < 40, "{held} bytes a reader, {room} fit");
+    let room = u64::try_from((MOST_CONNECTION_READER_BYTES - fonts.held_bytes() - 2 * small) / held).unwrap();
+    assert!(room > 1 && room < 1_000, "{held} bytes a reader, {room} fit");
     let mut channel = empty();
     for connection in 1..=room + 2 {
         let _ = arrive(&mut channel, connection, BOTH, 0);
@@ -461,7 +533,7 @@ fn connections_own_naplps_readers_are_counted_at_what_their_streams_define() {
         told(&effects).into_iter().filter(|line| line["type"] == "refused").map(|line| (line["rule"].clone(), line["detail"].clone())).collect();
     assert_eq!(refused.len(), 1, "{refused:?}");
     assert_eq!(refused[0].0, "kept_over_limit");
-    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (33554432) would be passed"), "{refused:?}");
+    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (1073741824) would be passed"), "{refused:?}");
     assert!(sent_to(&effects, room + 1).is_empty(), "nothing was sent to it");
 }
 
@@ -475,15 +547,17 @@ fn connections_own_naplps_readers_are_counted_at_what_their_streams_define() {
 #[test]
 fn connections_own_regis_readers_are_counted_at_what_their_streams_define() {
     use crate::kept::{Checker, MOST_CONNECTION_READER_BYTES, PictureLanguage};
-    let fresh = Checker::new(PictureLanguage::Regis).held_bytes();
-    assert!(MOST_CONNECTION_READER_BYTES / fresh > 1_000, "a new reader holds {fresh} bytes");
+    let fonts = crate::kept::tests::fonts();
+    let fresh = Checker::new(PictureLanguage::Regis, fonts).held_bytes();
+    assert!(MOST_CONNECTION_READER_BYTES / fresh > 50_000, "a new reader holds {fresh} bytes");
     let heavy = crate::kept::tests::regis_drawings(8_000);
-    let mut checker = Checker::new(PictureLanguage::Regis);
+    let mut checker = Checker::new(PictureLanguage::Regis, fonts);
     checker.feed(b"P[1,1]").unwrap();
     checker.feed(&heavy).unwrap();
     let held = checker.held_bytes();
-    let room = u64::try_from(MOST_CONNECTION_READER_BYTES / held).unwrap();
-    assert!(room > 1 && room < 20, "{held} bytes a reader, {room} fit");
+    // The small streams of the two connections beyond them stay too.
+    let room = u64::try_from((MOST_CONNECTION_READER_BYTES - fonts.held_bytes() - 2 * fresh) / held).unwrap();
+    assert!(room > 1 && room < 1_000, "{held} bytes a reader, {room} fit");
     let mut channel = empty();
     for connection in 1..=room + 2 {
         let _ = arrive(&mut channel, connection, BOTH, 0);
@@ -501,7 +575,7 @@ fn connections_own_regis_readers_are_counted_at_what_their_streams_define() {
         told(&effects).into_iter().filter(|line| line["type"] == "refused").map(|line| (line["rule"].clone(), line["detail"].clone())).collect();
     assert_eq!(refused.len(), 1, "{refused:?}");
     assert_eq!(refused[0].0, "kept_over_limit");
-    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (33554432) would be passed"), "{refused:?}");
+    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (1073741824) would be passed"), "{refused:?}");
     assert!(sent_to(&effects, room + 1).is_empty(), "nothing was sent to it");
     // Its stream was begun again, so an append without restart is passed
     // over, and one with restart starts afresh.

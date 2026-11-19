@@ -139,6 +139,17 @@ unimplemented = "warn"
 [profile.release]
 strip = true
 
+# The renderers' readers are fed streams of megabytes in the debug test
+# builds: the readers' bound tests (`channel/tests/kept.rs`) read hundreds
+# of the heaviest streams known, which unoptimised took 103 seconds for
+# NAPLPS alone. Overflow checks and debug assertions stay as in any
+# debug build.
+[profile.dev.package.naplps]
+opt-level = 2
+
+[profile.dev.package.regis]
+opt-level = 2
+
 # The Worker keeps its custom sections: wasm-bindgen reads the module's
 # `target_features` section to know it has reference types, without which
 # it cannot make the catch wrappers worker-build asks for (found 28 October

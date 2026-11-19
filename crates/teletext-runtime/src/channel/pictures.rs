@@ -14,14 +14,17 @@
 //! of its own, which takes no kept message until the page is selected
 //! again.
 
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use neoteletext_input::caps::{NAPLPS_CAP, REGIS_CAP};
 
 use super::{Channel, Connection, Level};
-use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, PictureLanguage, StreamChange};
+use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, PictureLanguage, ReaderFonts, StreamChange};
 use crate::protocol::{
     self, AuthorLevel, AuthorLog, ConnectionId, Connections, DrawingLink, MessageType, NaplpsObjects, PictureAudience, ProgramMessage, Refusal, Rule,
     ServerMessage,
@@ -40,8 +43,9 @@ pub(super) struct PictureStream {
     /// itself; none for a kept picture's, which its own reader checks.
     pub(super) checker: Option<Checker>,
     /// What `checker` holds, as it said after the last bytes it read
-    /// (TODO-6845); none without one.
-    pub(super) held: usize,
+    /// (TODO-6845), counted in the channel's total of every connection's
+    /// readers; none without one.
+    pub(super) held: HeldCount,
     /// It is the kept picture of its page and sub-code (PAR-18).
     pub(super) kept: bool,
     /// The bytes of the message being acted on were read and are to be sent.
@@ -49,6 +53,52 @@ pub(super) struct PictureStream {
     /// Its objects were logged as naming a macro it has not defined
     /// (PAR-23: once a generation).
     pub(super) macro_logged: bool,
+}
+
+/// What one connection's reader holds, kept in the channel's total of
+/// every connection's readers as it changes and taken out of it when the
+/// stream goes (TODO-6895): a message's check against
+/// `MOST_CONNECTION_READER_BYTES` reads the total, not every connection,
+/// which made each message cost the channel's whole count of connections,
+/// and opening tens of thousands of streams the square of it.
+pub(super) struct HeldCount {
+    amount: usize,
+    total: Option<Arc<AtomicUsize>>,
+}
+
+impl HeldCount {
+    /// No reader: a kept picture's stream, whose reader is the kept one's.
+    pub(super) const fn none() -> Self {
+        Self { amount: 0, total: None }
+    }
+
+    /// `amount`, added to `total`.
+    pub(super) fn new(total: &Arc<AtomicUsize>, amount: usize) -> Self {
+        total.fetch_add(amount, Ordering::Relaxed);
+        Self { amount, total: Some(Arc::clone(total)) }
+    }
+
+    /// What the reader holds now.
+    pub(super) const fn get(&self) -> usize {
+        self.amount
+    }
+
+    /// Says the reader holds `amount` now.
+    pub(super) fn set(&mut self, amount: usize) {
+        if let Some(total) = &self.total {
+            total.fetch_sub(self.amount, Ordering::Relaxed);
+            total.fetch_add(amount, Ordering::Relaxed);
+        }
+        self.amount = amount;
+    }
+}
+
+impl Drop for HeldCount {
+    fn drop(&mut self) {
+        if let Some(total) = &self.total {
+            total.fetch_sub(self.amount, Ordering::Relaxed);
+        }
+    }
 }
 
 /// The capability bit of a picture language (PAR-1).
@@ -134,10 +184,19 @@ impl Connection {
     ///
     /// # Errors
     /// What the receiver would refuse (REQ-6332, PAR-23).
-    fn read_own(&mut self, language: PictureLanguage, page: u16, sub: u16, restart: bool, bytes: &[u8]) -> Result<Notes, String> {
+    fn read_own(
+        &mut self,
+        language: PictureLanguage,
+        readers: (&ReaderFonts, &Arc<AtomicUsize>),
+        page: u16,
+        sub: u16,
+        restart: bool,
+        bytes: &[u8],
+    ) -> Result<Notes, String> {
+        let (fonts, total) = readers;
         if restart {
             let generation = self.next_generation(language);
-            let mut checker = Checker::new(language);
+            let mut checker = Checker::new(language, fonts);
             if language == PictureLanguage::Regis {
                 // The page's sheet is fed to its renderer before the page's
                 // own stream (ANIM-17; a sheet is one page's, DEC-6599): it
@@ -145,7 +204,7 @@ impl Connection {
                 // message's.
                 let _ = checker.feed(self.animation.regis_sheet(page, sub));
             }
-            let held = checker.held_bytes();
+            let held = HeldCount::new(total, checker.held_bytes());
             *self.stream_mut(language) =
                 Some(PictureStream { page, sub, generation, offset: 0, checker: Some(checker), held, kept: false, pending: false, macro_logged: false });
         }
@@ -159,7 +218,7 @@ impl Connection {
         let notes = match stream.checker.as_mut() {
             Some(checker) => {
                 let notes = checker.feed(bytes).map_err(|refused| refused.detail)?;
-                stream.held = checker.held_bytes();
+                stream.held.set(checker.held_bytes());
                 notes
             }
             None => Vec::new(),
@@ -186,7 +245,8 @@ impl Connection {
     pub(super) fn begin_kept(&mut self, page: u16, sub: u16, kept: &KeptPicture) -> Result<Vec<u8>, records::Refused> {
         let language = kept.language;
         let generation = self.next_generation(language);
-        let mut stream = PictureStream { page, sub, generation, offset: 0, checker: None, held: 0, kept: true, pending: false, macro_logged: false };
+        let mut stream =
+            PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
         let mut bytes = stream_records(language, &mut stream, &kept.stream, &mut self.record_id)?;
         *self.stream_mut(language) = Some(stream);
         if let Some(objects) = &kept.objects {
@@ -374,7 +434,7 @@ impl Channel {
         let mut notes: Notes = Vec::new();
         for connection in &targets {
             let Some(state) = self.connections.get_mut(connection) else { continue };
-            match state.read_own(language, page, sub, restart, bytes) {
+            match state.read_own(language, (self.kept.fonts(), &self.own_readers), page, sub, restart, bytes) {
                 Ok(found) => {
                     for note in found {
                         if !notes.contains(&note) {
@@ -422,15 +482,13 @@ impl Channel {
     /// # Errors
     /// The bound's detail when it would be passed.
     fn room_for_readers(&self, language: PictureLanguage, targets: &[ConnectionId]) -> Result<(), String> {
-        let held = self.connections.iter().fold(0_usize, |sum, (id, state)| {
-            let languages = [PictureLanguage::Regis, PictureLanguage::Naplps];
-            languages
-                .into_iter()
-                .filter(|&held_language| held_language != language || !targets.contains(id))
-                .filter_map(|held_language| state.stream(held_language).filter(|stream| stream.checker.is_some()))
-                .fold(sum, |sum, stream| sum.saturating_add(stream.held))
-        });
-        let wanted = held.saturating_add(targets.len().saturating_mul(Checker::new(language).held_bytes()));
+        let targets: BTreeSet<ConnectionId> = targets.iter().copied().collect();
+        let replaced =
+            targets.iter().filter_map(|id| self.connections.get(id)?.stream(language)).fold(0_usize, |sum, stream| sum.saturating_add(stream.held.get()));
+        let held = self.own_readers.load(Ordering::Relaxed).saturating_sub(replaced);
+        let wanted = held
+            .saturating_add(targets.len().saturating_mul(Checker::new(language, self.kept.fonts()).held_bytes()))
+            .saturating_add(self.kept.fonts().held_bytes());
         if wanted > MOST_CONNECTION_READER_BYTES {
             return Err(readers_over(wanted));
         }
@@ -439,12 +497,20 @@ impl Channel {
 
     /// What the readers of every connection's own streams hold, each as it
     /// said after the last bytes it read (TODO-6845).
-    fn connection_readers_held(&self) -> usize {
-        self.connections.values().fold(0_usize, |sum, state| {
+    pub(super) fn connection_readers_held(&self) -> usize {
+        // The font and sets every NAPLPS reader shares, once (TODO-6895).
+        self.kept.fonts().held_bytes().saturating_add(self.own_readers.load(Ordering::Relaxed))
+    }
+
+    /// [`Channel::connection_readers_held`] counted again from every
+    /// connection, which the running total must equal (TODO-6895).
+    #[cfg(test)]
+    pub(super) fn connection_readers_counted(&self) -> usize {
+        self.connections.values().fold(self.kept.fonts().held_bytes(), |sum, state| {
             [PictureLanguage::Regis, PictureLanguage::Naplps]
                 .into_iter()
-                .filter_map(|language| state.stream(language).filter(|stream| stream.checker.is_some()))
-                .fold(sum, |sum, stream| sum.saturating_add(stream.held))
+                .filter_map(|language| state.stream(language))
+                .fold(sum, |sum, stream| sum.saturating_add(stream.held.get()))
         })
     }
 
@@ -646,14 +712,14 @@ impl Channel {
                     protocol::PictureLanguageName::Naplps => PictureLanguage::Naplps,
                 };
                 let data = protocol::check::bytes_of(&bytes.data);
-                Checker::new(language).feed(&data).map_err(|refused| refuse("picture.data", refused.rule, refused.detail))?;
+                Checker::new(language, self.kept.fonts()).feed(&data).map_err(|refused| refuse("picture.data", refused.rule, refused.detail))?;
                 crate::fallback::draw(language, &data, bytes.objects.as_deref())
             }
         };
         let drawn = drawn.map_err(|fault| refuse("picture", Rule::WrongType, fault))?;
         Ok(crate::fallback::png(&drawn)
             .filter(|(png, _, _)| png.len() <= crate::descriptions::MOST_PICTURE_BYTES)
-            .map(|(png, width, height)| ((alloc::sync::Arc::from(png), width, height), drawn.title)))
+            .map(|(png, width, height)| ((Arc::from(png), width, height), drawn.title)))
     }
 }
 
@@ -676,7 +742,8 @@ fn kept_change(state: &mut Connection, language: PictureLanguage, page: u16, sub
     match delta {
         Delta::Restarted(bytes) => {
             let generation = state.next_generation(language);
-            let mut stream = PictureStream { page, sub, generation, offset: 0, checker: None, held: 0, kept: true, pending: false, macro_logged: false };
+            let mut stream =
+                PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
             let sent = stream_records(language, &mut stream, bytes, &mut state.record_id)?;
             *state.stream_mut(language) = Some(stream);
             Ok(sent)
@@ -701,7 +768,8 @@ fn kept_change(state: &mut Connection, language: PictureLanguage, page: u16, sub
 /// new generation of no bytes, and the links and cursor it had removed.
 fn empty_picture(state: &mut Connection, language: PictureLanguage, page: u16, sub: u16, forgotten: &KeptPicture) -> Result<Vec<u8>, records::Refused> {
     let generation = state.next_generation(language);
-    let mut stream = PictureStream { page, sub, generation, offset: 0, checker: None, held: 0, kept: true, pending: false, macro_logged: false };
+    let mut stream =
+        PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
     let mut bytes = stream_records(language, &mut stream, &[], &mut state.record_id)?;
     if forgotten.links.is_some() {
         bytes.extend_from_slice(&records::drawing_links(page, sub, &[], &mut state.record_id)?);

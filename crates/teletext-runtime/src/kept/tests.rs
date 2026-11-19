@@ -10,27 +10,34 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::{
-    Checker, Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, PictureLanguage, READER_BOX_BYTES, StreamChange,
-    naplps_validator,
+    Checker, Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, PictureLanguage, READER_BOX_BYTES, ReaderFonts, StreamChange,
 };
 use crate::protocol::Rule;
 
+/// The font and sets the tests' readers share, as a channel's do
+/// (TODO-6895): kept alive for the whole run, so no reader holds them
+/// alone.
+pub(crate) fn fonts() -> &'static ReaderFonts {
+    static FONTS: std::sync::LazyLock<ReaderFonts> = std::sync::LazyLock::new(ReaderFonts::default);
+    &FONTS
+}
+
 /// What a new ReGIS reader holds, as its renderer reports it (TODO-6845).
 fn regis_reader() -> usize {
-    Checker::new(PictureLanguage::Regis).held_bytes()
+    Checker::new(PictureLanguage::Regis, fonts()).held_bytes()
 }
 
 /// What a NAPLPS reader holds after reading `stream`, as its renderer
 /// reports it (TODO-6860).
 fn naplps_reader_after(stream: &[u8]) -> usize {
-    let mut checker = Checker::new(PictureLanguage::Naplps);
+    let mut checker = Checker::new(PictureLanguage::Naplps, fonts());
     checker.feed(stream).unwrap();
     checker.held_bytes()
 }
 
 /// What a ReGIS reader holds after reading `stream`.
 fn regis_reader_after(stream: &[u8]) -> usize {
-    let mut checker = Checker::new(PictureLanguage::Regis);
+    let mut checker = Checker::new(PictureLanguage::Regis, fonts());
     checker.feed(stream).unwrap();
     checker.held_bytes()
 }
@@ -147,12 +154,10 @@ fn the_cost_counts_each_stream_and_its_reader_and_most_kept_cost_is_kept_and_one
 /// room for.
 #[test]
 fn a_naplps_pictures_reader_is_counted_at_what_its_stream_defines() {
-    let fresh = Checker::new(PictureLanguage::Naplps).held_bytes();
-    let validator = naplps_validator();
-    let given = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).unwrap().held_bytes()
-        + super::JOINED_SETS.map(|_| naplps::BitmapSet::new(1, 1).unwrap().held_bytes()).sum::<usize>();
+    let fresh = Checker::new(PictureLanguage::Naplps, fonts()).held_bytes();
+    let validator = fonts().naplps_validator();
     assert_eq!(fresh, validator.held_bytes() + READER_BOX_BYTES, "the renderer's figure and the box");
-    assert!(fresh <= naplps::limits::MAX_HELD_BYTES + given + READER_BOX_BYTES, "a new reader holds {fresh} bytes, given {given}");
+    assert!(fresh <= naplps::limits::MAX_HELD_BYTES + READER_BOX_BYTES, "a new reader holds {fresh} bytes");
     // RAS-1, TODO-6854: the most a reader holds, with what it is given, and
     // a whole stream fit MOST_KEPT_COST alone, so every stream within
     // MOST_KEPT_STREAM_BYTES can be kept.
@@ -382,7 +387,7 @@ fn a_naplps_stream_past_the_work_allowance_is_refused_naming_it() {
 #[test]
 fn the_naplps_reader_counts_text_in_the_receivers_stroke_font() {
     let text = b"NeoTeletext";
-    let mut checker = Checker::new(PictureLanguage::Naplps);
+    let mut checker = Checker::new(PictureLanguage::Naplps, fonts());
     checker.feed(text).unwrap();
     let mut bare = naplps::Validator::new();
     let _ = bare.feed(text);
@@ -392,4 +397,23 @@ fn the_naplps_reader_counts_text_in_the_receivers_stroke_font() {
     let _ = receiver.feed(&mut canvas, text);
     assert_eq!(checker.work_spent(), Some(receiver.work_spent()), "the receiver's work");
     assert!(bare.work_spent() < receiver.work_spent(), "a reader without the font counts less: {} and {}", bare.work_spent(), receiver.work_spent());
+}
+
+/// TODO-6895: the stroke font and joined sets every NAPLPS reader is given
+/// are the channel's, shared, and not each reader's own copy: a new
+/// reader, and one that has read a page of text, holds about a kilobyte,
+/// where it held 32,600 bytes, 20,208 of them its copies; the shared font
+/// and sets are counted once, at what they hold.
+#[test]
+fn naplps_readers_share_the_font_and_sets_and_hold_a_kilobyte_for_a_page_of_text() {
+    let fresh = Checker::new(PictureLanguage::Naplps, fonts()).held_bytes();
+    let text = naplps_reader_after(b"Hello, a page of text");
+    assert!(fresh < 2_048, "a new reader holds {fresh} bytes");
+    assert!(text < 2_048, "a reader of text holds {text} bytes");
+    let shared = fonts().held_bytes();
+    let font = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).unwrap().held_bytes();
+    assert!(shared >= font + super::JOINED_SETS.len() * size_of::<naplps::BitmapSet>(), "the shared font and sets hold {shared} bytes");
+    // Many readers add nothing to what they share.
+    let readers: Vec<Checker> = (0..100).map(|_| Checker::new(PictureLanguage::Naplps, fonts())).collect();
+    assert_eq!(readers.iter().map(Checker::held_bytes).sum::<usize>(), 100 * fresh);
 }

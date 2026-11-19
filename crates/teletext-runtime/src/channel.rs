@@ -482,6 +482,10 @@ pub struct Channel {
     timelines: animation::Timelines,
     /// The pictures kept for their pages (PAR-16).
     kept: crate::kept::KeptPictures,
+    /// What the readers of every connection's own picture streams hold
+    /// together, each [`pictures::HeldCount`] adding and taking out its own
+    /// (TODO-6895).
+    own_readers: Arc<core::sync::atomic::AtomicUsize>,
     /// The length of the program's line being acted on: a kept
     /// companion's cost (PAR-17).
     line_bytes: usize,
@@ -530,6 +534,7 @@ impl Channel {
             stale_reported_at: None,
             descriptions: Descriptions::default(),
             kept: crate::kept::KeptPictures::default(),
+            own_readers: Arc::default(),
             line_bytes: 0,
             now: 0,
             fallbacks: fallback::Fallbacks::default(),
