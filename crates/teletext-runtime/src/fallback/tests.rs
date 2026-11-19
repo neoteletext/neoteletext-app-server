@@ -90,7 +90,8 @@ fn the_fallback_draws_a_gradually_painted_drawing_finished() {
 
 /// Renderer parity PAR-25 with ANIM-11 (TODO-6813's check of NAPLPS): the
 /// fallback composes a NAPLPS picture's shown objects over its background,
-/// as the browser does. The stream only defines macro 0x40, a white
+/// as the browser does, the object's rectangle in raster dots: the display
+/// area, 480 by 460 from line 20 (RAS-4, RAS-11). The stream only defines macro 0x40, a white
 /// rectangle over the left half (DEF MACRO, ANSI X3.110-1983 section
 /// 5.3.4.1, which does not draw it), so the background stays black and the
 /// white half comes from a macro object showing it. The macro's body
@@ -115,7 +116,7 @@ fn the_fallback_composes_a_naplps_pictures_shown_objects() {
     stream.push(END);
     let object: crate::protocol::NaplpsObject = serde_json::from_value(serde_json::json!({
         "number": 1, "kind": "macro", "shown": true, "detectable": false, "layer": 1, "order": 0,
-        "x": 0, "y": 0, "width": 480, "height": 462, "origin_x": 0, "origin_y": 0, "frames": [MACRO]}))
+        "x": 0, "y": 20, "width": 480, "height": 460, "origin_x": 0, "origin_y": 20, "frames": [MACRO]}))
     .unwrap();
     let bare = rows(PictureLanguage::Naplps, &stream, None).unwrap().0;
     assert!(!bare.iter().any(|row| row.contains(&FULL_BLOCK)), "the macro is only defined: {bare:?}");
@@ -199,4 +200,67 @@ fn the_costliest_fallback_drawings_are_timed() {
         naplps.len(),
         work.div_ceil(crate::kept::NAPLPS_WORK_PER_FALLBACK_BYTE)
     );
+}
+
+/// SO, a six-byte DOMAIN (RAS-6), SELECT COLOR entry 7, then a filled
+/// RECTANGLE over exactly the raster dots `x` to `x + width - 1` and lines
+/// `y` to `y + height - 1`, written as the kits' `rect` writes it: its near
+/// corner at the dot (x, y + height - 1), its displacement to the dot
+/// (x + width - 1, y) (ANSI X3.110-1983 sections 5.3.3.1 and 5.3.3.4).
+fn naplps_rectangle(x: i64, y: i64, width: i64, height: i64) -> std::vec::Vec<u8> {
+    use naplps::{Rounding, dot_steps, multi_value_operand};
+    const BYTES: u8 = 6;
+    let mut stream = std::vec![0x0E, 0x21, 0x54];
+    multi_value_operand(0, 0, BYTES, &mut stream);
+    stream.extend_from_slice(&[0x3E, 0x40 | (7 << 2), 0x24]);
+    let corner = dot_steps(x, y.saturating_add(height).saturating_sub(1), 1, BYTES, Rounding::Nearest);
+    let far = dot_steps(x.saturating_add(width).saturating_sub(1), y, 1, BYTES, Rounding::Nearest);
+    multi_value_operand(corner.0, corner.1, BYTES, &mut stream);
+    stream.push(0x31);
+    multi_value_operand(far.0.saturating_sub(corner.0), far.1.saturating_sub(corner.1), BYTES, &mut stream);
+    stream
+}
+
+/// RAS-11, PAR-25: the NAPLPS canvas is the receiver's, 480 by 460, and
+/// its lines are exactly the fallback's rows 1 to 23: a rectangle over the
+/// left half of teletext row r's 20 lines gives full blocks on row r and
+/// on no other, for the first row, a middle one and the last, and the
+/// mosaic row is the one a rectangle over row r's cells gives in the same
+/// place of every row.
+#[test]
+fn a_naplps_pictures_rows_are_the_fallbacks_rows() {
+    let mut shown = std::vec::Vec::new();
+    for row in [1_usize, 12, 23] {
+        let top = i64::try_from(row * 20).unwrap();
+        let drawn = rows(PictureLanguage::Naplps, &naplps_rectangle(0, top, 240, 20), None).unwrap().0;
+        let full: std::vec::Vec<usize> =
+            drawn.iter().enumerate().filter(|(_, codes)| codes.contains(&FULL_BLOCK)).map(|(index, _)| index + usize::from(super::FIRST_ROW)).collect();
+        assert_eq!(full, [row], "row {row}: {drawn:?}");
+        shown.push(drawn[row - 1]);
+    }
+    assert!(shown.iter().all(|codes| *codes == shown[0]), "{shown:?}");
+    let (left, right) = shown[0].split_at(shown[0].len() / 2);
+    assert!(left.iter().copied().filter(|code| *code == FULL_BLOCK).map(usize::from).count() >= 15, "{shown:?}");
+    assert!(!right.contains(&FULL_BLOCK), "{shown:?}");
+}
+
+/// RAS-11, PAR-26: a NAPLPS picture's public PNG is the 480 by 500 raster,
+/// its canvas on lines 20 to 479, rows 0 and 24 in the screen colour: a
+/// picture filled white over its whole display area has its first white
+/// line at 20 and its last at 479.
+#[test]
+fn a_naplps_pictures_public_png_draws_the_canvas_on_lines_20_to_479() {
+    let drawn = super::draw(PictureLanguage::Naplps, &naplps_rectangle(0, 20, 480, 460), None).unwrap();
+    assert_eq!((drawn.width, drawn.height), (480, 460));
+    let (height, indices) = super::placed(&drawn);
+    assert_eq!((height, indices.len()), (500, 480 * 500));
+    let border = drawn.border.unwrap();
+    let white = drawn.addresses[0];
+    assert_ne!(white, border);
+    let lines: std::vec::Vec<usize> = (0..height).filter(|line| indices[line * 480..(line + 1) * 480].iter().all(|&index| index == white)).collect();
+    assert_eq!((lines.first(), lines.last(), lines.len()), (Some(&20), Some(&479), 460));
+    assert!(indices[..20 * 480].iter().chain(&indices[480 * 480..]).all(|&index| index == border), "rows 0 and 24 in the screen colour");
+    let (png, png_width, png_height) = super::png(&drawn).unwrap();
+    assert!(png.starts_with(b"\x89PNG"), "a PNG");
+    assert_eq!((png_width, png_height), (480, 500));
 }

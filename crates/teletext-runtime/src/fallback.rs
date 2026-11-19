@@ -7,8 +7,9 @@
 //! VT340's alphabet 0 (the ReGIS repository's font) and the 55 provided
 //! sets from the engine's compiled Noto Teletext glyphs (PAR-12), sets 44
 //! to 51 with their joining data (PAR-3, PAR-13); NAPLPS by
-//! `naplps::Terminal` on the 480 by 462 display area of the teletext
-//! raster (REQ-5819, DEC-6667) with the NAPLPS repository's stroke font,
+//! `naplps::Terminal` on the 480 by 460 display area of the teletext
+//! raster, lines 20 to 479, which are rows 1 to 23 (REQ-5819, DEC-6857,
+//! RAS-11) with the NAPLPS repository's stroke font,
 //! the same 55 sets and joining data (REQ-6668, PAR-14), and the shown
 //! objects composed over it (ANIM-11). Each is turned into RGB by its
 //! colour map, and converted by the engine's
@@ -19,6 +20,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use naplps::limits::{DISPLAY_FIRST_LINE, DISPLAY_LINES, RASTER_HEIGHT, RASTER_WIDTH, RECEIVER_CANVAS_HEIGHT, RECEIVER_CANVAS_WIDTH};
 use neoteletext_core::charset::CharRef;
 use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_HEIGHT, PAGE_WIDTH};
 use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
@@ -42,9 +44,6 @@ pub(crate) type MosaicRows = [[u8; COLUMNS]; ROWS];
 /// The colour map of a NAPLPS picture: sixteen entries, 2 to the 4, as the
 /// browser's (`animation.rs`).
 const NAPLPS_PALETTE_BITS: u32 = 4;
-/// The display area of the teletext raster a NAPLPS picture takes: 480 by
-/// 462 (REQ-5819, DEC-6667 item 1).
-pub(crate) const NAPLPS_DISPLAY_LINES: usize = 462;
 /// The first and last codes of a provided set (REQ-6668).
 const FIRST_SET_CODE: u8 = 0x20;
 /// See [`FIRST_SET_CODE`].
@@ -57,6 +56,11 @@ const PARITY_BIT: u8 = 0x80;
 // PAR-12, REQ-6668: the engine's sets are each renderer's, one for one.
 const _: () = assert!(FONT_SET_COUNT == regis::limits::PROVIDED_SETS as usize);
 const _: () = assert!(FONT_SET_COUNT == naplps::TELETEXT_SET_COUNT);
+// RAS-1, RAS-11: the renderer's raster is the engine's page, and its display
+// area is exactly the fallback's rows 1 to 23, so the converter's sixels of
+// those rows come from those lines and no others.
+const _: () = assert!(RASTER_WIDTH as usize == PAGE_WIDTH && RASTER_HEIGHT as usize == PAGE_HEIGHT);
+const _: () = assert!(DISPLAY_FIRST_LINE as usize == FIRST_ROW as usize * CELL_HEIGHT && DISPLAY_LINES as usize == ROWS * CELL_HEIGHT);
 const _: () = assert!((LAST_SET_CODE - FIRST_SET_CODE + 1) as usize == regis::limits::PROVIDED_SET_POSITIONS);
 
 /// Noto Teletext, the engine's one compiled font (its REQ-FNT-001).
@@ -106,8 +110,8 @@ pub(crate) fn regis_terminal() -> Result<regis::Terminal, String> {
 /// # Errors
 /// A font, set or canvas the renderer refuses: a fault of this build.
 pub(crate) fn naplps_terminal() -> Result<(naplps::Terminal, naplps::Canvas), String> {
-    let size = |value: usize| u32::try_from(value).map_err(|_| String::from("a side of the raster passes 32 bits"));
-    let canvas = naplps::Canvas::new(size(PAGE_WIDTH)?, size(NAPLPS_DISPLAY_LINES)?).map_err(|error| format!("{error:?}"))?;
+    // RAS-11: the receiver's canvas, 480 by 460, placed at raster line 20.
+    let canvas = naplps::Canvas::new(RECEIVER_CANVAS_WIDTH, RECEIVER_CANVAS_HEIGHT).map_err(|error| format!("{error:?}"))?;
     let mut terminal = naplps::Terminal::new(NAPLPS_PALETTE_BITS);
     terminal.set_font(naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).map_err(|error| format!("the stroke font: {error:?}"))?);
     for (number, (_, set)) in (0_u8..).zip(FONT_SETS.iter()) {
@@ -279,24 +283,32 @@ pub(crate) fn mosaics(drawn: &Drawn) -> Result<MosaicRows, String> {
 
 /// `drawn` as a PNG at its language's own size, as the browser shows it
 /// (PAR-26): ReGIS 800 by 480; NAPLPS on the 480 by 500 teletext raster,
-/// its 19 border lines above and below in the screen colour (REQ-5819),
-/// the same raster and pixel shape as a teletext page's public picture.
-/// None when the writer refuses it.
+/// its canvas on lines 20 to 479 and rows 0 and 24, lines 0 to 19 and 480
+/// to 499, in the screen colour (REQ-5819, DEC-6857, RAS-11), the same
+/// raster and pixel shape as a teletext page's public picture. None when
+/// the writer refuses it.
 pub(crate) fn png(drawn: &Drawn) -> Option<(Vec<u8>, usize, usize)> {
     let palette = drawn.colours.iter().map(|&[red, green, blue]| neoteletext_image::palette::Rgba::opaque(red, green, blue)).collect();
-    let (height, indices) = match drawn.border {
-        None => (drawn.height, drawn.addresses.clone()),
-        Some(border) => {
-            let lines = PAGE_HEIGHT.saturating_sub(drawn.height) / 2;
-            let edge = alloc::vec![border; lines.saturating_mul(drawn.width)];
-            let mut indices = edge.clone();
-            indices.extend_from_slice(&drawn.addresses);
-            indices.extend_from_slice(&edge);
-            (drawn.height.saturating_add(lines.saturating_mul(2)), indices)
-        }
-    };
+    let (height, indices) = placed(drawn);
     let raster = neoteletext_image::raster::Raster { width: drawn.width, height, indices, palette };
     neoteletext_image::raster::png(&raster).ok().map(|bytes| (bytes, drawn.width, height))
+}
+
+/// `drawn`'s lines as its PNG has them, with their count: ReGIS as drawn;
+/// NAPLPS on the 480 by 500 raster, the canvas from `DISPLAY_FIRST_LINE`
+/// and the lines above and below it in the screen colour (RAS-11).
+pub(crate) fn placed(drawn: &Drawn) -> (usize, Vec<u8>) {
+    match drawn.border {
+        None => (drawn.height, drawn.addresses.clone()),
+        Some(border) => {
+            let above = DISPLAY_FIRST_LINE as usize;
+            let below = PAGE_HEIGHT.saturating_sub(above).saturating_sub(drawn.height);
+            let mut indices = alloc::vec![border; above.saturating_mul(drawn.width)];
+            indices.extend_from_slice(&drawn.addresses);
+            indices.resize(indices.len().saturating_add(below.saturating_mul(drawn.width)), border);
+            (above.saturating_add(drawn.height).saturating_add(below), indices)
+        }
+    }
 }
 
 /// `stream` as the fallback's rows, and for NAPLPS the pixel work its

@@ -12,7 +12,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_core::charset::CharRef;
-use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, PAGE_HEIGHT, PAGE_WIDTH};
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
 use neoteletext_core::glyphs::GlyphSet;
 use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
 use neoteletext_core::packet::Packet;
@@ -40,17 +40,6 @@ pub(crate) type Refused = String;
 /// many entries, sixteen, as its ReGIS pictures have.
 const NAPLPS_PALETTE_BITS: u32 = 4;
 
-/// The lines of the teletext raster a NAPLPS page's display area takes
-/// (REQ-5819, DEC-6667 item 1): 480 by 462 of the 480 by 500 raster has
-/// the NAPLPS page's shape of 1.28 to 1 at teletext's 16/13 pixel shape
-/// (480 × 16/13 ÷ 1.28 = 461.5, rounded), with 19 border lines above and
-/// below, which the receiver draws itself.
-const NAPLPS_DISPLAY_LINES: usize = 462;
-const _: () =
-    assert!(NAPLPS_DISPLAY_LINES < PAGE_HEIGHT && (PAGE_HEIGHT - NAPLPS_DISPLAY_LINES) / 2 == NAPLPS_BORDER_LINES, "REQ-5819: 19 border lines above and below");
-/// See [`NAPLPS_DISPLAY_LINES`].
-const NAPLPS_BORDER_LINES: usize = 19;
-
 /// The first and last codes of a character set the NAPLPS renderer takes,
 /// 2/0 and 7/15 (REQ-6668: each of the 55 sets has 96 positions).
 const FIRST_SET_CODE: u8 = 0x20;
@@ -65,15 +54,15 @@ const _: () = assert!(FONT_SET_COUNT == naplps::TELETEXT_SET_COUNT);
 static GLYPHS: GlyphSet<'static> = GlyphSet::noto_teletext();
 
 /// A NAPLPS terminal and canvas as a receiver has them (the browser's
-/// decoder): the display area of the teletext raster, 480 by 462 pixels
-/// (REQ-5819, DEC-6667), and the engine's 55 teletext character sets in
+/// decoder): the renderer's receiver canvas, the display area of the
+/// teletext raster, 480 by 460 dots from line 20 (REQ-5819, DEC-6857,
+/// RAS-11), and the engine's 55 teletext character sets in
 /// the order of its `FONT_SETS`, which is the renderer's `TELETEXT_SETS`,
 /// each code's glyph the teletext renderer's (REQ-6668; DEC-6669: the
 /// provided sets only). What the server reads with it is read as the
 /// receiver will read it.
 fn naplps_receiver() -> Result<(naplps::Terminal, naplps::Canvas), Refused> {
-    let size = |side: usize| u32::try_from(side).map_err(|_| String::from("a side of the raster passes 32 bits"));
-    let canvas = naplps::Canvas::new(size(PAGE_WIDTH)?, size(NAPLPS_DISPLAY_LINES)?).map_err(|error| format!("{error:?}"))?;
+    let canvas = naplps::Canvas::new(naplps::limits::RECEIVER_CANVAS_WIDTH, naplps::limits::RECEIVER_CANVAS_HEIGHT).map_err(|error| format!("{error:?}"))?;
     let mut terminal = naplps::Terminal::new(NAPLPS_PALETTE_BITS);
     let (Ok(width), Ok(height)) = (u8::try_from(CELL_WIDTH), u8::try_from(CELL_HEIGHT)) else {
         return Err(String::from("the engine's cell passes the renderer's bitmap"));
@@ -407,8 +396,8 @@ mod tests {
     }
 
     /// REQ-5819, DEC-6667, REQ-6668: the server reads NAPLPS on the canvas
-    /// a receiver draws it on, the 480 by 462 display area of the teletext
-    /// raster, with the engine's 55 sets: a page designating Greek (set 17,
+    /// a receiver draws it on, the 480 by 460 display area of the teletext
+    /// raster (DEC-6857, RAS-11), with the engine's 55 sets: a page designating Greek (set 17,
     /// ESC 2/8 2/1 3/1 into G0) draws the engine's Noto Teletext capital
     /// delta for its 4/4, exactly as a terminal given that glyph alone
     /// draws it, and not nothing.
@@ -416,7 +405,7 @@ mod tests {
     fn naplps_is_read_on_the_receivers_raster_with_its_character_sets() {
         const GREEK_D: &[u8] = b"\x1b\x28\x21\x31D";
         let (mut terminal, mut canvas) = naplps_receiver().unwrap();
-        assert_eq!((canvas.width(), canvas.height()), (480, 462));
+        assert_eq!((canvas.width(), canvas.height()), (480, 460));
         let _ = terminal.feed(&mut canvas, GREEK_D);
         let _ = terminal.finish(&mut canvas);
         let delta = *GLYPHS.lookup('\u{0394}').unwrap();
@@ -424,7 +413,7 @@ mod tests {
         let mut set = naplps::BitmapSet::new(12, 20).unwrap();
         set.set_glyph(0x44, &delta).unwrap();
         alone.set_teletext_set(17, set).unwrap();
-        let mut expected = naplps::Canvas::new(480, 462).unwrap();
+        let mut expected = naplps::Canvas::new(480, 460).unwrap();
         let _ = alone.feed(&mut expected, GREEK_D);
         let _ = alone.finish(&mut expected);
         assert!(expected.pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
