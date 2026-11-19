@@ -104,7 +104,7 @@ class Viewer {
     this.#buffer = rest;
   }
 
-  static async open(cookie?: string, file = "push", headers: Record<string, string> = {}): Promise<Viewer> {
+  static async open(file = "push", headers: Record<string, string> = {}): Promise<Viewer> {
     const url = new URL(`${base}/${channel}/${file}`);
     const secure = url.protocol === "https:";
     const port = Number(url.port || (secure ? 443 : 80));
@@ -113,7 +113,7 @@ class Viewer {
       socket.once(secure ? "secureConnect" : "connect", resolve);
       socket.once("error", reject);
     });
-    const extra = Object.entries(cookie === undefined ? headers : { ...headers, Cookie: cookie })
+    const extra = Object.entries(headers)
       .map(([name, value]) => `${name}: ${value}\r\n`)
       .join("");
     socket.write(
@@ -141,15 +141,9 @@ class Viewer {
     return Number(this.head.split(" ")[1]);
   }
 
-  /** The session its `Set-Cookie` names, if it was given one. */
-  get session(): string | undefined {
-    const line = this.head.split("\r\n").find((header) => header.toLowerCase().startsWith("set-cookie:"));
-    return line?.match(/_session=(\d+)\./)?.[1];
-  }
-
-  get cookie(): string {
-    const line = this.head.split("\r\n").find((header) => header.toLowerCase().startsWith("set-cookie:")) ?? "";
-    return line.slice(line.indexOf(":") + 1).trim().split(";")[0] ?? "";
+  /** Whether its response set a cookie, which none may (VS-354). */
+  get setsCookie(): boolean {
+    return this.head.split("\r\n").some((header) => header.toLowerCase().startsWith("set-cookie:"));
   }
 
   /** The binary messages received so far, by their payloads' lengths. */
@@ -223,22 +217,21 @@ test("the program's pages are served, its section and new title listed", async (
 });
 
 test("a program without the channel's secret is refused, and a second is refused", async () => {
-  const wrong = await Viewer.open(undefined, "program", { Authorization: "Bearer not-the-secret" });
+  const wrong = await Viewer.open("program", { Authorization: "Bearer not-the-secret" });
   assert.equal(wrong.status, 401, wrong.head);
   wrong.close();
   await eventually(() => page(`/${channel}/100.t42`), "the first program connected");
-  const second = await Viewer.open(undefined, "program", { Authorization: `Bearer ${secret}` });
+  const second = await Viewer.open("program", { Authorization: `Bearer ${secret}` });
   assert.equal(second.status, 409, second.head);
   second.close();
 });
 
-test("a viewer is sent the pages and nothing unasked after, its ping is answered, and it continues its session with its cookie", async () => {
+test("a viewer is sent the pages and nothing unasked after, its ping is answered, and no cookie is set", async () => {
   await eventually(() => page(`/${channel}/100.t42`), "page 100");
   const first = await Viewer.open();
   assert.equal(first.status, 101, first.head);
-  const session = first.session;
-  assert.ok(session !== undefined, `a cookie: ${first.head}`);
-  assert.match(first.head.toLowerCase(), /set-cookie: _session=\d+\.\d+\.[0-9a-f]{64}; path=\/[^/]+\/; max-age=2592000; httponly; samesite=strict/);
+  // The server keeps no session and sets no cookie (REQ-6704, DEC-6471).
+  assert.ok(!first.setsCookie, `no cookie: ${first.head}`);
   // Every shared page, and then, on pages that do not change, nothing: no
   // time-filling header (requirement 11.2).
   await eventually(async () => (first.messages().some((length) => length > PACKET_BYTES) ? true : undefined), "the pages themselves");
@@ -252,19 +245,7 @@ test("a viewer is sent the pages and nothing unasked after, its ping is answered
   first.ping(payload);
   const pong = await eventually(async () => first.frames().find((frame) => frame.opcode === OPCODE_PONG), "a pong");
   assert.deepEqual(pong.payload, payload, "the ping's payload");
-  const cookie = first.cookie;
   first.close();
-  const again = await eventually(async () => {
-    const viewer = await Viewer.open(cookie);
-    if (viewer.session === undefined) {
-      // The first connection's close has not reached the object yet.
-      viewer.close();
-      return undefined;
-    }
-    return viewer;
-  }, "the session continued");
-  assert.equal(again.session, session, "the same session");
-  again.close();
 });
 
 test("a restarted host serves what it kept before the program connects again", { skip: deployed !== undefined && "local only" }, async () => {
