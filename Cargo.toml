@@ -24,49 +24,49 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false, features = ["tti", "alloc", "write-text", "picture-text"] }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false, features = ["tti", "alloc", "write-text", "picture-text"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
 # The instruments' interfaces, which the server checks every block, patch
 # and bank with, so that the encoder and the receiver's checks are one
 # implementation (server.md SRV-87, SRV-88; MIDI-21). Only the feature
 # `interface`, every family's messages, patch packer and check, bank image
 # and restatement tracker, with no synthesis code: the server never plays
 # a sound.
-neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false, features = ["interface"] }
+neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false, features = ["interface"] }
 # A public page's picture (REQ-1728 item 4).
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
 # The mosaic fallback (renderer parity PAR-11, PAR-25): a picture's pixels
 # converted into a page of Level 1 mosaics, without the image decoders,
 # which the server never needs and the Cloudflare build cannot afford.
-neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
+neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
 # The page rule table's codec and checks (page-rules.md RULE-56, RULE-59):
 # the server encodes each table with the crate every receiver decodes it
 # with, and checks what it encoded with that crate's decoder.
-neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
-neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "6efa8fef8000a4503b538157396a02e4493521a6", default-features = false }
+neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
+neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false }
 # The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
 # a program's ReGIS is checked with the receiver's own code before it is
 # sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
-regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2" }
+regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e4e6c6ae7634728c8dddaa28bdc5c3a9eee61110" }
 # The NAPLPS renderer, pinned to one commit as the ReGIS renderer is: a
 # page's NAPLPS sprite sheet is read with the receiver's own code before
 # it is sent, since a sheet must draw nothing (animation.md ANIM-17,
 # ANIM-21), on the receiver's canvas with its character sets (the
 # renderer's REQ-5819 and REQ-6668, merged into its working branch).
 # MIT; no dependencies.
-naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "016a83cb0859343154db06a7661b500c542d0946" }
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "c65f5898c68eb8d73528a58618a6582944d85d2e" }
 # The fonts the browser draws pictures with, as text compiled in: the
 # VT340's alphabet 0 for ReGIS and the NAPLPS stroke font, so that the
 # server's mosaic fallback and a public page's picture are drawn as the
 # browser draws them (renderer parity PAR-25, PAR-26). The renderers'
 # repositories' own crates, pure Rust with no dependencies (DEC-6579).
-regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "9c1a162cc1a8d17d727e19fa9a2253dee7f8bcc2" }
-naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "016a83cb0859343154db06a7661b500c542d0946" }
+regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "e4e6c6ae7634728c8dddaa28bdc5c3a9eee61110" }
+naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "c65f5898c68eb8d73528a58618a6582944d85d2e" }
 
 # The protocol between the server and a channel's program (DEC-1482):
 # schemars, approved by the owner with DEC-1482 (MIT), generates the
