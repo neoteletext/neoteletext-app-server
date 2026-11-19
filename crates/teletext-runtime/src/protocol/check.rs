@@ -147,6 +147,8 @@ pub fn message(message: &ProgramMessage) -> Result<(), Refusal> {
             check_audience(&root.field("connections"), &cursor.connections).and_then(|()| check_shown_subpage(&root, cursor.sub))
         }
         ProgramMessage::ForgetPicture(forget) => check_shown_subpage(&root, forget.sub),
+        ProgramMessage::SnapshotPage(answer) => check_snapshot_page(&root, answer),
+        ProgramMessage::SnapshotDeclined(declined) => check_snapshot_number(&root.field("snapshot"), declined.snapshot),
         ProgramMessage::MeasurePictureText(measure) => check_text(&root.field("text"), &measure.text, 1, super::MOST_PART_CHARACTERS),
         // VS-352: a connection's number; a handle was read whole by its
         // type, and whether the channel holds it is the channel's to say.
@@ -1019,7 +1021,7 @@ fn check_shown_subpage(root: &Path<'_>, sub: super::SubCode) -> Checked {
 fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
     check_audience(&root.field("connections"), &regis.connections)?;
     check_shown_subpage(root, regis.sub)?;
-    check_picture_bytes(root, regis.data.as_ref(), regis.parts.as_deref())
+    check_picture_bytes(root, regis.data.as_ref(), regis.parts.as_deref(), MOST_REGIS_BYTES)
 }
 
 /// `naplps`: who it is for, a sub-page that can be shown, and at most as
@@ -1027,7 +1029,7 @@ fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
 fn check_naplps(root: &Path<'_>, naplps: &super::Naplps) -> Checked {
     check_audience(&root.field("connections"), &naplps.connections)?;
     check_shown_subpage(root, naplps.sub)?;
-    check_picture_bytes(root, naplps.data.as_ref(), naplps.parts.as_deref())
+    check_picture_bytes(root, naplps.data.as_ref(), naplps.parts.as_deref(), MOST_REGIS_BYTES)
 }
 
 /// A picture message's audience (PAR-16): `"kept"`, or connections as
@@ -1040,12 +1042,21 @@ fn check_audience(path: &Path<'_>, audience: &super::PictureAudience) -> Checked
 /// `parts` 1 to `MOST_PICTURE_PARTS` long, each part's bytes as `data`'s
 /// and each text 1 to `MOST_PART_CHARACTERS` characters in normalisation
 /// form C with no control or bidirectional formatting character. What a
-/// text part's language shows is the encoder's to say (`text.rs`).
-fn check_picture_bytes(root: &Path<'_>, data: Option<&super::Base64>, parts: Option<&[super::PicturePart]>) -> Checked {
+/// text part's language shows is the encoder's to say (`text.rs`). Each
+/// `data` holds at most `most` bytes decoded.
+fn check_picture_bytes(root: &Path<'_>, data: Option<&super::Base64>, parts: Option<&[super::PicturePart]>, most: usize) -> Checked {
     match (data, parts) {
         (None, None) => Err(fault(&root.field("data"), Rule::MissingField, "a picture message gives `data` or `parts`".to_string())),
         (Some(_), Some(_)) => Err(fault(&root.field("parts"), Rule::DuplicateField, "a picture message gives `data` or `parts`, not both".to_string())),
-        (Some(data), None) => check_base64(&root.field("data"), data, MOST_REGIS_BYTES).map(|_| ()),
+        (Some(data), None) => {
+            let decoded = check_base64(&root.field("data"), data, most)?;
+            // Base64's length bounds the decoded length to a multiple of
+            // three; the bound itself is exact.
+            if decoded.len() > most {
+                return Err(fault(&root.field("data"), Rule::TooLong, format!("{} bytes, at most {most}", decoded.len())));
+            }
+            Ok(())
+        }
         (None, Some(parts)) => {
             let path = root.field("parts");
             if parts.is_empty() || parts.len() > super::MOST_PICTURE_PARTS {
@@ -1054,7 +1065,7 @@ fn check_picture_bytes(root: &Path<'_>, data: Option<&super::Base64>, parts: Opt
             for (index, part) in parts.iter().enumerate() {
                 let at = path.item(index);
                 match part {
-                    super::PicturePart::Data(part) => check_base64(&at.field("data"), &part.data, MOST_REGIS_BYTES).map(|_| ())?,
+                    super::PicturePart::Data(part) => check_base64(&at.field("data"), &part.data, most).map(|_| ())?,
                     super::PicturePart::Text(part) => check_text(&at.field("text"), &part.text, 1, super::MOST_PART_CHARACTERS)?,
                 }
             }
@@ -1094,6 +1105,46 @@ pub(super) fn check_picture_links(path: &Path<'_>, links: &[(u16, &str)], field:
         }
     }
     Ok(())
+}
+
+/// A snapshot's number: 1 to 2^53 less one (REQ-6900).
+fn check_snapshot_number(path: &Path<'_>, snapshot: super::SnapshotNumber) -> Checked {
+    if (1..=SAFE_INTEGER_LIMIT).contains(&snapshot) { Ok(()) } else { Err(fault(path, Rule::OutOfRange, format!("{snapshot}, 1 to {SAFE_INTEGER_LIMIT}"))) }
+}
+
+/// `snapshot_page` (REQ-6900 item 2): its number, its sub-page as every
+/// page message's, and its picture: a kept one of that same sub-page, or
+/// at most `MOST_DESCRIPTION_PICTURE_BYTES` of bytes with, for NAPLPS
+/// only, objects that `naplps_objects` would take. Whether the page is the
+/// one asked for and the kept picture kept is the channel's to say, which
+/// knows what it asked.
+fn check_snapshot_page(root: &Path<'_>, answer: &super::SnapshotPage) -> Checked {
+    check_snapshot_number(&root.field("snapshot"), answer.snapshot)?;
+    check_page(&root.field("page"), &answer.page)?;
+    let path = root.field("picture");
+    match &answer.picture {
+        Some(super::SnapshotPicture::Kept(kept)) if kept.kept != answer.page.sub => {
+            let detail = format!("{:04X}: a snapshot's kept picture is its own sub-page's, {:04X}", kept.kept.0, answer.page.sub.0);
+            Err(fault(&path.field("kept"), Rule::WrongPage, detail))
+        }
+        None | Some(super::SnapshotPicture::Kept(_)) => Ok(()),
+        Some(super::SnapshotPicture::Bytes(bytes)) => {
+            check_picture_bytes(&path, bytes.data.as_ref(), bytes.parts.as_deref(), super::MOST_DESCRIPTION_PICTURE_BYTES)?;
+            let Some(objects) = &bytes.objects else { return Ok(()) };
+            if bytes.language == super::PictureLanguageName::Regis {
+                return Err(fault(&path.field("objects"), Rule::UnknownField, "objects are NAPLPS's: a ReGIS picture gives none".to_string()));
+            }
+            let message = super::NaplpsObjects {
+                connections: super::PictureAudience::Kept(super::Kept::Kept),
+                page: answer.page.page,
+                sub: answer.page.sub,
+                objects: objects.clone(),
+                title: None,
+                one: false,
+            };
+            check_naplps_objects(&path, &message)
+        }
+    }
 }
 
 /// A description's picture (PAR-26): a sub-code that names a sub-page, or

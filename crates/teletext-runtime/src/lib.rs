@@ -44,6 +44,7 @@ mod picture_text;
 pub mod protocol;
 mod records;
 pub mod rules;
+pub mod snapshot;
 mod sound;
 pub mod stats;
 mod text;

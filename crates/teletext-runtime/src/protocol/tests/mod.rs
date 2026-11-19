@@ -26,6 +26,7 @@ mod redirect;
 mod reply;
 pub(crate) mod rules;
 mod schema;
+mod snapshot;
 mod sound;
 mod subpages;
 pub(crate) mod synth;

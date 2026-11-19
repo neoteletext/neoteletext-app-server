@@ -241,6 +241,7 @@ pub(crate) fn encode_message(message: &mut ProgramMessage) -> Result<Vec<Replace
         ProgramMessage::Page(message) => Some(encode_at(kind, "page", &mut message.page)?),
         ProgramMessage::Reply(reply) => reply.selected.as_mut().map(|page| encode_at(kind, "selected", page)).transpose()?,
         ProgramMessage::Description(description) => description.content.as_mut().map(|page| encode_at(kind, "content", page)).transpose()?,
+        ProgramMessage::SnapshotPage(answer) => Some(encode_at(kind, "page", &mut answer.page)?),
         _ => None,
     };
     Ok(cost.map(|cost| cost.replaced).unwrap_or_default())

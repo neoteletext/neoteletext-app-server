@@ -722,6 +722,7 @@ impl Channel {
                 reply_limit_ms: PROGRAM_REPLY_LIMIT_MS,
                 description_text_characters: wide(protocol::DESCRIPTION_TEXT_CHARACTERS),
                 description_limit_ms: DESCRIPTION_WAIT_MS,
+                snapshot_limit_ms: crate::snapshot::SNAPSHOT_ANSWER_MS,
             },
             languages: protocol::languages(),
         };
@@ -1461,6 +1462,9 @@ impl Channel {
             }
             ProgramMessage::Redirect(redirect) => self.redirect(redirect, now)?,
             ProgramMessage::Description(description) => self.described(description, now)?,
+            // No snapshot is asked of a program yet (REQ-6900 item 5).
+            ProgramMessage::SnapshotPage(answer) => return Err(not_awaited_snapshot(kind, answer.snapshot)),
+            ProgramMessage::SnapshotDeclined(declined) => return Err(not_awaited_snapshot(kind, declined.snapshot)),
             ProgramMessage::Measure(measure) => {
                 // REQ-2216 item 1: encoded as for sending, sent to no viewer.
                 let protocol::Measure { request, mut page } = *measure;
@@ -1737,6 +1741,12 @@ fn public_page(description: Description, drawn: Option<(crate::descriptions::Pic
     };
     let (picture, alt) = if picture.is_some() { drawn.map_or((None, None), |(png, alt)| (Some(png), alt)) } else { (teletext(), None) };
     Some(PublicPage { title, text, picture, alt })
+}
+
+/// The refusal of an answer to a snapshot the server does not await
+/// (REQ-6900 item 5).
+fn not_awaited_snapshot(kind: protocol::MessageType, number: protocol::SnapshotNumber) -> Refusal {
+    Refusal { message: Some(kind), path: "snapshot".to_string(), rule: Rule::NotAwaited, detail: format!("snapshot {number} is not awaited") }
 }
 
 fn wide(count: usize) -> u64 {

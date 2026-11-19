@@ -97,6 +97,20 @@ fn joined(kind: MessageType, page: PageNumber, language: Language, parts: &[Pict
     Ok(bytes)
 }
 
+/// A snapshot picture's bytes, written, past `description.picture`'s bound
+/// (REQ-6900 item 2): refused.
+fn snapshot_bound(kind: MessageType, written: Vec<u8>) -> Result<Vec<u8>, Refusal> {
+    if written.len() > protocol::MOST_DESCRIPTION_PICTURE_BYTES {
+        return Err(Refusal {
+            message: Some(kind),
+            path: "picture.parts".to_string(),
+            rule: Rule::TooLong,
+            detail: format!("{} bytes once written, at most MOST_DESCRIPTION_PICTURE_BYTES ({})", written.len(), protocol::MOST_DESCRIPTION_PICTURE_BYTES),
+        });
+    }
+    Ok(written)
+}
+
 /// Bytes as exact base64.
 fn base64_of(bytes: &[u8]) -> Base64 {
     let mut out = alloc::vec![0_u8; base64::encoded_len(bytes.len())];
@@ -113,14 +127,33 @@ fn base64_of(bytes: &[u8]) -> Base64 {
 /// The encoder's refusal, at the path of the part at fault.
 pub(crate) fn encode_parts(message: &mut ProgramMessage) -> Result<Vec<Replaced>, Refusal> {
     let kind = message.kind();
-    let (page, data, parts, language) = match message {
-        ProgramMessage::Regis(message) => (message.page, &mut message.data, &mut message.parts, Language::Regis),
-        ProgramMessage::Naplps(message) => (message.page, &mut message.data, &mut message.parts, Language::Naplps),
+    let (page, data, parts, language, snapshot) = match message {
+        ProgramMessage::Regis(message) => (message.page, &mut message.data, &mut message.parts, Language::Regis, false),
+        ProgramMessage::Naplps(message) => (message.page, &mut message.data, &mut message.parts, Language::Naplps, false),
+        ProgramMessage::SnapshotPage(answer) => {
+            let page = answer.page.page;
+            let Some(protocol::SnapshotPicture::Bytes(bytes)) = answer.picture.as_mut() else { return Ok(Vec::new()) };
+            let language = match bytes.language {
+                protocol::PictureLanguageName::Regis => Language::Regis,
+                protocol::PictureLanguageName::Naplps => Language::Naplps,
+            };
+            (page, &mut bytes.data, &mut bytes.parts, language, true)
+        }
         _ => return Ok(Vec::new()),
     };
     let Some(given) = parts.take() else { return Ok(Vec::new()) };
     let mut replaced = Vec::new();
-    *data = Some(base64_of(&joined(kind, page, language, &given, &mut replaced)?));
+    let mut written = joined(kind, page, language, &given, &mut replaced).map_err(|mut refusal| {
+        // A snapshot's parts are its picture's.
+        if snapshot {
+            refusal.path = format!("picture.{}", refusal.path);
+        }
+        refusal
+    })?;
+    if snapshot {
+        written = snapshot_bound(kind, written)?;
+    }
+    *data = Some(base64_of(&written));
     Ok(replaced)
 }
 

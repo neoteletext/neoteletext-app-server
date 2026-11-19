@@ -31,6 +31,7 @@ pub mod check;
 mod picture;
 mod read;
 mod rules;
+mod snapshot;
 mod sound;
 pub mod viewer;
 
@@ -39,6 +40,7 @@ pub use check::Refusal;
 pub use picture::*;
 pub use read::{read, read_reporting, request_of};
 pub use rules::*;
+pub use snapshot::*;
 pub use sound::*;
 pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefusal, StateRefused, ViewerBegan, ViewerLeft, ViewersReset};
 
@@ -103,6 +105,16 @@ pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefus
 /// where 15 had them in a 640 by 480 picture. No field's name or shape
 /// changes, so a program built for 15 would put every object in the wrong
 /// place without an error: it stops at `start` instead (REQ-4767, REQ-4769).
+/// Version 16 also carries snapshots, added before 16 was released
+/// (REQ-6900 item 7; neoteletext-common `docs/tab-thumbnails.md` section
+/// 6.1): the server's `snapshot`, a program's `snapshot_page` and
+/// `snapshot_declined`, and `start.budgets.snapshot_limit_ms`. Version 16
+/// is new on the `parity` branches of this server, both kits and the
+/// component library, which are integrated together, and no program was
+/// built for it elsewhere; a program built on a kit of 16 from before the
+/// snapshots (the TypeScript kit 19.1.0, the Python kit 1.1.0) would refuse
+/// `snapshot` as unknown, so it runs with this server only once moved to
+/// the kits that know it (19.2.0, 1.2.0).
 pub const PROTOCOL: u32 = 16;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
@@ -419,6 +431,9 @@ pub enum ServerMessage {
     /// A web visitor or a search engine is at a page's address: answer with
     /// `description` (REQ-1728).
     Describe(Describe),
+    /// A receiver asks for a picture of a page as a stranger would see it:
+    /// answer with `snapshot_page` or `snapshot_declined` (REQ-6900).
+    Snapshot(Snapshot),
     /// The answer to `measure` (REQ-2216).
     Measured(Measured),
     /// A stored synthesizer sound was built and sent (server.md SRV-47).
@@ -448,6 +463,7 @@ impl ServerMessage {
             | Self::Stats(_)
             | Self::Refused(_)
             | Self::Describe(_)
+            | Self::Snapshot(_)
             | Self::Measured(_)
             | Self::SoundBuilt(_)
             | Self::MeasuredPictureText(_) => None,
@@ -575,6 +591,9 @@ pub struct Budgets {
     pub description_text_characters: u64,
     /// How long the server waits for a `description`, in milliseconds.
     pub description_limit_ms: u64,
+    /// How long the server waits for `snapshot_page` or
+    /// `snapshot_declined`, in milliseconds (REQ-6900 item 6).
+    pub snapshot_limit_ms: u64,
 }
 
 /// `connected` (REQ-1471).
@@ -1173,6 +1192,8 @@ pub enum MessageType {
     NaplpsCursor,
     ForgetPicture,
     MeasurePictureText,
+    SnapshotPage,
+    SnapshotDeclined,
 }
 
 /// Why a message was refused: a closed list (REQ-1475).
@@ -1492,6 +1513,10 @@ pub enum ProgramMessage {
     ForgetPicture(ForgetPicture),
     /// Asks what a text part costs, sending it to no viewer (PAR-22).
     MeasurePictureText(MeasurePictureText),
+    /// The page drawn for a `snapshot`, and its picture (REQ-6900).
+    SnapshotPage(Box<SnapshotPage>),
+    /// A `snapshot` the program will not draw (REQ-6900).
+    SnapshotDeclined(SnapshotDeclined),
 }
 
 impl ProgramMessage {
@@ -1538,6 +1563,8 @@ impl ProgramMessage {
             Self::NaplpsCursor(_) => MessageType::NaplpsCursor,
             Self::ForgetPicture(_) => MessageType::ForgetPicture,
             Self::MeasurePictureText(_) => MessageType::MeasurePictureText,
+            Self::SnapshotPage(_) => MessageType::SnapshotPage,
+            Self::SnapshotDeclined(_) => MessageType::SnapshotDeclined,
         }
     }
 
@@ -1545,7 +1572,7 @@ impl ProgramMessage {
     /// reading its lines can do (requirement 8.4).
     #[must_use]
     pub const fn is_answer(&self) -> bool {
-        matches!(self, Self::Reply(_) | Self::Denied(_) | Self::Description(_))
+        matches!(self, Self::Reply(_) | Self::Denied(_) | Self::Description(_) | Self::SnapshotPage(_) | Self::SnapshotDeclined(_))
     }
 }
 

@@ -601,6 +601,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "snapshot_limit_ms": {
+          "description": "How long the server waits for `snapshot_page` or\n`snapshot_declined`, in milliseconds (REQ-6900 item 6).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "title_characters": {
           "description": "The longest title, magazine name or section, in characters.",
           "format": "uint64",
@@ -616,7 +622,8 @@
         "named_connections",
         "reply_limit_ms",
         "description_text_characters",
-        "description_limit_ms"
+        "description_limit_ms",
+        "snapshot_limit_ms"
       ],
       "type": "object"
     },
@@ -3080,7 +3087,9 @@
         "naplps_links",
         "naplps_cursor",
         "forget_picture",
-        "measure_picture_text"
+        "measure_picture_text",
+        "snapshot_page",
+        "snapshot_declined"
       ],
       "type": "string"
     },
@@ -9121,6 +9130,66 @@
             "text"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The page drawn for a `snapshot`, and its picture (REQ-6900).",
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/Page",
+              "description": "One sub-page, as every page message carries one: of the page asked\nfor, and of the sub-code asked for, or any of the page's when 3F7F\nwas asked."
+            },
+            "picture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SnapshotPicture"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Its picture, shown in place of the sub-page's teletext page by a\nreceiver that agreed its language: the kept picture of the same\nsub-page, or bytes; none for none."
+            },
+            "snapshot": {
+              "description": "The number of a `snapshot` the server awaits.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "snapshot_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "snapshot",
+            "page"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A `snapshot` the program will not draw (REQ-6900).",
+          "properties": {
+            "snapshot": {
+              "description": "The number of a `snapshot` the server awaits.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "const": "snapshot_declined",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "snapshot"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -12622,6 +12691,43 @@
         },
         {
           "additionalProperties": false,
+          "description": "A receiver asks for a picture of a page as a stranger would see it:\nanswer with `snapshot_page` or `snapshot_declined` (REQ-6900).",
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/PageNumber",
+              "description": "The page asked for, a display page."
+            },
+            "path": {
+              "description": "The place as an address names it: `302` or `302/0002`.",
+              "type": "string"
+            },
+            "snapshot": {
+              "description": "The snapshot's number, which the answer carries back.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sub": {
+              "$ref": "#/$defs/SubCode",
+              "description": "The sub-code asked for, or 3F7F for the page as a whole."
+            },
+            "type": {
+              "const": "snapshot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "snapshot",
+            "page",
+            "sub",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "The answer to `measure` (REQ-2216).",
           "properties": {
             "designation": {
@@ -12870,6 +12976,79 @@
           "type": "string"
         }
       ]
+    },
+    "SnapshotPicture": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KeptPictureName",
+          "description": "The kept picture of the answered sub-page: its sub-code."
+        },
+        {
+          "$ref": "#/$defs/SnapshotPictureBytes",
+          "description": "These bytes."
+        }
+      ],
+      "description": "A snapshot's picture: `{\"kept\": \"<sub-code>\"}`, the picture kept for the\nsame sub-page (PAR-16), or bytes."
+    },
+    "SnapshotPictureBytes": {
+      "additionalProperties": false,
+      "description": "A snapshot picture's bytes: `data` or `parts`, exactly one (PAR-21), at\nmost 262,144 bytes once decoded and written, as `description.picture`'s\n(PAR-26); for NAPLPS, its objects.",
+      "oneOf": [
+        {
+          "required": [
+            "data"
+          ]
+        },
+        {
+          "required": [
+            "parts"
+          ]
+        }
+      ],
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Base64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its bytes, exact base64."
+        },
+        "language": {
+          "$ref": "#/$defs/PictureLanguageName",
+          "description": "Its language."
+        },
+        "objects": {
+          "description": "For NAPLPS, its objects, of which the shown ones are composed (PAR-26);\nnull for none.",
+          "items": {
+            "$ref": "#/$defs/NaplpsObject"
+          },
+          "maxItems": 64,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "parts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PictureParts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its bytes as parts, in place of `data` (PAR-21)."
+        }
+      },
+      "required": [
+        "language"
+      ],
+      "type": "object"
     },
     "SoundKind": {
       "description": "Every `kind` of `sound`: the 42 synthesizer kinds (server.md\nSRV-3), the six of Opus and PCM and the three commands (SRV-46).",

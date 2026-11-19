@@ -134,6 +134,8 @@ fn body(kind: MessageType, object: Map<String, Value>) -> Result<ProgramMessage,
         MessageType::NaplpsCursor => ProgramMessage::NaplpsCursor(typed(object, "")?),
         MessageType::ForgetPicture => ProgramMessage::ForgetPicture(typed(object, "")?),
         MessageType::MeasurePictureText => ProgramMessage::MeasurePictureText(typed(object, "")?),
+        MessageType::SnapshotPage => ProgramMessage::SnapshotPage(Box::new(typed(object, "")?)),
+        MessageType::SnapshotDeclined => ProgramMessage::SnapshotDeclined(typed(object, "")?),
     })
 }
 
@@ -189,6 +191,18 @@ impl<'de> Deserialize<'de> for super::PicturePart {
 /// A description's picture (PAR-26): a kept one's sub-code when it holds
 /// `kept`, else bytes.
 impl<'de> Deserialize<'de> for super::DescriptionPicture {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let Value::Object(object) = Value::deserialize(deserializer)? else {
+            return Err(de::Error::invalid_type(de::Unexpected::Other("not an object"), &"a picture, an object with `kept` or `language`"));
+        };
+        let picture = if object.contains_key("kept") { typed(object, "").map(Self::Kept) } else { typed(object, "").map(Self::Bytes) };
+        picture.map_err(|fault| de::Error::custom(format!("{INNER_PATH}{}{INNER_PATH}{:?}{INNER_PATH}{}", fault.path, fault.rule, fault.detail)))
+    }
+}
+
+/// A snapshot's picture (REQ-6900 item 2): a kept one's sub-code when it
+/// holds `kept`, else bytes.
+impl<'de> Deserialize<'de> for super::SnapshotPicture {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Value::Object(object) = Value::deserialize(deserializer)? else {
             return Err(de::Error::invalid_type(de::Unexpected::Other("not an object"), &"a picture, an object with `kept` or `language`"));
