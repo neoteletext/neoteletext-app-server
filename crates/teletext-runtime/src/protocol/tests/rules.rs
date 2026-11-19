@@ -382,6 +382,25 @@ fn vector_object(x: i32, label: Option<&str>) -> Value {
     object
 }
 
+/// RAS-4, RAS-10 (DEC-6853): a NAPLPS object's rectangle is in raster
+/// dots, at most the raster's 480 by 500: a width of 480 and a height of
+/// 500 are accepted, 481 and 501 refused `out_of_range` at their paths.
+#[test]
+fn a_naplps_object_is_at_most_the_raster() {
+    let message = |width: u32, height: u32| {
+        let mut object = vector_object(0, None);
+        object["y"] = json!(0);
+        object["width"] = json!(width);
+        object["height"] = json!(height);
+        naplps_message(&json!({"objects": [object]}))
+    };
+    let ProgramMessage::NaplpsObjects(whole) = accepted(&message(480, 500)) else { panic!("not naplps_objects") };
+    assert_eq!((whole.objects[0].width.get(), whole.objects[0].height.get()), (480, 500));
+    refused(&message(481, 500), "objects[0].width", Rule::OutOfRange);
+    refused(&message(480, 501), "objects[0].height", Rule::OutOfRange);
+    refused(&message(0, 500), "objects[0].width", Rule::OutOfRange);
+}
+
 /// A `naplps_objects` message for page 101 sub-page 0001, the shared
 /// wire vectors' page, with `fields` added.
 fn naplps_message(fields: &Value) -> Value {

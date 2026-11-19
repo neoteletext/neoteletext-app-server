@@ -2406,8 +2406,8 @@ impl CommandMessage {
 // ---------------------------------------------------------- the table
 
 /// A rectangle's declaration (RULE-13), in the pixels of the page's
-/// picture from its top left: a teletext page is 480 by 500, a ReGIS
-/// picture 800 by 480, a NAPLPS picture 640 by 480.
+/// picture from its top left: a teletext page and a NAPLPS picture are 480
+/// by 500 dots, a ReGIS picture 800 by 480 pixels (RAS-10).
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RectDeclaration {

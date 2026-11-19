@@ -318,18 +318,24 @@ pub struct NaplpsObject {
     pub layer: ObjectLayer,
     /// Its order within the layer, lowest drawn first.
     pub order: OrderInLayer,
-    /// The left of its rectangle, in the picture's 640 by 480 pixels.
+    /// The raster dot of its rectangle's left: a dot of the teletext
+    /// raster, 480 by 500 dots from the page's top left, on which the
+    /// picture is drawn on lines 20 to 479 (DEC-6853, DEC-6857, RAS-4).
     pub x: I32In<-32_768, 32_767>,
-    /// The top of its rectangle.
+    /// The raster line of its rectangle's top, in the same dots.
     pub y: I32In<-32_768, 32_767>,
-    /// Its width, 1 to 640.
-    pub width: U16In<1, 640>,
-    /// Its height, 1 to 480.
-    pub height: U16In<1, 480>,
-    /// Where the rectangle's top left lies in the macro's own drawing; 0
-    /// for a region.
+    /// Its width in dots, 1 to 480, the rectangle being dots x to
+    /// x + width - 1.
+    pub width: U16In<1, { naplps_objects::RASTER_WIDTH }>,
+    /// Its height in lines, 1 to 500, the rectangle being lines y to
+    /// y + height - 1.
+    pub height: U16In<1, { naplps_objects::RASTER_HEIGHT }>,
+    /// The raster dot at which the object's macro, drawn where the stream
+    /// would draw it, puts what is to be the rectangle's left; 0 for a
+    /// region.
     pub origin_x: I32In<-32_768, 32_767>,
-    /// See `origin_x`.
+    /// The raster line at which the macro puts the rectangle's top; 0 for
+    /// a region.
     pub origin_y: I32In<-32_768, 32_767>,
     /// A macro object's frames, 1 to 16 macro codes; empty for a region.
     #[schemars(length(max = MOST_OBJECT_FRAMES))]

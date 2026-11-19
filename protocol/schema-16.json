@@ -3182,9 +3182,9 @@
           "type": "array"
         },
         "height": {
-          "description": "Its height, 1 to 480.",
+          "description": "Its height in lines, 1 to 500, the rectangle being lines y to\ny + height - 1.",
           "format": "uint16",
-          "maximum": 480,
+          "maximum": 500,
           "minimum": 1,
           "type": "integer"
         },
@@ -3236,14 +3236,14 @@
           "type": "integer"
         },
         "origin_x": {
-          "description": "Where the rectangle's top left lies in the macro's own drawing; 0\nfor a region.",
+          "description": "The raster dot at which the object's macro, drawn where the stream\nwould draw it, puts what is to be the rectangle's left; 0 for a\nregion.",
           "format": "int32",
           "maximum": 32767,
           "minimum": -32768,
           "type": "integer"
         },
         "origin_y": {
-          "description": "See `origin_x`.",
+          "description": "The raster line at which the macro puts the rectangle's top; 0 for\na region.",
           "format": "int32",
           "maximum": 32767,
           "minimum": -32768,
@@ -3265,21 +3265,21 @@
           "type": "boolean"
         },
         "width": {
-          "description": "Its width, 1 to 640.",
+          "description": "Its width in dots, 1 to 480, the rectangle being dots x to\nx + width - 1.",
           "format": "uint16",
-          "maximum": 640,
+          "maximum": 480,
           "minimum": 1,
           "type": "integer"
         },
         "x": {
-          "description": "The left of its rectangle, in the picture's 640 by 480 pixels.",
+          "description": "The raster dot of its rectangle's left: a dot of the teletext\nraster, 480 by 500 dots from the page's top left, on which the\npicture is drawn on lines 20 to 479 (DEC-6853, DEC-6857, RAS-4).",
           "format": "int32",
           "maximum": 32767,
           "minimum": -32768,
           "type": "integer"
         },
         "y": {
-          "description": "The top of its rectangle.",
+          "description": "The raster line of its rectangle's top, in the same dots.",
           "format": "int32",
           "maximum": 32767,
           "minimum": -32768,
@@ -9126,7 +9126,7 @@
     },
     "RectDeclaration": {
       "additionalProperties": false,
-      "description": "A rectangle's declaration (RULE-13), in the pixels of the page's\npicture from its top left: a teletext page is 480 by 500, a ReGIS\npicture 800 by 480, a NAPLPS picture 640 by 480.",
+      "description": "A rectangle's declaration (RULE-13), in the pixels of the page's\npicture from its top left: a teletext page and a NAPLPS picture are 480\nby 500 dots, a ReGIS picture 800 by 480 pixels (RAS-10).",
       "properties": {
         "height": {
           "description": "The height, at least 1.",
@@ -11926,7 +11926,7 @@
               "type": "array"
             },
             "protocol": {
-              "const": 15,
+              "const": 16,
               "description": "The protocol's version.",
               "format": "uint32",
               "minimum": 0,
@@ -30110,5 +30110,5 @@
     }
   ],
   "description": "Both directions, for the schema.",
-  "title": "The NeoTeletext server's protocol with a channel's program, version 15"
+  "title": "The NeoTeletext server's protocol with a channel's program, version 16"
 }

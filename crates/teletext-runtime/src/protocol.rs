@@ -94,8 +94,16 @@ pub use viewer::{EndState, Gone, Handle, OfferRemember, RequestState, StateRefus
 /// `description.picture`. Each is something a program sends, and the
 /// server's one new message, `measured_picture_text`, and the new refusal
 /// rules answer only those, so a program written for version 15 before
-/// them never meets anything new.
-pub const PROTOCOL: u32 = 15;
+/// them never meets anything new. Version 16 puts every NAPLPS
+/// coordinate NeoTeletext defines on the teletext raster's 480 by 500 dots
+/// (DEC-6853, DEC-6857; neoteletext-common `docs/naplps-raster.md` RAS-10,
+/// DEC-6856 item 2): `naplps_objects`' places and sizes, the same objects
+/// in a rule table and in `description.picture`, an `animate` move on a
+/// NAPLPS object and a rule table's rectangles on a NAPLPS page are dots,
+/// where 15 had them in a 640 by 480 picture. No field's name or shape
+/// changes, so a program built for 15 would put every object in the wrong
+/// place without an error: it stops at `start` instead (REQ-4767, REQ-4769).
+pub const PROTOCOL: u32 = 16;
 /// The most text runs a page carries (REQ-2214 item 4).
 pub const MOST_TEXT_RUNS: usize = 64;
 /// The longest text run, in characters: a row (REQ-2214 item 4).

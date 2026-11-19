@@ -149,7 +149,7 @@ fn an_animate_for_3f7f_is_refused() {
 /// A table whose one rule places NAPLPS objects on page 100, sub-code
 /// 0000, and the body of its command for a stream of `generation`.
 fn objects_table() -> (Vec<u8>, impl Fn(u16) -> Vec<u8>) {
-    let objects = json!([{"number":1,"kind":"region","shown":true,"detectable":true,"layer":1,"order":0,"x":0,"y":440,"width":640,"height":40,
+    let objects = json!([{"number":1,"kind":"region","shown":true,"detectable":true,"layer":1,"order":0,"x":0,"y":440,"width":480,"height":40,
         "origin_x":0,"origin_y":0,"frames":[],"cover":0,"hover":null,"pressed":null,"alternative":null}]);
     let table = line(&json!({"type":"rules","connections":"all","page":"100","sub":"0000","table":{
         "rules":[{"name":"r","on":{"event":"key","keys":"any"},"do":[{"type":"naplps_objects","objects":objects}]}]}}));
