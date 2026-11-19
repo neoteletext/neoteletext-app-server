@@ -115,8 +115,8 @@ tracing-subscriber = { version = "=0.3.23", default-features = false, features =
 listenfd = { version = "=1.0.2", default-features = false }
 # The Cloudflare host (decision 20), approved by the owner on 28 October
 # 2026: Cloudflare's Rust SDK for Workers and Durable Objects (Apache-2.0),
-# and random bytes from the Web Crypto interface for the session cookie's
-# key (MIT or Apache-2.0).
+# and random bytes from the Web Crypto interface for the viewer-handle
+# secret and viewer-state challenges (VS-205, VS-305; MIT or Apache-2.0).
 worker = { version = "=0.8.7", default-features = false }
 getrandom = { version = "=0.4.3", default-features = false, features = ["wasm_js"] }
 # The `worker` macros expand to code that names `wasm_bindgen` itself, so the

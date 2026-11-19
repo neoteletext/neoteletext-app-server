@@ -99,9 +99,8 @@ pub fn tail(path: &str, query: Option<&str>) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PushRefusal {
     /// It carries `Origin`: a web page's script always sends one and a
-    /// receiver never does, so this stops a web page reaching a channel with
-    /// a viewer's cookies (cross-site WebSocket hijacking, DEC-1759 lesson
-    /// 18): 403.
+    /// receiver never does, so this stops a web page reaching a channel as
+    /// the viewer (cross-site WebSocket hijacking, DEC-1759 lesson 18): 403.
     Origin,
     /// It does not offer the input protocol's subprotocol: another program
     /// or another version (DEC-1759 lesson 14): 426, naming the one spoken.
