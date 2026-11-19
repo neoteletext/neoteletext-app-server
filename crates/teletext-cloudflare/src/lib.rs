@@ -237,8 +237,9 @@ impl Live {
     }
 
     /// When the object next needs its alarm, in milliseconds since the
-    /// Unix epoch: the runtime's next deadline.
-    fn next_alarm(&self) -> Option<u64> {
+    /// Unix epoch: the runtime's next deadline, which takes the channel
+    /// mutably because it first recounts the connections changed since.
+    fn next_alarm(&mut self) -> Option<u64> {
         self.channel.next_wake().map(|at| self.started_ms.saturating_add(at))
     }
 }
@@ -380,8 +381,8 @@ impl ChannelObject {
     /// Sets the object's alarm to when it is next needed, if that changed.
     async fn schedule(&self) -> Result<()> {
         let (wanted, set) = {
-            let live = self.live.borrow();
-            let Some(live) = live.as_ref() else { return Ok(()) };
+            let mut live = self.live.borrow_mut();
+            let Some(live) = live.as_mut() else { return Ok(()) };
             (live.next_alarm(), live.alarm)
         };
         if wanted == set {
