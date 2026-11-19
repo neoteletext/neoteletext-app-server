@@ -136,6 +136,7 @@ fn metrics_are_in_the_prometheus_text_format() {
         ("teletext_channel_viewers", "gauge"),
         ("teletext_channel_viewers_peak", "gauge"),
         ("teletext_channel_viewers_total", "counter"),
+        ("teletext_channel_snapshots_total", "counter"),
         ("teletext_channel_ready", "gauge"),
         ("teletext_channel_proofs_accepted_total", "counter"),
         ("teletext_channel_proofs_refused_total", "counter"),

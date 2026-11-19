@@ -497,8 +497,11 @@ impl ServerStats {
         for (name, help, value) in gauges {
             family(name, "gauge", help, &each(value));
         }
-        let counters: [Figure; 17] = [
+        let counters: [Figure; 18] = [
             ("teletext_channel_viewers_total", "Viewers that connected.", |figures| figures.stats.viewers_total),
+            // REQ-6881 item 2: snapshots are the server's own figure, never
+            // among the viewers' or in the program's `stats`.
+            ("teletext_channel_snapshots_total", "Snapshot connections held, apart from viewers.", |figures| figures.stats.snapshots),
             ("teletext_channel_proofs_accepted_total", "Viewers' proofs of viewer state that verified.", |figures| figures.stats.proofs_accepted),
             ("teletext_channel_proofs_refused_total", "Viewers' proofs of viewer state refused.", |figures| figures.stats.proofs_refused),
             ("teletext_channel_page_opens_total", "Pages opened.", |figures| figures.stats.total_opens()),

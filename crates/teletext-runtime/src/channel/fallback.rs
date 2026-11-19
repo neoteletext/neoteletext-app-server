@@ -174,7 +174,7 @@ impl Fallbacks {
 
 /// `page` with rows 1 to 23 replaced by `rows`, and no local enhancement
 /// data, which would place characters over the mosaics.
-fn with_rows(page: &protocol::Page, rows: &MosaicRows) -> protocol::Page {
+pub(super) fn with_rows(page: &protocol::Page, rows: &MosaicRows) -> protocol::Page {
     let mut replaced = page.clone();
     for (slot, codes) in replaced.rows.iter_mut().skip(usize::from(FIRST_ROW)).zip(rows.iter()) {
         let mut text = alloc::vec![0_u8; base64::encoded_len(codes.len())];

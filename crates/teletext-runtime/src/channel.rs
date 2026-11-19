@@ -23,7 +23,7 @@ use neoteletext_core::limits;
 use neoteletext_core::packet::{Packet, is_valid_stream_packet};
 use neoteletext_formats::page::CursorLine;
 use neoteletext_input::MAX_PER_SECOND;
-use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP, SNAPSHOT_CAP, TOUCH_CAP};
 use neoteletext_input::control::{Control, packet_of};
 use neoteletext_input::cursor::{BLOCK, Cursor, Place};
 use neoteletext_input::event::{Action, Device, Event, Item, MouseAction, Stamp, read_message, units};
@@ -33,7 +33,7 @@ use neoteletext_input::session::REMEMBERED;
 use neoteletext_web::consts::{CLOSE_BROKE_PROTOCOL, CLOSE_WRONG_VERSION};
 use neoteletext_web::records::denied::{DeniedRecord, STATUS_UNAVAILABLE, encode as encode_denied};
 
-use crate::descriptions::{Answer, Asked, DESCRIPTION_WAIT_MS, Descriptions, PublicPage, VisitorId};
+use crate::descriptions::{Answer, Asked, DESCRIPTION_WAIT_MS, Descriptions, PublicPage, VisitorId, Waiter};
 use crate::input::{self, Input};
 use crate::json::Writer;
 use crate::page::Change;
@@ -50,6 +50,7 @@ mod animation;
 mod fallback;
 mod pictures;
 mod rules;
+mod snapshots;
 mod table;
 mod viewers;
 
@@ -65,7 +66,7 @@ pub(crate) const SERVICE: u8 = 0;
 /// picture languages, whose records go only to a receiver that agreed them
 /// (renderer parity PAR-1, PAR-24). There are no modes to agree: every event is
 /// sent and the channel ignores what it does not use (DOC-1922).
-const USED: u32 = CURSOR_CAP | SELECT_CAP | TOUCH_CAP | REGIS_CAP | NAPLPS_CAP;
+const USED: u32 = CURSOR_CAP | SELECT_CAP | TOUCH_CAP | REGIS_CAP | NAPLPS_CAP | SNAPSHOT_CAP;
 /// The move slot of the mouse, or of the first finger, which goes as MOUSE;
 /// a later contact's slot is its number, 1 and up (DEC-2137).
 const MOUSE_CONTACT: u8 = 0;
@@ -311,6 +312,9 @@ impl Ending {
 struct Connection {
     /// The viewer it presents, and its challenges (DEC-6471).
     viewer: viewers::Slot,
+    /// When it opened: a snapshot connection's life is counted from it
+    /// (REQ-6881 item 6).
+    opened_at: u64,
     /// WELCOME was sent: the receiver acts on cursor records.
     welcomed: bool,
     /// The capabilities WELCOME agreed, once HELLO has come.
@@ -407,6 +411,7 @@ impl Connection {
     fn new(address: Option<core::net::IpAddr>, now: u64) -> Self {
         Self {
             viewer: viewers::Slot::new(address),
+            opened_at: now,
             welcomed: false,
             agreed: None,
             focus_untold: None,
@@ -494,6 +499,9 @@ pub struct Channel {
     stale_reported_at: Option<u64>,
     /// What the channel's pages show the web, for a short time (REQ-1728).
     descriptions: Descriptions,
+    /// Its snapshot connections, held apart from `connections`, and the
+    /// snapshots asked of its program (REQ-6881, REQ-6882).
+    snapshots: snapshots::Snapshots,
     /// Whether the channel's pages have the default table when their
     /// program gives them none (RULE-53), and with it the `wheel` rule:
     /// none when the configuration says `none`. The table is made for each
@@ -554,6 +562,7 @@ impl Channel {
             stale_unreported: 0,
             stale_reported_at: None,
             descriptions: Descriptions::default(),
+            snapshots: snapshots::Snapshots::default(),
             kept: crate::kept::KeptPictures::default(),
             own_readers: Arc::default(),
             line_bytes: 0,
@@ -757,8 +766,18 @@ impl Channel {
             state.replied = false;
             state.moves.clear();
         }
-        for visitor in self.descriptions.forget() {
-            self.effects.push(Effect::Described { visitor, answer: None });
+        for waiter in self.descriptions.forget() {
+            self.give_description(waiter, &None);
+        }
+        self.snapshots_program_ended();
+    }
+
+    /// Gives a description to one who waited for it: a web visitor's host,
+    /// or a snapshot connection (REQ-6881 item 4 step 5).
+    fn give_description(&mut self, waiter: Waiter, answer: &Answer) {
+        match waiter {
+            Waiter::Visitor(visitor) => self.effects.push(Effect::Described { visitor, answer: answer.clone() }),
+            Waiter::Snapshot(connection) => self.snapshot_described(connection, answer),
         }
     }
 
@@ -783,7 +802,7 @@ impl Channel {
             self.effects.push(Effect::Described { visitor, answer: None });
             return;
         }
-        match self.descriptions.ask(page.0, visitor, now) {
+        match self.descriptions.ask(page.0, Waiter::Visitor(visitor), now) {
             Asked::Answered(answer) => self.effects.push(Effect::Described { visitor, answer }),
             Asked::Waiting => {}
             // The program has this `describe` already, and answers it once.
@@ -808,8 +827,8 @@ impl Channel {
         }
         let drawn = self.description_picture(&description)?;
         let answer = public_page(description, drawn).map(Arc::new);
-        for visitor in self.descriptions.answered(page, &answer, now) {
-            self.effects.push(Effect::Described { visitor, answer: answer.clone() });
+        for waiter in self.descriptions.answered(page, &answer, now) {
+            self.give_description(waiter, &answer);
         }
         Ok(())
     }
@@ -879,7 +898,6 @@ impl Channel {
     /// [`FIRST_SELECTION_WAIT_MS`] passes, and its opening challenge is
     /// answered (VS-202).
     pub fn opened(&mut self, connection: ConnectionId, address: Option<core::net::IpAddr>, now: u64) {
-        self.stats.joined();
         self.connections.insert(connection, Connection::new(address, now));
     }
 
@@ -889,11 +907,20 @@ impl Channel {
     /// is no session that outlives a connection, and a viewer's identity
     /// across connections is their handle.
     pub fn closed(&mut self, connection: ConnectionId, now: u64) {
+        // A snapshot connection's close tells the program nothing (REQ-6881
+        // item 6).
+        if self.snapshot_closed(connection) {
+            return;
+        }
         self.flush_moves(connection, now);
         self.release_held(connection);
         self.unanswered_queries(connection, None);
         let Some(state) = self.connections.remove(&connection) else { return };
-        self.stats.left();
+        // Counted among the viewers from its WELCOME, which a snapshot
+        // connection, taken out of this table at HELLO, never has here.
+        if state.agreed.is_some() {
+            self.stats.left();
+        }
         self.sounds.forget(connection);
         self.timelines.forget(connection);
         if state.announced
@@ -915,8 +942,11 @@ impl Channel {
     /// published in [`ACKNOWLEDGEMENT_WAIT_MS`] from the first input that
     /// frame would have covered (REQ-1334).
     pub fn received(&mut self, connection: ConnectionId, bytes: &[u8], now: u64) {
-        let Some(state) = self.connections.get(&connection) else { return };
-        let acked = state.acked;
+        let acked = match self.connections.get(&connection) {
+            Some(state) => state.acked,
+            None if self.snapshots.holds(connection) => 0,
+            None => return,
+        };
         let mut broke = false;
         let read = read_message(bytes, &mut |item| {
             if !broke {
@@ -925,6 +955,7 @@ impl Channel {
         });
         if read.is_err() || broke {
             // A protocol error ends the session (DOC-1919).
+            self.snapshot_broke(connection);
             self.effects.push(Effect::Close { connection, code: CLOSE_BROKE_PROTOCOL });
             return;
         }
@@ -964,9 +995,10 @@ impl Channel {
             self.log(Level::Warn, "program_late", format!("{text} within {PROGRAM_REPLY_LIMIT_MS} ms"));
             self.deny(connection, STATUS_UNAVAILABLE);
         }
-        for visitor in self.descriptions.late(now) {
-            self.effects.push(Effect::Described { visitor, answer: None });
+        for waiter in self.descriptions.late(now) {
+            self.give_description(waiter, &None);
         }
+        self.snapshot_deadline(now);
         let unacknowledged: Vec<ConnectionId> = self
             .connections
             .due(now)
@@ -1020,6 +1052,7 @@ impl Channel {
             .into_iter()
             .chain(self.viewers.next_due())
             .chain(self.descriptions.next_due())
+            .chain(self.snapshots.next_wake())
             .chain(self.sounds.next_due())
             .chain(self.timelines.next_due())
             .chain(self.fallbacks.next_due())
@@ -1032,6 +1065,11 @@ impl Channel {
     /// WELCOME), SELECT when SELECT was not agreed, or a finger's MOUSE when
     /// TOUCH was not.
     fn item(&mut self, connection: ConnectionId, item: &Item<'_>, now: u64) -> bool {
+        // A snapshot connection's items, which reach no viewer path; its
+        // HELLO may have made it one earlier in the same message.
+        if self.snapshots.holds(connection) {
+            return self.snapshot_item(connection, item, now);
+        }
         let Some(state) = self.connections.get_mut(&connection) else { return true };
         // The viewer's input a rule sent (RULE-46): under push protocol 9 it
         // comes only inside a RULE_EVENT, and the engine's reader refuses
@@ -1053,7 +1091,7 @@ impl Channel {
             self.flush_moves(connection, now);
         }
         match *item {
-            Item::Event(Event::Hello { version, caps, .. }) => self.welcome(connection, version, caps, now),
+            Item::Event(Event::Hello { version, caps, .. }) => return self.welcome(connection, version, caps, now),
             Item::Event(Event::Select(select, parameters)) => {
                 self.selected_before_answer(connection, now);
                 self.selected(connection, select.page, select.sub, parameters, now);
@@ -1194,13 +1232,20 @@ impl Channel {
     /// another version (DOC-1921). A receiver that cannot send
     /// SELECT is not waited for. Its capabilities are the only thing asked of
     /// it: nothing here reads its agent text (DEC-1759 lesson 19).
-    fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32, now: u64) {
+    fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32, now: u64) -> bool {
         if version != neoteletext_input::VERSION {
             self.effects.push(Effect::Close { connection, code: CLOSE_WRONG_VERSION });
-            return;
+            return true;
         }
-        let Some(state) = self.connections.get_mut(&connection) else { return };
+        if caps & SNAPSHOT_CAP != 0 {
+            return self.snapshot_hello(connection, version, caps, now);
+        }
+        let Some(state) = self.connections.get_mut(&connection) else { return true };
         state.agreed = Some(caps & USED);
+        // A viewer's connection is counted from its HELLO, which says it is
+        // not a snapshot's (REQ-6881 item 2).
+        self.stats.joined();
+        let Some(state) = self.connections.get_mut(&connection) else { return true };
         let record = state.next_record();
         if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
             state.welcomed = true;
@@ -1212,6 +1257,7 @@ impl Channel {
         if caps & SELECT_CAP == 0 {
             self.end_hold(connection, now);
         }
+        true
     }
 
     /// SELECT (DOC-1753, REQ-INT-140): the tab selected a page
@@ -1462,9 +1508,8 @@ impl Channel {
             }
             ProgramMessage::Redirect(redirect) => self.redirect(redirect, now)?,
             ProgramMessage::Description(description) => self.described(description, now)?,
-            // No snapshot is asked of a program yet (REQ-6900 item 5).
-            ProgramMessage::SnapshotPage(answer) => return Err(not_awaited_snapshot(kind, answer.snapshot)),
-            ProgramMessage::SnapshotDeclined(declined) => return Err(not_awaited_snapshot(kind, declined.snapshot)),
+            ProgramMessage::SnapshotPage(answer) => self.snapshot_page(*answer, now)?,
+            ProgramMessage::SnapshotDeclined(declined) => self.snapshot_declined(declined, now)?,
             ProgramMessage::Measure(measure) => {
                 // REQ-2216 item 1: encoded as for sending, sent to no viewer.
                 let protocol::Measure { request, mut page } = *measure;
@@ -1739,14 +1784,22 @@ fn public_page(description: Description, drawn: Option<(crate::descriptions::Pic
         let (width, height) = neoteletext_image::raster::picture_size();
         crate::page::picture(&content).map(|png| (png, width, height))
     };
+    let shown = picture.as_ref().map(|picture| match picture {
+        protocol::DescriptionPicture::Kept(kept) => crate::snapshot::ShownPicture::Kept(kept.kept.0),
+        protocol::DescriptionPicture::Bytes(bytes) => crate::snapshot::ShownPicture::Bytes {
+            language: match bytes.language {
+                protocol::PictureLanguageName::Regis => crate::kept::PictureLanguage::Regis,
+                protocol::PictureLanguageName::Naplps => crate::kept::PictureLanguage::Naplps,
+            },
+            data: Arc::from(protocol::check::bytes_of(&bytes.data)),
+            objects: bytes.objects.clone(),
+        },
+    });
     let (picture, alt) = if picture.is_some() { drawn.map_or((None, None), |(png, alt)| (Some(png), alt)) } else { (teletext(), None) };
-    Some(PublicPage { title, text, picture, alt })
-}
-
-/// The refusal of an answer to a snapshot the server does not await
-/// (REQ-6900 item 5).
-fn not_awaited_snapshot(kind: protocol::MessageType, number: protocol::SnapshotNumber) -> Refusal {
-    Refusal { message: Some(kind), path: "snapshot".to_string(), rule: Rule::NotAwaited, detail: format!("snapshot {number} is not awaited") }
+    // REQ-6881 item 4 steps 2 and 5: what a snapshot connection is sent
+    // from this description, which anyone may be given.
+    let snapshot = Arc::new(crate::snapshot::SnapshotContent { page: *content, picture: shown });
+    Some(PublicPage { title, text, picture, alt, snapshot })
 }
 
 fn wide(count: usize) -> u64 {

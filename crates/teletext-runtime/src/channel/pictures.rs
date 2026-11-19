@@ -102,7 +102,7 @@ impl Drop for HeldCount {
 }
 
 /// The capability bit of a picture language (PAR-1).
-const fn capability(language: PictureLanguage) -> u32 {
+pub(super) const fn capability(language: PictureLanguage) -> u32 {
     match language {
         PictureLanguage::Regis => REGIS_CAP,
         PictureLanguage::Naplps => NAPLPS_CAP,

@@ -471,3 +471,21 @@ fn nothing_of_a_viewer_is_logged() {
     assert!(!logged.is_empty(), "the refusals are logged");
     assert!(!logged.contains(handle) && !logged.to_lowercase().contains("0123456789abcdef"), "{logged}");
 }
+
+/// A new viewer from `address`, seed `seed`, on a new `connection` at
+/// `now`: its handle as `connected` gives it, null when it was not
+/// admitted (VS-304). For the snapshot tests, which hold that snapshots
+/// spend no viewer's budget (REQ-6882).
+pub(super) fn new_viewer(channel: &mut Channel, connection: u64, address: core::net::IpAddr, seed: &[u8; 32], now: u64) -> Value {
+    channel.opened(connection, Some(address), now);
+    channel.received(connection, &message(channel, connection, &[hello()]), now);
+    let challenge = challenges(&channel.take_effects(), connection)[0].0;
+    channel.received(connection, &proof(seed, Lifetime::Visit, &challenge, ADDRESS), now);
+    channel.received(connection, &message(channel, connection, &[select(0x100, 0)]), now);
+    connecteds(&channel.take_effects())[0]["viewer"].clone()
+}
+
+/// Whether `value` is a viewer's handle.
+pub(super) fn handle(value: &Value) -> bool {
+    is_handle(value)
+}

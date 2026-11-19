@@ -54,6 +54,9 @@ pub struct ChannelStats {
     /// Viewers' proofs refused: not verified, with no challenge, or past a
     /// bound (VS-206, VS-304).
     pub proofs_refused: u64,
+    /// Snapshot connections held (REQ-6881 item 2): the server's own
+    /// figure, never among the viewers' or in the program's `stats`.
+    pub snapshots: u64,
 }
 
 impl ChannelStats {

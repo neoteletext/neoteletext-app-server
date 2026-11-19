@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
 use neoteletext_input::VERSION;
-use neoteletext_input::caps::{AGENT, ALL_CAPS, CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, RESUME_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{AGENT, ALL_CAPS, CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, RESUME_CAP, SELECT_CAP, SNAPSHOT_CAP, TOUCH_CAP};
 use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::cursor::TYPE_CURSOR;
 use neoteletext_input::event::{Action, Device, Event, Item, Key, KeyCode, Mouse, MouseAction, Point, Select, Stamp, write};
@@ -35,6 +35,7 @@ mod moves;
 mod naplps;
 mod regis;
 mod rules;
+mod snapshot;
 mod sound;
 mod synth;
 mod viewers;
@@ -442,10 +443,12 @@ fn a_connection_with_no_capability_is_shown_the_initial_page_and_heard() {
 #[test]
 fn gone_needs_no_capability_beyond_those_the_server_uses() {
     let mut channel = held();
-    let everything = Item::Event(Event::Hello { version: VERSION, caps: ALL_CAPS & !AGENT, agent: None });
+    // Everything a viewer's receiver may offer: SNAPSHOT makes a snapshot
+    // connection instead (REQ-6881), which `snapshot.rs` tests.
+    let everything = Item::Event(Event::Hello { version: VERSION, caps: ALL_CAPS & !AGENT & !SNAPSHOT_CAP, agent: None });
     channel.received(CONNECTION, &message(&channel, CONNECTION, &[everything, select(0x100, 0)]), 0);
     let agreed = welcomed_caps(&channel.take_effects());
-    assert_eq!(agreed, USED, "as the server uses");
+    assert_eq!(agreed, USED & !SNAPSHOT_CAP, "as the server uses");
     assert_eq!(agreed & (TOUCH_CAP | RESUME_CAP), TOUCH_CAP, "TOUCH and not RESUME");
     channel.received(CONNECTION, &message(&channel, CONNECTION, &[mouse(ON, MouseAction::Press, 0)]), 1);
     assert_eq!(inputs(&channel.take_effects()).len(), 1);

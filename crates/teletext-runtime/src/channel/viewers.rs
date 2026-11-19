@@ -95,6 +95,12 @@ impl Slot {
         Self { address, outstanding: None, opening: false, present: None, last_gesture: None, sent: Vec::new(), last_unprompted: None, keep_offered: false }
     }
 
+    /// The network address it came from, as VS-304 takes it: what a
+    /// snapshot connection is counted by (REQ-6882).
+    pub(super) const fn address(&self) -> Option<IpAddr> {
+        self.address
+    }
+
     /// `connected` waits for the opening challenge's answer.
     pub(super) const fn holds(&self) -> bool {
         self.opening

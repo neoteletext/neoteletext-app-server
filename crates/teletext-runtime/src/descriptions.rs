@@ -11,7 +11,8 @@
 //! - at most [`DESCRIPTIONS_PER_SECOND`] different pages a second, and a burst
 //!   of [`DESCRIPTIONS_BURST`];
 //! - at most [`MOST_WAITING_VISITORS`] visitors wait, each at most
-//!   [`DESCRIPTION_WAIT_MS`];
+//!   [`DESCRIPTION_WAIT_MS`], snapshot connections among them (REQ-6881
+//!   item 4 step 5), which ask as any web visitor does;
 //! - at most [`MOST_CACHED_DESCRIPTIONS`] entries are kept.
 
 use alloc::collections::BTreeMap;
@@ -51,6 +52,17 @@ pub const MOST_PICTURE_BYTES: usize = 64 * 1024;
 /// A web request a host is holding, numbered by the host.
 pub type VisitorId = u64;
 
+/// Who waits for a description: a web visitor, or a snapshot connection
+/// whose program declined or did not answer (REQ-6881 item 4 step 5),
+/// which asks as a visitor does and is told nothing else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Waiter {
+    /// A web request the host holds.
+    Visitor(VisitorId),
+    /// A snapshot connection.
+    Snapshot(crate::protocol::ConnectionId),
+}
+
 /// A public page as a web address shows it. Its text is the program's,
 /// checked, and not yet escaped for anywhere.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -67,6 +79,9 @@ pub struct PublicPage {
     /// ReGIS picture's `D(T'...')` or a kept NAPLPS picture's objects'
     /// title; none gives the page's title.
     pub alt: Option<String>,
+    /// The sub-page and picture a snapshot connection is sent for this
+    /// page (REQ-6881 items 4 and 5): what the description gives anyone.
+    pub snapshot: Arc<crate::snapshot::SnapshotContent>,
 }
 
 /// A public page's picture: a PNG, its width and its height.
@@ -88,7 +103,7 @@ struct Cached {
 
 /// Those waiting for one page's description.
 struct Waiting {
-    visitors: Vec<VisitorId>,
+    visitors: Vec<Waiter>,
     /// When the page counts as not public.
     due: u64,
 }
@@ -140,7 +155,7 @@ impl Descriptions {
 
     /// `visitor` is at `page`'s address at `now`. Past the limits the answer is
     /// not public and is not kept, so that a flood leaves no mark on the page.
-    pub(crate) fn ask(&mut self, page: u16, visitor: VisitorId, now: u64) -> Asked {
+    pub(crate) fn ask(&mut self, page: u16, visitor: Waiter, now: u64) -> Asked {
         if let Some(kept) = self.cached.get(&page).filter(|kept| kept.until > now) {
             return Asked::Answered(kept.answer.clone());
         }
@@ -158,6 +173,12 @@ impl Descriptions {
         Asked::AskProgram
     }
 
+    /// The description of `page` kept at `now`, if one is: asked for
+    /// nothing (REQ-6881 item 4 step 2).
+    pub(crate) fn kept(&self, page: u16, now: u64) -> Option<&Answer> {
+        self.cached.get(&page).filter(|kept| kept.until > now).map(|kept| &kept.answer)
+    }
+
     /// Whether a description of `page` is awaited at `now`: by those waiting,
     /// or, after they gave up, by the cache, so that a slow program's answer
     /// is not lost and a public page does not stay not public for the entry's
@@ -168,7 +189,7 @@ impl Descriptions {
     }
 
     /// Keeps `answer` for `page`, and gives those who waited for it.
-    pub(crate) fn answered(&mut self, page: u16, answer: &Answer, now: u64) -> Vec<VisitorId> {
+    pub(crate) fn answered(&mut self, page: u16, answer: &Answer, now: u64) -> Vec<Waiter> {
         let visitors = self.waiting.remove(&page).map(|waiting| waiting.visitors).unwrap_or_default();
         self.keep(page, answer.clone(), false, now);
         visitors
@@ -187,7 +208,7 @@ impl Descriptions {
     /// The visitors whose page's program did not answer by `now`: its page
     /// counts as not public, for them and for those after them (REQ-1728 item
     /// 2), until the program's late answer replaces that ([`Self::awaited`]).
-    pub(crate) fn late(&mut self, now: u64) -> Vec<VisitorId> {
+    pub(crate) fn late(&mut self, now: u64) -> Vec<Waiter> {
         let due: Vec<u16> = self.waiting.iter().filter(|(_, waiting)| waiting.due <= now).map(|(&page, _)| page).collect();
         let mut visitors = Vec::new();
         for page in due {
@@ -198,7 +219,7 @@ impl Descriptions {
     }
 
     /// The program went: nothing will answer, and what it said goes with it.
-    pub(crate) fn forget(&mut self) -> Vec<VisitorId> {
+    pub(crate) fn forget(&mut self) -> Vec<Waiter> {
         self.cached.clear();
         core::mem::take(&mut self.waiting).into_values().flat_map(|waiting| waiting.visitors).collect()
     }
