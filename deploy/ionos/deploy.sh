@@ -169,8 +169,19 @@ ssh "$target" "set -e
     cd $app/current/$python_channels && uv python install --quiet \$(cat .python-version) && rm -rf .venv && uv sync --quiet --frozen --no-dev"
 # A glibc build: the musl one needs a musl C compiler, which the builder
 # lacks, for the TLS that neottx's qr and keyboard commands bring.
+# The engine pins the ReGIS and NAPLPS renderers by file:// sources in the
+# development machine's $devel, which the builder lacks. Each is pushed to
+# GitHub at the revision pinned, so Cargo fetches through the git program,
+# which reads the GIT_CONFIG_* environment (Cargo's built-in fetcher does
+# not), with each file:// address rewritten by url.<base>.insteadOf to its
+# GitHub repository. Cargo.lock is unchanged, so --locked still holds every
+# dependency at the engine's revisions.
+renderer_rewrites="export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=2
+    export GIT_CONFIG_KEY_0=url.https://github.com/neoteletext/neoteletext-renderer-regis.insteadOf GIT_CONFIG_VALUE_0=file://$devel/neoteletext-renderer-regis
+    export GIT_CONFIG_KEY_1=url.https://github.com/neoteletext/neoteletext-renderer-naplps.insteadOf GIT_CONFIG_VALUE_1=file://$devel/neoteletext-renderer-naplps"
 # shellcheck disable=SC2029
 ssh "$builder" ". ~/.cargo/env; set -e; cd ~; [ -d neottx-build ] || git clone --quiet https://github.com/neoteletext/neoteletext-renderer-teletext neottx-build
+    $renderer_rewrites
     cd neottx-build; git fetch --quiet origin; git checkout --quiet $engine_rev; cargo build --quiet --release --locked -p neoteletext-cli"
 # shellcheck disable=SC2029
 glibc_needed=$(ssh "$builder" "objdump -T neottx-build/target/release/neottx | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1")
