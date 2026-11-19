@@ -8,9 +8,15 @@
 //! interval; a kept picture's fallback is drawn once and shared by every
 //! connection showing it. A channel draws at most
 //! `MOST_FALLBACK_RENDERS_PER_SECOND` a second, sustained, and at most
-//! `MOST_FALLBACK_BYTES_PER_SECOND` of stream, each drawing counted as its
-//! stream's bytes and `FALLBACK_DRAWING_FLOOR_BYTES` (TODO-6839): a drawing
-//! over that budget is drawn late, never wrong and never skipped. For a stream
+//! `MOST_FALLBACK_BYTES_PER_SECOND` of stream, each ReGIS drawing counted as
+//! its stream's bytes and `FALLBACK_DRAWING_FLOOR_BYTES` (TODO-6839), each
+//! NAPLPS drawing as the pixel work it spends, `NAPLPS_WORK_PER_FALLBACK_BYTE`
+//! units a byte (TODO-6845; the NAPLPS renderer's work allowance, DEC-6851,
+//! bounds one drawing): a drawing over that budget is drawn late, never wrong
+//! and never skipped, and one costlier than the whole budget is drawn alone
+//! once the last second's drawings have passed. A NAPLPS drawing is let
+//! start at what it may spend (its kept reader's count, or the allowance for
+//! its bytes) and then counted at what it spent. For a stream
 //! sent to such a connection itself, the server keeps the bytes it did not
 //! send, at most `MOST_KEPT_STREAM_BYTES` a connection and
 //! `MOST_FALLBACK_POOL_BYTES` for the channel; past either the stream is
@@ -28,7 +34,7 @@ use super::{Channel, Level};
 use crate::fallback::{FIRST_ROW, MosaicRows};
 use crate::kept::{
     FALLBACK_DRAWING_FLOOR_BYTES, FALLBACK_INTERVAL_MS, MOST_FALLBACK_BYTES_PER_SECOND, MOST_FALLBACK_POOL_BYTES, MOST_FALLBACK_RENDERS_PER_SECOND,
-    MOST_KEPT_STREAM_BYTES, PictureLanguage,
+    MOST_KEPT_STREAM_BYTES, NAPLPS_WORK_PER_FALLBACK_BYTE, PictureLanguage,
 };
 use crate::protocol::{self, ConnectionId, NaplpsObject};
 
@@ -40,10 +46,47 @@ const RENDER_WINDOW_MS: u64 = 1_000;
 // drawing is made in the end.
 const _: () = assert!(MOST_KEPT_STREAM_BYTES + FALLBACK_DRAWING_FLOOR_BYTES <= MOST_FALLBACK_BYTES_PER_SECOND);
 
-/// What a drawing of a stream of `length` bytes counts against
+/// What a ReGIS drawing of a stream of `length` bytes counts against
 /// `MOST_FALLBACK_BYTES_PER_SECOND`.
 const fn drawing_cost(length: usize) -> usize {
     length.saturating_add(FALLBACK_DRAWING_FLOOR_BYTES)
+}
+
+/// What a NAPLPS drawing that spends `work` pixel work units counts
+/// against `MOST_FALLBACK_BYTES_PER_SECOND` (TODO-6845).
+fn work_cost(work: u64) -> usize {
+    usize::try_from(work.div_ceil(NAPLPS_WORK_PER_FALLBACK_BYTE)).unwrap_or(usize::MAX)
+}
+
+/// The most pixel work a NAPLPS stream of `length` bytes may spend: the
+/// renderer's allowance, `WORK_CAP` and `WORK_PER_BYTE` a byte (DEC-6851).
+fn most_naplps_work(length: usize) -> u64 {
+    let bytes = u64::try_from(length).unwrap_or(u64::MAX);
+    naplps::limits::WORK_CAP.saturating_add(naplps::limits::WORK_PER_BYTE.saturating_mul(bytes))
+}
+
+/// What a drawing is let start at: a ReGIS one at its bytes; a NAPLPS one
+/// at the work its stream's reader counted (`known`, exact for a kept
+/// picture's) or else the most its bytes allow, and the most a composing of
+/// its objects may spend (`MAX_COMPOSE_WORK`) if it has any.
+fn start_cost(language: PictureLanguage, length: usize, known: Option<u64>, objects: bool) -> usize {
+    match language {
+        PictureLanguage::Regis => drawing_cost(length),
+        PictureLanguage::Naplps => {
+            let composing = if objects { naplps::limits::MAX_COMPOSE_WORK } else { 0 };
+            work_cost(known.unwrap_or_else(|| most_naplps_work(length)).saturating_add(composing))
+        }
+    }
+}
+
+/// What a drawing made is counted at: a ReGIS one at its bytes, a NAPLPS
+/// one at the work it spent (one that failed, at the most it could have).
+fn spent_cost(language: PictureLanguage, length: usize, work: Option<u64>) -> usize {
+    match (language, work) {
+        (PictureLanguage::Naplps, Some(work)) => work_cost(work),
+        (PictureLanguage::Naplps, None) => work_cost(most_naplps_work(length).saturating_add(naplps::limits::MAX_COMPOSE_WORK)),
+        (PictureLanguage::Regis, _) => drawing_cost(length),
+    }
 }
 
 /// When one picture's fallback is drawn.
@@ -270,7 +313,10 @@ impl Channel {
         let due_kept: Vec<(u16, u16)> =
             self.fallbacks.kept.iter().filter(|(_, drawing)| drawing.due.is_some_and(|due| due <= now)).map(|(key, _)| *key).collect();
         for (page, sub) in due_kept {
-            let cost = drawing_cost(self.kept.get(page, sub).map_or(0, |picture| picture.stream.len()));
+            let cost = self.kept.get(page, sub).map_or(0, |picture| {
+                let objects = picture.objects.as_ref().is_some_and(|objects| !objects.objects.is_empty());
+                start_cost(picture.language, picture.stream.len(), picture.work_spent(), objects)
+            });
             if let Err(later) = self.fallbacks.budget(now, cost) {
                 if let Some(drawing) = self.fallbacks.kept.get_mut(&(page, sub)) {
                     drawing.due = Some(later);
@@ -284,9 +330,10 @@ impl Channel {
             let objects = picture.objects.as_ref().map(|objects| objects.objects.as_slice());
             let drawn = crate::fallback::rows(picture.language, &picture.stream, objects);
             let language = picture.language;
-            self.fallbacks.spend(now, cost);
+            let length = picture.stream.len();
+            self.fallbacks.spend(now, spent_cost(language, length, drawn.as_ref().ok().and_then(|(_, work)| *work)));
             let rows = match drawn {
-                Ok(rows) => rows,
+                Ok((rows, _)) => rows,
                 Err(fault) => {
                     self.log(Level::Error, "fallback_refused", format!("{page:03X}/{sub:04X}: {fault}"));
                     continue;
@@ -314,7 +361,10 @@ impl Channel {
             .map(|(&id, _)| id)
             .collect();
         for connection in due_own {
-            let cost = drawing_cost(self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()).map_or(0, |own| own.stream.len()));
+            let cost = self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()).map_or(0, |own| {
+                let objects = own.objects.as_ref().is_some_and(|objects| !objects.is_empty());
+                start_cost(own.language, own.stream.len(), None, objects)
+            });
             if let Err(later) = self.fallbacks.budget(now, cost) {
                 if let Some(own) = self.connections.get_mut(&connection).and_then(|state| state.own_picture.as_mut()) {
                     own.drawing.due = Some(later);
@@ -324,9 +374,9 @@ impl Channel {
             let Some(own) = self.connections.get(&connection).and_then(|state| state.own_picture.as_ref()) else { continue };
             let (page, sub) = (own.page, own.sub);
             let drawn = crate::fallback::rows(own.language, &own.stream, own.objects.as_deref());
-            self.fallbacks.spend(now, cost);
+            self.fallbacks.spend(now, spent_cost(own.language, own.stream.len(), drawn.as_ref().ok().and_then(|(_, work)| *work)));
             let rows = match drawn {
-                Ok(rows) => rows,
+                Ok((rows, _)) => rows,
                 Err(fault) => {
                     self.log(Level::Error, "fallback_refused", format!("connection {connection}, {page:03X}/{sub:04X}: {fault}"));
                     continue;

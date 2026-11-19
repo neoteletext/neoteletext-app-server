@@ -15,8 +15,10 @@
 //!
 //! **Readers** (TODO-6836, TODO-6837). Each kept picture's stream is read
 //! by the receiver's reader as it comes, and the reader is kept to read
-//! the next append. Readers are counted at what they can hold
-//! ([`reader_bytes`]). When holding one would pass `MOST_KEPT_COST`, the
+//! the next append. Readers are counted at what they hold
+//! ([`Checker::held_bytes`]: a ReGIS reader as its renderer reports it,
+//! measured again after every append it takes; a NAPLPS reader at the
+//! most it can hold). When holding one would pass `MOST_KEPT_COST`, the
 //! readers of the pictures least recently written are let go; and a
 //! reader that refused an append, having read bytes that are not kept, is
 //! let go too. A picture without its reader is still kept and shown, but
@@ -29,6 +31,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use neoteletext_core::glyphs::{JOINED_SETS, JoiningClass, joining};
+
 use crate::protocol::{DrawingLink, NaplpsObject, NaplpsTitle, Rule};
 
 /// The bytes of one kept stream since its restart (PAR-17): the most a
@@ -38,15 +42,16 @@ pub const MOST_KEPT_STREAM_BYTES: usize = neoteletext_formats::picture_text::MAX
 /// The pages and sub-codes with a kept picture, for one channel (PAR-17).
 pub const MOST_KEPT_PICTURES: usize = 512;
 /// The cost of all of a channel's kept pictures (PAR-17): each stream's
-/// bytes, its reader's memory as [`reader_bytes`] states it, and each
+/// bytes, its reader's memory as [`Checker::held_bytes`] states it, and each
 /// companion's message bytes as received. A quarter of the Cloudflare
 /// host's 128 MB for one channel.
 pub const MOST_KEPT_COST: usize = 33_554_432;
 /// The memory of the readers of every stream a program sends to
-/// connections themselves (PAR-23), each as [`reader_bytes`] states it,
-/// for all of a channel's connections together; a restart that would pass
-/// it is refused. A quarter of the Cloudflare host's 128 MB, as
-/// `MOST_KEPT_COST` is (TODO-6836).
+/// connections themselves (PAR-23), each as [`Checker::held_bytes`]
+/// states it after the message it read, for all of a channel's
+/// connections together; a message that would pass it is refused. A
+/// quarter of the Cloudflare host's 128 MB, as `MOST_KEPT_COST` is
+/// (TODO-6836, TODO-6845).
 pub const MOST_CONNECTION_READER_BYTES: usize = 33_554_432;
 /// The least time between two fallback drawings of one picture (PAR-25).
 pub const FALLBACK_INTERVAL_MS: u64 = 500;
@@ -60,9 +65,9 @@ pub const MOST_FALLBACK_RENDERS_PER_SECOND: u32 = 20;
 /// `WORK_CAP`, and with numbered drawings composed up to
 /// `MAX_REBUILD_WORK` 98 ms; twenty of those a second would take two
 /// processor cores. Two mebibytes a second hold a channel's ReGIS
-/// fallbacks to about a quarter of one core. A NAPLPS drawing is not
-/// bounded in time by it, since its renderer has no pixel work cap (about
-/// 295 microseconds a byte of whole-screen fills; TODO-6844, TODO-6845).
+/// fallbacks to about a quarter of one core. A NAPLPS drawing is counted
+/// by the pixel work it spends instead ([`NAPLPS_WORK_PER_FALLBACK_BYTE`]
+/// units a byte; TODO-6845, the NAPLPS renderer's DEC-6851).
 pub const MOST_FALLBACK_BYTES_PER_SECOND: usize = 2_097_152;
 /// What a fallback drawing is counted as besides its stream's bytes: the
 /// composition of its numbered drawings, which a short stream can make as
@@ -71,6 +76,16 @@ pub const MOST_FALLBACK_BYTES_PER_SECOND: usize = 2_097_152;
 /// composed in 19 ms, what about 220 KB of base fills cost), rounded up
 /// to a quarter of a mebibyte.
 pub const FALLBACK_DRAWING_FLOOR_BYTES: usize = 262_144;
+/// The NAPLPS renderer's pixel work units (DEC-6851) one byte of
+/// `MOST_FALLBACK_BYTES_PER_SECOND` stands for, so that a NAPLPS fallback
+/// drawing is counted by the work it spends at about what ReGIS's bytes
+/// cost in time (TODO-6845). Measured 19 November 2026 (release build,
+/// `x86_64` Linux, chunko): one work unit costs about 12.5 ns
+/// (DEC-6851's measurement), and the costliest ReGIS megabyte about 98 ms,
+/// some 93 ns a byte; 93 / 12.5 is 7.5, rounded up to 8, so that the
+/// budget's two mebibytes a second hold a channel's NAPLPS fallbacks too
+/// to about a quarter of one core (16,777,216 units, about 210 ms).
+pub const NAPLPS_WORK_PER_FALLBACK_BYTE: u64 = 8;
 /// The bytes of per-connection streams kept for fallbacks, for all of a
 /// channel's connections together (PAR-25).
 pub const MOST_FALLBACK_POOL_BYTES: usize = 16_777_216;
@@ -86,38 +101,52 @@ const NAPLPS_POINT_BYTES: usize = 8;
 /// The NAPLPS renderer's own memory test allows the same margin
 /// (`tests/validator_memory.rs`, `FIXED_MARGIN`).
 const READER_FIXED_ALLOWANCE: usize = 262_144;
+/// The bookkeeping an allocation may cost besides its bytes, as the ReGIS
+/// renderer counts it (its `limits::ALLOCATION_OVERHEAD_BYTES`).
+const ALLOCATION_OVERHEAD_BYTES: usize = regis::limits::ALLOCATION_OVERHEAD_BYTES;
+/// The positions of each of a stroke font's two sets: codes 2/1 to 7/14
+/// (ANSI X3.110-1983 section 6.1; the NAPLPS renderer's `font` module).
+const STROKE_FONT_POSITIONS: usize = 0x7E - 0x21 + 1;
+/// Bytes of one stroke segment, `[x1, y1, x2, y2]` (`naplps::Glyph`).
+const STROKE_SEGMENT_BYTES: usize = 4;
+/// The most the receiver's stroke font holds in a NAPLPS reader
+/// (TODO-6845, DEC-6851): both sets' positions, each glyph at the
+/// renderer's `font::MAX_SEGMENTS` segments in an allocation of its own.
+const NAPLPS_FONT_BYTES: usize = size_of::<naplps::StrokeFont>()
+    + 2 * STROKE_FONT_POSITIONS * (size_of::<Option<naplps::Glyph>>() + naplps::font::MAX_SEGMENTS * STROKE_SEGMENT_BYTES + ALLOCATION_OVERHEAD_BYTES)
+    + 2 * ALLOCATION_OVERHEAD_BYTES;
+/// The sets a NAPLPS reader is given: the joined sets, 44 to 51 (PAR-3,
+/// PAR-14).
+const JOINED_SET_COUNT: usize = (*JOINED_SETS.end() - *JOINED_SETS.start() + 1) as usize;
+/// What one joined set's stand-in holds in a NAPLPS reader: one-pixel
+/// glyphs and the joining data (two allocations).
+const JOINED_SET_STAND_IN_BYTES: usize =
+    size_of::<naplps::BitmapSet>() + naplps::bitmap::BITMAP_SET_CODES * (size_of::<u16>() + size_of::<naplps::JoiningType>()) + 2 * ALLOCATION_OVERHEAD_BYTES;
 /// The most a `naplps::Validator` holds, from the renderer's own limits
 /// (its documentation, PAR-15): the macros, the copies of one while they
 /// nest, every DRCS character and texture at the largest mask, a PDI's
-/// operands and its points, and the fixed state. 2,113,536 bytes. Its
+/// operands and its points, the receiver's stroke font and the joined
+/// sets' stand-ins it is given (TODO-6845), and the fixed state. Its
 /// definitions cost a stream almost nothing (seven bytes define a
-/// 16,384-byte DRCS character), so a reader is counted at this whatever
-/// its stream (TODO-6836).
+/// 16,384-byte DRCS character), and the renderer reports no figure for
+/// what a reader holds, so a reader is counted at this whatever its
+/// stream (TODO-6836).
 pub const NAPLPS_READER_BYTES: usize = naplps::limits::MAX_ALL_MACRO_BYTES
     + naplps::limits::MAX_MACRO_DEPTH * naplps::limits::MAX_MACRO_BYTES
     + NAPLPS_MASKS * (naplps::limits::MASK_SIDE as usize * naplps::limits::MASK_SIDE as usize)
     + naplps::limits::MAX_PDI_BYTES
     + naplps::limits::MAX_VERTICES * NAPLPS_POINT_BYTES
+    + NAPLPS_FONT_BYTES
+    + JOINED_SET_COUNT * JOINED_SET_STAND_IN_BYTES
     + READER_FIXED_ALLOWANCE;
-/// What a `regis::Validator` holds besides what its stream defines: its
-/// own 15,296 bytes and the copies of the 26 macrographs and the three
-/// loaded sets that the machine, the last commit and the drawings' player
-/// keep (`docs/regis-v2.md` of the ReGIS renderer, rule 4: 16,384 bytes of
-/// macrographs and 2,880 of loaded sets each). Measured 19 November 2026
-/// at 83,476 bytes of resident size a validator with every macrograph
-/// filled and two commits; rounded up to 128 KiB. What the stream defines
-/// (numbered drawings, their contents) is not counted here: the renderer
-/// reports no figure for it (TODO-6836; the ReGIS renderer's TODO-6843, then the server's TODO-6845).
-pub const REGIS_READER_BYTES: usize = 131_072;
+/// What a box holding a reader costs besides the reader's own figure.
+const READER_BOX_BYTES: usize = ALLOCATION_OVERHEAD_BYTES;
 
-/// The memory a reader of `language` is counted as holding (TODO-6836).
-#[must_use]
-pub const fn reader_bytes(language: PictureLanguage) -> usize {
-    match language {
-        PictureLanguage::Regis => REGIS_READER_BYTES,
-        PictureLanguage::Naplps => NAPLPS_READER_BYTES,
-    }
-}
+// One reader at the most a ReGIS renderer says it can hold (its
+// `MAX_HELD_BYTES`, DEC-6850) and a whole stream fit `MOST_KEPT_COST`
+// alone, so every stream within `MOST_KEPT_STREAM_BYTES` can be kept.
+const _: () = assert!(regis::limits::MAX_HELD_BYTES + READER_BOX_BYTES + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
+const _: () = assert!(NAPLPS_READER_BYTES + MOST_KEPT_STREAM_BYTES <= MOST_KEPT_COST);
 
 /// A picture language.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -166,7 +195,27 @@ impl Checker {
     pub(crate) fn new(language: PictureLanguage) -> Self {
         match language {
             PictureLanguage::Regis => Self::Regis(alloc::boxed::Box::new(regis::Validator::new())),
-            PictureLanguage::Naplps => Self::Naplps(alloc::boxed::Box::new(naplps::Validator::new())),
+            PictureLanguage::Naplps => Self::Naplps(alloc::boxed::Box::new(naplps_validator())),
+        }
+    }
+
+    /// The memory it holds, in bytes (TODO-6845): a ReGIS reader as its
+    /// renderer reports it (`regis::Validator::held_bytes`, DEC-6850), which
+    /// grows and shrinks with what the stream defines; a NAPLPS reader at
+    /// [`NAPLPS_READER_BYTES`], since its renderer reports no figure.
+    pub(crate) fn held_bytes(&self) -> usize {
+        match self {
+            Self::Regis(validator) => validator.held_bytes().saturating_add(READER_BOX_BYTES),
+            Self::Naplps(_) => NAPLPS_READER_BYTES,
+        }
+    }
+
+    /// The pixel work the stream's drawing spends on the receiver's
+    /// canvas (DEC-6851); none for ReGIS.
+    pub(crate) fn work_spent(&self) -> Option<u64> {
+        match self {
+            Self::Regis(_) => None,
+            Self::Naplps(validator) => Some(validator.work_spent()),
         }
     }
 
@@ -183,9 +232,21 @@ impl Checker {
             Self::Regis(validator) => {
                 for event in validator.feed_regis(bytes) {
                     if let regis::Event::CommitFailed { error, drawing } = event {
+                        // DEC-6850: code 8 is the scene's drawings passing
+                        // the renderer's bound on their records, which the
+                        // author can act on only if it is named.
+                        let why = if matches!(error, regis::CommitError::Drawings) {
+                            format!(
+                                ": the scene's numbered drawings would pass MAX_DRAWING_RECORD_BYTES ({}), about {} drawings",
+                                regis::limits::MAX_DRAWING_RECORD_BYTES,
+                                regis::limits::MOST_DRAWINGS_HELD
+                            )
+                        } else {
+                            String::new()
+                        };
                         return Err(CheckRefusal {
                             rule: Rule::InvalidRegis,
-                            detail: format!("a commit fails with code {} ({error:?}), drawing {drawing}", error.code()),
+                            detail: format!("a commit fails with code {} ({error:?}), drawing {drawing}{why}", error.code()),
                         });
                     }
                 }
@@ -199,7 +260,21 @@ impl Checker {
                     let names: Vec<&str> =
                         naplps::Refusal::ALL.into_iter().filter(|&kind| after.count(kind) > before.count(kind)).map(naplps::Refusal::name).collect();
                     let offset = after.first_refused.map_or_else(|| String::from("unknown"), |offset| format!("{offset}"));
-                    return Err(CheckRefusal { rule: Rule::InvalidNaplps, detail: format!("{}; the first at stream offset {offset}", names.join(", ")) });
+                    // DEC-6851: the work limit stops the receiver's drawing
+                    // for good, so the allowance is named for the author.
+                    let allowance = if after.count(naplps::Refusal::WorkLimit) > before.count(naplps::Refusal::WorkLimit) {
+                        format!(
+                            "; the stream's drawing passed its pixel work allowance, WORK_CAP ({}) and WORK_PER_BYTE ({}) a byte, and the receiver draws none of the rest",
+                            naplps::limits::WORK_CAP,
+                            naplps::limits::WORK_PER_BYTE
+                        )
+                    } else {
+                        String::new()
+                    };
+                    return Err(CheckRefusal {
+                        rule: Rule::InvalidNaplps,
+                        detail: format!("{}; the first at stream offset {offset}{allowance}", names.join(", ")),
+                    });
                 }
                 let mut notes = Vec::new();
                 let passed = after.passed_over.saturating_sub(before.passed_over);
@@ -233,6 +308,39 @@ impl Checker {
     }
 }
 
+/// A NAPLPS reader as the receiver's is (DEC-6851, TODO-6845): on the
+/// receiver's 480 by 462 canvas (`Validator::new`), with the receiver's
+/// stroke font, whose strokes' pixel work it counts, and the joined sets 44
+/// to 51 with their joining data, which decide when a held letter is drawn.
+/// Only a set's joining data matters to a validator, so each joined set is
+/// a stand-in of one-pixel glyphs; the font and the sets are this build's,
+/// so a refusal of them is a fault of the build and leaves the reader
+/// without them, which counts the stream's end the same.
+fn naplps_validator() -> naplps::Validator {
+    let mut validator = naplps::Validator::new();
+    if let Ok(font) = naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT) {
+        validator.set_font(font);
+    }
+    for number in JOINED_SETS {
+        let Ok(mut set) = naplps::BitmapSet::new(1, 1) else { continue };
+        for code in FIRST_MACRO_CODE..=LAST_SET_CODE {
+            let Some(joined) = joining(number, code) else { continue };
+            let kind = match joined.class {
+                JoiningClass::None => naplps::JoiningType::None,
+                JoiningClass::Right => naplps::JoiningType::Right,
+                JoiningClass::Dual => naplps::JoiningType::Dual,
+                JoiningClass::Transparent => naplps::JoiningType::Transparent,
+            };
+            let _ = set.set_joining(code, kind);
+        }
+        let _ = validator.set_teletext_set(number, set);
+    }
+    validator
+}
+
+/// The last code of a provided set (REQ-6668).
+const LAST_SET_CODE: u8 = 0x7F;
+
 /// The NAPLPS macro names: the 96 codes 2/0 to 7/15 (ANSI X3.110-1983
 /// section 6.2).
 pub(crate) const MACRO_CODES: usize = 96;
@@ -255,6 +363,10 @@ pub(crate) struct KeptPicture {
     /// The receiver's reader, having read `stream`; none once it was let
     /// go, and then why.
     checker: Result<Checker, Released>,
+    /// What `checker` holds, as it said after the last bytes it took
+    /// (TODO-6845); its renderer's figure is not asked for again until it
+    /// reads more.
+    reader_held: usize,
     /// When it was last written, by [`KeptPictures`]'s count of writes: the
     /// pictures written longest ago let their readers go first.
     written: u64,
@@ -275,10 +387,16 @@ pub(crate) struct KeptPicture {
 
 impl KeptPicture {
     fn new(language: PictureLanguage) -> Self {
+        Self::with_checker(language, Checker::new(language))
+    }
+
+    /// An empty one whose reader is `checker`.
+    fn with_checker(language: PictureLanguage, checker: Checker) -> Self {
         Self {
             language,
             stream: Vec::new(),
-            checker: Ok(Checker::new(language)),
+            reader_held: checker.held_bytes(),
+            checker: Ok(checker),
             written: 0,
             defined: None,
             objects: None,
@@ -299,7 +417,7 @@ impl KeptPicture {
 
     /// What its reader is counted as holding: none once it is let go.
     const fn reader_cost(&self) -> usize {
-        if self.checker.is_ok() { reader_bytes(self.language) } else { 0 }
+        if self.checker.is_ok() { self.reader_held } else { 0 }
     }
 
     /// What it costs besides its reader.
@@ -315,6 +433,13 @@ impl KeptPicture {
     /// The NAPLPS macros its stream has defined.
     pub(crate) const fn defined_macros(&self) -> Option<[bool; MACRO_CODES]> {
         self.defined
+    }
+
+    /// The pixel work its NAPLPS stream's drawing spends on the receiver's
+    /// canvas, as its reader counted it (DEC-6851); none for ReGIS or once
+    /// its reader was let go.
+    pub(crate) fn work_spent(&self) -> Option<u64> {
+        self.checker.as_ref().ok().and_then(Checker::work_spent)
     }
 }
 
@@ -340,6 +465,16 @@ pub(crate) struct KeptRefusal {
 impl KeptRefusal {
     fn over(path: &'static str, constant: &str, value: usize) -> Self {
         Self { path, rule: Rule::KeptOverLimit, detail: format!("{constant} ({value}) would be passed") }
+    }
+}
+
+/// The refusal of bytes after which a kept picture's reader would hold
+/// `held` bytes, past `MOST_KEPT_COST` with the rest (TODO-6845).
+fn reader_over(held: usize) -> KeptRefusal {
+    KeptRefusal {
+        path: "data",
+        rule: Rule::KeptOverLimit,
+        detail: format!("MOST_KEPT_COST ({MOST_KEPT_COST}) would be passed: the picture's reader would hold {held} bytes for what its stream defines"),
     }
 }
 
@@ -455,24 +590,34 @@ impl KeptPictures {
             return Err(KeptRefusal::over("data", "MOST_KEPT_STREAM_BYTES", MOST_KEPT_STREAM_BYTES));
         }
         // The others' readers may be let go for room; this one's reader is
-        // needed to read the bytes.
+        // needed to read the bytes, and is counted at what it holds before
+        // and again after it reads them (TODO-6845).
         let companions = kept_before.map_or(0, KeptPicture::companions_cost);
-        let cost = self.others_content_cost(key).saturating_add(length).saturating_add(reader_bytes(language)).saturating_add(companions);
-        if cost > MOST_KEPT_COST {
-            return Err(KeptRefusal::over("data", "MOST_KEPT_COST", MOST_KEPT_COST));
-        }
+        let without_reader = self.others_content_cost(key).saturating_add(length).saturating_add(companions);
+        let over = |held: usize| without_reader.saturating_add(held) > MOST_KEPT_COST;
         // A restart refused by its bytes must keep what was kept: it is
         // read on a checker of its own first.
         if restart || existing.is_none() {
             let mut checker = Checker::new(language);
+            if over(checker.held_bytes()) {
+                return Err(KeptRefusal::over("data", "MOST_KEPT_COST", MOST_KEPT_COST));
+            }
             let notes = checker.feed(bytes).map_err(|refused| KeptRefusal { path: "data", rule: refused.rule, detail: refused.detail })?;
+            let held = checker.held_bytes();
+            if over(held) {
+                return Err(reader_over(held));
+            }
             let picture = self.entry(page, sub, language, true, "data")?;
             picture.defined = checker.defined_macros();
+            picture.reader_held = held;
             picture.checker = Ok(checker);
             picture.stream = bytes.to_vec();
             picture.version = picture.version.wrapping_add(1);
             self.written(key);
             return Ok((StreamChange::Restarted, notes));
+        }
+        if over(kept_before.map_or(0, |picture| picture.reader_held)) {
+            return Err(KeptRefusal::over("data", "MOST_KEPT_COST", MOST_KEPT_COST));
         }
         let picture = self.entry(page, sub, language, false, "data")?;
         let checker = match picture.checker.as_mut() {
@@ -491,7 +636,15 @@ impl KeptPictures {
         };
         match checker.feed(bytes) {
             Ok(notes) => {
+                let held = checker.held_bytes();
+                if over(held) {
+                    // As for a refusal: the reader has read bytes that are
+                    // not kept, and is let go (TODO-6837).
+                    picture.checker = Err(Released::Refused);
+                    return Err(reader_over(held));
+                }
                 picture.defined = checker.defined_macros();
+                picture.reader_held = held;
                 picture.stream.extend_from_slice(bytes);
                 picture.version = picture.version.wrapping_add(1);
                 self.written(key);
@@ -528,7 +681,7 @@ impl KeptPictures {
         let key = (page, sub);
         let own = self.pictures.get(&key).filter(|picture| picture.language == language);
         let companion_after = if one { before.saturating_add(line_bytes) } else { line_bytes };
-        let after = own.map_or(reader_bytes(language), KeptPicture::cost).saturating_sub(before).saturating_add(companion_after);
+        let after = own.map_or_else(|| Checker::new(language).held_bytes(), KeptPicture::cost).saturating_sub(before).saturating_add(companion_after);
         if self.others_content_cost(key).saturating_add(after) > MOST_KEPT_COST {
             return Err(KeptRefusal::over(path, "MOST_KEPT_COST", MOST_KEPT_COST));
         }
@@ -608,4 +761,4 @@ pub(crate) fn undefined_macros(objects: &[NaplpsObject], defined: &[bool; MACRO_
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

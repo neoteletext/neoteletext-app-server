@@ -415,3 +415,49 @@ fn the_readers_of_connections_own_streams_stop_at_their_bound() {
     channel.from_program(&picture("naplps", &json!(all), true, b"Again"), 3);
     assert_eq!(refusals(&mut channel), []);
 }
+
+/// TODO-6845, DEC-6850: a connection's own ReGIS stream's reader is
+/// counted at what its renderer says it holds, after every message it
+/// reads, not at a fixed 131,072 bytes when the stream begins: an ordinary
+/// page's reader is some 20 KB, so over a thousand connections' streams
+/// fit, while streams that define thousands of numbered drawings reach the
+/// bound within a few connections, and the append that would pass it is
+/// refused naming it, sent to none, and its stream begun again.
+#[test]
+fn connections_own_regis_readers_are_counted_at_what_their_streams_define() {
+    use crate::kept::{Checker, MOST_CONNECTION_READER_BYTES, PictureLanguage};
+    let fresh = Checker::new(PictureLanguage::Regis).held_bytes();
+    assert!(MOST_CONNECTION_READER_BYTES / fresh > 1_000, "a new reader holds {fresh} bytes");
+    let heavy = crate::kept::tests::regis_drawings(8_000);
+    let mut checker = Checker::new(PictureLanguage::Regis);
+    checker.feed(b"P[1,1]").unwrap();
+    checker.feed(&heavy).unwrap();
+    let held = checker.held_bytes();
+    let room = u64::try_from(MOST_CONNECTION_READER_BYTES / held).unwrap();
+    assert!(room > 1 && room < 20, "{held} bytes a reader, {room} fit");
+    let mut channel = empty();
+    for connection in 1..=room + 2 {
+        let _ = arrive(&mut channel, connection, BOTH, 0);
+        channel.from_program(&picture("regis", &json!([connection]), true, b"P[1,1]"), 1);
+        assert_eq!(refusals(&mut channel), [], "connection {connection}'s small stream fits");
+    }
+    let _ = channel.take_effects();
+    for connection in 1..=room {
+        channel.from_program(&picture("regis", &json!([connection]), false, &heavy), 2);
+        assert_eq!(refusals(&mut channel), [], "connection {connection}'s drawings fit");
+    }
+    channel.from_program(&picture("regis", &json!([room + 1]), false, &heavy), 3);
+    let effects = channel.take_effects();
+    let refused: Vec<(Value, Value)> =
+        told(&effects).into_iter().filter(|line| line["type"] == "refused").map(|line| (line["rule"].clone(), line["detail"].clone())).collect();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].0, "kept_over_limit");
+    assert!(refused[0].1.as_str().unwrap().starts_with("MOST_CONNECTION_READER_BYTES (33554432) would be passed"), "{refused:?}");
+    assert!(sent_to(&effects, room + 1).is_empty(), "nothing was sent to it");
+    // Its stream was begun again, so an append without restart is passed
+    // over, and one with restart starts afresh.
+    channel.from_program(&picture("regis", &json!([room + 1]), false, b"V[2,2]"), 4);
+    assert_eq!(refusals(&mut channel), []);
+    channel.from_program(&picture("regis", &json!([room + 1]), true, b"P[1,1]"), 5);
+    assert_eq!(refusals(&mut channel), []);
+}

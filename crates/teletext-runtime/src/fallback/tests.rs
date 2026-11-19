@@ -29,7 +29,7 @@ fn a_regis_red_rectangle_on_black_gives_red_mosaics_where_it_lies() {
     // Colour map entry 1 red, hue 120 of the HLS system (manual chapter 2), the left
     // half filled with it (chapter 11, a filled polygon).
     let stream = b"S(M1(H120L50S100))W(I1)P[0,0]F(V[399,0][399,479][0,479][0,0])";
-    let drawn = rows(PictureLanguage::Regis, stream, None).unwrap();
+    let drawn = rows(PictureLanguage::Regis, stream, None).unwrap().0;
     let shape = shape(&drawn);
     assert_eq!(shape.len(), ROWS);
     let middle = shape[ROWS / 2];
@@ -53,7 +53,7 @@ fn a_naplps_rectangle_on_black_gives_mosaics_where_it_lies() {
     stream.extend(pair(0, 0));
     stream.push(0x31);
     stream.extend(pair(128, 191));
-    let drawn = rows(PictureLanguage::Naplps, &stream, None).unwrap();
+    let drawn = rows(PictureLanguage::Naplps, &stream, None).unwrap().0;
     let middle = drawn[ROWS / 2];
     let (left, right) = middle.split_at(middle.len() / 2);
     assert!(middle.contains(&WHITE_GRAPHICS), "{drawn:?}");
@@ -74,10 +74,10 @@ const RED_LEFT: &[u8] = b"S(M1(H120L50S100))W(I1)P[0,0]F(V[399,0][399,479][0,479
 /// half drawn on the base gives.
 #[test]
 fn the_fallback_composes_a_regis_pictures_numbered_drawings() {
-    let in_drawing = rows(PictureLanguage::Regis, RED_LEFT_IN_A_DRAWING, None).unwrap();
+    let in_drawing = rows(PictureLanguage::Regis, RED_LEFT_IN_A_DRAWING, None).unwrap().0;
     let middle = shape(&in_drawing)[ROWS / 2];
     assert!(middle.0 && middle.1 > 10 && middle.2 == 0, "{in_drawing:?}");
-    assert_eq!(in_drawing, rows(PictureLanguage::Regis, RED_LEFT, None).unwrap());
+    assert_eq!(in_drawing, rows(PictureLanguage::Regis, RED_LEFT, None).unwrap().0);
 }
 
 /// TODO-6813: a drawing given a paint rate (`docs/regis-v2.md`, "Paint
@@ -85,7 +85,7 @@ fn the_fallback_composes_a_regis_pictures_numbered_drawings() {
 #[test]
 fn the_fallback_draws_a_gradually_painted_drawing_finished() {
     let slow = b"S(M1(H120L50S100))D(B1)W(I1)P[0,0]F(V[399,0][399,479][0,479][0,0])D(E)D(S1(T1),C)";
-    assert_eq!(rows(PictureLanguage::Regis, slow, None).unwrap(), rows(PictureLanguage::Regis, RED_LEFT, None).unwrap());
+    assert_eq!(rows(PictureLanguage::Regis, slow, None).unwrap().0, rows(PictureLanguage::Regis, RED_LEFT, None).unwrap().0);
 }
 
 /// Renderer parity PAR-25 with ANIM-11 (TODO-6813's check of NAPLPS): the
@@ -117,14 +117,33 @@ fn the_fallback_composes_a_naplps_pictures_shown_objects() {
         "number": 1, "kind": "macro", "shown": true, "detectable": false, "layer": 1, "order": 0,
         "x": 0, "y": 0, "width": 480, "height": 462, "origin_x": 0, "origin_y": 0, "frames": [MACRO]}))
     .unwrap();
-    let bare = rows(PictureLanguage::Naplps, &stream, None).unwrap();
+    let bare = rows(PictureLanguage::Naplps, &stream, None).unwrap().0;
     assert!(!bare.iter().any(|row| row.contains(&FULL_BLOCK)), "the macro is only defined: {bare:?}");
-    let drawn = rows(PictureLanguage::Naplps, &stream, Some(&[object])).unwrap();
+    let drawn = rows(PictureLanguage::Naplps, &stream, Some(&[object])).unwrap().0;
     let middle = drawn[ROWS / 2];
     let (left, right) = middle.split_at(middle.len() / 2);
     assert!(middle.contains(&WHITE_GRAPHICS), "{drawn:?}");
     assert!(left.iter().copied().filter(|code| *code == FULL_BLOCK).map(usize::from).count() > 5, "{drawn:?}");
     assert!(!right.contains(&FULL_BLOCK), "{drawn:?}");
+}
+
+/// SO, then POINT SET at the origin and RECTANGLE (FILLED) over the whole
+/// unit screen (ANSI X3.110-1983 sections 5.3.3.1 and 5.3.3.4), again and
+/// again while they fit `length` bytes.
+pub(crate) fn whole_screen_fills(length: usize) -> std::vec::Vec<u8> {
+    /// POINT SET (ABSOLUTE) and RECTANGLE (FILLED), section 5.3.3.
+    const POINT_SET: u8 = 0x24;
+    const RECTANGLE_FILLED: u8 = 0x31;
+    /// One fill: two opcodes and two three-byte coordinate pairs.
+    const FILL_BYTES: usize = 8;
+    let mut naplps = std::vec![0x0E];
+    while naplps.len().saturating_add(FILL_BYTES) <= length {
+        naplps.push(POINT_SET);
+        naplps.extend(naplps_pair(0, 0));
+        naplps.push(RECTANGLE_FILLED);
+        naplps.extend(naplps_pair(255, 191));
+    }
+    naplps
 }
 
 /// A NAPLPS operand pair of 256ths, three bytes (ANSI X3.110-1983 section
@@ -150,9 +169,6 @@ fn the_costliest_fallback_drawings_are_timed() {
     /// Numbered drawings of whole-screen fills whose composition the
     /// renderer's `MAX_REBUILD_WORK` still allows (measured: 150 fail).
     const REGIS_DRAWINGS: u16 = 100;
-    /// NAPLPS whole-screen fills drawn to time one, the stream's cost
-    /// being linear in them.
-    const NAPLPS_FILLS: usize = 1_000;
     let mut regis = std::vec::Vec::new();
     while regis.len() + REGIS_FILL.len() < MOST_KEPT_STREAM_BYTES / 2 {
         regis.extend_from_slice(REGIS_FILL);
@@ -170,21 +186,17 @@ fn the_costliest_fallback_drawings_are_timed() {
     rows(PictureLanguage::Regis, &regis, None).unwrap();
     std::println!("ReGIS: {} bytes of whole-screen fills and {REGIS_DRAWINGS} numbered drawings: {:?} a drawing", regis.len(), start.elapsed());
     // SO, then POINT SET at the origin and RECTANGLE (FILLED) over the
-    // whole unit screen (sections 5.3.3.1 and 5.3.3.4), again and again.
-    let mut naplps = std::vec![0x0E];
-    for _ in 0..NAPLPS_FILLS {
-        naplps.push(0x24);
-        naplps.extend(naplps_pair(0, 0));
-        naplps.push(0x31);
-        naplps.extend(naplps_pair(255, 191));
-    }
+    // whole unit screen (sections 5.3.3.1 and 5.3.3.4), again and again to
+    // the longest kept stream: the renderer's work allowance (DEC-6851)
+    // stops it, and the budget counts it by the work it spent (TODO-6845).
+    let naplps = whole_screen_fills(MOST_KEPT_STREAM_BYTES);
     let start = Instant::now();
-    rows(PictureLanguage::Naplps, &naplps, None).unwrap();
+    let (_, work) = rows(PictureLanguage::Naplps, &naplps, None).unwrap();
     let elapsed = start.elapsed();
-    let per_byte = elapsed / u32::try_from(naplps.len()).unwrap();
+    let work = work.unwrap();
     std::println!(
-        "NAPLPS: {NAPLPS_FILLS} whole-screen fills, {} bytes: {elapsed:?}, so {per_byte:?} a byte and about {:?} for {MOST_KEPT_STREAM_BYTES} bytes",
+        "NAPLPS: {} bytes of whole-screen fills: {elapsed:?} a drawing, {work} work units, counted as {} bytes of MOST_FALLBACK_BYTES_PER_SECOND",
         naplps.len(),
-        per_byte * u32::try_from(MOST_KEPT_STREAM_BYTES).unwrap()
+        work.div_ceil(crate::kept::NAPLPS_WORK_PER_FALLBACK_BYTE)
     );
 }

@@ -9,10 +9,31 @@ extern crate std;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{
-    Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, NAPLPS_READER_BYTES, PictureLanguage, REGIS_READER_BYTES, StreamChange,
-};
+use super::{Checker, Companion, KeptPictures, MOST_KEPT_COST, MOST_KEPT_PICTURES, MOST_KEPT_STREAM_BYTES, NAPLPS_READER_BYTES, PictureLanguage, StreamChange};
 use crate::protocol::Rule;
+
+/// What a new ReGIS reader holds, as its renderer reports it (TODO-6845).
+fn regis_reader() -> usize {
+    Checker::new(PictureLanguage::Regis).held_bytes()
+}
+
+/// What a ReGIS reader holds after reading `stream`.
+fn regis_reader_after(stream: &[u8]) -> usize {
+    let mut checker = Checker::new(PictureLanguage::Regis);
+    checker.feed(stream).unwrap();
+    checker.held_bytes()
+}
+
+/// `D(S1,S2,...,Sn,C)`: `drawings` empty numbered drawings set and
+/// committed at once (`docs/regis-v2.md` of the ReGIS renderer).
+pub(crate) fn regis_drawings(drawings: u32) -> Vec<u8> {
+    let mut stream = Vec::from(&b"D("[..]);
+    for number in 1..=drawings {
+        stream.extend_from_slice(std::format!("S{number},").as_bytes());
+    }
+    stream.extend_from_slice(b"C)");
+    stream
+}
 
 /// ReGIS that draws nothing: spaces between commands.
 fn blank(length: usize) -> Vec<u8> {
@@ -83,9 +104,9 @@ fn most_kept_pictures_are_kept_and_one_more_refused() {
 fn the_cost_counts_each_stream_and_its_reader_and_most_kept_cost_is_kept_and_one_byte_more_refused() {
     let mut kept = KeptPictures::default();
     kept.stream(0x100, 0, PictureLanguage::Regis, true, &blank(100)).unwrap();
-    assert_eq!(kept.cost(), 100 + REGIS_READER_BYTES, "the bytes and its reader");
+    assert_eq!(kept.cost(), 100 + regis_reader(), "the bytes and its reader");
     kept.companion(0x100, 0, PictureLanguage::Regis, Companion::Cursor(1), 40).unwrap();
-    assert_eq!(kept.cost(), 140 + REGIS_READER_BYTES, "and the cursor message's line");
+    assert_eq!(kept.cost(), 140 + regis_reader(), "and the cursor message's line");
     // Whole streams fill the cost but for the last one's reader, which the
     // last stream leaves room for.
     let mut kept = KeptPictures::default();
@@ -95,7 +116,7 @@ fn the_cost_counts_each_stream_and_its_reader_and_most_kept_cost_is_kept_and_one
     for sub in 0..last {
         kept.stream(0x100, sub, PictureLanguage::Regis, true, &blank(MOST_KEPT_STREAM_BYTES)).unwrap();
     }
-    kept.stream(0x100, last, PictureLanguage::Regis, true, &blank(MOST_KEPT_STREAM_BYTES - REGIS_READER_BYTES)).unwrap();
+    kept.stream(0x100, last, PictureLanguage::Regis, true, &blank(MOST_KEPT_STREAM_BYTES - regis_reader())).unwrap();
     assert_eq!(kept.cost(), MOST_KEPT_COST);
     assert_eq!(kept.readers_held(), 1, "only the last written keeps its reader");
     let refused = kept.stream(0x200, 0, PictureLanguage::Regis, true, b" ").unwrap_err();
@@ -114,7 +135,7 @@ fn a_naplps_pictures_reader_is_counted_at_what_it_can_hold() {
     let mut kept = KeptPictures::default();
     kept.stream(0x100, 0, PictureLanguage::Naplps, true, &heaviest).unwrap();
     assert!(kept.cost() >= NAPLPS_READER_BYTES, "its reader is counted: {}", kept.cost());
-    assert_eq!(NAPLPS_READER_BYTES, 2_113_536, "the renderer's documented 1,851,392 bytes and the fixed allowance");
+    assert_eq!(NAPLPS_READER_BYTES, 2_177_456, "the renderer's documented 1,851,392 bytes, the stroke font, the joined sets and the fixed allowance");
     // Twice as many as the cost holds readers for.
     let pictures = 2 * MOST_KEPT_COST / NAPLPS_READER_BYTES;
     for sub in 1..u16::try_from(pictures).unwrap() {
@@ -198,4 +219,130 @@ fn kept_naplps_pictures_hold_no_more_than_their_cost() {
         kept.readers_held()
     );
     assert!(growth <= MOST_KEPT_COST, "the resident size grew by {growth} bytes, past MOST_KEPT_COST");
+}
+
+/// TODO-6845, DEC-6850: a ReGIS picture's reader is counted at what its
+/// renderer says it holds, measured again after each append it takes, so
+/// pictures whose streams define many numbered drawings let the others'
+/// readers go for room. Counted at a fixed 131,072 bytes before, every one
+/// of these readers was held, some 4.4 MB each.
+#[test]
+fn a_regis_pictures_reader_is_counted_at_what_its_stream_defines() {
+    let stream = regis_drawings(8_000);
+    let mut kept = KeptPictures::default();
+    kept.stream(0x100, 0, PictureLanguage::Regis, true, b"P[1,1]").unwrap();
+    assert_eq!(kept.cost(), 6 + regis_reader());
+    kept.stream(0x100, 0, PictureLanguage::Regis, false, &stream).unwrap();
+    let mut whole = Vec::from(&b"P[1,1]"[..]);
+    whole.extend_from_slice(&stream);
+    let held = regis_reader_after(&whole);
+    assert!(held > 1_000_000, "the drawings are held: {held}");
+    assert_eq!(kept.cost(), whole.len() + held, "measured again after the append");
+    // As many such pictures as fit twice over: the readers of the oldest
+    // are let go, and the cost stays within MOST_KEPT_COST.
+    let pictures = 2 * MOST_KEPT_COST / held;
+    for sub in 1..=u16::try_from(pictures).unwrap() {
+        kept.stream(0x100, sub, PictureLanguage::Regis, true, &stream).unwrap();
+    }
+    assert!(kept.cost() <= MOST_KEPT_COST, "{}", kept.cost());
+    assert!(kept.readers_held() < pictures / 2 + 1, "{} of {} readers held", kept.readers_held(), pictures + 1);
+    std::println!("a ReGIS reader of {} drawings holds {held} bytes; {} of {} readers held", 8_000, kept.readers_held(), pictures + 1);
+}
+
+/// TODO-6845 step 4: kept ReGIS pictures whose streams define as many
+/// numbered drawings as the renderer allows, kept until `MOST_KEPT_COST`
+/// refuses one, grow the process's resident size by no more than
+/// `MOST_KEPT_COST` and one reader at the renderer's `MAX_HELD_BYTES`:
+/// the cost counts what is held between messages, and while a message is
+/// read its new reader is held beside the one it may replace, with what a
+/// commit's checks hold while they run (the ReGIS renderer's
+/// `Terminal::held_bytes`). Measured 19 November 2026 (release, `x86_64`
+/// Linux): 260 pictures of 96,439 bytes counted 33,481,758 bytes and grew
+/// the resident size by 35,495,936. Ignored, since it measures the whole process: run it
+/// alone, `cargo test --release -p teletext-runtime --lib
+/// kept::tests::kept_regis_pictures_hold_no_more_than_their_cost --
+/// --ignored --exact --nocapture`.
+#[test]
+#[ignore = "measures the process's resident size, so runs alone: name it with --ignored --exact"]
+fn kept_regis_pictures_hold_no_more_than_their_cost() {
+    let heaviest = regis_drawings(u32::try_from(regis::limits::MOST_DRAWINGS_HELD).unwrap());
+    let before = resident();
+    let mut kept = KeptPictures::default();
+    let mut pictures = 0_usize;
+    for sub in 0..u16::try_from(MOST_KEPT_PICTURES).unwrap() {
+        if kept.stream(0x100, sub, PictureLanguage::Regis, true, &heaviest).is_err() {
+            break;
+        }
+        pictures += 1;
+    }
+    let growth = resident().saturating_sub(before);
+    std::println!(
+        "{pictures} kept ReGIS pictures of {} bytes: counted {} bytes, {} readers held; the resident size grew by {growth} bytes",
+        heaviest.len(),
+        kept.cost(),
+        kept.readers_held()
+    );
+    assert!(growth <= MOST_KEPT_COST + regis::limits::MAX_HELD_BYTES, "the resident size grew by {growth} bytes, past MOST_KEPT_COST and one reader");
+}
+
+/// TODO-6845, DEC-6850: a commit that would take the scene's numbered
+/// drawings past the ReGIS renderer's `MAX_DRAWING_RECORD_BYTES` fails with
+/// code 8, and the message is refused `invalid_regis` naming the bound;
+/// nothing of it is kept.
+#[test]
+fn a_regis_stream_past_the_drawings_bound_is_refused_naming_it() {
+    let mut kept = KeptPictures::default();
+    let drawings = u32::try_from(regis::limits::MOST_DRAWINGS_HELD).unwrap() + 1;
+    let refused = kept.stream(0x100, 0, PictureLanguage::Regis, true, &regis_drawings(drawings)).unwrap_err();
+    assert_eq!(refused.rule, Rule::InvalidRegis, "{}", refused.detail);
+    assert!(refused.detail.starts_with("a commit fails with code 8 (Drawings)"), "{}", refused.detail);
+    assert!(refused.detail.contains("MAX_DRAWING_RECORD_BYTES (4194304)"), "{}", refused.detail);
+    assert!(kept.get(0x100, 0).is_none());
+    kept.stream(0x100, 0, PictureLanguage::Regis, true, &regis_drawings(drawings - 1)).unwrap();
+}
+
+/// TODO-6845, DEC-6851: a NAPLPS stream whose drawing passes the
+/// renderer's pixel work allowance stops the receiver's drawing for good,
+/// so it is refused `invalid_naplps` naming the allowance. Before the
+/// allowance, a megabyte of such fills took the receiver five minutes.
+#[test]
+fn a_naplps_stream_past_the_work_allowance_is_refused_naming_it() {
+    /// Whole-screen fills of eight bytes: 221,760 units each against an
+    /// allowance of 128 screens and 16 units a byte, so 200 pass it.
+    const FILLS: usize = 200;
+    let stream = crate::fallback::tests::whole_screen_fills(1 + FILLS * 8);
+    let mut kept = KeptPictures::default();
+    let refused = kept.stream(0x100, 0, PictureLanguage::Naplps, true, &stream).unwrap_err();
+    assert_eq!(refused.rule, Rule::InvalidNaplps, "{}", refused.detail);
+    assert!(refused.detail.starts_with("bytes left unprocessed at the pixel work limit"), "{}", refused.detail);
+    assert!(refused.detail.contains("WORK_CAP (28385280) and WORK_PER_BYTE (16) a byte"), "{}", refused.detail);
+    assert!(kept.get(0x100, 0).is_none());
+    // Within it, the reader counts the work the receiver will spend: a
+    // drawing is made once its operands end, at the next opcode, so two
+    // fills have drawn the first.
+    let two = crate::fallback::tests::whole_screen_fills(1 + 2 * 8);
+    kept.stream(0x100, 0, PictureLanguage::Naplps, true, &two).unwrap();
+    let (mut receiver, mut canvas) = crate::fallback::naplps_terminal().unwrap();
+    let _ = receiver.feed(&mut canvas, &two);
+    let work = kept.get(0x100, 0).unwrap().work_spent().unwrap();
+    assert!(work > naplps::limits::RECEIVER_CANVAS_PIXELS / 2, "a fill over the screen drawn: {work}");
+    assert_eq!(work, receiver.work_spent(), "the receiver's work");
+}
+
+/// DEC-6851: the NAPLPS reader is given the receiver's stroke font, so it
+/// counts the pixel work of text drawn in it as the receiver spends it,
+/// which a reader without the font undercounts.
+#[test]
+fn the_naplps_reader_counts_text_in_the_receivers_stroke_font() {
+    let text = b"NeoTeletext";
+    let mut checker = Checker::new(PictureLanguage::Naplps);
+    checker.feed(text).unwrap();
+    let mut bare = naplps::Validator::new();
+    let _ = bare.feed(text);
+    let mut receiver = naplps::Terminal::new(4);
+    receiver.set_font(naplps::StrokeFont::parse(naplps_fonts::NEOTELETEXT).unwrap());
+    let mut canvas = naplps::Canvas::new(naplps::limits::RECEIVER_CANVAS_WIDTH, naplps::limits::RECEIVER_CANVAS_HEIGHT).unwrap();
+    let _ = receiver.feed(&mut canvas, text);
+    assert_eq!(checker.work_spent(), Some(receiver.work_spent()), "the receiver's work");
+    assert!(bare.work_spent() < receiver.work_spent(), "a reader without the font counts less: {} and {}", bare.work_spent(), receiver.work_spent());
 }

@@ -203,3 +203,32 @@ fn fallback_drawings_are_bounded_by_the_bytes_they_draw_a_second() {
     channel.deadline(1 + 1_000);
     assert_eq!(channel.fallbacks_drawn(), before + 2, "and drawn then");
 }
+
+/// TODO-6845, DEC-6851: a NAPLPS fallback drawing is counted by the pixel
+/// work it spends, `NAPLPS_WORK_PER_FALLBACK_BYTE` units a byte of
+/// `MOST_FALLBACK_BYTES_PER_SECOND`, not by its stream's bytes: of two
+/// short streams of whole-screen fills changed together one is drawn at
+/// once, the other a second later. Counted by their 401 bytes, both were
+/// drawn at once, though each costs what some 1.3 MB of ReGIS does.
+#[test]
+fn naplps_fallback_drawings_are_bounded_by_the_work_they_spend() {
+    use crate::kept::{FALLBACK_DRAWING_FLOOR_BYTES, MOST_FALLBACK_BYTES_PER_SECOND, NAPLPS_WORK_PER_FALLBACK_BYTE};
+    /// Whole-screen fills of eight bytes each.
+    const FILLS: usize = 50;
+    let fills = crate::fallback::tests::whole_screen_fills(1 + FILLS * 8);
+    let (_, work) = crate::fallback::rows(crate::kept::PictureLanguage::Naplps, &fills, None).unwrap();
+    let counted = work.unwrap().div_ceil(NAPLPS_WORK_PER_FALLBACK_BYTE);
+    assert!(2 * counted > u64::try_from(MOST_FALLBACK_BYTES_PER_SECOND).unwrap(), "two do not fit in a second: {counted} each");
+    assert!(2 * (fills.len() + FALLBACK_DRAWING_FLOOR_BYTES) <= MOST_FALLBACK_BYTES_PER_SECOND, "counted by bytes, two would");
+    let mut channel = empty();
+    let _ = arrive(&mut channel, 1, NEITHER, 0);
+    let _ = arrive(&mut channel, 2, NEITHER, 0);
+    let before = channel.fallbacks_drawn();
+    channel.from_program(&picture("naplps", &json!([1]), true, &fills), 1);
+    channel.from_program(&picture("naplps", &json!([2]), true, &fills), 1);
+    assert_eq!(channel.fallbacks_drawn(), before + 1, "one drawn at once");
+    let _ = channel.take_effects();
+    assert_eq!(channel.next_wake(), Some(1 + 1_000), "the other a second after the first");
+    channel.deadline(1 + 1_000);
+    assert_eq!(channel.fallbacks_drawn(), before + 2, "and drawn then");
+}

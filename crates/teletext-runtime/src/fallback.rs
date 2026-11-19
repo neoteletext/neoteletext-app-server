@@ -177,6 +177,11 @@ pub(crate) struct Drawn {
     /// it, for a public page's `alt` (PAR-26). A NAPLPS picture's title
     /// comes with its objects, outside the stream, so it is none here.
     pub title: Option<String>,
+    /// NAPLPS: the pixel work its drawing spent, the stream's and the
+    /// objects' composing together (the renderer's `work_spent` and
+    /// `compose_work`, DEC-6851), what the fallback's budget counts it by
+    /// (TODO-6845); none for ReGIS, counted by its bytes.
+    pub work: Option<u64>,
 }
 
 impl Drawn {
@@ -214,24 +219,35 @@ pub(crate) fn draw(language: PictureLanguage, stream: &[u8], objects: Option<&[N
             let canvas = picture.canvas();
             let colours = terminal.palette().colours().to_vec();
             let title = terminal.title();
-            Ok(Drawn { width: canvas.width() as usize, height: canvas.height() as usize, addresses: canvas.pixels().to_vec(), colours, border: None, title })
+            Ok(Drawn {
+                width: canvas.width() as usize,
+                height: canvas.height() as usize,
+                addresses: canvas.pixels().to_vec(),
+                colours,
+                border: None,
+                title,
+                work: None,
+            })
         }
         PictureLanguage::Naplps => {
             let (mut terminal, mut canvas) = naplps_terminal()?;
             let _ = terminal.feed(&mut canvas, stream);
             let _ = terminal.finish(&mut canvas);
             let shown: Vec<naplps::Object> = objects.unwrap_or_default().iter().map(object).collect();
-            let presented = if shown.is_empty() {
-                canvas
+            let (presented, composing) = if shown.is_empty() {
+                (canvas, 0)
             } else {
                 terminal.set_objects(&shown).map_err(|error| format!("{error:?}"))?;
                 let mut presented = naplps::Canvas::new(canvas.width(), canvas.height()).map_err(|error| format!("{error:?}"))?;
                 terminal.compose(&canvas, &mut presented).map_err(|error| format!("{error:?}"))?;
-                presented
+                // A composing that stopped at MAX_COMPOSE_WORK shows only
+                // the objects it paid for, as the browser's does (DEC-6851).
+                (presented, terminal.compose_work().0)
             };
             let colours = terminal.palette().colours().to_vec();
             let (width, height) = (presented.width() as usize, presented.height() as usize);
-            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours, border: Some(terminal.screen_colour()), title: None })
+            let work = Some(terminal.work_spent().saturating_add(composing));
+            Ok(Drawn { width, height, addresses: presented.pixels().to_vec(), colours, border: Some(terminal.screen_colour()), title: None, work })
         }
     }
 }
@@ -283,12 +299,14 @@ pub(crate) fn png(drawn: &Drawn) -> Option<(Vec<u8>, usize, usize)> {
     neoteletext_image::raster::png(&raster).ok().map(|bytes| (bytes, drawn.width, height))
 }
 
-/// `stream` as the fallback's rows.
+/// `stream` as the fallback's rows, and for NAPLPS the pixel work its
+/// drawing spent (TODO-6845).
 ///
 /// # Errors
 /// As [`draw`] and [`mosaics`].
-pub(crate) fn rows(language: PictureLanguage, stream: &[u8], objects: Option<&[NaplpsObject]>) -> Result<MosaicRows, String> {
-    mosaics(&draw(language, stream, objects)?)
+pub(crate) fn rows(language: PictureLanguage, stream: &[u8], objects: Option<&[NaplpsObject]>) -> Result<(MosaicRows, Option<u64>), String> {
+    let drawn = draw(language, stream, objects)?;
+    Ok((mosaics(&drawn)?, drawn.work))
 }
 
 #[cfg(test)]
