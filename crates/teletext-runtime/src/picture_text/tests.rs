@@ -117,3 +117,112 @@ fn measure_picture_text_answers_the_encoders_figures() {
     assert_eq!((refused.path.as_str(), refused.rule), ("text", Rule::TextUnshown));
     assert_eq!(crate::protocol::request_of(&line(&unshown)), Some(17), "the refusal carries the request");
 }
+
+/// RAS-8 item 4 (DEC-6857, DEC-6856 item 8): a NAPLPS text part is bytes of
+/// characters only, the set's designation, SI, the codes and the primary
+/// set designated back, with no SO, so no TEXT field or point of the
+/// server's own can be among them, in any language `start` lists.
+#[test]
+fn a_naplps_text_part_writes_no_field_or_point_of_its_own() {
+    /// SO, which a picture description instruction needs before it.
+    const SHIFT_OUT: u8 = 0x0E;
+    for language in crate::protocol::languages() {
+        let tag = language.tag.0.as_str();
+        let bytes = written("naplps", "Hello 1", Some(tag)).unwrap();
+        assert!(!bytes.contains(&SHIFT_OUT), "{tag}: {bytes:02x?}");
+        assert_eq!(bytes, engine("naplps", "Hello 1", Some(tag)), "{tag}: the engine's characters and nothing else");
+    }
+}
+
+/// RAS-8's full-page test through the server's text parts: the 23 rows 1
+/// to 23 of 40 characters, row r column c the G0 Latin English code
+/// 0x21 + ((r + c) mod 94), each row a text part after the program's own
+/// bytes setting the field (3,276 by 4,452 steps of 1/131072) and the
+/// point of the dot (0, 20r + 19) rounded down, as the kits' `text()`
+/// writes them (neoteletext-common's example `naplps-text-page`). The
+/// message's stream is the program's bytes and the engine's characters
+/// with nothing between, and drawn as the receiver draws it, on 480 by 460
+/// with the engine's Noto Teletext glyphs, every cell's 12 by 20 dots are
+/// exactly its glyph.
+#[test]
+fn a_page_of_naplps_text_parts_puts_every_character_on_its_noto_cell() {
+    use naplps::{Rounding, dot_steps, multi_value_operand, unit_steps};
+    use neoteletext_core::charset::{CharRef, to_unicode};
+    use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH, COLUMNS};
+    use neoteletext_core::glyphs::GlyphSet;
+    use neoteletext_core::glyphs::conformance::FONT_SETS;
+
+    /// The provided set of G0 Latin English (REQ-6668).
+    const LATIN_ENGLISH: usize = 1;
+    /// Six-byte multi-value operands (RAS-6).
+    const BYTES: u8 = 6;
+    /// The teletext rows NAPLPS text is written on (DEC-6857).
+    const ROWS: core::ops::RangeInclusive<usize> = 1..=23;
+    /// The codes of a provided set's printing characters cycle through 94.
+    const PRINTING: usize = 94;
+    /// The first printing code, 2/1.
+    const FIRST_PRINTING: usize = 0x21;
+    let set = FONT_SETS[LATIN_ENGLISH].1;
+    assert_eq!(FONT_SETS[LATIN_ENGLISH].0, "G0-Latin-English");
+    let code = |row: usize, column: usize| u8::try_from(FIRST_PRINTING + (row + column) % PRINTING).unwrap();
+
+    // The kits' preamble: SO, RESET, DOMAIN of six-byte operands, CLEAR
+    // (ANSI X3.110-1983 sections 5.3.2.1, 5.3.2.2, 5.2.5).
+    let mut preamble = alloc::vec![0x0E, 0x20, 0x7F, 0x7F, 0x21, 0x54];
+    multi_value_operand(0, 0, BYTES, &mut preamble);
+    preamble.push(0x0C);
+    let mut parts = Vec::new();
+    let mut program = Vec::new();
+    for row in ROWS {
+        let mut data = if row == *ROWS.start() { preamble.clone() } else { alloc::vec![0x0E] };
+        // RAS-8 items 1 and 2: TEXT's field, then POINT SET ABSOLUTE.
+        data.extend_from_slice(&[0x22, 0x40, 0x40]);
+        multi_value_operand(unit_steps(1, 40, BYTES, Rounding::Down), unit_steps(20 * 25, 32 * 460, BYTES, Rounding::Down), BYTES, &mut data);
+        data.push(0x24);
+        let (across, up) = dot_steps(0, i64::try_from(CELL_HEIGHT * row + CELL_HEIGHT - 1).unwrap(), 1, BYTES, Rounding::Down);
+        multi_value_operand(across, up, BYTES, &mut data);
+        let text: String = (0..COLUMNS).map(|column| to_unicode(CharRef::new(set, code(row, column))).base).collect();
+        parts.push(json!({"data": base64(&data)}));
+        parts.push(json!({"text": text, "language": "en"}));
+        program.push((data, text));
+    }
+    // The shared example's first part, at neoteletext-common d24ff33.
+    assert_eq!(parts[0]["data"], "DiB/fyFUQEBAQEBADCJAQEBBcF1MZCRCR0dCQ0M=");
+    let message = json!({"type": "naplps", "connections": "kept", "page": "100", "sub": "0001", "parts": parts});
+    let ProgramMessage::Naplps(read) = read(&line(&message)).unwrap() else { panic!() };
+    let stream = crate::protocol::check::bytes_of(&read.data.unwrap());
+    let mut expected = Vec::new();
+    for (data, text) in &program {
+        expected.extend_from_slice(data);
+        expected.extend_from_slice(&engine("naplps", text, Some("en")));
+    }
+    assert_eq!(stream, expected, "the program's bytes and the engine's characters, nothing between");
+
+    let (mut terminal, mut canvas) = crate::fallback::naplps_terminal().unwrap();
+    assert_eq!((canvas.width(), canvas.height()), (480, 460));
+    let _ = terminal.feed(&mut canvas, &stream);
+    let _ = terminal.finish(&mut canvas);
+    let width = canvas.width() as usize;
+    let pixels = canvas.pixels();
+    // Canvas line 0 is raster line 20, teletext row 1's first (RAS-11).
+    let at = |dot: usize, line: usize| pixels[(line - naplps::limits::DISPLAY_FIRST_LINE as usize) * width + dot];
+    let glyphs = GlyphSet::noto_teletext();
+    let ink = |rows: &[u16; CELL_HEIGHT], dot: usize, line: usize| rows[line] >> (CELL_WIDTH - 1 - dot) & 1 != 0;
+    let first = glyphs.glyph(CharRef::new(set, code(1, 0)));
+    let cell = || (0..CELL_HEIGHT).flat_map(|line| (0..CELL_WIDTH).map(move |dot| (dot, line)));
+    let inked = cell().find(|&(dot, line)| ink(&first, dot, line)).unwrap();
+    let bare = cell().find(|&(dot, line)| !ink(&first, dot, line)).unwrap();
+    let (drawing, cleared) = (at(inked.0, CELL_HEIGHT + inked.1), at(bare.0, CELL_HEIGHT + bare.1));
+    assert_ne!(drawing, cleared);
+    let mut wrong = Vec::new();
+    for row in ROWS {
+        for column in 0..COLUMNS {
+            let glyph = glyphs.glyph(CharRef::new(set, code(row, column)));
+            let (left, top) = (CELL_WIDTH * column, CELL_HEIGHT * row);
+            if !cell().all(|(dot, line)| at(left + dot, top + line) == if ink(&glyph, dot, line) { drawing } else { cleared }) {
+                wrong.push((row, column));
+            }
+        }
+    }
+    assert_eq!(wrong, [], "every one of the 920 cells is exactly its glyph");
+}
