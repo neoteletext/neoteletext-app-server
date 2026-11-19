@@ -1074,10 +1074,33 @@ fn a_page_redirect_keeps_the_query_it_is_given() {
 /// REQ-1036: another version closes with its own stop code.
 #[test]
 fn another_version_is_closed_with_a_stop_code() {
-    let mut channel = held();
-    let hello = Item::Event(Event::Hello { version: VERSION - 1, caps: SELECT_CAP, agent: None });
-    channel.received(CONNECTION, &message(&channel, CONNECTION, &[hello]), 0);
-    assert_eq!(channel.take_effects(), [Effect::Close { connection: CONNECTION, code: CLOSE_WRONG_VERSION }]);
+    // The versions either side of those spoken, 10 and 11.
+    for version in [neoteletext_input::OLDEST_VERSION - 1, VERSION + 1] {
+        let mut channel = held();
+        let hello = Item::Event(Event::Hello { version, caps: SELECT_CAP, agent: None });
+        channel.received(CONNECTION, &message(&channel, CONNECTION, &[hello]), 0);
+        assert_eq!(channel.take_effects(), [Effect::Close { connection: CONNECTION, code: CLOSE_WRONG_VERSION }], "{version}");
+    }
+}
+
+/// REQ-6927 item 2, DEC-6953 items 1 to 3: a receiver of push protocol 10
+/// is welcomed in version 10 and one of 11 in version 11, each with the
+/// capabilities it offered that the server uses. Capability bit 26,
+/// magazine music, is not agreed to either: the server sends none yet.
+#[test]
+fn a_receiver_is_welcomed_in_the_version_its_hello_names() {
+    use neoteletext_input::caps::MAGAZINE_SOUND_CAP;
+    assert_eq!((neoteletext_input::OLDEST_VERSION, VERSION), (10, 11));
+    for version in [10, 11] {
+        let mut channel = held();
+        let hello = Item::Event(Event::Hello { version, caps: SELECT_CAP | CURSOR_CAP | MAGAZINE_SOUND_CAP, agent: None });
+        channel.received(CONNECTION, &message(&channel, CONNECTION, &[hello]), 0);
+        let bytes = sent_to(&channel.take_effects(), CONNECTION);
+        let mut buffer = [0; FRAGMENT_DATA];
+        let packet = Packet { bytes: bytes[..PACKET_BYTES].try_into().unwrap() };
+        let welcome = Control::Welcome { version, caps: SELECT_CAP | CURSOR_CAP, resume: None };
+        assert_eq!(from_packet(&packet, &mut buffer), Some(Ok(welcome)), "version {version}");
+    }
 }
 
 /// DEC-1759 lesson 16: an unknown extension is skipped, so the connection
@@ -1155,13 +1178,26 @@ fn vector_bytes(value: &str) -> Vec<u8> {
 /// REQ-1090: the table's `select_*` rows, accepted and refused.
 #[test]
 fn every_row_of_the_wire_vectors_holds() {
-    use neoteletext_web::consts::{CLOSE_RESTARTING, PUSH_SUBPROTOCOL, close_says_stop};
+    use neoteletext_web::consts::{CLOSE_RESTARTING, PUSH_SUBPROTOCOL, PUSH_SUBPROTOCOL_OLDEST, close_says_stop};
     use neoteletext_web::wire_vectors::vectors;
     let row = |name: &str| vectors().find(|vector| vector.name == name).unwrap();
     for vector in vectors() {
         match (vector.kind, vector.name) {
             ("version", "input") => assert_eq!(vector.value, VERSION.to_string()),
-            ("version", _) => assert_eq!(vector.value, PUSH_SUBPROTOCOL),
+            // REQ-6927 item 2, DEC-6953 item 1: version 10 is still spoken.
+            ("version", "oldest_input") => assert_eq!(vector.value, neoteletext_input::OLDEST_VERSION.to_string()),
+            ("version", "oldest_subprotocol") => {
+                assert_eq!(vector.value, PUSH_SUBPROTOCOL_OLDEST);
+                assert_eq!(crate::landing::push_upgrade(false, [vector.value.as_bytes()].into_iter()), Ok(PUSH_SUBPROTOCOL_OLDEST));
+            }
+            // What a receiver offers is answered with the newest.
+            ("version", "subprotocols") => {
+                assert_eq!(crate::landing::push_upgrade(false, [vector.value.as_bytes()].into_iter()), Ok(PUSH_SUBPROTOCOL));
+            }
+            ("version", name) => {
+                assert_eq!(name, "subprotocol");
+                assert_eq!(vector.value, PUSH_SUBPROTOCOL);
+            }
             ("close", name) => {
                 let code: u16 = vector.value.parse().unwrap();
                 assert_eq!(close_says_stop(code), vector.meaning == "stop", "{name}");
@@ -1209,6 +1245,13 @@ fn every_row_of_the_wire_vectors_holds() {
     channel.received(CONNECTION, &vector_bytes(row("hello_pictures").value), 0);
     let sent = sent_to(&channel.take_effects(), CONNECTION);
     assert_eq!(sent[..PACKET_BYTES], vector_bytes(row("welcome_pictures").value));
+    // REQ-6927: a receiver that offers magazine music, bit 26, with the
+    // `hello` row's bits is not agreed it, since the server sends none yet:
+    // its WELCOME is the `welcome` row's, not `welcome_magazine`'s.
+    let mut channel = held();
+    channel.received(CONNECTION, &vector_bytes(row("hello_magazine").value), 0);
+    let sent = sent_to(&channel.take_effects(), CONNECTION);
+    assert_eq!(sent[..PACKET_BYTES], vector_bytes(row("welcome").value));
     let mut channel = held();
     channel.received(CONNECTION, &message(&channel, CONNECTION, &[hello()]), 0);
     channel.received(CONNECTION, &vector_bytes(row("select_sub_page").value), 0);

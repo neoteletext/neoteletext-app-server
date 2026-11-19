@@ -319,6 +319,9 @@ struct Connection {
     welcomed: bool,
     /// The capabilities WELCOME agreed, once HELLO has come.
     agreed: Option<u32>,
+    /// The push protocol version the connection speaks (REQ-6927 item 2,
+    /// DEC-6953): the one its HELLO named, and the newest until then.
+    version: u32,
     /// The focus last given before the program knew the connection or its
     /// selection: true for `FOCUS_IN`, with the rule that sent it.
     focus_untold: Option<(bool, rules::Sender)>,
@@ -414,6 +417,7 @@ impl Connection {
             opened_at: now,
             welcomed: false,
             agreed: None,
+            version: neoteletext_input::VERSION,
             focus_untold: None,
             redirected: None,
             acked: 0,
@@ -1233,21 +1237,27 @@ impl Channel {
     /// SELECT is not waited for. Its capabilities are the only thing asked of
     /// it: nothing here reads its agent text (DEC-1759 lesson 19).
     fn welcome(&mut self, connection: ConnectionId, version: u32, caps: u32, now: u64) -> bool {
-        if version != neoteletext_input::VERSION {
+        // Every version from the oldest spoken to the newest (REQ-6927
+        // item 2, DEC-6953 item 1): a receiver of version 10 is answered in
+        // version 10.
+        if !neoteletext_input::speaks(version) {
             self.effects.push(Effect::Close { connection, code: CLOSE_WRONG_VERSION });
             return true;
         }
         if caps & SNAPSHOT_CAP != 0 {
             return self.snapshot_hello(connection, version, caps, now);
         }
+        // Only what the connection's version defines is agreed.
+        let agreed = caps & USED & neoteletext_input::caps::caps_of(version);
         let Some(state) = self.connections.get_mut(&connection) else { return true };
-        state.agreed = Some(caps & USED);
+        state.agreed = Some(agreed);
+        state.version = version;
         // A viewer's connection is counted from its HELLO, which says it is
         // not a snapshot's (REQ-6881 item 2).
         self.stats.joined();
         let Some(state) = self.connections.get_mut(&connection) else { return true };
         let record = state.next_record();
-        if let Ok(packet) = packet_of(&Control::Welcome { version, caps: caps & USED, resume: None }, SERVICE, record) {
+        if let Ok(packet) = packet_of(&Control::Welcome { version, caps: agreed, resume: None }, SERVICE, record) {
             state.welcomed = true;
             self.send(connection, Arc::from(&packet.bytes[..]));
             // Before `connected` can go, so that it waits for the answer

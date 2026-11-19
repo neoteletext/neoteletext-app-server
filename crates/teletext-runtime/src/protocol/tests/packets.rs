@@ -49,7 +49,9 @@ fn raw_packets_name_the_fault() {
 #[test]
 fn raw_packets_carry_no_audio_record() {
     use neoteletext_audio::encode::{Command, packets as record_packets};
-    let control = Command { channel: 0, sequence: 1, operation: 1, handle: 1, generation: 0, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None }.record();
+    let control =
+        Command { channel: 0, sequence: 1, operation: 1, handle: 1, generation: 0, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None, magazine: None }
+            .record();
     let (fragments, _) = record_packets(crate::channel::SERVICE, 0, &[control]);
     let bytes: Vec<u8> = fragments.iter().flat_map(|packet| packet.bytes).collect();
     refused(&with(&packets(), "/packets", json!(base64(&bytes))), "packets[0]", Rule::InvalidPacket);

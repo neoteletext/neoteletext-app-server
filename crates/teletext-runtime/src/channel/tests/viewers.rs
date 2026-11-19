@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::{ANY, CONNECTION, Channel, ChannelConfig, Effect, InitialPage, ON, bare, connecteds, hello, key, line, message, select, sent_to, told};
 use crate::viewer::testing::{random, secret};
-use crate::viewer::tests::sign;
+use crate::viewer::tests::{sign, sign_under};
 use crate::viewer::{
     CHALLENGE_BYTES, HandleSecret, MOST_CHALLENGES_PER_CONNECTION_PER_MINUTE, MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR, STATE_ANSWER_MS, STATE_GESTURE_MS,
     VIEWER_IDLE_MS,
@@ -131,6 +131,26 @@ fn connected_waits_for_the_answer_and_carries_the_handle() {
     assert_eq!(lines[0]["remembered"], json!(true));
     assert!(lines[0].get("session").is_none() && lines[0].get("cookies").is_none());
     assert_eq!(channel.stats().proofs_accepted, 1);
+}
+
+/// VS-203 item 2, DEC-6953 item 2: a proof is verified under the version
+/// the connection's HELLO named. A receiver of version 10 signs version 10
+/// and is a viewer; a proof signed under the other version is refused on
+/// either connection.
+#[test]
+fn a_proof_is_verified_under_the_connections_version() {
+    let hello_of = |version| Item::Event(Event::Hello { version, caps: neoteletext_input::caps::SELECT_CAP, agent: None });
+    for (connection, spoken, signed, accepted) in [(1, 10, 10, true), (2, 11, 11, true), (3, 10, 11, false), (4, 11, 10, false)] {
+        let mut channel = channel_at(ADDRESS, &secret());
+        channel.opened(connection, None, 0);
+        channel.received(connection, &message(&channel, connection, &[hello_of(spoken)]), 0);
+        let challenge = challenges(&channel.take_effects(), connection)[0].0;
+        let (public_key, signature) = sign_under(signed, &ALICE, Lifetime::Visit, &challenge, ADDRESS);
+        let proof = StateProof { algorithm: Algorithm::Ed25519, lifetime: Lifetime::Visit, public_key: &public_key, signature: &signature };
+        channel.received(connection, &bare(&[Item::Event(Event::StateProof(proof))]), 0);
+        let stats = channel.stats();
+        assert_eq!((stats.proofs_accepted, stats.proofs_refused), (u64::from(accepted), u64::from(!accepted)), "HELLO {spoken}, signed {signed}");
+    }
 }
 
 /// VS-202: a SELECT before the answer is an answer with no key; `STATE_NONE`

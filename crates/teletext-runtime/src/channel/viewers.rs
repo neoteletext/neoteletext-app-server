@@ -369,11 +369,14 @@ impl Channel {
     /// uses whether or not it verifies (VS-205, VS-301). One with no
     /// challenge outstanding is refused and told to nobody.
     fn proof(&mut self, connection: ConnectionId, proof: &StateProof<'_>, now: u64) {
-        let Some(outstanding) = self.connections.get(&connection).and_then(|state| state.viewer.outstanding.as_ref()) else {
+        let Some((version, outstanding)) = self.connections.get(&connection).and_then(|state| Some((state.version, state.viewer.outstanding.as_ref()?))) else {
             count(&mut self.stats.proofs_refused);
             return;
         };
-        if let Ok((key_id, lifetime)) = viewer::verify(proof, &outstanding.challenge, &self.viewers.identities) {
+        // Under the version the connection's HELLO named, so a proof made
+        // under one version is no proof under another (VS-203 item 2,
+        // DEC-6953 item 2).
+        if let Ok((key_id, lifetime)) = viewer::verify(version, proof, &outstanding.challenge, &self.viewers.identities) {
             self.proven(connection, Present { key_id, lifetime }, now);
         } else {
             count(&mut self.stats.proofs_refused);

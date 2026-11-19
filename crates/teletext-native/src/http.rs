@@ -264,9 +264,11 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>, address: O
         Err(response) => return *response,
     };
     let offered = request.headers().get_all(SEC_WEBSOCKET_PROTOCOL).iter().map(HeaderValue::as_bytes);
-    if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
-        return refused_upgrade(refusal);
-    }
+    // The subprotocol answered names the version the connection speaks.
+    let subprotocol = match push_upgrade(request.headers().contains_key(ORIGIN), offered) {
+        Ok(subprotocol) => subprotocol,
+        Err(refusal) => return refused_upgrade(refusal),
+    };
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let pending = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
@@ -276,7 +278,7 @@ fn upgrade(routes: &Routes, hub: Hub, mut request: Request<Incoming>, address: O
         connection::serve(parts.io.into_inner(), &parts.read_buf, hub, connection, address).await;
     });
     let mut response = switching(&key);
-    response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
+    response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(subprotocol));
     response
 }
 

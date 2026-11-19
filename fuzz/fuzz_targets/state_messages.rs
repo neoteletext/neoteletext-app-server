@@ -65,7 +65,7 @@ fn proof(seed: [u8; 32], lifetime: Lifetime, challenge: &[u8; CHALLENGE_BYTES]) 
     let pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
     let identity = ChannelIdentity::read(ADDRESS).unwrap();
     let mut signed = [0_u8; MAX_SIGNED_BYTES];
-    let length = viewer_state::signed_bytes(Algorithm::Ed25519, lifetime, challenge, &identity, &mut signed).unwrap();
+    let length = viewer_state::signed_bytes(neoteletext_input::VERSION, Algorithm::Ed25519, lifetime, challenge, &identity, &mut signed).unwrap();
     let signature: [u8; 64] = pair.sign(&signed[..length]).as_ref().try_into().unwrap();
     let public_key: [u8; 32] = pair.public_key().as_ref().try_into().unwrap();
     let item = Item::Event(Event::StateProof(StateProof { algorithm: Algorithm::Ed25519, lifetime, public_key: &public_key, signature: &signature }));

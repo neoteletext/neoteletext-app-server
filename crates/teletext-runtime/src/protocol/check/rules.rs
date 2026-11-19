@@ -598,8 +598,19 @@ impl Scope<'_> {
     /// the table's page, never for the whole service or after the current
     /// sound (RULE-119).
     fn control(&self, path: &Path<'_>, sound: &GroupSound, binder: &mut Binder) -> Result<Vec<u8>, Fault> {
-        let mut control =
-            Control { channel: 0, sequence: 0, operation: 0, handle: 0, generation: 0, gain: 0, fade_ms: 0, flags: 0, duck: 0, page: Some(self.page) };
+        let mut control = Control {
+            channel: 0,
+            sequence: 0,
+            operation: 0,
+            handle: 0,
+            generation: 0,
+            gain: 0,
+            fade_ms: 0,
+            flags: 0,
+            duck: 0,
+            page: Some(self.page),
+            magazine: None,
+        };
         match sound {
             GroupSound::Play(play) => {
                 if play.page.is_some() {
