@@ -18,6 +18,8 @@ members = ["."]
 # Apache-2.0).
 libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
+# The native server, for its WebSocket frame reader and its PROXY protocol
+# header reader (REQ-6974).
 teletext-native = { path = "../crates/teletext-native" }
 # The HTTP/3 layer, whose readers take what any QUIC peer sends (REQ-6967).
 teletext-http3 = { path = "../crates/teletext-http3" }
@@ -118,6 +120,13 @@ bench = false
 [[bin]]
 name = "http3_reader"
 path = "fuzz_targets/http3_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proxy_protocol_reader"
+path = "fuzz_targets/proxy_protocol_reader.rs"
 test = false
 doc = false
 bench = false
