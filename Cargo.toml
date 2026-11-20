@@ -46,7 +46,7 @@ neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neotel
 neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "3a5083f1f77fd7fc9a1e8231b02880bd34d89aba", default-features = false }
 # The mosaic fallback (renderer parity PAR-11, PAR-25): a picture's pixels
 # converted into a page of Level 1 mosaics, without the image decoders,
-# which the server never needs and the Cloudflare build cannot afford.
+# which the server never needs.
 neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "3a5083f1f77fd7fc9a1e8231b02880bd34d89aba", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
@@ -79,7 +79,7 @@ naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-na
 # protocol's JSON Schema from its Rust types; serde (MIT or Apache-2.0)
 # makes those types serde-strict and serde_json (MIT or Apache-2.0) reads
 # and writes their JSON lines. Both are schemars's own dependencies, and
-# were already in the lockfile through worker: part of that approval.
+# were in the lockfile when it was given: part of that approval.
 # Default features off: no standard library, for the runtime's no_std.
 schemars = { version = "=1.2.3", default-features = false, features = ["derive"] }
 serde = { version = "=1.0.229", default-features = false, features = ["alloc", "derive"] }
@@ -99,9 +99,7 @@ unicode-normalization = { version = "=0.1.26", default-features = false }
 # Ed25519 verification of a viewer's proof and HMAC-SHA-256 for the
 # per-channel handle, both constant-time; the native host also draws its
 # random bytes from its `SystemRandom`. Default features off: no `alloc`,
-# no `/dev/urandom` fallback, so the runtime stays `no_std`. On the
-# Cloudflare host's `wasm32-unknown-unknown` its random source needs the
-# Web Crypto interface, which `wasm32_unknown_unknown_js` gives.
+# no `/dev/urandom` fallback, so the runtime stays `no_std`.
 ring = { version = "=0.17.14", default-features = false }
 
 # The native host's libraries, approved by the owner on 25 October 2026
@@ -140,16 +138,6 @@ tracing-subscriber = { version = "=0.3.23", default-features = false, features =
 # name on 1 November 2026 (DEC-1767): Apache-2.0. It holds the `unsafe` that
 # taking a socket by its descriptor needs, which this workspace forbids.
 listenfd = { version = "=1.0.2", default-features = false }
-# The Cloudflare host (decision 20), approved by the owner on 28 October
-# 2026: Cloudflare's Rust SDK for Workers and Durable Objects (Apache-2.0),
-# and random bytes from the Web Crypto interface for the viewer-handle
-# secret and viewer-state challenges (VS-205, VS-305; MIT or Apache-2.0).
-worker = { version = "=0.8.7", default-features = false }
-getrandom = { version = "=0.4.3", default-features = false, features = ["wasm_js"] }
-# The `worker` macros expand to code that names `wasm_bindgen` itself, so the
-# Worker depends on it directly, at the version `worker` resolves (MIT or
-# Apache-2.0); part of `worker`'s approval.
-wasm-bindgen = { version = "=0.2.129", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -176,10 +164,3 @@ opt-level = 2
 
 [profile.dev.package.regis]
 opt-level = 2
-
-# The Worker keeps its custom sections: wasm-bindgen reads the module's
-# `target_features` section to know it has reference types, without which
-# it cannot make the catch wrappers worker-build asks for (found 28 October
-# 2026: stripped, `wasm-bindgen` fails "externref table required").
-[profile.release.package.teletext-cloudflare]
-strip = false

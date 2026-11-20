@@ -25,8 +25,8 @@ fuzz_seconds="${TELETEXT_FUZZ_SECONDS:-20}"
 # Cloudflare Workers' target, which the runtime must build for
 # (requirement 1.3).
 readonly WASM_TARGET="wasm32-unknown-unknown"
-# The crates that build for WebAssembly: everything a Worker links.
-readonly WASM_CRATES=(teletext-runtime teletext-cloudflare)
+# The crates that build for WebAssembly.
+readonly WASM_CRATES=(teletext-runtime)
 # The native server's systems besides the one the gate runs on
 # (requirement 1.1, REQ-1020): each is type-checked by the full gate, so a
 # `cfg` that stops compiling on a system is found without that system.
@@ -88,7 +88,7 @@ $out_of_date"
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root. Every crate root must be listed.
 readonly NO_PANIC_ROOTS=(crates/teletext-runtime/src/lib.rs crates/teletext-native/src/lib.rs crates/teletext-native/src/main.rs
-    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-cloudflare/src/lib.rs)
+    crates/teletext-native/src/bin/teletext-load.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate root"

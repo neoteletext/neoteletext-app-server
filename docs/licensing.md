@@ -33,8 +33,6 @@ GPL and AGPL, in any form.
 | `ring` | Apache-2.0 and ISC | Viewer state's cryptography (DEC-6471), and the cryptography under `rustls` and `quinn` (DEC-6964) | DEC-6471, DEC-6478 |
 | `listenfd` (and on Windows alone what it brings, `uuid` and `winapi`, checked by `cargo deny`) | Apache-2.0 | systemd's socket activation in the native host | DEC-1767 |
 | `tracing`, `tracing-subscriber` (and what they bring: `tracing-core`, `tracing-serde`, `serde`, `serde_json`, `sharded-slab`, `thread_local`, `smallvec` and others, all MIT or Apache-2.0, checked by `cargo deny`) | MIT | The native host's log | Decision 18 |
-| `worker` (workers-rs), `wasm-bindgen`, `getrandom` (and what they bring: `js-sys`, `web-sys`, `wasm-bindgen-futures`, `serde`, `serde-wasm-bindgen` and others, checked by `cargo deny`) | Apache-2.0; MIT or Apache-2.0 | The Cloudflare host, `wasm32-unknown-unknown` only | Decision 20 |
-| `wrangler`, `worker-build` | MIT or Apache-2.0; Apache-2.0 | Building, running locally and deploying the Cloudflare host; development only, never linked | Decision 20 |
 | `libfuzzer-sys` | (MIT or Apache-2.0) and NCSA, for the LLVM libFuzzer it bundles | `fuzz/`, outside the shipped server | Decision 5 |
 
 ### 5.1 What the channels use
