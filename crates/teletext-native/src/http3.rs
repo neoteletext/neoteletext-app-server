@@ -456,10 +456,11 @@ async fn request(routes: Arc<Routes>, connection: quinn::Connection, mut send: S
             // request still sends is not wanted.
             let _ = reading.recv.stop(wire(Code::NoError));
         }
-        Answer::Push { response, hub, connection: number, address } => {
+        Answer::Push { response, hub, connection: number, address, place } => {
             if send.write_all(&head(&response, None)).await.is_ok() {
                 serve_halves(reading, Writing::new(send), &[], hub, number, address).await;
             }
+            drop(place);
         }
         Answer::Program { response, door, claim } => {
             if send.write_all(&head(&response, None)).await.is_ok() {

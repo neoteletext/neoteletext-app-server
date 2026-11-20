@@ -85,6 +85,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use listenfd::ListenFd;
 use teletext_native::http::Routes;
+use teletext_native::limits::MAX_PUSH_WEBSOCKETS;
 use teletext_native::logging::{self, Format};
 use teletext_native::serving::{self, Direct, Server};
 use teletext_native::state::{StateDirectory, SystemRandomSource, random_secret};
@@ -307,7 +308,13 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         None => TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?,
     };
     let listening = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
-    let routes = Arc::new(Routes { hubs, connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: arguments.trusted_proxy });
+    let routes = Arc::new(Routes {
+        hubs,
+        connections: AtomicU64::new(1),
+        stats: Arc::clone(&stats),
+        trusted_proxy: arguments.trusted_proxy,
+        websockets: Arc::new(tokio::sync::Semaphore::new(MAX_PUSH_WEBSOCKETS)),
+    });
     let server = Server::start(listener, direct, Arc::clone(&routes))?;
     let mut administering = None;
     if let Some(address) = &arguments.admin {

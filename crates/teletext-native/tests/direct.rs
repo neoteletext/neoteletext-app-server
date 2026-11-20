@@ -38,7 +38,7 @@ use rustls::pki_types::{CertificateDer, ServerName};
 use teletext_native::apps::{self, ChannelSpec, Program, Secret};
 use teletext_native::http::Routes;
 use teletext_native::hub;
-use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, PROXY_HEADER_WITHIN};
+use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, MAX_PUSH_WEBSOCKETS, PROXY_HEADER_WITHIN};
 use teletext_native::proxy_protocol::SIGNATURE;
 use teletext_native::serving::{Direct, Server, TcpBounds, public_port};
 use teletext_native::state::SystemRandomSource;
@@ -133,16 +133,23 @@ enum Hosted {
 
 /// [`running`] with TLS from `certificate`, hosting `hosted`.
 async fn running_hosting(certificate: &Certificate, hosted: Hosted) -> Running {
-    running_full(Some(certificate), |port| format!(":{port}"), None, TcpBounds::SERVED, hosted).await
+    running_full(Some(certificate), |port| format!(":{port}"), None, TcpBounds::SERVED, hosted, MAX_PUSH_WEBSOCKETS).await
 }
 
 /// [`running_at`], serving TCP within `bounds`.
 async fn running_with(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>, bounds: TcpBounds) -> Running {
-    running_full(certificate, public, proxy, bounds, Hosted::Plain).await
+    running_full(certificate, public, proxy, bounds, Hosted::Plain, MAX_PUSH_WEBSOCKETS).await
 }
 
 /// [`running_with`], hosting `hosted`.
-async fn running_full(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>, bounds: TcpBounds, hosted: Hosted) -> Running {
+async fn running_full(
+    certificate: Option<&Certificate>,
+    public: impl Fn(u16) -> String,
+    proxy: Option<IpAddr>,
+    bounds: TcpBounds,
+    hosted: Hosted,
+    websockets: usize,
+) -> Running {
     let listener = TcpListener::bind(ANY_LOCAL_PORT).await.unwrap();
     let address = listener.local_addr().unwrap();
     let scheme = if certificate.is_some() { "https" } else { "http" };
@@ -178,8 +185,13 @@ async fn running_full(certificate: Option<&Certificate>, public: impl Fn(u16) ->
         hub.commands = commands;
     }
     let descriptor = Arc::clone(&hub.descriptor);
-    let routes =
-        Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: proxy });
+    let routes = Arc::new(Routes {
+        hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]),
+        connections: AtomicU64::new(1),
+        stats: Arc::clone(&stats),
+        trusted_proxy: proxy,
+        websockets: Arc::new(tokio::sync::Semaphore::new(websockets)),
+    });
     let secured = certificate.map(|certificate| tls::load(&certificate.files).unwrap());
     let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy });
     let server = Server::start_bounded(listener, direct, routes, bounds).unwrap();
@@ -1417,4 +1429,34 @@ async fn the_viewers_address_over_extended_connect_is_the_connections_peer() {
     let (status, _, _h3_stream) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "push", Some("websocket"), &PUSH_HEADERS), false).await;
     assert_eq!(status, 200);
     assert_eq!(opened_with(&mut observed).await, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), "HTTP/3: the QUIC peer's");
+}
+
+/// REQ-7006: the push WebSocket connections open at once are bounded over every
+/// version of HTTP together: with room for one, a push WebSocket is
+/// opened over HTTP/2, a second over HTTP/3 and a third over HTTP/2 are
+/// answered 503, and once the first has closed one is opened over HTTP/3.
+#[tokio::test]
+async fn push_websockets_past_the_bound_are_answered_503_over_every_version() {
+    let certificate = certificate("websockets");
+    let running = running_full(Some(&certificate), |port| format!(":{port}"), None, TcpBounds::SERVED, Hosted::Plain, 1).await;
+    let mut sender = h2_to(&running, &certificate).await;
+    let (opened, first) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "push", Some("websocket"), &PUSH_HEADERS), false).await;
+    assert_eq!(opened.status(), StatusCode::OK);
+    let h3 = h3_to(&running, &certificate).await;
+    let (status, _, _) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "push", Some("websocket"), &PUSH_HEADERS), false).await;
+    assert_eq!(status, 503, "HTTP/3, past the bound");
+    let (refused, _) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "push", Some("websocket"), &PUSH_HEADERS), false).await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE, "HTTP/2, past the bound");
+    // The first ends: its stream is reset, and its WebSocket closes.
+    drop((first, opened));
+    let began = Instant::now();
+    loop {
+        let (status, _, _) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "push", Some("websocket"), &PUSH_HEADERS), false).await;
+        if status == 200 {
+            break;
+        }
+        assert_eq!(status, 503);
+        assert!(began.elapsed() < WITHIN, "the first WebSocket's place was never let go");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

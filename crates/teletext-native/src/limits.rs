@@ -11,6 +11,7 @@ use std::time::Duration;
 use teletext_runtime::kept::CONNECTIONS_WITH_OWN_PICTURES;
 
 use crate::connection::{DEAD_AFTER_PING, PING_AFTER};
+use crate::websocket::MAX_MESSAGE;
 
 /// How long a TLS handshake over TCP, or a QUIC handshake, may take before
 /// the connection is dropped. A handshake is two round trips and one
@@ -82,23 +83,45 @@ pub const H2_PING_AFTER: Duration = PING_AFTER;
 /// See [`H2_PING_AFTER`].
 pub const H2_DEAD_AFTER_PING: Duration = DEAD_AFTER_PING;
 
+/// The push WebSocket connections open at once (REQ-7006), over HTTP/1.1, HTTP/2 and
+/// HTTP/3 together; one more is answered 503. Over HTTP/2 and HTTP/3 a
+/// connection carries up to [`MAX_CONCURRENT_STREAMS`] of them, so the
+/// bounds on connections alone would let the server be made to hold a
+/// hundred times as many; this is the one bound on all of them. It is
+/// above [`CONNECTIONS_WITH_OWN_PICTURES`], the channel's connections the
+/// server is built to carry (DEC-6898, REQ-6897), by a fifth for other
+/// channels' and for a restart's overlap.
+pub const MAX_PUSH_WEBSOCKETS: usize = 60_000;
+const _: () = assert!(MAX_PUSH_WEBSOCKETS > CONNECTIONS_WITH_OWN_PICTURES, "the server holds every connection it is built to carry");
+
 /// The QUIC connections open at once, handshakes in progress among them;
-/// one more is refused. With [`QUIC_CONNECTION_WINDOW_BYTES`] it bounds
-/// what all peers together can make the server hold unread, at 1 GiB, and
-/// a thousand connections of a hundred streams each is far more viewers
-/// than one machine's channels have had.
-pub const MAX_QUIC_CONNECTIONS: usize = 1_024;
+/// one more is refused. As many as [`MAX_PUSH_WEBSOCKETS`]: a browser that
+/// shares no connection among its tabs makes one connection a tab, and
+/// one that shares makes fewer. Measured 21 November 2026 (teletext-load
+/// from foundintelquiet4060 to chunko, 1,000 tabs at rest), a QUIC
+/// connection with one push WebSocket holds 55,347 bytes of the server's
+/// memory, the WebSocket's channel state among them, and 26,195 a tab
+/// with four tabs a connection; so at this bound the connections hold
+/// about 3.3 GB with one tab each. With [`QUIC_CONNECTION_WINDOW_BYTES`]
+/// it also bounds what all peers together can make the server hold
+/// unread: 60,000 times 64 KiB, 3.7 GiB, about what as many TCP
+/// connections hold in the kernel at its default receive buffer.
+pub const MAX_QUIC_CONNECTIONS: usize = MAX_PUSH_WEBSOCKETS;
 
 /// What a peer may send on one QUIC stream before the server has read it
-/// (the stream's flow-control window, RFC 9000 section 4.1). A viewer's
-/// message is at most `websocket::MAX_MESSAGE`, 8 KiB; a program's line
-/// may be megabytes, and is read as it comes, so the window bounds what
-/// waits, not what may be sent.
-pub const QUIC_STREAM_WINDOW_BYTES: u32 = 256 * 1024;
+/// (the stream's flow-control window, RFC 9000 section 4.1): four of a
+/// viewer's largest messages (`websocket::MAX_MESSAGE`, 8 KiB). A
+/// program's line may be megabytes and is read as it comes, a window a
+/// round trip; a program over HTTP/3 is held to 32 KiB a round trip, and
+/// one beside the server, as the deployment's are, is not slowed.
+pub const QUIC_STREAM_WINDOW_BYTES: u32 = 32 * 1024;
+const _: () = assert!(QUIC_STREAM_WINDOW_BYTES as usize >= 4 * MAX_MESSAGE, "a stream's window holds four of a viewer's messages");
 
 /// What a peer may send on all of one QUIC connection's streams before
-/// the server has read it (the connection's window, RFC 9000 section 4.1).
-pub const QUIC_CONNECTION_WINDOW_BYTES: u32 = 1024 * 1024;
+/// the server has read it (the connection's window, RFC 9000 section
+/// 4.1): two streams' windows, for a viewer typing in two tabs at once;
+/// a viewer's upstream is a few bytes a key.
+pub const QUIC_CONNECTION_WINDOW_BYTES: u32 = 2 * QUIC_STREAM_WINDOW_BYTES;
 
 /// What the server sends one QUIC connection's peer and holds until it is
 /// acknowledged, at most (the connection's send window). quinn's own

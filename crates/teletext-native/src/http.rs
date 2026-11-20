@@ -24,7 +24,7 @@ use hyper::header::{
 use hyper::{Method, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
-use tokio::sync::{OwnedSemaphorePermit, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use teletext_runtime::ConnectionId;
@@ -85,6 +85,10 @@ pub struct Routes {
     /// The proxy in front of the server, whose `X-Forwarded-For` names the
     /// viewer's address (VS-304); none trusted when there is none.
     pub trusted_proxy: Option<IpAddr>,
+    /// The push WebSocket connections open at once, over every version of HTTP, at
+    /// most `MAX_PUSH_WEBSOCKETS` (REQ-7006): a place is taken when one is
+    /// opened and let go when it closes.
+    pub websockets: Arc<Semaphore>,
 }
 
 /// The header a reverse proxy names the client's address in, appending it
@@ -143,6 +147,9 @@ pub enum Answer {
         connection: ConnectionId,
         /// The viewer's network address (VS-304).
         address: Option<IpAddr>,
+        /// Its place among the push WebSocket connections (REQ-7006), held while it
+        /// is served.
+        place: OwnedSemaphorePermit,
     },
     /// The channel's program's WebSocket was opened: after `response`,
     /// what carried the request goes in by `door`, under `claim`.
@@ -165,10 +172,10 @@ pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, sou
     let place = request.extensions().get::<TcpPlace>().cloned();
     match decide(routes, &request, source).await {
         Answer::Response(response) => response,
-        Answer::Push { response, hub, connection, address } => {
+        Answer::Push { response, hub, connection, address, place: websocket } => {
             let pending = hyper::upgrade::on(request);
             tokio::spawn(async move {
-                let _place = place;
+                let (_place, _websocket) = (place, websocket);
                 let Ok(upgraded) = pending.await else { return };
                 match upgraded.downcast::<TokioIo<TcpStream>>() {
                     // HTTP/1.1 with no TLS: the raw socket, so that no
@@ -414,10 +421,16 @@ fn upgrade<B>(routes: &Routes, hub: Hub, request: &Request<B>, address: Option<I
     if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
         return Answer::Response(refused_upgrade(refusal, &opening));
     }
+    let Ok(place) = Arc::clone(&routes.websockets).try_acquire_owned() else {
+        // REQ-7006: every place is taken; a receiver tries again later, as
+        // after any refusal of the connection (DOC-1917).
+        tracing::debug!(target: "connection", channel = hub.folder, "a push WebSocket was refused: every place is taken");
+        return Answer::Response(status(StatusCode::SERVICE_UNAVAILABLE));
+    };
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let mut response = switching(&opening);
     response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
-    Answer::Push { response, hub, connection, address }
+    Answer::Push { response, hub, connection, address, place }
 }
 
 fn status(code: StatusCode) -> Response<Whole> {
