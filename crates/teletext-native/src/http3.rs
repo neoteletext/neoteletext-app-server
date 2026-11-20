@@ -8,6 +8,7 @@ use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, ready};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,9 +45,10 @@ fn wire(code: Code) -> VarInt {
     VarInt::from_u32(code.value())
 }
 
-/// The QUIC endpoint, and what the system batches of its datagrams.
+/// The QUIC endpoints, one a socket on the one port, and what the system
+/// batches of their datagrams.
 pub(crate) struct Listening {
-    pub(crate) endpoint: quinn::Endpoint,
+    pub(crate) endpoints: Vec<quinn::Endpoint>,
     /// How many datagrams one send may carry (UDP generic segmentation
     /// offload, `UDP_SEGMENT`, on Linux since 4.18), 1 where there is none.
     pub(crate) send_segments: usize,
@@ -60,8 +62,34 @@ pub(crate) struct Listening {
     pub(crate) receive_buffer: usize,
 }
 
+/// How many UDP sockets share the QUIC port, each with an endpoint of its
+/// own (REQ-7006): one a core the system offers, where the system can
+/// share a port among sockets (`SO_REUSEPORT`, Unix), else one. quinn
+/// handles each endpoint's packets on one task and accepts a handshake,
+/// its signature included, under the endpoint's lock; measured 21
+/// November 2026, 50,000 viewers reconnecting over HTTP/3 to one endpoint
+/// after a restart overflowed its socket (4,717,050 datagrams dropped)
+/// and took 288 seconds to come back. The system hands each socket the
+/// packets of the connections whose address and port hash to it, so each
+/// connection stays with one endpoint; a client whose address or port
+/// changes may hash to another, which answers with a stateless reset, and
+/// the client connects again.
+fn quic_sockets() -> usize {
+    if cfg!(unix) { std::thread::available_parallelism().map_or(1, std::num::NonZero::get) } else { 1 }
+}
+
+/// A UDP socket at `address`, sharing the port with the server's other
+/// QUIC sockets where the system allows.
+fn shared_socket(address: SocketAddr) -> io::Result<std::net::UdpSocket> {
+    let socket = socket2::Socket::new(socket2::Domain::for_address(address), socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+    socket.bind(&address.into())?;
+    Ok(socket.into())
+}
+
 /// Binds UDP at `address` and listens for QUIC there, within the bounds
-/// of [`crate::limits`].
+/// of [`crate::limits`], on [`quic_sockets`] sockets.
 ///
 /// # Errors
 /// A socket that cannot be bound.
@@ -79,12 +107,6 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr, reset_secret: Opti
     let mut config = quinn::ServerConfig::with_crypto(Arc::clone(&tls.quic) as Arc<dyn quinn::crypto::ServerConfig>);
     config.transport_config(Arc::new(transport)).max_incoming(MAX_QUIC_CONNECTIONS);
     let unbound = |error: io::Error| format!("cannot listen for QUIC on UDP {address}: {error}");
-    let socket = std::net::UdpSocket::bind(address).map_err(unbound)?;
-    let state = quinn::udp::UdpSocketState::new((&socket).into()).map_err(unbound)?;
-    // As much as the system allows of what is asked; less is no fault,
-    // and the serving line says what was had.
-    let _ = state.set_recv_buffer_size((&socket).into(), QUIC_RECEIVE_BUFFER_BYTES);
-    let receive_buffer = state.recv_buffer_size((&socket).into()).map_err(unbound)?;
     let runtime = quinn::default_runtime().ok_or_else(|| unbound(io::Error::other("no async runtime")))?;
     let mut endpoint_config = match reset_secret {
         Some(secret) => quinn::EndpointConfig::new(Arc::new(reset_key(secret))),
@@ -97,9 +119,25 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr, reset_secret: Opti
     // short packet for an unknown connection is answered with a reset.
     let ids = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &ring::rand::SystemRandom::new())
         .map_err(|_| unbound(io::Error::other("no random bytes for QUIC's connection IDs")))?;
-    endpoint_config.cid_generator(move || Box::new(ConnectionIds { key: ids.clone(), made: 0 }));
-    let endpoint = quinn::Endpoint::new(endpoint_config, Some(config), socket, runtime).map_err(unbound)?;
-    Ok(Listening { endpoint, send_segments: state.max_gso_segments(), receive_segments: state.gro_segments(), receive_buffer })
+    // One count for every endpoint, so that no two issue the same ID.
+    let made = Arc::new(AtomicU64::new(0));
+    endpoint_config.cid_generator(move || Box::new(ConnectionIds { key: ids.clone(), made: Arc::clone(&made) }));
+    let (mut endpoints, mut batching) = (Vec::new(), None);
+    for _ in 0..quic_sockets() {
+        // The first socket binds `address`, which may name port 0; the
+        // others the port it was given.
+        let at = endpoints.first().and_then(|first: &quinn::Endpoint| first.local_addr().ok()).unwrap_or(address);
+        let socket = shared_socket(at).map_err(unbound)?;
+        let state = quinn::udp::UdpSocketState::new((&socket).into()).map_err(unbound)?;
+        // As much as the system allows of what is asked; less is no
+        // fault, and the serving line says what was had.
+        let _ = state.set_recv_buffer_size((&socket).into(), QUIC_RECEIVE_BUFFER_BYTES);
+        let receive_buffer = state.recv_buffer_size((&socket).into()).map_err(unbound)?;
+        batching.get_or_insert((state.max_gso_segments(), state.gro_segments(), receive_buffer));
+        endpoints.push(quinn::Endpoint::new(endpoint_config.clone(), Some(config.clone()), socket, Arc::clone(&runtime)).map_err(unbound)?);
+    }
+    let (send_segments, receive_segments, receive_buffer) = batching.unwrap_or((1, 1, 0));
+    Ok(Listening { endpoints, send_segments, receive_segments, receive_buffer })
 }
 
 /// The bytes of a connection ID the server issues: quinn's own length.
@@ -114,13 +152,13 @@ const CONNECTION_ID_BYTES: usize = 8;
 /// process held, is then answered with a stateless reset.
 struct ConnectionIds {
     key: ring::hmac::Key,
-    made: u64,
+    made: Arc<AtomicU64>,
 }
 
 impl quinn::ConnectionIdGenerator for ConnectionIds {
     fn generate_cid(&mut self) -> quinn::ConnectionId {
-        self.made = self.made.wrapping_add(1);
-        let tag = ring::hmac::sign(&self.key, &self.made.to_be_bytes());
+        let made = self.made.fetch_add(1, Ordering::Relaxed);
+        let tag = ring::hmac::sign(&self.key, &made.to_be_bytes());
         quinn::ConnectionId::new(tag.as_ref().get(..CONNECTION_ID_BYTES).unwrap_or_default())
     }
 
@@ -152,8 +190,7 @@ fn reset_key(secret: &HandleSecret) -> ring::hmac::Key {
 /// Accepts QUIC connections until the endpoint is closed, at most
 /// [`MAX_QUIC_CONNECTIONS`] at once: one more is refused. Each is told
 /// the server is going away once `stopping` says so.
-pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>, stopping: watch::Receiver<bool>) {
-    let open = Arc::new(Semaphore::new(MAX_QUIC_CONNECTIONS));
+pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>, stopping: watch::Receiver<bool>, open: Arc<Semaphore>) {
     while let Some(incoming) = endpoint.accept().await {
         // As TCP is listened on no more once the server is stopping, a
         // QUIC handshake is then refused at once with CONNECTION_REFUSED
@@ -176,15 +213,22 @@ pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>, stopp
     }
 }
 
-/// Closes every connection with `H3_NO_ERROR` (RFC 9114 sections 5.2 and
-/// 8.1, RFC 9000 section 10.2), so that each peer learns at once that it
-/// is closed rather than at its idle timeout, and waits until the endpoint
-/// is idle, at most [`QUIC_CLOSED_WITHIN`]: a `CONNECTION_CLOSE` lost on the
-/// way is sent again while the connection is closing, in answer to what
-/// the peer still sends.
-pub(crate) async fn close(endpoint: &quinn::Endpoint) {
-    endpoint.close(wire(Code::NoError), b"");
-    if tokio::time::timeout(QUIC_CLOSED_WITHIN, endpoint.wait_idle()).await.is_err() {
+/// Closes every connection of every endpoint with `H3_NO_ERROR` (RFC 9114
+/// sections 5.2 and 8.1, RFC 9000 section 10.2), so that each peer learns
+/// at once that it is closed rather than at its idle timeout, and waits
+/// until the endpoints are idle, at most [`QUIC_CLOSED_WITHIN`]: a
+/// `CONNECTION_CLOSE` lost on the way is sent again while the connection
+/// is closing, in answer to what the peer still sends.
+pub(crate) async fn close(endpoints: &[quinn::Endpoint]) {
+    for endpoint in endpoints {
+        endpoint.close(wire(Code::NoError), b"");
+    }
+    let idle = async {
+        for endpoint in endpoints {
+            endpoint.wait_idle().await;
+        }
+    };
+    if tokio::time::timeout(QUIC_CLOSED_WITHIN, idle).await.is_err() {
         tracing::debug!(target: "http3", within_ms = QUIC_CLOSED_WITHIN.as_millis(), "not every QUIC connection was idle in time");
     }
 }

@@ -40,6 +40,7 @@ neoteletext-http3.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 quinn.workspace = true
+socket2.workspace = true
 listenfd.workspace = true
 # The handle secret's and the challenges' random bytes (DEC-6471).
 ring.workspace = true

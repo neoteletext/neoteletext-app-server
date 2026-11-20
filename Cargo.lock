@@ -1311,6 +1311,7 @@ dependencies = [
  "rcgen",
  "ring",
  "rustls",
+ "socket2",
  "teletext-runtime",
  "tokio",
  "tokio-rustls",

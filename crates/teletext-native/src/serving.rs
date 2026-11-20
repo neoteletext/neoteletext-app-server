@@ -25,7 +25,7 @@ use tokio_rustls::TlsAcceptor;
 use crate::http::{Routes, Source, TcpPlace, answer};
 use crate::limits::{
     H2_DEAD_AFTER_PING, H2_MAX_FRAME_BYTES, H2_PING_AFTER, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_HEADER_LIST_BYTES, MAX_PROXY_HEADER_BYTES,
-    MAX_TCP_CONNECTIONS, MAX_TLS_HANDSHAKES, PROXY_HEADER_WITHIN,
+    MAX_QUIC_CONNECTIONS, MAX_TCP_CONNECTIONS, MAX_TLS_HANDSHAKES, PROXY_HEADER_WITHIN,
 };
 use crate::proxy_protocol::{self, Header, Refused};
 use crate::tls::{ALPN_H2, Configured};
@@ -116,7 +116,8 @@ impl TcpBounds {
 pub struct Server {
     listener: TcpListener,
     secured: Option<Secured>,
-    quic: Option<quinn::Endpoint>,
+    /// The QUIC endpoints, one a socket on the one port; none without TLS.
+    quic: Vec<quinn::Endpoint>,
     /// What the system batches of QUIC's datagrams: the segments one send
     /// and one receive may carry.
     offload: Option<(usize, usize)>,
@@ -150,14 +151,14 @@ impl Server {
     pub fn start_bounded(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>, bounds: TcpBounds) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
         let Some(Direct { tls, public_port, proxy_protocol, reset_secret }) = direct else {
-            return Ok(Self { listener, secured: None, quic: None, offload: None, receive_buffer: None, routes, bounds });
+            return Ok(Self { listener, secured: None, quic: Vec::new(), offload: None, receive_buffer: None, routes, bounds });
         };
         let listening = http3::endpoint(tls, address, reset_secret)?;
         let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
         Ok(Self {
             listener,
             secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc, proxy: proxy_protocol.map(|proxy| proxy.to_canonical()) }),
-            quic: Some(listening.endpoint),
+            quic: listening.endpoints,
             offload: Some((listening.send_segments, listening.receive_segments)),
             receive_buffer: Some(listening.receive_buffer),
             routes,
@@ -179,10 +180,17 @@ impl Server {
         self.receive_buffer
     }
 
+    /// How many UDP sockets share the QUIC port, each with an endpoint of
+    /// its own; none without TLS.
+    #[must_use]
+    pub fn quic_sockets(&self) -> usize {
+        self.quic.len()
+    }
+
     /// The UDP address QUIC is served on, when it is.
     #[must_use]
     pub fn quic_address(&self) -> Option<SocketAddr> {
-        self.quic.as_ref().and_then(|endpoint| endpoint.local_addr().ok())
+        self.quic.first().and_then(|endpoint| endpoint.local_addr().ok())
     }
 
     /// Serves until `stopped` is ready, and then listens on TCP no more
@@ -193,8 +201,11 @@ impl Server {
     /// connections, once the channels have closed their own.
     pub async fn run(self, stopped: impl Future<Output = ()>) -> Stopped {
         let (stopping, told) = watch::channel(false);
-        if let Some(endpoint) = &self.quic {
-            tokio::spawn(http3::accept(endpoint.clone(), Arc::clone(&self.routes), told.clone()));
+        // One count of QUIC connections, however many sockets share the
+        // port.
+        let quic_places = Arc::new(Semaphore::new(MAX_QUIC_CONNECTIONS));
+        for endpoint in &self.quic {
+            tokio::spawn(http3::accept(endpoint.clone(), Arc::clone(&self.routes), told.clone(), Arc::clone(&quic_places)));
         }
         let open = Arc::new(Semaphore::new(self.bounds.connections));
         let handshakes = Arc::new(Semaphore::new(self.bounds.handshakes));
@@ -229,7 +240,7 @@ pub(crate) async fn until_stopping(mut told: watch::Receiver<bool>) {
 /// The viewers' address after it stopped listening on TCP.
 #[derive(Debug)]
 pub struct Stopped {
-    quic: Option<quinn::Endpoint>,
+    quic: Vec<quinn::Endpoint>,
     /// What told every connection the server is going away, kept so that
     /// none takes its end for the stop again.
     _stopping: watch::Sender<bool>,
@@ -239,9 +250,7 @@ impl Stopped {
     /// Closes every QUIC connection with `H3_NO_ERROR`, waiting until each
     /// has been told, at most [`crate::limits::QUIC_CLOSED_WITHIN`].
     pub async fn close(self) {
-        if let Some(endpoint) = self.quic {
-            http3::close(&endpoint).await;
-        }
+        http3::close(&self.quic).await;
     }
 }
 

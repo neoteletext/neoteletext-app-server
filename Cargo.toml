@@ -125,6 +125,11 @@ hyper-util = { version = "=0.1.21", default-features = false }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.6", default-features = false }
 quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# - socket2 (MIT OR Apache-2.0), the tokio project's sockets, already built
+#   for tokio and quinn with the same feature: the one way in safe Rust to
+#   let several UDP sockets share the QUIC port (SO_REUSEPORT), each with
+#   an endpoint of its own (REQ-7006, DEC-7007).
+socket2 = { version = "=0.6.5", default-features = false, features = ["all"] }
 # Logging (decision 18), approved by the owner on 28 October 2026: the
 # Rust ecosystem's structured logging, the tokio project's, MIT. Default
 # features off: no procedural macros; the `Targets` filter, not
