@@ -372,23 +372,41 @@ fn the_socket_unit_is_installed_and_names_the_services_address() {
     assert!(deploy.contains("enable --now neoteletext.socket"));
 }
 
-/// The deployment's proxy path: caddyrouter proxies `app.neottx.com` straight
-/// to the socket's address, trusted as the server's one proxy by the address
-/// it connects from, and the container's Caddy no longer proxies the server.
+/// The deployment's proxy path (DEC-6972, REQ-6974): caddyrouter's layer 4
+/// listener wrapper passes `app.neottx.com`'s TLS through to the socket's
+/// address with a PROXY protocol version 2 header, as does its site block
+/// for what Caddy itself ends; the server ends TLS, reads the header only
+/// from caddyrouter's address, and the container's Caddy proxies nothing to
+/// it.
 #[test]
-fn caddyrouter_proxies_the_server_directly_and_is_its_trusted_proxy() {
+fn caddyrouter_passes_the_server_through_and_is_its_trusted_proxy() {
     let unit = include_str!("../../../deploy/ionos/neoteletext.socket");
     let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let global = include_str!("../../../deploy/ionos/caddyrouter-global.caddy");
     let router = include_str!("../../../deploy/ionos/caddyrouter.caddy");
     let container = include_str!("../../../deploy/ionos/Caddyfile");
     let address = unit.lines().find_map(|line| line.strip_prefix("ListenStream=")).unwrap();
+    let settings =
+        |text: &str| -> Vec<String> { text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).map(String::from).collect() };
+    let options = settings(global);
+    let upstreams: Vec<&str> = options.iter().filter_map(|line| line.strip_prefix("upstream ")).collect();
+    assert_eq!(upstreams, [address], "the layer 4 route passes app.neottx.com to the socket and nowhere else");
+    for line in ["tls sni app.neottx.com", "not tls alpn acme-tls/1", "proxy_protocol v2", "tls"] {
+        assert!(options.iter().any(|option| option == line), "caddyrouter's global options lack {line:?}");
+    }
     let block =
         router.split("\napp.neottx.com {\n").nth(1).and_then(|rest| rest.split("\n}\n").next()).expect("caddyrouter has a block for app.neottx.com alone");
     let proxied: Vec<&str> = block.lines().filter_map(|line| line.trim().strip_prefix("reverse_proxy ")).collect();
-    assert_eq!(proxied, [format!("http://{address}")], "app.neottx.com goes to the socket and nowhere else");
+    assert_eq!(proxied, [format!("https://{address} {{")], "app.neottx.com's site block goes to the socket over TLS and nowhere else");
+    let block_settings = settings(block);
+    for line in ["tls_server_name app.neottx.com", "proxy_protocol v2"] {
+        assert!(block_settings.iter().any(|setting| setting == line), "app.neottx.com's site block lacks {line:?}");
+    }
     let (host_side, _) = address.split_once(':').unwrap();
     assert_eq!(host_side, "10.70.0.18", "the socket is on the container's veth address, which create_container.sh fixes");
-    assert!(deploy.contains("--trusted-proxy 10.70.0.17"), "caddyrouter connects from the host's side of the veth");
+    for option in ["--trusted-proxy 10.70.0.17 ", "--proxy-protocol", "--tls-certificate ", "--tls-key "] {
+        assert!(deploy.contains(option), "the service is started without {option:?}");
+    }
     assert!(!container.contains("app.neottx.com:") && !container.contains("8090"), "the container's Caddy proxies nothing to the server");
 }
 
