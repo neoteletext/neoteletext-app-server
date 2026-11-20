@@ -649,3 +649,64 @@ async fn a_hangup_reloads_the_certificate_for_new_handshakes() {
     before.connection.close(0_u32.into(), b"");
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+// ------------------------------------------------------- a peer that went
+
+/// A UDP relay between one client and the server, which forwards each
+/// way until `cut` is set and then drops everything: a client that has
+/// gone without a word, as one whose network fell away has.
+async fn relay(server: SocketAddr) -> (SocketAddr, Arc<std::sync::atomic::AtomicBool>) {
+    let outer = tokio::net::UdpSocket::bind(ANY_LOCAL_PORT).await.unwrap();
+    let inner = tokio::net::UdpSocket::bind(ANY_LOCAL_PORT).await.unwrap();
+    inner.connect(server).await.unwrap();
+    let address = outer.local_addr().unwrap();
+    let cut = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cutting = Arc::clone(&cut);
+    tokio::spawn(async move {
+        // The largest UDP payload.
+        let (mut from_client, mut from_server) = (vec![0_u8; 65_536], vec![0_u8; 65_536]);
+        let mut client = None;
+        loop {
+            let passing = !cutting.load(std::sync::atomic::Ordering::Relaxed);
+            tokio::select! {
+                Ok((count, sender)) = outer.recv_from(&mut from_client) => {
+                    client = Some(sender);
+                    if passing {
+                        let _ = inner.send(&from_client[..count]).await;
+                    }
+                }
+                Ok(count) = inner.recv(&mut from_server) => {
+                    if let (true, Some(client)) = (passing, client) {
+                        let _ = outer.send_to(&from_server[..count], client).await;
+                    }
+                }
+            }
+        }
+    });
+    (address, cut)
+}
+
+/// REQ-7002: a client that has gone without a word, its packets no longer
+/// arriving, holds a stop no longer than the wait for its WebSocket's
+/// Close to be acknowledged and for QUIC to close, and not until the
+/// channels' own bound (`STOP_WITHIN`, 10 seconds): before the wait was
+/// bounded, the stop waited for the acknowledgement that never comes, and
+/// the server exited 13 seconds after the signal.
+#[tokio::test]
+async fn a_client_that_went_holds_the_stop_for_its_bound_alone() {
+    let folder = scratch("gone");
+    let (certificate, key, trusted) = certificate(&folder, "server");
+    let mut server = Server::start(&folder, &certificate, &key);
+    let (relayed, cut) = relay(server.address).await;
+    let h3 = h3_to(relayed, &trusted).await;
+    let _socket = h3.push(server.address).await;
+    cut.store(true, std::sync::atomic::Ordering::Relaxed);
+    let signalled = Instant::now();
+    server.signal("TERM");
+    assert!(server.exited().await, "exit status 0");
+    let stopped = signalled.elapsed();
+    eprintln!("a stop with a client gone: exited {stopped:?} after the signal");
+    let bound = teletext_native::limits::STREAM_ACKNOWLEDGED_WITHIN + teletext_native::limits::QUIC_CLOSED_WITHIN;
+    assert!(stopped < bound + PROMPTLY, "within the stop's own bounds, not {stopped:?}");
+    let _ = std::fs::remove_dir_all(&folder);
+}

@@ -19,7 +19,7 @@ use neoteletext_http3::limits::MAX_FIELD_SECTION_BYTES;
 use neoteletext_http3::message::{self, CONNECTION_SPECIFIC, STATUS};
 use neoteletext_http3::stream::{Control, Message, MessageEvent, Opened, Role, Unidirectional, open_control};
 use neoteletext_http3::{Code, Error, Scope, frame, qpack, varint};
-use quinn::{RecvStream, SendStream, StoppedError, VarInt};
+use quinn::{RecvStream, SendStream, VarInt};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Semaphore, watch};
 
@@ -27,7 +27,7 @@ use crate::connection::serve_halves;
 use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
-    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES,
+    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES, STREAM_ACKNOWLEDGED_WITHIN,
 };
 use crate::serving::until_stopping;
 use crate::tls::Configured;
@@ -290,8 +290,9 @@ impl AsyncRead for Reading {
     }
 }
 
-/// The peer's acknowledgement of everything sent on a stream ended.
-type Acknowledged = Pin<Box<dyn Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync>>;
+/// The peer's acknowledgement of everything sent on a stream ended, or
+/// [`STREAM_ACKNOWLEDGED_WITHIN`] passing first.
+type Acknowledged = Pin<Box<dyn Future<Output = ()> + Send + Sync>>;
 
 /// A request stream's sending side as [`AsyncWrite`]: each write's bytes,
 /// up to [`H3_DATA_FRAME_BYTES`], go out as one DATA frame.
@@ -376,19 +377,24 @@ impl AsyncWrite for Writing {
 
     /// Ends the stream, after any frame begun, and is ready once the peer
     /// has acknowledged all of it (RFC 9000 section 3.1, "Data Recvd") or
-    /// stopped it, or the connection has ended: a WebSocket's Close, the
-    /// last frame on its stream, then reaches the peer before a stop
-    /// closes the connection, which would discard what is still in flight.
+    /// stopped it, or the connection has ended, or
+    /// [`STREAM_ACKNOWLEDGED_WITHIN`] has passed: a WebSocket's Close, the
+    /// last frame on its stream, then reaches a live peer before a stop
+    /// closes the connection, which would discard what is still in
+    /// flight, and a peer that has gone holds the stop no longer.
     fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         if this.acknowledged.is_none() {
             ready!(this.poll_rest(context))?;
             this.frame.clear();
             ready!(Pin::new(&mut this.send).poll_shutdown(context))?;
-            this.acknowledged = Some(Box::pin(this.send.stopped()));
+            let stopped = this.send.stopped();
+            this.acknowledged = Some(Box::pin(async move {
+                let _ = tokio::time::timeout(STREAM_ACKNOWLEDGED_WITHIN, stopped).await;
+            }));
         }
         match this.acknowledged.as_mut() {
-            Some(acknowledged) => acknowledged.as_mut().poll(context).map(|_| Ok(())),
+            Some(acknowledged) => acknowledged.as_mut().poll(context).map(Ok),
             None => Poll::Ready(Ok(())),
         }
     }

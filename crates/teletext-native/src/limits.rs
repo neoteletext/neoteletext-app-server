@@ -146,6 +146,19 @@ const _: () = assert!(MAX_TCP_CONNECTIONS > CONNECTIONS_WITH_OWN_PICTURES, "ever
 /// while what a stalled thousand hold is a thousand small buffers.
 pub const MAX_TLS_HANDSHAKES: usize = 1_024;
 
+/// How long the end of an HTTP/3 request stream waits for the peer to
+/// acknowledge what was sent on it (REQ-7002), so that a WebSocket's
+/// Close is not discarded by the connection's close that a stop sends
+/// next. A live peer acknowledges within a round trip and its
+/// acknowledgement delay (RFC 9000 section 13.2.1, 25 milliseconds unless
+/// it says otherwise); one second covers a slow path's few round trips
+/// and a lost packet's retransmission, and a peer that has gone, which
+/// never acknowledges, holds the stop, and the stream's task, no longer:
+/// without the bound it held them until the connection's idle timeout,
+/// and the stop until `STOP_WITHIN` (found 21 November 2026 with a load
+/// client killed before the stop).
+pub const STREAM_ACKNOWLEDGED_WITHIN: Duration = Duration::from_secs(1);
+
 /// How long a stop waits, after closing every QUIC connection with
 /// `H3_NO_ERROR`, for the endpoint to be idle before the server exits. A
 /// closed connection stays in its closing state for three times its probe
