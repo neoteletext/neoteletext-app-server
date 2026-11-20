@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 mod remote;
 mod waiting;
 
-pub use remote::{Claim, Door, LONGEST_MESSAGE as LONGEST_PROGRAM_MESSAGE};
+pub use remote::{Claim, Door, LONGEST_MESSAGE as LONGEST_PROGRAM_MESSAGE, Reading, Writing};
 pub use waiting::{Outgoing, ToProgram};
 
 /// The longest line either side may send, which `start` tells a program:

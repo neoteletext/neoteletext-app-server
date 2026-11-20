@@ -45,11 +45,13 @@ pub async fn serve(stream: TcpStream, early: &[u8], hub: Hub, connection: Connec
     serve_halves(reading, writing, early, hub, connection, address).await;
 }
 
-/// `serve` on the connection's two halves. The tests serve an in-memory
-/// stream, whose delivery tokio's stopped clock governs: a socket's
-/// is the kernel's, and the clock jumps to its next timer while a frame
-/// is in the kernel's hands.
-async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+/// `serve` on the connection's two halves, whatever carries them: a TLS
+/// session, or a stream of an HTTP/2 or HTTP/3 connection that an
+/// extended CONNECT opened (REQ-6966), each one connection to the channel
+/// as a socket is. The tests serve an in-memory stream, whose delivery
+/// tokio's stopped clock governs: a socket's is the kernel's, and the
+/// clock jumps to its next timer while a frame is in the kernel's hands.
+pub async fn serve_halves<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     mut reading: R,
     mut writing: W,
     early: &[u8],

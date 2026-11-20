@@ -24,7 +24,11 @@ neoteletext-core.workspace = true
 # The input protocol's writer, for teletext-load's HELLO and SELECT.
 neoteletext-input.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process", "signal", "fs"] }
-hyper = { workspace = true, features = ["server", "http1"] }
+# `http2` for `hyper::ext::Protocol`, what an extended CONNECT asks to
+# speak (RFC 8441 section 4), which the HTTP side reads (REQ-6966); it
+# brings the hyper project's `h2` (MIT), under the owner's standing
+# approval of pure-Rust libraries (DEC-6579).
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 listenfd.workspace = true
 # The handle secret's and the challenges' random bytes (DEC-6471).

@@ -8,8 +8,11 @@
 //! told it ended.
 //!
 //! The HTTP side checks the secret and claims the door before it answers
-//! 101, so that a second program while one is connected is answered 409
-//! and not upgraded; the claim goes when the connection does.
+//! 101, or 200 to an extended CONNECT over HTTP/2 or HTTP/3 (REQ-6966), so
+//! that a second program while one is connected is answered 409 and not
+//! upgraded; the claim goes when the connection does. What arrives is the
+//! connection's two halves, whatever carries them: a socket, a TLS
+//! session, or a stream of an HTTP/2 or HTTP/3 connection.
 //!
 //! **Keepalive:** a program's connection crosses networks whose devices
 //! forget quiet connections, and one whose machine is gone leaves no end to
@@ -23,7 +26,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use neoteletext_web::consts::{CLOSE_PROTOCOL_ERROR, CLOSE_TOO_BIG};
 use teletext_runtime::landing::{program_admitted, program_lines};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
@@ -43,13 +45,24 @@ const READ_BYTES: usize = 64 * 1024;
 /// 5.5.3 allows of a pong when pings come faster than they are answered.
 const CONTROL_FRAMES: usize = 4;
 
+/// The half of a WebSocket's connection that is read, whatever carries it.
+pub type Reading = Box<dyn AsyncRead + Send + Unpin>;
+/// The half that is written.
+pub type Writing = Box<dyn AsyncWrite + Send + Unpin>;
+
 /// A connection of the program's, upgraded, with what was read past its
 /// upgrade, and the claim that keeps a second program out while it lasts.
-#[derive(Debug)]
 pub struct Arrival {
-    stream: TcpStream,
+    reading: Reading,
+    writing: Writing,
     early: Vec<u8>,
     claim: Claim,
+}
+
+impl std::fmt::Debug for Arrival {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Arrival").field("early", &self.early.len()).field("claim", &self.claim).finish_non_exhaustive()
+    }
 }
 
 /// The HTTP side's way in for a channel's program over a WebSocket.
@@ -86,8 +99,8 @@ impl Door {
 
     /// Hands an upgraded connection to the channel's program task. It is
     /// dropped, and the claim with it, when the channel has stopped.
-    pub async fn arrive(&self, stream: TcpStream, early: Vec<u8>, claim: Claim) {
-        let _ = self.arrivals.send(Arrival { stream, early, claim }).await;
+    pub async fn arrive(&self, reading: Reading, writing: Writing, early: Vec<u8>, claim: Claim) {
+        let _ = self.arrivals.send(Arrival { reading, writing, early, claim }).await;
     }
 }
 
@@ -101,13 +114,11 @@ pub fn door(secret: Secret) -> (Door, mpsc::Receiver<Arrival>) {
 /// Serves each program that comes in by the door, one at a time, until the
 /// channel stops.
 pub async fn await_programs(folder: String, mut arriving: mpsc::Receiver<Arrival>, arrived: mpsc::Sender<FromApplication>, mut outgoing: Outgoing) {
-    while let Some(Arrival { stream, early, claim }) = arriving.recv().await {
-        let _ = stream.set_nodelay(true);
+    while let Some(Arrival { reading, writing, early, claim }) = arriving.recv().await {
         tracing::info!(target: "program", channel = folder, "the program connected over a WebSocket");
         if !started(&arrived, &mut outgoing).await {
             return;
         }
-        let (reading, writing) = stream.into_split();
         let reason = relay(reading, writing, &early, &arrived, &mut outgoing).await;
         tracing::info!(target: "program", channel = folder, reason, "the program went");
         if arrived.send(FromApplication::Ended).await.is_err() {
