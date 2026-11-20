@@ -218,9 +218,13 @@ pub const STREAM_ACKNOWLEDGED_WITHIN: Duration = Duration::from_secs(1);
 /// `H3_NO_ERROR`, for the endpoint to be idle before the server exits. A
 /// closed connection stays in its closing state for three times its probe
 /// timeout (RFC 9000 section 10.2), answering what still arrives with its
-/// `CONNECTION_CLOSE` again, so that a peer whose first copy was lost still
-/// learns of the close at once rather than at its idle timeout; on the
-/// paths the server's viewers have, three probe timeouts are well under a
-/// second, and three seconds keeps the whole stop within the unit's
-/// `TimeoutStopSec` with the channels' own time.
-pub const QUIC_CLOSED_WITHIN: Duration = Duration::from_secs(3);
+/// `CONNECTION_CLOSE` again; on the server's viewers' paths three probe
+/// timeouts are well under a second. A peer whose every copy was lost is
+/// told by the next process instead, with a stateless reset, so the wait
+/// need not be longer; and the next process cannot take the UDP port
+/// until this one has gone, so every second here is a second no QUIC
+/// handshake is answered. Measured 21 November 2026 under 10,000 HTTP/3
+/// tabs, the wait reached its bound of three seconds then, the stop took
+/// 4.1 seconds, and the next process had the tabs back 2.3 seconds after
+/// it started.
+pub const QUIC_CLOSED_WITHIN: Duration = Duration::from_secs(1);
