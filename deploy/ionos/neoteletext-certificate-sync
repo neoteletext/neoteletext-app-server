@@ -3,8 +3,10 @@
 # (container caddyrouter) keeps for app.neottx.com, which the server ends TLS
 # with since caddyrouter passes the name's TLS through (neoteletext-app-server
 # DEC-6972). Run by neoteletext-certificate.path whenever Caddy writes the
-# certificate or its key; installs only a matching pair, and restarts the
-# server only when the pair changed, since it reads them at start.
+# certificate or its key; installs only a matching pair, and only when the
+# pair changed asks the server to reload it (its SIGHUP, neoteletext-app-server
+# REQ-7003), which it uses for every handshake from then on without closing
+# any connection.
 set -euo pipefail
 source_dir=/var/lib/machines/caddyrouter/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/app.neottx.com
 target_dir=/var/lib/machines/neoteletext/opt/neoteletext/tls
@@ -30,7 +32,7 @@ install -o "$owner" -g "$owner" -m 0600 "$key" "$target_dir/app.neottx.com.key.n
 mv "$target_dir/app.neottx.com.key.new" "$target_dir/app.neottx.com.key"
 mv "$target_dir/app.neottx.com.crt.new" "$target_dir/app.neottx.com.crt"
 echo "installed $(openssl x509 -in "$target_dir/app.neottx.com.crt" -noout -enddate)"
-if [ "${1:-}" != "--no-restart" ] && systemctl -M neoteletext is-active --quiet neoteletext.service; then
-    systemctl -M neoteletext restart neoteletext.service
-    echo "server restarted"
+if [ "${1:-}" != "--no-reload" ] && systemctl -M neoteletext is-active --quiet neoteletext.service; then
+    systemctl -M neoteletext reload neoteletext.service
+    echo "server reloaded"
 fi

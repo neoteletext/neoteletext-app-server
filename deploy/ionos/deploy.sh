@@ -243,9 +243,10 @@ ssh "$target" 'set -e
 say "the certificate sync on $host, and the server's certificate"
 # The server ends TLS with the certificate Caddy keeps for app.neottx.com
 # (DEC-6972); the path unit copies it into the container whenever Caddy
-# renews it. Each file is installed only when it differs, and the sync is
-# run once here, without restarting the server, so the certificate is in
-# place before the service below starts.
+# renews it, and asks the server to reload it (REQ-7003). Each file is
+# installed only when it differs, and the sync is run once here, without
+# reloading the server, so the certificate is in place before the service
+# below starts.
 # shellcheck disable=SC2029
 if ! ssh "$host" "sudo cmp -s - $certificate_sync" < "$here/neoteletext-certificate-sync"; then
     ssh "$host" "sudo install -m 755 /dev/stdin $certificate_sync.new && sudo mv $certificate_sync.new $certificate_sync" < "$here/neoteletext-certificate-sync"
@@ -261,7 +262,7 @@ done
 # shellcheck disable=SC2029
 ssh "$host" "set -e; if [ $units_changed = yes ]; then sudo systemctl daemon-reload; fi
     sudo systemctl enable --now neoteletext-certificate.path >/dev/null 2>&1
-    sudo $certificate_sync --no-restart"
+    sudo $certificate_sync --no-reload"
 # shellcheck disable=SC2029
 ssh "$target" "sudo test -s $app/tls/app.neottx.com.crt && sudo test -s $app/tls/app.neottx.com.key" ||
     die "no certificate and key in the container's $app/tls; the server could not start (see $certificate_sync's output above)"
@@ -311,6 +312,9 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # the container's loopback, which nothing outside the container reaches.
 StateDirectory=neoteletext
 ExecStart=$app/bin/teletext-server --listen 10.70.0.18:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 10.70.0.17 --tls-certificate $app/tls/app.neottx.com.crt --tls-key $app/tls/app.neottx.com.key --proxy-protocol
+# SIGHUP reads the certificate and key again for new handshakes, closing
+# no connection (REQ-7003); the certificate sync asks for it.
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 # The server stops within 10 s of SIGTERM (requirement 5.1).
 TimeoutStopSec=15

@@ -410,6 +410,22 @@ fn caddyrouter_passes_the_server_through_and_is_its_trusted_proxy() {
     assert!(!container.contains("app.neottx.com:") && !container.contains("8090"), "the container's Caddy proxies nothing to the server");
 }
 
+/// REQ-7003: a renewed certificate is taken by a reload and not a
+/// restart. The unit the deploy script writes reloads by `SIGHUP`, and
+/// the certificate sync asks systemd for a reload, never a restart, still
+/// installing only a matching pair and only when it changed.
+#[test]
+fn a_renewed_certificate_reloads_the_service_and_does_not_restart_it() {
+    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let sync = include_str!("../../../deploy/ionos/neoteletext-certificate-sync");
+    assert!(deploy.contains("ExecReload=/bin/kill -HUP \\$MAINPID\n"), "the unit reloads the server by SIGHUP");
+    assert!(sync.contains("systemctl -M neoteletext reload neoteletext.service"), "the sync reloads the server");
+    assert!(!sync.contains(" restart "), "the sync never restarts the server");
+    assert!(sync.contains("-pubkey | sha256sum)\" != \"$(openssl pkey -in \"$key\" -pubout | sha256sum)"), "only a matching pair is installed");
+    assert!(sync.contains("cmp -s \"$certificate\""), "only a changed pair is installed");
+    assert!(deploy.contains("$certificate_sync --no-reload"), "the deploy's own run of the sync reloads nothing");
+}
+
 /// DEC-1759 lesson 18: an upgrade that carries `Origin` is a web page's
 /// script, and is refused, whatever it offers. Lesson 14: an upgrade that does
 /// not offer this version's subprotocol is refused and told what is spoken.

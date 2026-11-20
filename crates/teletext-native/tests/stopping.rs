@@ -84,7 +84,7 @@ struct Server {
     child: Child,
     address: SocketAddr,
     /// Its log, read up to its `serving` event.
-    _stderr: BufReader<ChildStderr>,
+    stderr: BufReader<ChildStderr>,
 }
 
 impl Drop for Server {
@@ -121,7 +121,7 @@ impl Server {
         let mut stderr = BufReader::new(child.stderr.take().unwrap());
         let serving = Self::until(&mut stderr, "serving");
         let address = serving.get("fields").and_then(|fields| fields.get("listen")).and_then(Value::text).unwrap().parse().unwrap();
-        Self { child, address, _stderr: stderr }
+        Self { child, address, stderr }
     }
 
     /// The next event of the log whose message is `wanted`.
@@ -131,6 +131,18 @@ impl Server {
             assert_ne!(stderr.read_line(&mut line).unwrap(), 0, "the server's log ended before {wanted:?}");
             let event = json::parse(line.trim_end().as_bytes()).unwrap();
             if message(&event) == Some(wanted) {
+                return event;
+            }
+        }
+    }
+
+    /// The next event of the log whose message is one of `wanted`.
+    fn next_of(&mut self, wanted: &[&str]) -> Value {
+        loop {
+            let mut line = String::new();
+            assert_ne!(self.stderr.read_line(&mut line).unwrap(), 0, "the server's log ended before any of {wanted:?}");
+            let event = json::parse(line.trim_end().as_bytes()).unwrap();
+            if message(&event).is_some_and(|message| wanted.contains(&message)) {
                 return event;
             }
         }
@@ -441,5 +453,126 @@ async fn a_stop_sends_an_http2_client_goaway() {
     assert!(refused.is_go_away() && refused.is_remote(), "GOAWAY from the server, not {refused:?}");
     assert_eq!(refused.reason(), Some(h2::Reason::NO_ERROR));
     assert!(server.exited().await, "exit status 0");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+// ---------------------------------------------------------- reloading
+
+/// What the server's log says of a reload.
+const RELOADED: &str = "the certificate and key were reloaded";
+const NOT_RELOADED: &str = "the certificate and key were not reloaded: the pair in use is kept";
+
+/// A client's TLS that trusts any certificate and remembers none: it is
+/// there to see which certificate the server presents.
+#[derive(Debug)]
+struct Shown;
+
+impl rustls::client::danger::ServerCertVerifier for Shown {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls12_signature(message, certificate, signature, &algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls13_signature(message, certificate, signature, &algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// A client's TLS that offers `alpn` and takes whatever certificate the
+/// server presents, after checking its signature.
+fn shown_tls(alpn: &[u8]) -> rustls::ClientConfig {
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(Shown))
+        .with_no_client_auth();
+    config.alpn_protocols = vec![alpn.to_vec()];
+    config
+}
+
+/// The certificate the server presents to a new TLS handshake over TCP.
+async fn certificate_over_tcp(address: SocketAddr) -> CertificateDer<'static> {
+    let stream = TcpStream::connect(address).await.unwrap();
+    let session = timeout(WITHIN, TlsConnector::from(Arc::new(shown_tls(ALPN_H2))).connect(ServerName::try_from(HOST).unwrap(), stream))
+        .await
+        .expect("a TLS handshake in time")
+        .unwrap();
+    session.get_ref().1.peer_certificates().unwrap()[0].clone().into_owned()
+}
+
+/// The certificate the server presents to a new QUIC handshake.
+async fn certificate_over_quic(address: SocketAddr) -> CertificateDer<'static> {
+    let mut endpoint = quinn::Endpoint::client(ANY_LOCAL_PORT.parse().unwrap()).unwrap();
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(shown_tls(ALPN_H3)).unwrap())));
+    let connection = timeout(WITHIN, endpoint.connect(address, HOST).unwrap()).await.expect("a QUIC handshake in time").unwrap();
+    let chain = connection.peer_identity().unwrap().downcast::<Vec<CertificateDer<'static>>>().unwrap();
+    connection.close(0_u32.into(), b"");
+    endpoint.wait_idle().await;
+    chain[0].clone()
+}
+
+/// REQ-7003: at `SIGHUP` the server reads its certificate and key again
+/// and presents the new certificate to every new TLS handshake over TCP
+/// and every new QUIC handshake, while a connection made before goes on
+/// being served; a pair that does not load (here a key that is not the
+/// certificate's) is logged and the pair in use kept; and the server
+/// does not stop. Before REQ-7003 `SIGHUP` ended the server.
+#[tokio::test]
+async fn a_hangup_reloads_the_certificate_for_new_handshakes() {
+    let folder = scratch("reload");
+    let (certificate, key, first) = certificate(&folder, "server");
+    let mut server = Server::start(&folder, &certificate, &key);
+    assert_eq!(certificate_over_tcp(server.address).await, first);
+    assert_eq!(certificate_over_quic(server.address).await, first);
+    let before = h3_to(server.address, &first).await;
+    let _socket = before.push(server.address).await;
+
+    let (renewed_certificate, renewed_key, renewed) = self::certificate(&folder, "renewed");
+    std::fs::rename(&renewed_key, &key).unwrap();
+    std::fs::rename(&renewed_certificate, &certificate).unwrap();
+    server.signal("HUP");
+    assert_eq!(message(&server.next_of(&[RELOADED, NOT_RELOADED])), Some(RELOADED));
+    assert_eq!(certificate_over_tcp(server.address).await, renewed, "TCP's next handshake has the new certificate");
+    assert_eq!(certificate_over_quic(server.address).await, renewed, "QUIC's next handshake has the new certificate");
+    let _again = before.push(server.address).await;
+
+    let (_, unrelated_key, _) = self::certificate(&folder, "unrelated");
+    std::fs::rename(&unrelated_key, &key).unwrap();
+    server.signal("HUP");
+    let refused = server.next_of(&[RELOADED, NOT_RELOADED]);
+    assert_eq!(message(&refused), Some(NOT_RELOADED));
+    let error = refused.get("fields").and_then(|fields| fields.get("error")).and_then(Value::text).unwrap().to_owned();
+    assert!(error.contains("is not the key of the certificate"), "{error}");
+    assert_eq!(certificate_over_tcp(server.address).await, renewed, "the pair in use is kept");
+    assert_eq!(certificate_over_quic(server.address).await, renewed, "the pair in use is kept");
+    assert!(server.child.try_wait().unwrap().is_none(), "the server is still running");
+    before.connection.close(0_u32.into(), b"");
     let _ = std::fs::remove_dir_all(&folder);
 }

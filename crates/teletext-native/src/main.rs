@@ -32,9 +32,12 @@
 //! every answer over TCP names HTTP/3 at in `Alt-Svc`: the port viewers
 //! reach the server at, which is not the listening port when a proxy
 //! relays connections to it (DEC-6972). The
-//! files are read once, at start, and a file that cannot be read, or a key
-//! that is not the certificate's, stops the server there. Without them the
-//! server serves plain HTTP/1.1 and listens on no UDP port.
+//! files are read at start, and a file that cannot be read, or a key that
+//! is not the certificate's, stops the server there. They are read again
+//! at `SIGHUP` (REQ-7003): a pair that loads is used for every TLS and
+//! QUIC handshake from then on, connections already made keeping theirs,
+//! and a pair that does not is logged and the pair in use kept. Without
+//! them the server serves plain HTTP/1.1 and listens on no UDP port.
 //!
 //! `--proxy-protocol`, with `--trusted-proxy` and the two TLS options, is
 //! for a proxy that relays viewers' TLS connections to the server still
@@ -257,6 +260,9 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     // Before any channel's program is started: a certificate or key that
     // cannot be used stops the server here (REQ-6965).
     let secured = serving::secure(arguments.tls.as_ref())?;
+    // Before the server is said to be serving, so that a `SIGHUP` from then
+    // on reloads and never ends the process, as its default would.
+    reload_on_hangup(secured.clone(), arguments.tls.clone())?;
     let proxy_protocol = if arguments.proxy_protocol { arguments.trusted_proxy } else { None };
     let direct =
         secured.as_ref().map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port, proxy_protocol })).transpose()?;
@@ -395,6 +401,36 @@ async fn keep_figures(stats: &ServerStats, kept: Option<&StateDirectory>) {
         Ok(Err(error)) => tracing::error!(target: "state", %error, "the accumulated figures could not be kept"),
         Err(error) => tracing::error!(target: "state", %error, "keeping the accumulated figures failed"),
     }
+}
+
+/// Reads the certificate and key again at each `SIGHUP` (REQ-7003), for
+/// the TLS and QUIC handshakes that follow; a pair that does not load is
+/// logged and the pair in use kept. Without TLS there is nothing to read,
+/// and the signal is logged and otherwise ignored.
+///
+/// # Errors
+/// A handler for the signal that cannot be installed.
+fn reload_on_hangup(secured: Option<tls::Configured>, files: Option<tls::Files>) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut hangup = signal(SignalKind::hangup()).map_err(|error| format!("cannot take SIGHUP, which reloads the certificate: {error}"))?;
+        tokio::spawn(async move {
+            while hangup.recv().await.is_some() {
+                let (Some(secured), Some(files)) = (&secured, &files) else {
+                    tracing::info!(target: "tls", "SIGHUP: no certificate to reload, the server serves no TLS");
+                    continue;
+                };
+                match secured.reload(files) {
+                    Ok(()) => tracing::info!(target: "tls", certificate = %files.certificate.display(), "the certificate and key were reloaded"),
+                    Err(error) => tracing::warn!(target: "tls", %error, "the certificate and key were not reloaded: the pair in use is kept"),
+                }
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    drop((secured, files));
+    Ok(())
 }
 
 /// `SIGTERM` or `SIGINT`, whichever comes first.
