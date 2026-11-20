@@ -4,6 +4,7 @@
 //! a stream that an extended CONNECT opened (RFC 9220) is then served as
 //! a WebSocket's connection, its bytes the payload of DATA frames.
 
+use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
@@ -18,17 +19,23 @@ use neoteletext_http3::limits::MAX_FIELD_SECTION_BYTES;
 use neoteletext_http3::message::{self, CONNECTION_SPECIFIC, STATUS};
 use neoteletext_http3::stream::{Control, Message, MessageEvent, Opened, Role, Unidirectional, open_control};
 use neoteletext_http3::{Code, Error, Scope, frame, qpack, varint};
-use quinn::{RecvStream, SendStream, VarInt};
+use quinn::{RecvStream, SendStream, StoppedError, VarInt};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 use crate::connection::serve_halves;
 use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
-    QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES,
+    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES,
 };
+use crate::serving::until_stopping;
 use crate::tls::Configured;
+
+/// Client-initiated bidirectional streams are numbered 0, 4, 8 and on:
+/// a stream identifier's two low bits are its type (RFC 9000 section
+/// 2.1), so the next of one type is four on.
+const STREAM_ID_STEP: u64 = 4;
 
 /// An error code as QUIC carries it.
 fn wire(code: Code) -> VarInt {
@@ -54,8 +61,9 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<quinn::E
 }
 
 /// Accepts QUIC connections until the endpoint is closed, at most
-/// [`MAX_QUIC_CONNECTIONS`] at once: one more is refused.
-pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>) {
+/// [`MAX_QUIC_CONNECTIONS`] at once: one more is refused. Each is told
+/// the server is going away once `stopping` says so.
+pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>, stopping: watch::Receiver<bool>) {
     let open = Arc::new(Semaphore::new(MAX_QUIC_CONNECTIONS));
     while let Some(incoming) = endpoint.accept().await {
         let Ok(place) = Arc::clone(&open).try_acquire_owned() else {
@@ -63,18 +71,25 @@ pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>) {
             continue;
         };
         let routes = Arc::clone(&routes);
+        let stopping = stopping.clone();
         tokio::spawn(async move {
-            connection(incoming, routes).await;
+            connection(incoming, routes, stopping).await;
             drop(place);
         });
     }
 }
 
-/// Closes every connection (RFC 9114 section 8.1: `H3_NO_ERROR`) and
-/// waits until each peer has been told, or its idle time has passed.
+/// Closes every connection with `H3_NO_ERROR` (RFC 9114 sections 5.2 and
+/// 8.1, RFC 9000 section 10.2), so that each peer learns at once that it
+/// is closed rather than at its idle timeout, and waits until the endpoint
+/// is idle, at most [`QUIC_CLOSED_WITHIN`]: a `CONNECTION_CLOSE` lost on the
+/// way is sent again while the connection is closing, in answer to what
+/// the peer still sends.
 pub(crate) async fn close(endpoint: &quinn::Endpoint) {
     endpoint.close(wire(Code::NoError), b"");
-    endpoint.wait_idle().await;
+    if tokio::time::timeout(QUIC_CLOSED_WITHIN, endpoint.wait_idle()).await.is_err() {
+        tracing::debug!(target: "http3", within_ms = QUIC_CLOSED_WITHIN.as_millis(), "not every QUIC connection was idle in time");
+    }
 }
 
 /// Ends the connection with a connection error (RFC 9114 section 8).
@@ -84,8 +99,9 @@ fn fail(connection: &quinn::Connection, code: Code) {
 }
 
 /// Serves one QUIC connection: its control stream out, the peer's
-/// unidirectional streams in, and each bidirectional stream a request.
-async fn connection(incoming: quinn::Incoming, routes: Arc<Routes>) {
+/// unidirectional streams in, and each bidirectional stream a request;
+/// and when the server stops, GOAWAY on its control stream.
+async fn connection(incoming: quinn::Incoming, routes: Arc<Routes>, stopping: watch::Receiver<bool>) {
     let Ok(Ok(connection)) = tokio::time::timeout(HANDSHAKE_WITHIN, incoming).await else { return };
     let peer = connection.remote_address().ip();
     // RFC 9114 section 6.2.1: each side opens one control stream, SETTINGS
@@ -97,15 +113,41 @@ async fn connection(incoming: quinn::Incoming, routes: Arc<Routes>) {
         return;
     }
     let opened = Arc::new(Mutex::new(Opened::new(Role::Server)));
+    // The lowest request stream identifier not yet accepted, which GOAWAY
+    // names (RFC 9114 section 5.2).
+    let mut next_request = 0_u64;
+    let mut going_away = false;
     loop {
         tokio::select! {
             stream = connection.accept_bi() => {
-                let Ok((send, recv)) = stream else { break };
+                let Ok((mut send, mut recv)) = stream else { break };
+                if going_away {
+                    // RFC 9114 section 5.2: a request on a stream at or
+                    // past the identifier GOAWAY named is not processed.
+                    abandon(&mut send, &mut recv, Code::RequestRejected);
+                    continue;
+                }
+                next_request = next_request.max(VarInt::from(send.id()).into_inner().saturating_add(STREAM_ID_STEP));
                 tokio::spawn(request(Arc::clone(&routes), connection.clone(), send, recv, peer));
             }
             stream = connection.accept_uni() => {
                 let Ok(recv) = stream else { break };
                 tokio::spawn(unidirectional(connection.clone(), recv, Arc::clone(&opened)));
+            }
+            () = until_stopping(stopping.clone()), if !going_away => {
+                // RFC 9114 section 5.2: a server shutting down sends
+                // GOAWAY, naming the first request it will not process,
+                // and goes on serving those before it, here each channel's
+                // WebSockets until the channel closes them.
+                going_away = true;
+                let mut payload = Vec::new();
+                varint::encode(next_request, &mut payload);
+                let mut goaway = Vec::new();
+                frame::write(frame::GOAWAY, &payload, &mut goaway);
+                if control.write_all(&goaway).await.is_err() {
+                    break;
+                }
+                tracing::debug!(target: "http3", peer = %connection.remote_address(), next_request, "GOAWAY sent");
             }
         }
     }
@@ -248,10 +290,15 @@ impl AsyncRead for Reading {
     }
 }
 
+/// The peer's acknowledgement of everything sent on a stream ended.
+type Acknowledged = Pin<Box<dyn Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync>>;
+
 /// A request stream's sending side as [`AsyncWrite`]: each write's bytes,
 /// up to [`H3_DATA_FRAME_BYTES`], go out as one DATA frame.
 struct Writing {
     send: SendStream,
+    /// Once the stream is ended: until the peer has everything on it.
+    acknowledged: Option<Acknowledged>,
     /// The frame being written, its header first; empty between writes.
     frame: Vec<u8>,
     /// Where its payload starts.
@@ -262,7 +309,7 @@ struct Writing {
 
 impl Writing {
     const fn new(send: SendStream) -> Self {
-        Self { send, frame: Vec::new(), payload: 0, sent: 0 }
+        Self { send, acknowledged: None, frame: Vec::new(), payload: 0, sent: 0 }
     }
 
     /// Writes `slices` as one DATA frame, as far as [`H3_DATA_FRAME_BYTES`]
@@ -327,12 +374,23 @@ impl AsyncWrite for Writing {
         Pin::new(&mut self.get_mut().send).poll_flush(context)
     }
 
-    /// Ends the stream, after any frame begun.
+    /// Ends the stream, after any frame begun, and is ready once the peer
+    /// has acknowledged all of it (RFC 9000 section 3.1, "Data Recvd") or
+    /// stopped it, or the connection has ended: a WebSocket's Close, the
+    /// last frame on its stream, then reaches the peer before a stop
+    /// closes the connection, which would discard what is still in flight.
     fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        ready!(this.poll_rest(context))?;
-        this.frame.clear();
-        Pin::new(&mut this.send).poll_shutdown(context)
+        if this.acknowledged.is_none() {
+            ready!(this.poll_rest(context))?;
+            this.frame.clear();
+            ready!(Pin::new(&mut this.send).poll_shutdown(context))?;
+            this.acknowledged = Some(Box::pin(this.send.stopped()));
+        }
+        match this.acknowledged.as_mut() {
+            Some(acknowledged) => acknowledged.as_mut().poll(context).map(|_| Ok(())),
+            None => Poll::Ready(Ok(())),
+        }
     }
 }
 

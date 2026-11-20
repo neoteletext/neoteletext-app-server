@@ -118,3 +118,14 @@ pub const H3_READ_BYTES: usize = 4 * 1024;
 /// The largest DATA frame the server writes on an HTTP/3 stream: one
 /// write's bytes, up to this, are one frame.
 pub const H3_DATA_FRAME_BYTES: usize = 16 * 1024;
+
+/// How long a stop waits, after closing every QUIC connection with
+/// `H3_NO_ERROR`, for the endpoint to be idle before the server exits. A
+/// closed connection stays in its closing state for three times its probe
+/// timeout (RFC 9000 section 10.2), answering what still arrives with its
+/// `CONNECTION_CLOSE` again, so that a peer whose first copy was lost still
+/// learns of the close at once rather than at its idle timeout; on the
+/// paths the server's viewers have, three probe timeouts are well under a
+/// second, and three seconds keeps the whole stop within the unit's
+/// `TimeoutStopSec` with the channels' own time.
+pub const QUIC_CLOSED_WITHIN: Duration = Duration::from_secs(3);

@@ -19,6 +19,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 
 use crate::http::{Routes, Source, answer};
@@ -127,12 +128,16 @@ impl Server {
         self.quic.as_ref().and_then(|endpoint| endpoint.local_addr().ok())
     }
 
-    /// Serves until `stopped` is ready, and then listens on TCP no more.
-    /// Connections already made go on; what is returned ends QUIC's, once
-    /// the channels have closed theirs.
+    /// Serves until `stopped` is ready, and then listens on TCP no more
+    /// and tells every connection the server is going away: GOAWAY on
+    /// HTTP/2 (RFC 9113 section 6.8) and HTTP/3 (RFC 9114 section 5.2), and
+    /// on HTTP/1.1 a connection between requests is closed. Requests and
+    /// WebSocket connections already open go on; what is returned ends QUIC's
+    /// connections, once the channels have closed their own.
     pub async fn run(self, stopped: impl Future<Output = ()>) -> Stopped {
+        let (stopping, told) = watch::channel(false);
         if let Some(endpoint) = &self.quic {
-            tokio::spawn(http3::accept(endpoint.clone(), Arc::clone(&self.routes)));
+            tokio::spawn(http3::accept(endpoint.clone(), Arc::clone(&self.routes), told.clone()));
         }
         tokio::pin!(stopped);
         loop {
@@ -140,23 +145,34 @@ impl Server {
                 accepted = self.listener.accept() => {
                     let Ok((stream, peer)) = accepted else { continue };
                     let _ = stream.set_nodelay(true);
-                    tokio::spawn(connection(stream, peer, Arc::clone(&self.routes), self.secured.clone()));
+                    tokio::spawn(connection(stream, peer, Arc::clone(&self.routes), self.secured.clone(), told.clone()));
                 }
                 () = &mut stopped => break,
             }
         }
-        Stopped { quic: self.quic }
+        stopping.send_replace(true);
+        Stopped { quic: self.quic, _stopping: stopping }
     }
+}
+
+/// Ready once the server is stopping: once `told` says so, or its sender,
+/// held until the server has stopped, is gone.
+pub(crate) async fn until_stopping(mut told: watch::Receiver<bool>) {
+    let _ = told.wait_for(|stopping| *stopping).await;
 }
 
 /// The viewers' address after it stopped listening on TCP.
 #[derive(Debug)]
 pub struct Stopped {
     quic: Option<quinn::Endpoint>,
+    /// What told every connection the server is going away, kept so that
+    /// none takes its end for the stop again.
+    _stopping: watch::Sender<bool>,
 }
 
 impl Stopped {
-    /// Closes every QUIC connection, waiting until each has been told.
+    /// Closes every QUIC connection with `H3_NO_ERROR`, waiting until each
+    /// has been told, at most [`crate::limits::QUIC_CLOSED_WITHIN`].
     pub async fn close(self) {
         if let Some(endpoint) = self.quic {
             http3::close(&endpoint).await;
@@ -229,10 +245,28 @@ async fn relayed(stream: &mut TcpStream, peer: SocketAddr, proxy: IpAddr) -> Res
     }
 }
 
+/// Serves `$connection`, one of hyper's, until it ends; once the server is
+/// stopping (`$told`), it is shut down gracefully (hyper's
+/// `graceful_shutdown`: GOAWAY over HTTP/2, RFC 9113 section 6.8, and over
+/// HTTP/1.1 no further request), and served until what it has open ends.
+macro_rules! served {
+    ($connection:expr, $told:expr) => {{
+        let connection = $connection;
+        tokio::pin!(connection);
+        tokio::select! {
+            _ = connection.as_mut() => {}
+            () = until_stopping($told) => {
+                connection.as_mut().graceful_shutdown();
+                let _ = connection.await;
+            }
+        }
+    }};
+}
+
 /// Serves one TCP connection: HTTP/1.1 as it is, or, under TLS, what the
 /// client chose of HTTP/2 and HTTP/1.1 (RFC 7301), after the PROXY
 /// protocol header when a proxy relays the connection.
-async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, secured: Option<Secured>) {
+async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, secured: Option<Secured>, told: watch::Receiver<bool>) {
     let proxy = secured.as_ref().and_then(|secured| secured.proxy);
     let source = match proxy {
         None => Source::Peer(peer.ip()),
@@ -258,12 +292,13 @@ async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>
         }
     });
     let Some(secured) = secured else {
-        let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
+        served!(http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades(), told);
         return;
     };
     let Ok(Ok(session)) = tokio::time::timeout(HANDSHAKE_WITHIN, secured.acceptor.accept(stream)).await else { return };
     if session.get_ref().1.alpn_protocol() == Some(ALPN_H2) {
-        let _ = http2::Builder::new(TokioExecutor::new())
+        let mut builder = http2::Builder::new(TokioExecutor::new());
+        builder
             .timer(TokioTimer::new())
             // RFC 8441 section 3: SETTINGS_ENABLE_CONNECT_PROTOCOL = 1.
             .enable_connect_protocol()
@@ -271,11 +306,10 @@ async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>
             .max_header_list_size(MAX_HEADER_LIST_BYTES)
             .max_frame_size(H2_MAX_FRAME_BYTES)
             .keep_alive_interval(H2_PING_AFTER)
-            .keep_alive_timeout(H2_DEAD_AFTER_PING)
-            .serve_connection(TokioIo::new(session), service)
-            .await;
+            .keep_alive_timeout(H2_DEAD_AFTER_PING);
+        served!(builder.serve_connection(TokioIo::new(session), service), told);
     } else {
-        let _ = http1::Builder::new().serve_connection(TokioIo::new(session), service).with_upgrades().await;
+        served!(http1::Builder::new().serve_connection(TokioIo::new(session), service).with_upgrades(), told);
     }
 }
 
