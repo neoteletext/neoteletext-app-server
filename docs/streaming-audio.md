@@ -33,7 +33,7 @@ There are two kinds of source:
                      title, levels, position ──► application        blocks ──► stream ring ──► connections
 ```
 
-- **The transcoder is sans I/O, like the runtime.** `teletext-transcode` takes bytes in and gives encoded packets and events out. It holds no socket, clock or thread. A host feeds it what it fetched. symphonia 0.6.1, with the codecs needed, compiled for `wasm32-unknown-unknown` on 25 October 2026; whether the transcoder still does depends on the Opus encoder (section 10 item 8). It runs in the native host's workers either way (section 8), not in a Worker on Cloudflare, whose CPU limits suit fan-out, not transcoding.
+- **The transcoder is sans I/O, like the runtime.** `teletext-transcode` takes bytes in and gives encoded packets and events out. It holds no socket, clock or thread. A host feeds it what it fetched. It runs in the native host's workers (section 8).
 - **The fetcher is the host's.** On the native host it is a task, or a worker process (section 8), holding the HTTP connection.
 - **Blocks go to listeners as pages go to viewers** (decision 7). The runtime never touches a listener's audio.
   - A live stream is a ring of encoded blocks with a sequence number.
@@ -335,7 +335,7 @@ The URLs come from a public directory anyone can add to, and from podcast feeds.
 6. **Rights.** Relaying a station or a podcast to many listeners is retransmission. Many stations' and podcasts' terms forbid it, and ads inserted per request would be relayed to people they were not counted for. On the LAN for testing, this matters little. A public server needs a policy, for example only stations that allow relaying, or each listener fetching for themselves. That is the owner's call.
 7. **The output rate.** *Withdrawn on 28 October 2026 (decision 21):* the Opus profile fixes it at 48 kHz and 16 kbit/s (the engine's E.123).
 8. **The Opus encoder** (decision 21). The engine decodes Opus and has no encoder (its E.124 item 4). Options:
-   - **libopus, the reference encoder, through a Rust binding** (C, BSD-3-Clause; bindings such as `audiopus_sys` build it from source): the same codebase whose decoder the engine's is bit-exact with, so what it writes is what the receivers decode; it runs inside the confined workers (section 8), where a C library's faults stay. The transcoder would then no longer build for `wasm32-unknown-unknown` without libopus compiled for it, which the transcoder does not need (section 2). **Recommended.**
+   - **libopus, the reference encoder, through a Rust binding** (C, BSD-3-Clause; bindings such as `audiopus_sys` build it from source): the same codebase whose decoder the engine's is bit-exact with, so what it writes is what the receivers decode; it runs inside the confined workers (section 8), where a C library's faults stay. **Recommended.**
    - A pure-Rust encoder: none mature or tested here.
    - `ffmpeg` as the worker program, decoding every station and encoding Opus: it would replace symphonia, against the owner's instruction "use symphonia", and its LGPL or GPL build may run only as a separate program (`DEVELOPMENT.md` section 7).
 

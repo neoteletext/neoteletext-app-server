@@ -21,7 +21,7 @@ They are records in rdm, reached through its MCP tools (search, get_record, list
 ## Key documents
 
 - The requirements and the owner's decisions: rdm, above.
-- `docs/architecture.md`: section 3 how the server runs on each host (section numbers unchanged; section 2, the decisions, is in rdm).
+- `docs/architecture.md`: section 3 how the server runs on its one host, the native server (section numbers unchanged; section 2, the decisions, is in rdm).
 - `docs/licensing.md`, `CREDITS.md`, `IMPLEMENTATION-LOG.md`.
 
 ## Commands

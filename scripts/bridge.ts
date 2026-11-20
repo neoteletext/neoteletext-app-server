@@ -1,11 +1,12 @@
-// The bridge between a channel's program and the Cloudflare host (decision
-// 20): runs the program over its standard input and output, as the native
-// server does (DOC-1964), and carries its lines to and from its
-// channel's Durable Object over a WebSocket, one line a message
-// (requirements 1.5 and 6.4). The program is unchanged.
+// The bridge between a channel's program and a native server it does not
+// run beside (DEC-7011 item 6): runs the program over its standard input
+// and output, as the native server does (DOC-1964), and carries its lines
+// to and from the channel's program WebSocket (REQ-1044), one line a
+// message (requirement 6.4). The program is unchanged. It goes once the
+// kits have a WebSocket transport of their own (TODO-1308).
 //
 //   NEOTELETEXT_PROGRAM_SECRET=... node scripts/bridge.ts \
-//       --url wss://cf.neoteletext.com/demosite/program [--directory DIR] -- node src/main.ts
+//       --url wss://app.neottx.com/demosite/program [--directory DIR] -- node src/main.ts
 //
 // It connects as soon as the program starts: the channel speaks first,
 // with `start` (DOC-1965). When the connection closes the program is

@@ -138,3 +138,12 @@ Built without the owner from neoteletext-common's `docs/tab-thumbnails.md` (DEC-
 | 73 | A kept picture named by an answer and forgotten before it is sent | The page alone | REQ-6881 item 5 sends "a kept picture as its kept stream stands"; a forgotten picture has none. |
 | 74 | The record numbers and generation of what a snapshot connection is sent | WELCOME takes record 0, the answer's records follow; its one picture stream is generation 1 at offset 0 | As a new viewer's connection numbers them; each snapshot connection has one stream. |
 
+
+## 21 November 2026: Cloudflare dropped as a server target
+
+The owner: "drop cloudflare entirely as a server target and remove code that was for that objective" (DEC-7011). The Cloudflare host (`crates/teletext-cloudflare`, `deploy/cloudflare/`), the runtime's connection resume for a Durable Object's hibernation, the WebAssembly bound and the `wasm32-unknown-unknown` target are removed; the last commit with them whole is `dc0e1e9`. Rows above that name the Cloudflare host are history.
+
+| Row | Question | Decision | Reason |
+|---|---|---|---|
+| 75 | Whether `scripts/bridge.ts`, made for the Cloudflare host, goes with it | It stays, described as the way a program on another machine reaches the native server's program WebSocket (REQ-1044) | The kits have no WebSocket transport of their own yet (TODO-1308); until they do, the bridge is the only way a standard-input program reaches that door (DEC-7011 item 6). |
+| 76 | Whether the runtime keeps building for `wasm32-unknown-unknown` | No: the target leaves `rust-toolchain.toml` and the push gate | Nothing but the Cloudflare host needed it; `docs/architecture.md`'s section 3.4 named a further WebAssembly host only "if needed", and none is wanted. The runtime stays `no_std` and sans I/O (DEC-7011 item 5). |
