@@ -23,7 +23,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::Semaphore;
 
 use crate::connection::serve_halves;
-use crate::http::{Answer, Routes, Whole, decide};
+use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
     QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES,
@@ -352,7 +352,7 @@ async fn request(routes: Arc<Routes>, connection: quinn::Connection, mut send: S
         Err(Error { code, scope: Scope::Connection }) => return fail(&connection, code),
         Err(Error { code, scope: Scope::Stream }) => return abandon(&mut send, &mut reading.recv, code),
     };
-    match decide(&routes, &asked, Some(peer)).await {
+    match decide(&routes, &asked, Source::Peer(peer)).await {
         Answer::Response(response) => {
             let (head, body) = whole(response, *asked.method() != Method::HEAD);
             if send.write_all(&head).await.is_ok() && send.write_all(&body).await.is_ok() {

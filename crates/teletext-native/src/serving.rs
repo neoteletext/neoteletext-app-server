@@ -2,11 +2,14 @@
 //! proxy in front, as before; or, given a certificate and key, TLS on TCP
 //! with HTTP/2 or HTTP/1.1 as the client chooses, and HTTP/3 over QUIC on
 //! UDP at the same address and port, which every answer over TCP then
-//! names in `Alt-Svc` at the port viewers reach the server at.
+//! names in `Alt-Svc` at the port viewers reach the server at. Behind a
+//! proxy that relays TLS without ending it, each TCP connection first
+//! gives a PROXY protocol header, which names the viewer's address
+//! (REQ-6974).
 
 use std::convert::Infallible;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use hyper::Uri;
@@ -14,11 +17,16 @@ use hyper::header::{ALT_SVC, HeaderValue};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{Routes, answer};
-use crate::limits::{H2_DEAD_AFTER_PING, H2_MAX_FRAME_BYTES, H2_PING_AFTER, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_HEADER_LIST_BYTES};
+use crate::http::{Routes, Source, answer};
+use crate::limits::{
+    H2_DEAD_AFTER_PING, H2_MAX_FRAME_BYTES, H2_PING_AFTER, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_HEADER_LIST_BYTES, MAX_PROXY_HEADER_BYTES,
+    PROXY_HEADER_WITHIN,
+};
+use crate::proxy_protocol::{self, Header, Refused};
 use crate::tls::{ALPN_H2, Configured};
 use crate::{http3, tls};
 
@@ -29,6 +37,8 @@ struct Secured {
     /// `Alt-Svc: h3=":<port>"` (RFC 7838 section 3), the port viewers
     /// reach QUIC at ([`Direct::public_port`]).
     alt_svc: HeaderValue,
+    /// [`Direct::proxy_protocol`].
+    proxy: Option<IpAddr>,
 }
 
 /// What the server serves TLS with, and where viewers reach it.
@@ -41,6 +51,14 @@ pub struct Direct<'tls> {
     /// listening port only when nothing relays connections to the server
     /// from another port (DEC-6972).
     pub public_port: u16,
+    /// The proxy that relays viewers' TCP connections still encrypted,
+    /// when there is one (REQ-6974): every TCP connection must then come
+    /// from this address and start with a PROXY protocol version 2
+    /// header, read before TLS, which names the viewer's address. The
+    /// specification's section 2: "The receiver MUST be configured to
+    /// only receive the protocol described in this specification and MUST
+    /// not try to guess whether the protocol header is present or not".
+    pub proxy_protocol: Option<IpAddr>,
 }
 
 /// The default port of `http` (RFC 9110 section 4.2.1).
@@ -92,10 +110,15 @@ impl Server {
     /// bound there.
     pub fn start(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
-        let Some(Direct { tls, public_port }) = direct else { return Ok(Self { listener, secured: None, quic: None, routes }) };
+        let Some(Direct { tls, public_port, proxy_protocol }) = direct else { return Ok(Self { listener, secured: None, quic: None, routes }) };
         let quic = http3::endpoint(tls, address)?;
         let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
-        Ok(Self { listener, secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc }), quic: Some(quic), routes })
+        Ok(Self {
+            listener,
+            secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc, proxy: proxy_protocol.map(|proxy| proxy.to_canonical()) }),
+            quic: Some(quic),
+            routes,
+        })
     }
 
     /// The UDP address QUIC is served on, when it is.
@@ -141,15 +164,93 @@ impl Stopped {
     }
 }
 
+/// Why a connection that had to start with a PROXY protocol header was
+/// closed (REQ-6974 items 3 and 4).
+enum Unheaded {
+    /// Its peer is not the proxy.
+    Peer,
+    /// What it sent is not a header the server takes.
+    Refused(Refused),
+    /// It ended, or failed, before its header was whole.
+    Ended,
+    /// Its header was not whole within [`PROXY_HEADER_WITHIN`].
+    Late,
+}
+
+impl std::fmt::Display for Unheaded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Peer => formatter.write_str("its peer is not the trusted proxy"),
+            Self::Refused(refused) => write!(formatter, "its first bytes are not a header taken: {refused:?}"),
+            Self::Ended => formatter.write_str("it ended before its header was whole"),
+            Self::Late => formatter.write_str("its header was not whole in time"),
+        }
+    }
+}
+
+/// Reads the PROXY protocol header `stream` starts with, and no byte
+/// past it: what follows is the TLS handshake's.
+async fn proxy_header(stream: &mut TcpStream) -> Result<Header, Unheaded> {
+    let mut bytes = [0_u8; MAX_PROXY_HEADER_BYTES];
+    let mut come = 0_usize;
+    loop {
+        let needed = match proxy_protocol::read(bytes.get(..come).unwrap_or_default()) {
+            Ok(proxy_protocol::Read::Whole { header, .. }) => return Ok(header),
+            Ok(proxy_protocol::Read::More { needed }) => needed,
+            Err(refused) => return Err(Unheaded::Refused(refused)),
+        };
+        // The reader asks for more than has come and never past the
+        // header's end, so this reads into the header alone; anything
+        // else would be its fault, and ends the connection.
+        let wanted = bytes.get_mut(come..needed).filter(|wanted| !wanted.is_empty()).ok_or(Unheaded::Ended)?;
+        match stream.read(wanted).await {
+            Ok(count) if count > 0 => come = come.saturating_add(count),
+            _ => return Err(Unheaded::Ended),
+        }
+    }
+}
+
+/// The viewer's address on a connection relayed by `proxy` (REQ-6974):
+/// the source its PROXY protocol header names, or for the proxy's own
+/// connection (LOCAL) the proxy's. `Err` when the connection is to be
+/// closed, with nothing sent on it.
+async fn relayed(stream: &mut TcpStream, peer: SocketAddr, proxy: IpAddr) -> Result<IpAddr, Unheaded> {
+    // The specification's section 5: "accepting the header only from a
+    // number of known sources should be safe". Nothing of anyone else's
+    // connection is read.
+    if peer.ip().to_canonical() != proxy {
+        return Err(Unheaded::Peer);
+    }
+    match tokio::time::timeout(PROXY_HEADER_WITHIN, proxy_header(stream)).await {
+        Ok(Ok(Header::Proxied(source))) => Ok(source.ip()),
+        Ok(Ok(Header::Local)) => Ok(peer.ip()),
+        Ok(Err(unheaded)) => Err(unheaded),
+        Err(_) => Err(Unheaded::Late),
+    }
+}
+
 /// Serves one TCP connection: HTTP/1.1 as it is, or, under TLS, what the
-/// client chose of HTTP/2 and HTTP/1.1 (RFC 7301).
-async fn connection(stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, secured: Option<Secured>) {
+/// client chose of HTTP/2 and HTTP/1.1 (RFC 7301), after the PROXY
+/// protocol header when a proxy relays the connection.
+async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, secured: Option<Secured>) {
+    let proxy = secured.as_ref().and_then(|secured| secured.proxy);
+    let source = match proxy {
+        None => Source::Peer(peer.ip()),
+        Some(proxy) => match relayed(&mut stream, peer, proxy).await {
+            Ok(viewer) => Source::Viewer(viewer),
+            Err(unheaded) => {
+                // No address: the log names no viewer (REQ-1049).
+                tracing::debug!(target: "proxy_protocol", reason = %unheaded, "closed a connection with no PROXY protocol header taken");
+                return;
+            }
+        },
+    };
     let alt_svc = secured.as_ref().map(|secured| secured.alt_svc.clone());
     let service = service_fn(move |request| {
         let routes = Arc::clone(&routes);
         let alt_svc = alt_svc.clone();
         async move {
-            let mut response = answer(&routes, request, Some(peer.ip())).await;
+            let mut response = answer(&routes, request, source).await;
             if let Some(alt_svc) = alt_svc {
                 response.headers_mut().insert(ALT_SVC, alt_svc);
             }

@@ -4,11 +4,13 @@
 //! 8441) and HTTP/3 (RFC 9220), several on one connection (REQ-6966), and
 //! the connection errors HTTP/3 input over its bounds ends in (REQ-6967).
 //! Before DEC-6964 the server spoke plain HTTP/1.1 alone, so none of this
-//! could be asked of it.
+//! could be asked of it. And the server behind a proxy that relays TLS
+//! still encrypted (DEC-6972): the PROXY protocol header it reads before
+//! TLS, and whose address a viewer is then counted under (REQ-6974).
 #![allow(clippy::arithmetic_side_effects, reason = "a test")]
 
 use std::collections::BTreeMap;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -17,8 +19,16 @@ use std::time::Duration;
 use hyper::body::Bytes;
 use hyper::header::{ALT_SVC, ORIGIN, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION};
 use hyper::{Method, Request, StatusCode};
+use neoteletext_core::consts::PACKET_BYTES;
+use neoteletext_core::packet::Packet;
+use neoteletext_input::caps::SELECT_CAP;
+use neoteletext_input::event::{Event, Item, write as write_item};
+use neoteletext_input::state::{Algorithm, CHALLENGE_BYTES, Lifetime, StateProof};
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
+use neoteletext_web::records::{ChannelRecord, Read as RecordRead, RecordReader};
+use neoteletext_web::viewer_state::{self, ChannelIdentity, MAX_SIGNED_BYTES};
 use quinn::crypto::rustls::{HandshakeData, QuicClientConfig};
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use rustls::pki_types::{CertificateDer, ServerName};
 use teletext_http3::limits::MAX_FIELD_SECTION_BYTES;
 use teletext_http3::qpack::{self, Field};
@@ -27,10 +37,13 @@ use teletext_http3::stream::{Control, ControlEvent, Message, MessageEvent, Role,
 use teletext_http3::{Code, frame, varint};
 use teletext_native::http::Routes;
 use teletext_native::hub;
+use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, PROXY_HEADER_WITHIN};
+use teletext_native::proxy_protocol::SIGNATURE;
 use teletext_native::serving::{Direct, Server, public_port};
 use teletext_native::state::SystemRandomSource;
 use teletext_native::stats::ServerStats;
 use teletext_native::tls::{self, ALPN_H2, ALPN_H3, ALPN_HTTP1, Files};
+use teletext_runtime::viewer::MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR;
 use teletext_runtime::{Channel, ChannelConfig, HandleSecret, InitialPage};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -74,6 +87,9 @@ struct Running {
     address: SocketAddr,
     quic: Option<SocketAddr>,
     descriptor: Arc<[u8]>,
+    /// The channel's address, which a viewer's proof is made for.
+    channel: String,
+    stats: Arc<ServerStats>,
     serving: tokio::task::JoinHandle<()>,
 }
 
@@ -84,19 +100,28 @@ impl Drop for Running {
 }
 
 async fn running(certificate: Option<&Certificate>) -> Running {
-    running_at(certificate, |port| format!(":{port}")).await
+    running_at(certificate, |port| format!(":{port}"), None).await
+}
+
+/// The server behind `proxy`, which relays viewers' TLS to it with a
+/// PROXY protocol header first, as `--trusted-proxy` and
+/// `--proxy-protocol` start it (REQ-6974).
+async fn running_behind(certificate: &Certificate, proxy: IpAddr) -> Running {
+    running_at(Some(certificate), |port| format!(":{port}"), Some(proxy)).await
 }
 
 /// The server, reached by viewers at the origin of [`HOST`] with
-/// `public`'s port text, given the port it listens on.
-async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> String) -> Running {
+/// `public`'s port text, given the port it listens on; with `proxy`,
+/// behind that proxy.
+async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>) -> Running {
     let listener = TcpListener::bind(ANY_LOCAL_PORT).await.unwrap();
     let address = listener.local_addr().unwrap();
     let scheme = if certificate.is_some() { "https" } else { "http" };
     let origin = format!("{scheme}://{HOST}{}", public(address.port()));
+    let channel_address = format!("{origin}/{FOLDER}/");
     let config = ChannelConfig {
         name: "Test".to_owned(),
-        address: format!("{origin}/{FOLDER}/"),
+        address: channel_address.clone(),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
@@ -107,15 +132,16 @@ async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> S
     let channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(SystemRandomSource::new()));
     let hub = hub::spawn(FOLDER, channel, Instant::now(), None, Arc::clone(&stats));
     let descriptor = Arc::clone(&hub.descriptor);
-    let routes = Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats, trusted_proxy: None });
+    let routes =
+        Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: proxy });
     let secured = certificate.map(|certificate| tls::load(&certificate.files).unwrap());
-    let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap() });
+    let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy });
     let server = Server::start(listener, direct, routes).unwrap();
     let quic = server.quic_address();
     let serving = tokio::spawn(async move {
         server.run(std::future::pending()).await;
     });
-    Running { address, quic, descriptor, serving }
+    Running { address, quic, descriptor, channel: channel_address, stats, serving }
 }
 
 /// A client's TLS that trusts `certificate` alone and offers `alpn`.
@@ -176,7 +202,11 @@ fn path(name: &str) -> String {
 
 /// An HTTP/2 connection to the server.
 async fn h2_to(running: &Running, certificate: &Certificate) -> h2::client::SendRequest<Bytes> {
-    let session = tls_to(running, certificate, &[ALPN_H2]).await;
+    h2_on(tls_to(running, certificate, &[ALPN_H2]).await).await
+}
+
+/// An HTTP/2 connection on `session`.
+async fn h2_on(session: TlsStream<TcpStream>) -> h2::client::SendRequest<Bytes> {
     assert_eq!(session.get_ref().1.alpn_protocol(), Some(ALPN_H2));
     let (sender, connection) = h2::client::handshake(session).await.unwrap();
     tokio::spawn(connection);
@@ -635,7 +665,7 @@ async fn alt_svc_names_the_origins_port_and_not_the_listening_port() {
     const ELSEWHERE: u16 = 8443;
     let certificate = certificate("tls-public-port");
     for (public, port) in [(String::new(), 443), (format!(":{ELSEWHERE}"), ELSEWHERE)] {
-        let running = running_at(Some(&certificate), |_| public.clone()).await;
+        let running = running_at(Some(&certificate), |_| public.clone(), None).await;
         assert_ne!(running.address.port(), port, "the kernel chose another port to listen on");
         let answer = http1_get(tls_to(&running, &certificate, &[ALPN_HTTP1]).await, &path("channel.ttx")).await;
         assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
@@ -769,4 +799,311 @@ fn the_server_stops_at_start_with_a_mismatched_key() {
     assert!(log.contains(&format!("the private key {} is not the key of the certificate", other.files.key.display())), "{log}");
     let (started, log) = run(&["--tls-certificate".as_ref(), ours.files.certificate.as_os_str()]);
     assert!(!started && log.contains("--tls-certificate needs --tls-key"), "{log}");
+}
+
+// -------------------------------------------------------- PROXY protocol
+
+/// The thirteenth byte of a version 2 header with the PROXY command, and
+/// with LOCAL; the fourteenth for TCP over IPv4, for UDP over IPv4 and
+/// for TCP over IPv6 (the specification's section 2.2).
+const PROXY_COMMAND: u8 = 0x21;
+const LOCAL_COMMAND: u8 = 0x20;
+const TCP_OVER_IPV4: u8 = 0x11;
+const UDP_OVER_IPV4: u8 = 0x12;
+const TCP_OVER_IPV6: u8 = 0x21;
+/// The address this test's connections come from, and so the proxy's.
+const LOOPBACK: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+/// An address no connection of this test comes from (RFC 5737's
+/// documentation range).
+const NOT_THIS_TEST: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+
+/// A version 2 header of `following`.
+fn proxy_header(command: u8, family_protocol: u8, following: &[u8]) -> Vec<u8> {
+    let mut header = SIGNATURE.to_vec();
+    header.extend([command, family_protocol]);
+    header.extend(u16::try_from(following.len()).unwrap().to_be_bytes());
+    header.extend(following);
+    header
+}
+
+/// The header a proxy sends for a viewer who connected to it over TCP
+/// from `source`, an IPv4 or an IPv6 address.
+fn relayed_from(source: &str) -> Vec<u8> {
+    let (source, port): (IpAddr, u16) = (source.parse().unwrap(), 51_234);
+    let mut following = Vec::new();
+    let family_protocol = match source {
+        IpAddr::V4(source) => {
+            following.extend(source.octets());
+            following.extend(Ipv4Addr::new(192, 0, 2, 80).octets());
+            TCP_OVER_IPV4
+        }
+        IpAddr::V6(source) => {
+            following.extend(source.octets());
+            following.extend("2001:db8::80".parse::<std::net::Ipv6Addr>().unwrap().octets());
+            TCP_OVER_IPV6
+        }
+    };
+    following.extend(port.to_be_bytes());
+    following.extend(443_u16.to_be_bytes());
+    proxy_header(PROXY_COMMAND, family_protocol, &following)
+}
+
+/// A TLS session to the server on a TCP connection that first sends
+/// `header`, as the proxy does.
+async fn tls_after(header: &[u8], running: &Running, certificate: &Certificate, alpn: &[&[u8]]) -> TlsStream<TcpStream> {
+    let connector = TlsConnector::from(Arc::new(client_tls(certificate, alpn)));
+    let mut stream = TcpStream::connect(running.address).await.unwrap();
+    stream.write_all(header).await.unwrap();
+    timeout(WITHIN, connector.connect(ServerName::try_from(HOST).unwrap(), stream)).await.expect("a TLS handshake in time").unwrap()
+}
+
+/// A viewer's input items as one masked binary WebSocket message (RFC
+/// 6455 section 5.2) with the key 0, so that the masked payload is the
+/// payload.
+fn input(items: &[Item<'_>]) -> Bytes {
+    const BINARY_FINAL: u8 = 0x82;
+    const MASKED_LENGTH_16: u8 = 0xFE;
+    let mut payload = Vec::new();
+    for item in items {
+        let mut one = [0_u8; neoteletext_input::MAX_MESSAGE];
+        let length = write_item(item, &mut one).unwrap();
+        payload.extend_from_slice(&one[..length]);
+    }
+    let length = u16::try_from(payload.len()).unwrap().to_be_bytes();
+    let mut message = vec![BINARY_FINAL, MASKED_LENGTH_16, length[0], length[1], 0, 0, 0, 0];
+    message.extend(payload);
+    Bytes::from(message)
+}
+
+/// Opens a push WebSocket by extended CONNECT with `headers` more, and on
+/// it proves the viewer key made from `key_seed` to the channel (VS-203):
+/// HELLO, the server's challenge, the proof. The stream is then ended,
+/// and the server's end of it waited for.
+async fn prove(sender: &mut h2::client::SendRequest<Bytes>, running: &Running, key_seed: &[u8; 32], headers: &[(&str, &str)]) {
+    let headers = [&PUSH_HEADERS[..], headers].concat();
+    let mut ready = timeout(WITHIN, sender.clone().ready()).await.expect("room for a stream in time").unwrap();
+    let (response, mut send) = h2_ask(&mut ready, h2_request(running, Method::CONNECT, "push", Some("websocket"), &headers), false).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut receive = response.into_body();
+    send.send_data(input(&[Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: SELECT_CAP, agent: None })]), false).unwrap();
+    let (mut frames, mut records) = (Frames::default(), RecordReader::new());
+    let challenge: [u8; CHALLENGE_BYTES] = 'challenge: loop {
+        while let Some((_, message)) = frames.next() {
+            for packet in message.as_chunks::<PACKET_BYTES>().0 {
+                if let RecordRead::Record(ChannelRecord::StateChallenge(record)) = records.push(&Packet { bytes: *packet }) {
+                    break 'challenge record.challenge;
+                }
+            }
+        }
+        let part = timeout(WITHIN, receive.data()).await.expect("a challenge in time").expect("the stream stays open").unwrap();
+        receive.flow_control().release_capacity(part.len()).unwrap();
+        frames.0.extend_from_slice(&part);
+    };
+    let pair = Ed25519KeyPair::from_seed_unchecked(key_seed).unwrap();
+    let identity = ChannelIdentity::read(&running.channel).unwrap();
+    let mut signed = [0_u8; MAX_SIGNED_BYTES];
+    let length = viewer_state::signed_bytes(Algorithm::Ed25519, Lifetime::Visit, &challenge, &identity, &mut signed).unwrap();
+    let public_key: [u8; 32] = pair.public_key().as_ref().try_into().unwrap();
+    let signature: [u8; 64] = pair.sign(&signed[..length]).as_ref().try_into().unwrap();
+    let proof = StateProof { algorithm: Algorithm::Ed25519, lifetime: Lifetime::Visit, public_key: &public_key, signature: &signature };
+    send.send_data(input(&[Item::Event(Event::StateProof(proof))]), true).unwrap();
+    // Until the server has ended its side, having read the proof:
+    // dropping the stream before would reset it, and what the server had
+    // not yet read of it would be lost.
+    while let Some(part) = timeout(WITHIN, receive.data()).await.expect("the server ends the stream in time") {
+        let Ok(part) = part else { break };
+        receive.flow_control().release_capacity(part.len()).unwrap();
+    }
+}
+
+/// A seed no other viewer of a test has: `number`'s bytes.
+fn seed(number: u32) -> [u8; 32] {
+    let mut seed = [0_u8; 32];
+    seed[..4].copy_from_slice(&number.to_le_bytes());
+    seed
+}
+
+/// Waits until the channel's figures, recorded each second, show exactly
+/// `accepted` proofs accepted and `refused` refused (VS-206).
+async fn until_proofs(running: &Running, accepted: u32, refused: u32) {
+    let wanted = [
+        format!("teletext_channel_proofs_accepted_total{{channel=\"{FOLDER}\"}} {accepted}\n"),
+        format!("teletext_channel_proofs_refused_total{{channel=\"{FOLDER}\"}} {refused}\n"),
+    ];
+    let shown = |metrics: &str| -> Vec<String> { metrics.lines().filter(|line| line.starts_with("teletext_channel_proofs_")).map(str::to_owned).collect() };
+    let shown_in_time = timeout(WITHIN, async {
+        loop {
+            let metrics = running.stats.metrics();
+            if wanted.iter().all(|line| metrics.contains(line.as_str())) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(shown_in_time.is_ok(), "{accepted} accepted and {refused} refused, not {:?}", shown(&running.stats.metrics()));
+}
+
+/// REQ-6974 items 2 and 5, with REQ-6730 (VS-304): a client that sends a
+/// PROXY protocol header and then TLS is served `channel.ttx` over
+/// HTTP/2, and the push connections it opens by extended CONNECT are the
+/// header's source address's: of 601 new viewers under one header
+/// address the last is refused by the bound on new viewers from one
+/// address, a new viewer on another TCP connection under the same header
+/// address is refused too, and one under another header address, IPv6
+/// here, is accepted, though every TCP connection came from the same
+/// peer, the proxy.
+#[tokio::test]
+async fn viewers_behind_a_proxy_header_are_counted_under_its_source_address() {
+    let certificate = certificate("proxy-source");
+    let running = running_behind(&certificate, LOOPBACK).await;
+    let viewer = relayed_from("203.0.113.7");
+    let mut sender = h2_on(tls_after(&viewer, &running, &certificate, &[ALPN_H2]).await).await;
+    let (described, _) = h2_ask(&mut sender, h2_request(&running, Method::GET, "channel.ttx", None, &[]), true).await;
+    assert_eq!(described.status(), StatusCode::OK);
+    assert_eq!(h2_body(described.into_body()).await, &*running.descriptor);
+
+    let bound = MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR;
+    for number in 0..=bound {
+        prove(&mut sender, &running, &seed(number), &[]).await;
+    }
+    until_proofs(&running, bound, 1).await;
+
+    let mut again = h2_on(tls_after(&viewer, &running, &certificate, &[ALPN_H2]).await).await;
+    prove(&mut again, &running, &seed(bound + 1), &[]).await;
+    until_proofs(&running, bound, 2).await;
+
+    let mut another = h2_on(tls_after(&relayed_from("2001:db8::7"), &running, &certificate, &[ALPN_H2]).await).await;
+    prove(&mut another, &running, &seed(bound + 2), &[]).await;
+    until_proofs(&running, bound + 1, 2).await;
+}
+
+/// REQ-6974 items 6 and 9: a LOCAL header, the proxy's own connection, is
+/// served with the proxy's address standing as the viewer's, over
+/// HTTP/1.1 too; and `X-Forwarded-For` is not believed behind the PROXY
+/// protocol even there, where the address is the trusted proxy's: 601 new
+/// viewers each naming another address in it are counted under the one
+/// address, and the last is refused.
+#[tokio::test]
+async fn a_local_header_stands_as_the_proxy_and_x_forwarded_for_is_not_believed() {
+    let certificate = certificate("proxy-local");
+    let running = running_behind(&certificate, LOOPBACK).await;
+    // LOCAL with nothing to skip, as a health check sends it, and with a
+    // length to skip.
+    let local = proxy_header(LOCAL_COMMAND, 0x00, &[]);
+    for header in [local.clone(), proxy_header(LOCAL_COMMAND, UDP_OVER_IPV4, &[0xAA; 7])] {
+        let answer = http1_get(tls_after(&header, &running, &certificate, &[ALPN_HTTP1]).await, &path("channel.ttx")).await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    }
+    let mut sender = h2_on(tls_after(&local, &running, &certificate, &[ALPN_H2]).await).await;
+    let bound = MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR;
+    for number in 0..=bound {
+        let named = Ipv4Addr::from(u32::from(Ipv4Addr::new(198, 18, 0, 0)) + number).to_string();
+        prove(&mut sender, &running, &seed(number), &[("x-forwarded-for", &named)]).await;
+    }
+    until_proofs(&running, bound, 1).await;
+}
+
+/// What the server sent on `stream` before it closed it: every byte, to
+/// the end of the stream or its reset.
+async fn sent_before_closing(mut stream: TcpStream) -> Vec<u8> {
+    let mut sent = Vec::new();
+    // A reset is a close too: the server drops a connection it has not
+    // read to the end.
+    let _ = timeout(WITHIN, stream.read_to_end(&mut sent)).await.expect("the connection closed in time");
+    sent
+}
+
+/// REQ-6974 item 3: a connection whose peer is not the trusted proxy is
+/// closed with nothing sent, though it starts with a valid header.
+#[tokio::test]
+async fn a_connection_from_a_peer_that_is_not_the_proxy_is_closed_unanswered() {
+    let certificate = certificate("proxy-peer");
+    let running = running_behind(&certificate, NOT_THIS_TEST).await;
+    let mut stream = TcpStream::connect(running.address).await.unwrap();
+    assert_ne!(stream.local_addr().unwrap().ip(), NOT_THIS_TEST);
+    stream.write_all(&relayed_from("203.0.113.7")).await.unwrap();
+    assert_eq!(sent_before_closing(stream).await, [] as [u8; 0]);
+    let connector = TlsConnector::from(Arc::new(client_tls(&certificate, &[ALPN_H2])));
+    let stream = TcpStream::connect(running.address).await.unwrap();
+    assert!(timeout(WITHIN, connector.connect(ServerName::try_from(HOST).unwrap(), stream)).await.unwrap().is_err(), "no TLS for it either");
+}
+
+/// REQ-6974 item 4: from the trusted proxy's address, a connection that
+/// starts with TLS and no header, with HTTP, with the version 1 header,
+/// with a header for UDP, or with one over `MAX_PROXY_HEADER_BYTES` is
+/// closed with nothing sent.
+#[tokio::test]
+async fn a_connection_without_a_header_taken_is_closed_unanswered() {
+    let certificate = certificate("proxy-none");
+    let running = running_behind(&certificate, LOOPBACK).await;
+    let connector = TlsConnector::from(Arc::new(client_tls(&certificate, &[ALPN_H2, ALPN_HTTP1])));
+    let stream = TcpStream::connect(running.address).await.unwrap();
+    assert!(timeout(WITHIN, connector.connect(ServerName::try_from(HOST).unwrap(), stream)).await.unwrap().is_err(), "TLS with no header before it");
+
+    let mut for_udp = relayed_from("203.0.113.7");
+    for_udp[SIGNATURE.len() + 1] = UDP_OVER_IPV4;
+    let mut too_long = SIGNATURE.to_vec();
+    too_long.extend([PROXY_COMMAND, TCP_OVER_IPV4]);
+    too_long.extend(u16::try_from(MAX_PROXY_HEADER_BYTES - SIGNATURE.len() - 3).unwrap().to_be_bytes());
+    let unheaded: [(&str, &[u8]); 4] = [
+        ("HTTP", b"GET /test/channel.ttx HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        ("the version 1 header", b"PROXY TCP4 203.0.113.7 192.0.2.80 51234 443\r\n"),
+        ("a header for UDP", &for_udp),
+        ("a header a byte over the bound", &too_long),
+    ];
+    for (name, bytes) in unheaded {
+        let mut stream = TcpStream::connect(running.address).await.unwrap();
+        stream.write_all(bytes).await.unwrap();
+        assert_eq!(sent_before_closing(stream).await, [] as [u8; 0], "{name}");
+    }
+    // The server still serves the proxy.
+    let answer = http1_get(tls_after(&relayed_from("203.0.113.7"), &running, &certificate, &[ALPN_HTTP1]).await, &path("channel.ttx")).await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+}
+
+/// REQ-6974 items 4 and 8: a header that is not whole within
+/// `PROXY_HEADER_WITHIN` of the connection being accepted closes it, with
+/// nothing sent, and not before; one that ends early closes it at once.
+#[tokio::test]
+async fn a_header_that_never_completes_is_closed_after_its_time() {
+    let certificate = certificate("proxy-late");
+    let running = running_behind(&certificate, LOOPBACK).await;
+    let header = relayed_from("203.0.113.7");
+    let began = Instant::now();
+    let mut stream = TcpStream::connect(running.address).await.unwrap();
+    stream.write_all(&header[..header.len() - 1]).await.unwrap();
+    assert_eq!(sent_before_closing(stream).await, [] as [u8; 0]);
+    let took = began.elapsed();
+    println!("closed after {took:?}, the bound {PROXY_HEADER_WITHIN:?}");
+    assert!(took >= PROXY_HEADER_WITHIN, "closed after {took:?}, before {PROXY_HEADER_WITHIN:?}");
+
+    let began = Instant::now();
+    let mut stream = TcpStream::connect(running.address).await.unwrap();
+    stream.write_all(&header[..header.len() - 1]).await.unwrap();
+    stream.shutdown().await.unwrap();
+    assert_eq!(sent_before_closing(stream).await, [] as [u8; 0]);
+    assert!(began.elapsed() < PROXY_HEADER_WITHIN, "a connection that ended is not waited for");
+}
+
+/// REQ-6974 item 1: the server binary stops at start when
+/// `--proxy-protocol` is given without `--trusted-proxy`, or without TLS,
+/// naming what is missing.
+#[test]
+fn the_server_stops_at_start_with_proxy_protocol_and_no_trusted_proxy_or_no_tls() {
+    let ours = certificate("binary-proxy");
+    let run = |arguments: &[&std::ffi::OsStr]| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_teletext-server"))
+            .args(["--listen", ANY_LOCAL_PORT, "--log-format", "text", "--proxy-protocol"])
+            .args(arguments)
+            .env_remove("STATE_DIRECTORY")
+            .output()
+            .unwrap();
+        (output.status.success(), String::from_utf8(output.stderr).unwrap())
+    };
+    let tls = ["--tls-certificate".as_ref(), ours.files.certificate.as_os_str(), "--tls-key".as_ref(), ours.files.key.as_os_str()];
+    let (started, log) = run(&tls);
+    assert!(!started && log.contains("--proxy-protocol needs --trusted-proxy"), "{log}");
+    let (started, log) = run(&["--trusted-proxy".as_ref(), "127.0.0.1".as_ref()]);
+    assert!(!started && log.contains("--proxy-protocol needs --tls-certificate and --tls-key"), "{log}");
 }

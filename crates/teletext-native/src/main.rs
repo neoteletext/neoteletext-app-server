@@ -4,7 +4,7 @@
 //! teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE]
 //!                 [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text]
 //!                 [--trusted-proxy ADDRESS]
-//!                 [--tls-certificate FILE --tls-key FILE]
+//!                 [--tls-certificate FILE --tls-key FILE [--proxy-protocol]]
 //! teletext-server rotate-viewer-secret [--state DIRECTORY]
 //! ```
 //!
@@ -35,6 +35,16 @@
 //! files are read once, at start, and a file that cannot be read, or a key
 //! that is not the certificate's, stops the server there. Without them the
 //! server serves plain HTTP/1.1 and listens on no UDP port.
+//!
+//! `--proxy-protocol`, with `--trusted-proxy` and the two TLS options, is
+//! for a proxy that relays viewers' TLS connections to the server still
+//! encrypted (REQ-6974, DEC-6972). Every TCP connection must then come
+//! from the trusted proxy's address and start with a PROXY protocol
+//! version 2 header, read before TLS, whose source address is the
+//! viewer's for the bound on new viewers; any other connection is closed
+//! with nothing sent, and `X-Forwarded-For` is no longer read on TCP,
+//! since such a proxy never wrote it. QUIC is not changed by it. Given
+//! without `--trusted-proxy` or without TLS, the server stops at start.
 //!
 //! `rotate-viewer-secret` makes a new viewer-handle secret in the state
 //! directory, for the server's next start (VS-306). **Every channel then
@@ -106,12 +116,14 @@ struct Arguments {
     trusted_proxy: Option<IpAddr>,
     /// `--tls-certificate` and `--tls-key`, given together or not at all.
     tls: Option<tls::Files>,
+    /// `--proxy-protocol`: only with `trusted_proxy` and `tls`.
+    proxy_protocol: bool,
     /// `rotate-viewer-secret`: rotate, and serve nothing.
     rotate: bool,
 }
 
 /// How the server is run.
-const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS] [--tls-certificate FILE --tls-key FILE], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
+const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS] [--tls-certificate FILE --tls-key FILE [--proxy-protocol]], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
 
 fn arguments() -> Result<Arguments, String> {
     // systemd separates several state directories with colons; the first is ours.
@@ -125,6 +137,7 @@ fn arguments() -> Result<Arguments, String> {
         log_format: Format::Automatic,
         trusted_proxy: None,
         tls: None,
+        proxy_protocol: false,
         rotate: false,
     };
     let (mut certificate, mut key) = (None, None);
@@ -147,6 +160,7 @@ fn arguments() -> Result<Arguments, String> {
             }
             "--tls-certificate" => certificate = Some(PathBuf::from(value()?)),
             "--tls-key" => key = Some(PathBuf::from(value()?)),
+            "--proxy-protocol" => parsed.proxy_protocol = true,
             other => return Err(format!("unknown argument {other}; {USAGE}")),
         }
     }
@@ -156,6 +170,13 @@ fn arguments() -> Result<Arguments, String> {
         (Some(_), None) => return Err("--tls-certificate needs --tls-key, the certificate's private key".to_owned()),
         (None, Some(_)) => return Err("--tls-key needs --tls-certificate, the key's certificate chain".to_owned()),
     };
+    // REQ-6974 item 1: before any channel's program is started.
+    if parsed.proxy_protocol && parsed.trusted_proxy.is_none() {
+        return Err("--proxy-protocol needs --trusted-proxy, the address of the one proxy that may send the header".to_owned());
+    }
+    if parsed.proxy_protocol && parsed.tls.is_none() {
+        return Err("--proxy-protocol needs --tls-certificate and --tls-key: the header comes before the TLS the server ends itself".to_owned());
+    }
     Ok(parsed)
 }
 
@@ -236,7 +257,9 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     // Before any channel's program is started: a certificate or key that
     // cannot be used stops the server here (REQ-6965).
     let secured = serving::secure(arguments.tls.as_ref())?;
-    let direct = secured.as_ref().map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port })).transpose()?;
+    let proxy_protocol = if arguments.proxy_protocol { arguments.trusted_proxy } else { None };
+    let direct =
+        secured.as_ref().map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port, proxy_protocol })).transpose()?;
     let kept = arguments.state.as_deref().map(StateDirectory::open).transpose()?;
     if let Some(kept) = &kept {
         match kept.figures() {
@@ -291,6 +314,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         listen = %listening,
         origin = arguments.origin,
         quic = server.quic_address().map(|address| address.to_string()),
+        proxy_protocol = arguments.proxy_protocol,
         channels = routes.hubs.keys().cloned().collect::<Vec<_>>().join(", "),
         state = kept.as_ref().map(|kept| kept.root().display().to_string()),
         admin = administering,

@@ -91,13 +91,32 @@ pub struct Routes {
 /// to what it received (the de facto form RFC 7239 section 1 describes).
 const FORWARDED_FOR: &str = "x-forwarded-for";
 
+/// The address a request comes with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Source {
+    /// The address of the TCP or QUIC connection's peer: the viewer's,
+    /// unless the peer is the trusted proxy, whose `X-Forwarded-For` then
+    /// names the viewer's.
+    Peer(IpAddr),
+    /// The viewer's address as the PROXY protocol header of the request's
+    /// connection gave it (REQ-6974 item 9). `X-Forwarded-For` is not
+    /// read: the proxy relayed the request encrypted and wrote none of
+    /// it, so the field is the viewer's own word, whatever the address.
+    Viewer(IpAddr),
+}
+
 /// The viewer's network address (VS-304): the peer's, or, when the peer is
 /// the trusted proxy, the last address its `X-Forwarded-For` names, the
 /// one it appended itself. The rest of the header is the viewer's own
-/// word, and is never read.
-fn viewer_address<B>(routes: &Routes, peer: Option<IpAddr>, request: &Request<B>) -> Option<IpAddr> {
-    if peer.is_none() || peer != routes.trusted_proxy {
-        return peer;
+/// word, and is never read. Behind the PROXY protocol it is the address
+/// the connection's header gave.
+fn viewer_address<B>(routes: &Routes, source: Source, request: &Request<B>) -> Option<IpAddr> {
+    let peer = match source {
+        Source::Viewer(viewer) => return Some(viewer),
+        Source::Peer(peer) => peer,
+    };
+    if Some(peer) != routes.trusted_proxy {
+        return Some(peer);
     }
     let forwarded = request.headers().get_all(FORWARDED_FOR).iter().next_back()?.to_str().ok()?;
     forwarded.rsplit(',').next()?.trim().parse().ok()
@@ -140,8 +159,8 @@ pub enum Answer {
 /// Answers one request on the viewers' address over HTTP/1.1 or HTTP/2,
 /// and serves the WebSocket it opened, if it opened one, on what hyper
 /// makes of the connection or the stream.
-pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, peer: Option<IpAddr>) -> Response<Whole> {
-    match decide(routes, &request, peer).await {
+pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, source: Source) -> Response<Whole> {
+    match decide(routes, &request, source).await {
         Answer::Response(response) => response,
         Answer::Push { response, hub, connection, address } => {
             let pending = hyper::upgrade::on(request);
@@ -185,7 +204,7 @@ pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, pee
 /// for everything else, `/` included. The server serves no channel's files:
 /// every page comes over the connection. The request's body is never read,
 /// so any version of HTTP's request is decided here (REQ-6966).
-pub async fn decide<B>(routes: &Routes, request: &Request<B>, peer: Option<IpAddr>) -> Answer {
+pub async fn decide<B>(routes: &Routes, request: &Request<B>, source: Source) -> Answer {
     count(&routes.stats.requests);
     let connect = *request.method() == Method::CONNECT;
     // RFC 9220 section 3, RFC 8441 section 5: a `:protocol` the server
@@ -197,7 +216,7 @@ pub async fn decide<B>(routes: &Routes, request: &Request<B>, peer: Option<IpAdd
     let Some(hub) = routes.hubs.get(folder).cloned() else { return Answer::Response(status(StatusCode::NOT_FOUND)) };
     let reads = matches!(*request.method(), Method::GET | Method::HEAD);
     Answer::Response(match asked {
-        Route::Push => return upgrade(routes, hub, request, viewer_address(routes, peer, request)),
+        Route::Push => return upgrade(routes, hub, request, viewer_address(routes, source, request)),
         Route::Program => return program_upgrade(hub, request),
         // A CONNECT's 2xx answer would open a tunnel, and only the two
         // routes above have one to open.
