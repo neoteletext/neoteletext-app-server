@@ -1,15 +1,22 @@
-// The Cloudflare host end to end (requirements 1.2, 1.5, 5.2 and 5.5):
-// `wrangler dev` locally, or the deployed Worker when NEOTELETEXT_URL names
-// it, with the kit's fixture channel's program connected through the bridge
-// (scripts/bridge.ts). Run by `npm test` in this folder.
+// The Cloudflare host end to end (REQ-1021, REQ-1024, REQ-1674; TODO-2054
+// item 4, TODO-4435, TODO-4579): `wrangler dev` locally, or the deployed
+// Worker when NEOTELETEXT_URL names it, with the TypeScript kit's fixture
+// channel (test/fixtures/hello.ts) connected as the channel's program
+// through the bridge (scripts/bridge.ts). Run by `npm test` in this folder.
 //
 //   npm test                                            locally, a fresh state
 //   NEOTELETEXT_URL=https://cf.neoteletext.com NEOTELETEXT_CHANNEL=demo \
 //     NEOTELETEXT_PROGRAM_SECRET=... npm test           against the deployment
+//
+// It needs the kit's checkout with its generated validators current
+// (NEOTELETEXT_KIT, by default ~/devel/neoteletext-server-ts-protocol;
+// `node scripts/validators.ts` there) and the engine's `neottx` at the
+// server's pinned engine commit (NEOTTX); either missing fails the run.
 
 import { strict as assert } from "node:assert";
-import { type ChildProcess, spawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { connect as connectPlain, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -19,13 +26,14 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const crate = join(here, "..");
 const repository = join(crate, "..", "..");
-const fixture = join(repository, "crates", "teletext-native", "tests", "fixtures", "kit-channel.jsonl");
 /** A local port for `wrangler dev`, apart from its default. */
 const LOCAL_PORT = 8797;
 /** The secret `.dev.vars` gives the local channel's program. */
 const LOCAL_SECRET = "local-test-secret";
 /** How long anything has to happen. */
 const WITHIN_MS = 60_000;
+/** How long `wrangler dev` has to answer: it first builds the Worker, which took 68 s on chunko on 21 November 2026; four times that. */
+const WRANGLER_STARTS_WITHIN_MS = 300_000;
 /** A T42 packet's bytes (EN 300 706 clause 7.1). */
 const PACKET_BYTES = 42;
 /** WebSocket opcodes (RFC 6455 section 5.2). */
@@ -36,18 +44,52 @@ const OPCODE_PONG = 0xa;
 const FIN = 0x80;
 /** A client frame's second byte: masked, as every client frame is (RFC 6455 section 5.3). */
 const MASKED = 0x80;
+/** A payload length that needs the 16-bit extended length (RFC 6455 section 5.2). */
+const LENGTH_16 = 126;
+const LENGTH_64 = 127;
 /** How long a viewer on pages that do not change is watched for anything sent unasked. */
 const QUIET_MS = 5_000;
+/**
+ * How long a viewer and its program stay quiet for the object to hibernate:
+ * Cloudflare evicts an object that "receives no events ... for a short
+ * period" (its Durable Objects documentation, "Use WebSockets") and states
+ * no figure. The test does not take the wait on trust: a wake shows as the
+ * program's second `start`, which it waits for.
+ */
+const HIBERNATE_WAIT_MS = 30_000;
+/** The input protocol (neoteletext-input's `event.rs`): an event item's lead byte, HELLO and SELECT. */
+const EVENT = 0xff;
+const HELLO = 0x09;
+const SELECT = 0x40;
+/** The input protocol's version (neoteletext-input `limits::VERSION`), which push protocol 10 names. */
+const INPUT_VERSION = 10;
+/** SELECT_CAP (neoteletext-input `caps.rs`): the receiver selects pages. */
+const SELECT_CAP = 1 << 22;
+/** The push WebSocket's subprotocol (neoteletext-web `PUSH_SUBPROTOCOL`, DOC-1917). */
+const SUBPROTOCOL = "neottx.10";
+/** A LEB128 group's bits and its continuation bit (neoteletext-input `wire.rs`). */
+const GROUP_BITS = 7;
+const GROUP = 0x7f;
+const MORE = 0x80;
+/** The kit fixture's carousel and its second sub-page, which the program sends again after a wake only if the selection was kept. */
+const CAROUSEL_PLACE = "101/0002";
 
 const deployed = process.env.NEOTELETEXT_URL;
 const base = deployed ?? `http://127.0.0.1:${LOCAL_PORT}`;
 const channel = process.env.NEOTELETEXT_CHANNEL ?? "demo";
 const secret = process.env.NEOTELETEXT_PROGRAM_SECRET ?? LOCAL_SECRET;
+const kit = process.env.NEOTELETEXT_KIT ?? join(homedir(), "devel", "neoteletext-server-ts-protocol");
+const neottx = process.env.NEOTTX ?? join(repository, "tmp", "neottx", "bin", "neottx");
+const scratch = mkdtempSync(join(process.env.TMPDIR ?? join(repository, "tmp"), "cloudflare-end-to-end-"));
+/** Every line the server sent the program, as the program read them. */
+const programInput = join(scratch, "program-input.jsonl");
 
 const running: ChildProcess[] = [];
 
 function start(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }): ChildProcess {
-  const child = spawn(command, args, { cwd: options.cwd, env: { ...process.env, ...options.env }, stdio: ["ignore", "ignore", "inherit"] });
+  // Each in a process group of its own, so that stopping it stops what it
+  // started (wrangler's workerd, the bridge's program).
+  const child = spawn(command, args, { cwd: options.cwd, env: { ...process.env, ...options.env }, stdio: ["ignore", "ignore", "inherit"], detached: true });
   running.push(child);
   return child;
 }
@@ -55,44 +97,75 @@ function start(command: string, args: string[], options: { cwd: string; env?: No
 async function stop(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.kill("SIGTERM");
+  if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM");
   await exited;
 }
 
 function startWrangler(): ChildProcess {
-  const tools = join(repository, "tools", "bin");
-  return start("npx", ["wrangler", "dev", "--port", String(LOCAL_PORT), "--ip", "127.0.0.1", "--var", `ORIGIN:${base}`], {
+  const tools = join(repository, "tools");
+  return start(join(crate, "node_modules", ".bin", "wrangler"), ["dev", "--port", String(LOCAL_PORT), "--ip", "127.0.0.1", "--var", `ORIGIN:${base}`], {
     cwd: crate,
-    env: { PATH: `${tools}:${process.env.PATH ?? ""}` },
+    env: { PATH: `${join(tools, "bin")}:${process.env.PATH ?? ""}`, XDG_CACHE_HOME: join(tools, "cache"), WRANGLER_SEND_METRICS: "false" },
   });
 }
 
+/** The kit's fixture channel behind the bridge, every line it is sent kept in `programInput`. */
 function startBridge(): ChildProcess {
-  const program = 'head -n 1 "$0"; read -r _; tail -n +2 "$0"; exec cat >/dev/null';
+  const program = 'tee -a "$0" | exec node test/fixtures/hello.ts';
   const url = `${base.replace(/^http/, "ws")}/${channel}/program`;
-  return start("node", [join(repository, "scripts", "bridge.ts"), "--url", url, "--", "sh", "-c", program, fixture], {
+  return start("node", [join(repository, "scripts", "bridge.ts"), "--url", url, "--directory", kit, "--", "sh", "-c", program, programInput], {
     cwd: repository,
     env: { NEOTELETEXT_PROGRAM_SECRET: secret },
   });
 }
 
-/** Asks `check` until it answers, within [`WITHIN_MS`]. */
-async function eventually<T>(check: () => Promise<T | undefined>, what: string): Promise<T> {
-  const deadline = Date.now() + WITHIN_MS;
+/** The lines the program has been sent so far. */
+function programLines(): Record<string, unknown>[] {
+  if (!existsSync(programInput)) return [];
+  return readFileSync(programInput, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** Asks `check` until it answers, within `within` ms. */
+async function eventually<T>(check: () => Promise<T | undefined>, what: string, within = WITHIN_MS): Promise<T> {
+  const deadline = Date.now() + within;
   for (;;) {
     const answer = await check().catch(() => undefined);
     if (answer !== undefined) return answer;
-    assert.ok(Date.now() < deadline, `${what} did not happen within ${WITHIN_MS} ms`);
+    assert.ok(Date.now() < deadline, `${what} did not happen within ${within} ms`);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }
 
-async function page(path: string): Promise<Buffer | undefined> {
-  const response = await fetch(`${base}${path}`);
-  return response.ok ? Buffer.from(await response.arrayBuffer()) : undefined;
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** A push connection opened by hand, to read the upgrade's headers and the server's frames. */
+/** An unsigned LEB128 varint (neoteletext-input `Writer::uv`). */
+function varint(value: number): number[] {
+  const bytes: number[] = [];
+  let rest = value;
+  for (;;) {
+    const low = rest & GROUP;
+    rest = Math.floor(rest / (1 << GROUP_BITS));
+    if (rest === 0) return [...bytes, low];
+    bytes.push(low | MORE);
+  }
+}
+
+/** HELLO of a receiver that selects pages and nothing else. */
+function hello(): Buffer {
+  return Buffer.from([EVENT, HELLO, ...varint(INPUT_VERSION), ...varint(SELECT_CAP)]);
+}
+
+/** SELECT of a place such as `101/0002`, with no query. */
+function select(place: string): Buffer {
+  return Buffer.from([EVENT, SELECT, ...varint(place.length), ...Buffer.from(place, "latin1")]);
+}
+
+/** A push or program connection opened by hand, to read the upgrade's headers and the server's frames. */
 class Viewer {
   readonly socket: Socket;
   readonly head: string;
@@ -104,11 +177,11 @@ class Viewer {
     this.#buffer = rest;
   }
 
-  static async open(file = "push", headers: Record<string, string> = {}): Promise<Viewer> {
+  static async open(file = "push", headers: Record<string, string> = { "Sec-WebSocket-Protocol": SUBPROTOCOL }): Promise<Viewer> {
     const url = new URL(`${base}/${channel}/${file}`);
     const secure = url.protocol === "https:";
     const port = Number(url.port || (secure ? 443 : 80));
-    const socket = secure ? connectSecure({ host: url.hostname, port, servername: url.hostname }) : connectPlain({ host: url.hostname, port });
+    const socket = secure ? connectSecure({ host: url.hostname, port, servername: url.hostname, ALPNProtocols: ["http/1.1"] }) : connectPlain({ host: url.hostname, port });
     await new Promise((resolve, reject) => {
       socket.once(secure ? "secureConnect" : "connect", resolve);
       socket.once("error", reject);
@@ -141,9 +214,10 @@ class Viewer {
     return Number(this.head.split(" ")[1]);
   }
 
-  /** Whether its response set a cookie, which none may (VS-354). */
-  get setsCookie(): boolean {
-    return this.head.split("\r\n").some((header) => header.toLowerCase().startsWith("set-cookie:"));
+  /** A response header's value, or undefined. */
+  header(name: string): string | undefined {
+    const line = this.head.split("\r\n").find((header) => header.toLowerCase().startsWith(`${name.toLowerCase()}:`));
+    return line?.slice(name.length + 1).trim();
   }
 
   /** The binary messages received so far, by their payloads' lengths. */
@@ -153,9 +227,19 @@ class Viewer {
       .map((frame) => frame.length);
   }
 
+  /** Sends one binary message, masked with the key 0. */
+  send(payload: Buffer): void {
+    this.#frame(OPCODE_BINARY, payload);
+  }
+
   /** Sends a Ping of `payload`, masked with the key 0. */
   ping(payload: Buffer): void {
-    this.socket.write(Buffer.concat([Buffer.from([FIN | OPCODE_PING, MASKED | payload.length, 0, 0, 0, 0]), payload]));
+    this.#frame(OPCODE_PING, payload);
+  }
+
+  #frame(opcode: number, payload: Buffer): void {
+    assert.ok(payload.length < LENGTH_16, "a short frame");
+    this.socket.write(Buffer.concat([Buffer.from([FIN | opcode, MASKED | payload.length, 0, 0, 0, 0]), payload]));
   }
 
   /** The frames received so far: each one's opcode, payload length and payload. */
@@ -165,11 +249,11 @@ class Viewer {
     while (at + 2 <= this.#buffer.length) {
       let length = this.#buffer[at + 1]! & 0x7f;
       let header = 2;
-      if (length === 126) {
+      if (length === LENGTH_16) {
         if (at + 4 > this.#buffer.length) break;
         length = this.#buffer.readUInt16BE(at + 2);
         header = 4;
-      } else if (length === 127) {
+      } else if (length === LENGTH_64) {
         if (at + 10 > this.#buffer.length) break;
         length = Number(this.#buffer.readBigUInt64BE(at + 2));
         header = 10;
@@ -186,73 +270,133 @@ class Viewer {
   }
 }
 
-let wrangler: ChildProcess | undefined;
-let bridge: ChildProcess | undefined;
+/** Whether the program has been sent `connected` for a selection of `place`, after the `start` numbered `starts`. */
+function connectedAfterStart(starts: number, place: string): boolean {
+  let seen = 0;
+  for (const line of programLines()) {
+    if (line.type === "start") seen += 1;
+    else if (seen >= starts && line.type === "connected" && line.path === place) return true;
+  }
+  return false;
+}
+
+function starts(): number {
+  return programLines().filter((line) => line.type === "start").length;
+}
 
 before(async () => {
+  assert.ok(existsSync(join(kit, "test", "fixtures", "hello.ts")), `the kit's fixture channel is needed at ${kit} (NEOTELETEXT_KIT)`);
+  assert.ok(existsSync(neottx), `neottx at the server's pinned engine commit is needed at ${neottx} (NEOTTX)`);
   if (deployed === undefined) {
     rmSync(join(crate, ".wrangler", "state"), { recursive: true, force: true });
-    wrangler = startWrangler();
-    await eventually(async () => ((await fetch(`${base}/`)).ok ? true : undefined), "wrangler dev answering");
+    startWrangler();
+    await eventually(async () => ((await fetch(`${base}/${channel}/`)).ok ? true : undefined), "wrangler dev answering", WRANGLER_STARTS_WITHIN_MS);
   }
-  bridge = startBridge();
+  startBridge();
+  await eventually(async () => (starts() > 0 ? true : undefined), "the program sent start");
 });
 
 after(async () => {
   for (const child of running) await stop(child);
+  rmSync(scratch, { recursive: true, force: true });
 });
 
-test("the program's pages are served, its section and new title listed", async () => {
-  const index = await eventually(() => page(`/${channel}/100.t42`), "page 100");
-  assert.equal(index.length % PACKET_BYTES, 0);
-  // A deployment may serve page 100 kept from before (requirement 5.2)
-  // while the program is still declaring and retitling: wait for its title.
-  const contents = await eventually(async () => {
-    const text = (await page(`/${channel}/contents.txt`))?.toString("utf8");
-    return text?.includes("p\t102\tKit raw, retitled\n") ? text : undefined;
-  }, "the program's new title listed");
-  assert.match(contents, /p\t100\tKit index\n/);
-  assert.match(contents, /p\t102\tKit raw, retitled\n/);
-  assert.match(contents, /s\tKit links\np\t103\tKit sub-page link\n/);
+test("the push upgrade is refused as the native host refuses it, and accepted naming the subprotocol (TODO-4435)", async () => {
+  const withOrigin = await Viewer.open("push", { Origin: "https://elsewhere.example", "Sec-WebSocket-Protocol": SUBPROTOCOL });
+  assert.equal(withOrigin.status, 403, withOrigin.head);
+  withOrigin.close();
+  const without = await Viewer.open("push", {});
+  assert.equal(without.status, 426, without.head);
+  assert.equal(without.header("sec-websocket-protocol"), SUBPROTOCOL, without.head);
+  without.close();
+  const other = await Viewer.open("push", { "Sec-WebSocket-Protocol": "neottx.9" });
+  assert.equal(other.status, 426, other.head);
+  other.close();
+  const accepted = await Viewer.open();
+  assert.equal(accepted.status, 101, accepted.head);
+  assert.equal(accepted.header("sec-websocket-protocol"), SUBPROTOCOL, accepted.head);
+  // The server keeps no session and sets no cookie (REQ-6704, DEC-6471).
+  assert.equal(accepted.header("set-cookie"), undefined, accepted.head);
+  accepted.close();
 });
 
-test("a program without the channel's secret is refused, and a second is refused", async () => {
+test("a program without the channel's secret is refused 401, and a second 409 (REQ-1024)", async () => {
+  const none = await Viewer.open("program", {});
+  assert.equal(none.status, 401, none.head);
+  none.close();
   const wrong = await Viewer.open("program", { Authorization: "Bearer not-the-secret" });
   assert.equal(wrong.status, 401, wrong.head);
   wrong.close();
-  await eventually(() => page(`/${channel}/100.t42`), "the first program connected");
   const second = await Viewer.open("program", { Authorization: `Bearer ${secret}` });
   assert.equal(second.status, 409, second.head);
   second.close();
 });
 
-test("a viewer is sent the pages and nothing unasked after, its ping is answered, and no cookie is set", async () => {
-  await eventually(() => page(`/${channel}/100.t42`), "page 100");
-  const first = await Viewer.open();
-  assert.equal(first.status, 101, first.head);
-  // The server keeps no session and sets no cookie (REQ-6704, DEC-6471).
-  assert.ok(!first.setsCookie, `no cookie: ${first.head}`);
-  // Every shared page, and then, on pages that do not change, nothing: no
-  // time-filling header (requirement 11.2).
-  await eventually(async () => (first.messages().some((length) => length > PACKET_BYTES) ? true : undefined), "the pages themselves");
-  await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
-  const sent = first.messages().length;
-  await new Promise((resolve) => setTimeout(resolve, QUIET_MS));
-  assert.equal(first.messages().length, sent, "nothing sent unasked");
-  assert.ok(!first.messages().includes(PACKET_BYTES), "no header alone");
-  // The keepalive: the runtime answers a ping (requirement 11.3).
-  const payload = Buffer.from("keep");
-  first.ping(payload);
-  const pong = await eventually(async () => first.frames().find((frame) => frame.opcode === OPCODE_PONG), "a pong");
-  assert.deepEqual(pong.payload, payload, "the ping's payload");
-  first.close();
+test("the channel's addresses answer as the URL map says (REQ-1693 item 7)", async () => {
+  const get = (path: string) => fetch(`${base}${path}`, { redirect: "manual" });
+  assert.equal((await get("/")).status, 404);
+  const folder = await get(`/${channel}`);
+  assert.equal(folder.status, 308);
+  assert.equal(folder.headers.get("location"), `/${channel}/`);
+  const small = await get(`/${channel}/`);
+  assert.equal(small.status, 200);
+  assert.match(small.headers.get("content-type") ?? "", /^text\/html/);
+  assert.ok(small.headers.get("content-security-policy"), "a policy");
+  const descriptor = await get(`/${channel}/channel.ttx`);
+  assert.equal(descriptor.status, 200);
+  assert.equal(typeof ((await descriptor.json()) as { name?: unknown }).name, "string");
+  const page = await get(`/${channel}/100`);
+  assert.equal(page.status, 200, "a page's address answers, public or not (REQ-1728)");
+  assert.equal((await get(`/${channel}/100/`)).status, 308);
+  assert.equal((await get(`/${channel}/nothing-here`)).status, 404);
 });
 
-test("a restarted host serves what it kept before the program connects again", { skip: deployed !== undefined && "local only" }, async () => {
-  const kept = await eventually(() => page(`/${channel}/100.t42`), "page 100");
-  await stop(bridge!);
-  await stop(wrangler!);
-  wrangler = startWrangler();
-  const served = await eventually(() => page(`/${channel}/100.t42`), "page 100 after the restart");
-  assert.deepEqual(served, kept, "the page as it was kept");
+test("a receiver meets the channel as neottx probe does, and is served the program's page", () => {
+  const local = deployed === undefined ? ["--allow-local", "127.0.0.1"] : [];
+  const probe = spawnSync(neottx, ["probe", ...local, `${base}/${channel}/`], { encoding: "utf8", timeout: WITHIN_MS });
+  assert.equal(probe.status, 0, `${probe.stdout}\n${probe.stderr}`);
+  assert.match(probe.stdout, /handshake +accepted: neottx\.10/);
+  assert.match(probe.stdout, /selection +100: a page/);
 });
+
+test("a viewer is sent its page and nothing unasked after, and its ping is answered (requirements 11.2, 11.3)", async () => {
+  const viewer = await Viewer.open();
+  assert.equal(viewer.status, 101, viewer.head);
+  viewer.send(hello());
+  viewer.send(select("100"));
+  await eventually(async () => (viewer.messages().some((length) => length > PACKET_BYTES) ? true : undefined), "the page itself");
+  await pause(QUIET_MS);
+  const sent = viewer.messages().length;
+  await pause(QUIET_MS);
+  assert.equal(viewer.messages().length, sent, "nothing sent unasked");
+  const payload = Buffer.from("keep");
+  viewer.ping(payload);
+  const pong = await eventually(async () => viewer.frames().find((frame) => frame.opcode === OPCODE_PONG), "a pong");
+  assert.deepEqual(pong.payload, payload, "the ping's payload");
+  viewer.close();
+});
+
+test(
+  "a viewer's selection outlasts the object's hibernation (DEC-1755 option 1, TODO-4579)",
+  { skip: deployed === undefined && "wrangler dev keeps the object in memory, so a hibernation cannot be forced: run against the deployment" },
+  async () => {
+    const viewer = await Viewer.open();
+    assert.equal(viewer.status, 101, viewer.head);
+    viewer.send(hello());
+    viewer.send(select(CAROUSEL_PLACE));
+    await eventually(async () => (connectedAfterStart(starts(), CAROUSEL_PLACE) || viewer.messages().length > 0 ? true : undefined), "the selection");
+    await eventually(async () => (viewer.messages().some((length) => length > PACKET_BYTES) ? true : undefined), "the sub-page itself");
+    const before = { starts: starts(), messages: viewer.messages().length };
+    // Quiet on both sides: the object hibernates. A request wakes it, which
+    // gives the viewer's connection back and starts the program again.
+    await pause(HIBERNATE_WAIT_MS);
+    assert.equal((await fetch(`${base}/${channel}/channel.ttx`)).status, 200);
+    await eventually(async () => (starts() > before.starts ? true : undefined), "a wake: the program sent start again");
+    await eventually(
+      async () => (connectedAfterStart(before.starts + 1, CAROUSEL_PLACE) ? true : undefined),
+      `the program told the connection with its selection ${CAROUSEL_PLACE} after the wake`,
+    );
+    await eventually(async () => (viewer.messages().length > before.messages ? true : undefined), "the sub-page sent again after the wake");
+    viewer.close();
+  },
+);
