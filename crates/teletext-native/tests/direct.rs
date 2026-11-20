@@ -1202,3 +1202,35 @@ async fn tls_handshakes_past_the_bound_are_refused() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// REQ-7004: a TCP connection upgraded to a WebSocket over HTTP/1.1 keeps
+/// its place among the TCP connections for as long as the WebSocket is
+/// served, after hyper has let the connection go: with room for one, a
+/// second connection is closed unanswered while the WebSocket is open,
+/// and served once it has closed.
+#[tokio::test]
+async fn an_upgraded_websocket_keeps_its_tcp_place() {
+    let running = running_with(None, |port| format!(":{port}"), None, TcpBounds { connections: 1, handshakes: 1 }).await;
+    let mut socket = TcpStream::connect(running.address).await.unwrap();
+    let upgrade = format!(
+        "GET {} HTTP/1.1\r\nHost: {HOST}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: {VERSION}\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n\r\n",
+        path("push")
+    );
+    socket.write_all(upgrade.as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(timeout(WITHIN, socket.read_u8()).await.expect("an answer in time").unwrap());
+    }
+    assert!(head.starts_with(b"HTTP/1.1 101"), "{}", String::from_utf8_lossy(&head));
+    // Answered a ping: upgraded, and hyper done with the connection.
+    socket.write_all(&PING).await.unwrap();
+    let mut frames = Frames::default();
+    while frames.next().is_none_or(|(first, _)| first != PONG_OPCODE) {
+        frames.0.push(timeout(WITHIN, socket.read_u8()).await.expect("a pong in time").unwrap());
+    }
+    let mut other = TcpStream::connect(running.address).await.unwrap();
+    assert!(!served(&mut other).await, "the WebSocket holds the one place");
+    drop(socket);
+    served_again(&running).await;
+}

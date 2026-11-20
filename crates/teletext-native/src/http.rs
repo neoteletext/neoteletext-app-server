@@ -24,7 +24,7 @@ use hyper::header::{
 use hyper::{Method, Request, Response, StatusCode, Version};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
 use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use teletext_runtime::ConnectionId;
@@ -160,11 +160,15 @@ pub enum Answer {
 /// and serves the WebSocket it opened, if it opened one, on what hyper
 /// makes of the connection or the stream.
 pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, source: Source) -> Response<Whole> {
+    // An upgraded socket keeps its TCP connection's place for as long as
+    // it is served (REQ-7004), after hyper has let the connection go.
+    let place = request.extensions().get::<TcpPlace>().cloned();
     match decide(routes, &request, source).await {
         Answer::Response(response) => response,
         Answer::Push { response, hub, connection, address } => {
             let pending = hyper::upgrade::on(request);
             tokio::spawn(async move {
+                let _place = place;
                 let Ok(upgraded) = pending.await else { return };
                 match upgraded.downcast::<TokioIo<TcpStream>>() {
                     // HTTP/1.1 with no TLS: the raw socket, so that no
@@ -182,6 +186,7 @@ pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, sou
         Answer::Program { response, door, claim } => {
             let pending = hyper::upgrade::on(request);
             tokio::spawn(async move {
+                let _place = place;
                 // An upgrade that fails drops the claim, which lets the next in.
                 let Ok(upgraded) = pending.await else { return };
                 match upgraded.downcast::<TokioIo<TcpStream>>() {
@@ -199,6 +204,12 @@ pub async fn answer<B: Send + 'static>(routes: &Routes, request: Request<B>, sou
         }
     }
 }
+
+/// A TCP connection's place among `MAX_TCP_CONNECTIONS` (REQ-7004), which
+/// each of its requests carries, so that a WebSocket it was upgraded to
+/// holds the place until that WebSocket ends.
+#[derive(Clone, Debug)]
+pub struct TcpPlace(pub Arc<OwnedSemaphorePermit>);
 
 /// Decides one request on the viewers' address (REQ-1693 item 7), and 404
 /// for everything else, `/` included. The server serves no channel's files:

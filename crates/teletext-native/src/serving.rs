@@ -22,7 +22,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio_rustls::TlsAcceptor;
 
-use crate::http::{Routes, Source, answer};
+use crate::http::{Routes, Source, TcpPlace, answer};
 use crate::limits::{
     H2_DEAD_AFTER_PING, H2_MAX_FRAME_BYTES, H2_PING_AFTER, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_HEADER_LIST_BYTES, MAX_PROXY_HEADER_BYTES,
     MAX_TCP_CONNECTIONS, MAX_TLS_HANDSHAKES, PROXY_HEADER_WITHIN,
@@ -180,10 +180,7 @@ impl Server {
                     };
                     let _ = stream.set_nodelay(true);
                     let (routes, secured, told, handshakes) = (Arc::clone(&self.routes), self.secured.clone(), told.clone(), Arc::clone(&handshakes));
-                    tokio::spawn(async move {
-                        connection(stream, peer, routes, secured, told, handshakes).await;
-                        drop(place);
-                    });
+                    tokio::spawn(connection(stream, peer, routes, secured, told, handshakes, TcpPlace(Arc::new(place))));
                 }
                 () = &mut stopped => break,
             }
@@ -311,6 +308,7 @@ async fn connection(
     secured: Option<Secured>,
     told: watch::Receiver<bool>,
     handshakes: Arc<Semaphore>,
+    place: TcpPlace,
 ) {
     let proxy = secured.as_ref().and_then(|secured| secured.proxy);
     let source = match proxy {
@@ -325,9 +323,10 @@ async fn connection(
         },
     };
     let alt_svc = secured.as_ref().map(|secured| secured.alt_svc.clone());
-    let service = service_fn(move |request| {
+    let service = service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| {
         let routes = Arc::clone(&routes);
         let alt_svc = alt_svc.clone();
+        request.extensions_mut().insert(place.clone());
         async move {
             let mut response = answer(&routes, request, source).await;
             if let Some(alt_svc) = alt_svc {
