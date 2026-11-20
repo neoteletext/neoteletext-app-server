@@ -24,12 +24,17 @@ neoteletext-core.workspace = true
 # The input protocol's writer, for teletext-load's HELLO and SELECT.
 neoteletext-input.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process", "signal", "fs"] }
-# `http2` for `hyper::ext::Protocol`, what an extended CONNECT asks to
-# speak (RFC 8441 section 4), which the HTTP side reads (REQ-6966); it
-# brings the hyper project's `h2` (MIT), under the owner's standing
-# approval of pure-Rust libraries (DEC-6579).
+# `http2` for HTTP/2 served directly, and for `hyper::ext::Protocol`, what
+# an extended CONNECT asks to speak (RFC 8441 section 4), which the HTTP
+# side reads (REQ-6966); it brings the hyper project's `h2` (MIT), under
+# the owner's standing approval of pure-Rust libraries (DEC-6579).
 hyper = { workspace = true, features = ["server", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["tokio"] }
+# TLS, and HTTP/3 over QUIC, served directly (DEC-6964).
+teletext-http3.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+quinn.workspace = true
 listenfd.workspace = true
 # The handle secret's and the challenges' random bytes (DEC-6471).
 ring.workspace = true
@@ -43,6 +48,15 @@ tokio = { workspace = true, features = ["test-util"] }
 # The target a rule event names, for the tests that write a viewer's input
 # as a receiver of push protocol 9 does (page-rules.md RULE-46).
 neoteletext-rules.workspace = true
+# The clients and the certificate of the tests of TLS, HTTP/2 and HTTP/3
+# served directly (DEC-6964), under the owner's standing approval of
+# pure-Rust libraries (DEC-6579), pinned as the programs' libraries are:
+# - h2 (MIT), the hyper project's HTTP/2, already built as hyper's own,
+#   here as a client that opens streams by extended CONNECT;
+# - rcgen (MIT OR Apache-2.0), which makes each test's certificate and key
+#   over `ring`, so that no key is kept in the repository.
+h2 = { version = "=0.4.20", default-features = false }
+rcgen = { version = "=0.14.10", default-features = false, features = ["ring", "pem"] }
 
 [lints]
 workspace = true

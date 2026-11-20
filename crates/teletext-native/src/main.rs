@@ -4,6 +4,7 @@
 //! teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE]
 //!                 [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text]
 //!                 [--trusted-proxy ADDRESS]
+//!                 [--tls-certificate FILE --tls-key FILE]
 //! teletext-server rotate-viewer-secret [--state DIRECTORY]
 //! ```
 //!
@@ -21,6 +22,15 @@
 //! address of the reverse proxy in front of the server, whose
 //! `X-Forwarded-For` then names each viewer's address for the bound on new
 //! viewers (VS-304).
+//!
+//! `--tls-certificate` and `--tls-key`, given together, are a certificate
+//! chain and its private key in PEM, with which the server serves TLS
+//! itself and needs no proxy (REQ-6965): HTTP/2 and HTTP/1.1 on TCP, and
+//! HTTP/3 over QUIC on UDP at the same address and port, each carrying a
+//! channel's push and program connections (REQ-6966). `--origin` then starts `https://`. The
+//! files are read once, at start, and a file that cannot be read, or a key
+//! that is not the certificate's, stops the server there. Without them the
+//! server serves plain HTTP/1.1 and listens on no UDP port.
 //!
 //! `rotate-viewer-secret` makes a new viewer-handle secret in the state
 //! directory, for the server's next start (VS-306). **Every channel then
@@ -57,11 +67,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use listenfd::ListenFd;
-use teletext_native::http::{Routes, answer};
+use teletext_native::http::Routes;
 use teletext_native::logging::{self, Format};
+use teletext_native::serving::{self, Server};
 use teletext_native::state::{StateDirectory, SystemRandomSource, random_secret};
 use teletext_native::stats::ServerStats;
-use teletext_native::{admin, apps, hub};
+use teletext_native::{admin, apps, hub, tls};
 use teletext_runtime::{Channel, ChannelConfig, HandleSecret};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -89,12 +100,14 @@ struct Arguments {
     admin: Option<String>,
     log_format: Format,
     trusted_proxy: Option<IpAddr>,
+    /// `--tls-certificate` and `--tls-key`, given together or not at all.
+    tls: Option<tls::Files>,
     /// `rotate-viewer-secret`: rotate, and serve nothing.
     rotate: bool,
 }
 
 /// How the server is run.
-const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
+const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS] [--tls-certificate FILE --tls-key FILE], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
 
 fn arguments() -> Result<Arguments, String> {
     // systemd separates several state directories with colons; the first is ours.
@@ -107,8 +120,10 @@ fn arguments() -> Result<Arguments, String> {
         admin: None,
         log_format: Format::Automatic,
         trusted_proxy: None,
+        tls: None,
         rotate: false,
     };
+    let (mut certificate, mut key) = (None, None);
     let mut list = std::env::args().skip(1).peekable();
     if list.next_if(|first| first == "rotate-viewer-secret").is_some() {
         parsed.rotate = true;
@@ -126,9 +141,17 @@ fn arguments() -> Result<Arguments, String> {
                 let text = value()?;
                 parsed.trusted_proxy = Some(text.parse().map_err(|error| format!("--trusted-proxy {text}: {error}"))?);
             }
+            "--tls-certificate" => certificate = Some(PathBuf::from(value()?)),
+            "--tls-key" => key = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown argument {other}; {USAGE}")),
         }
     }
+    parsed.tls = match (certificate, key) {
+        (Some(certificate), Some(key)) => Some(tls::Files { certificate, key }),
+        (None, None) => None,
+        (Some(_), None) => return Err("--tls-certificate needs --tls-key, the certificate's private key".to_owned()),
+        (None, Some(_)) => return Err("--tls-key needs --tls-certificate, the key's certificate chain".to_owned()),
+    };
     Ok(parsed)
 }
 
@@ -206,6 +229,9 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     let start = tokio::time::Instant::now();
     let epoch_at_start_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0));
     let stats = Arc::new(ServerStats::default());
+    // Before any channel's program is started: a certificate or key that
+    // cannot be used stops the server here (REQ-6965).
+    let secured = serving::secure(arguments.tls.as_ref())?;
     let kept = arguments.state.as_deref().map(StateDirectory::open).transpose()?;
     if let Some(kept) = &kept {
         match kept.figures() {
@@ -247,6 +273,8 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         None => TcpListener::bind(&arguments.listen).await.map_err(|error| format!("cannot listen on {}: {error}", arguments.listen))?,
     };
     let listening = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
+    let routes = Arc::new(Routes { hubs, connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: arguments.trusted_proxy });
+    let server = Server::start(listener, secured.as_ref(), Arc::clone(&routes))?;
     let mut administering = None;
     if let Some(address) = &arguments.admin {
         let admin = TcpListener::bind(address).await.map_err(|error| format!("cannot listen on {address} for administration: {error}"))?;
@@ -257,34 +285,18 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         version = env!("CARGO_PKG_VERSION"),
         listen = %listening,
         origin = arguments.origin,
-        channels = hubs.keys().cloned().collect::<Vec<_>>().join(", "),
+        quic = server.quic_address().map(|address| address.to_string()),
+        channels = routes.hubs.keys().cloned().collect::<Vec<_>>().join(", "),
         state = kept.as_ref().map(|kept| kept.root().display().to_string()),
         admin = administering,
         "serving"
     );
-    let routes = Arc::new(Routes { hubs, connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: arguments.trusted_proxy });
     tokio::spawn(figures(Arc::clone(&stats), kept.clone()));
-    let stopped = stop_signal();
-    tokio::pin!(stopped);
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => {
-                let Ok((stream, peer)) = accepted else { continue };
-                let _ = stream.set_nodelay(true);
-                let routes = Arc::clone(&routes);
-                tokio::spawn(async move {
-                    let service = service_fn(move |request| {
-                        let routes = Arc::clone(&routes);
-                        async move { Ok::<_, Infallible>(answer(&routes, request, Some(peer.ip())).await) }
-                    });
-                    let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
-                });
-            }
-            () = &mut stopped => break,
-        }
-    }
-    drop(listener);
+    let stopped = server.run(stop_signal()).await;
     stop(&routes, kept.as_ref()).await;
+    // After the channels have closed their connections, so that each
+    // WebSocket on a QUIC stream is sent its Close first.
+    stopped.close().await;
     Ok(())
 }
 
