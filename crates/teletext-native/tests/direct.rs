@@ -196,7 +196,7 @@ async fn running_full(
         websockets: Arc::new(tokio::sync::Semaphore::new(websockets)),
     });
     let secured = certificate.map(|certificate| tls::load(&certificate.files).unwrap());
-    let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy });
+    let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy, reset_secret: None });
     let server = Server::start_bounded(listener, direct, routes, bounds).unwrap();
     let quic = server.quic_address();
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();

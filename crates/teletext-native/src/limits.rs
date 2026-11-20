@@ -136,6 +136,16 @@ pub const QUIC_CONNECTION_WINDOW_BYTES: u32 = 2 * QUIC_STREAM_WINDOW_BYTES;
 /// 8 MiB holds about 7,000 such packets.
 pub const QUIC_RECEIVE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
+/// The shortest time between two stateless resets the QUIC endpoint
+/// sends (RFC 9000 section 10.3), which bounds what any packets can make
+/// it send: a reset is always smaller than the packet it answers, so it
+/// cannot amplify, and this keeps a flood of packets for unknown
+/// connections from making the server answer each. quinn's own 20
+/// milliseconds would answer fifty a second, so that after a restart the
+/// last process's 10,000 or 50,000 connections would be told over minutes;
+/// 20 microseconds answers 50,000 a second.
+pub const STATELESS_RESET_EVERY: Duration = Duration::from_micros(20);
+
 /// What the server sends one QUIC connection's peer and holds until it is
 /// acknowledged, at most (the connection's send window). quinn's own
 /// default is ten megabytes, which across [`MAX_QUIC_CONNECTIONS`] peers

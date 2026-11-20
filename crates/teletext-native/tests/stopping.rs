@@ -47,6 +47,10 @@ const ANY_LOCAL_PORT: &str = "127.0.0.1:0";
 /// `neoteletext-transport`, its REQ-6985): a client that learns of a stop
 /// only by its connection going idle learns of it this late.
 const CLIENT_IDLE_AFTER: Duration = Duration::from_secs(15);
+/// How often the client pings a quiet connection, as the browser does
+/// every five seconds (REQ-6985); one second here, so that a test of what
+/// a ping provokes is quick.
+const CLIENT_KEEP_ALIVE_EVERY: Duration = Duration::from_secs(1);
 /// What "at once" is held to: a third of [`CLIENT_IDLE_AFTER`], so that a
 /// close learnt only at the idle timeout fails, with room for a slow
 /// machine's stop of its channels.
@@ -104,6 +108,12 @@ fn message(event: &Value) -> Option<&str> {
 
 impl Server {
     fn start(folder: &Path, certificate: &Path, key: &Path) -> Self {
+        Self::start_with(folder, certificate, key, None)
+    }
+
+    /// [`Server::start`], keeping what lasts across restarts in `state`
+    /// when given.
+    fn start_with(folder: &Path, certificate: &Path, key: &Path, state: Option<&Path>) -> Self {
         let channels = folder.join("channels.json");
         let program = r#"read -r _; printf '%s\n' '{"type":"log","level":"info","event":"started","text":"stopping"}'; while read -r _; do :; done"#;
         std::fs::write(&channels, format!(r#"{{"channels":[{{"folder":"{FOLDER}","name":"Channel","command":["sh","-c",{program:?}]}}]}}"#)).unwrap();
@@ -114,6 +124,7 @@ impl Server {
             .arg(certificate)
             .arg("--tls-key")
             .arg(key)
+            .args(state.map(|state| ["--state".as_ref(), state.as_os_str()]).into_iter().flatten())
             .env("RUST_LOG", "info")
             .env_remove("STATE_DIRECTORY")
             .env_remove("LISTEN_FDS")
@@ -216,7 +227,7 @@ struct H3 {
 async fn h3_to(address: SocketAddr, trusted: &CertificateDer<'static>) -> H3 {
     let mut endpoint = quinn::Endpoint::client(ANY_LOCAL_PORT.parse().unwrap()).unwrap();
     let mut transport = quinn::TransportConfig::default();
-    transport.max_idle_timeout(Some(CLIENT_IDLE_AFTER.try_into().unwrap()));
+    transport.max_idle_timeout(Some(CLIENT_IDLE_AFTER.try_into().unwrap())).keep_alive_interval(Some(CLIENT_KEEP_ALIVE_EVERY));
     let mut config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_tls(trusted, ALPN_H3)).unwrap()));
     config.transport_config(Arc::new(transport));
     endpoint.set_default_client_config(config);
@@ -652,27 +663,41 @@ async fn a_hangup_reloads_the_certificate_for_new_handshakes() {
 
 // ------------------------------------------------------- a peer that went
 
-/// A UDP relay between one client and the server, which forwards each
-/// way until `cut` is set and then drops everything: a client that has
-/// gone without a word, as one whose network fell away has.
-async fn relay(server: SocketAddr) -> (SocketAddr, Arc<std::sync::atomic::AtomicBool>) {
+/// A UDP relay between one client and a server, which forwards each way
+/// until `cut` is set and then drops everything, as a network that falls
+/// away does; `target` is the server it forwards to, which a test may
+/// change to the next process.
+struct Relay {
+    address: SocketAddr,
+    cut: Arc<std::sync::atomic::AtomicBool>,
+    target: Arc<std::sync::Mutex<SocketAddr>>,
+}
+
+impl Relay {
+    fn cut(&self, cut: bool) {
+        self.cut.store(cut, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+async fn relay(server: SocketAddr) -> Relay {
     let outer = tokio::net::UdpSocket::bind(ANY_LOCAL_PORT).await.unwrap();
     let inner = tokio::net::UdpSocket::bind(ANY_LOCAL_PORT).await.unwrap();
-    inner.connect(server).await.unwrap();
     let address = outer.local_addr().unwrap();
     let cut = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let cutting = Arc::clone(&cut);
+    let target = Arc::new(std::sync::Mutex::new(server));
+    let (cutting, targeting) = (Arc::clone(&cut), Arc::clone(&target));
     tokio::spawn(async move {
         // The largest UDP payload.
         let (mut from_client, mut from_server) = (vec![0_u8; 65_536], vec![0_u8; 65_536]);
         let mut client = None;
         loop {
             let passing = !cutting.load(std::sync::atomic::Ordering::Relaxed);
+            let server = *targeting.lock().unwrap();
             tokio::select! {
                 Ok((count, sender)) = outer.recv_from(&mut from_client) => {
                     client = Some(sender);
                     if passing {
-                        let _ = inner.send(&from_client[..count]).await;
+                        let _ = inner.send_to(&from_client[..count], server).await;
                     }
                 }
                 Ok(count) = inner.recv(&mut from_server) => {
@@ -683,7 +708,7 @@ async fn relay(server: SocketAddr) -> (SocketAddr, Arc<std::sync::atomic::Atomic
             }
         }
     });
-    (address, cut)
+    Relay { address, cut, target }
 }
 
 /// REQ-7002: a client that has gone without a word, its packets no longer
@@ -697,10 +722,10 @@ async fn a_client_that_went_holds_the_stop_for_its_bound_alone() {
     let folder = scratch("gone");
     let (certificate, key, trusted) = certificate(&folder, "server");
     let mut server = Server::start(&folder, &certificate, &key);
-    let (relayed, cut) = relay(server.address).await;
-    let h3 = h3_to(relayed, &trusted).await;
+    let relayed = relay(server.address).await;
+    let h3 = h3_to(relayed.address, &trusted).await;
     let _socket = h3.push(server.address).await;
-    cut.store(true, std::sync::atomic::Ordering::Relaxed);
+    relayed.cut(true);
     let signalled = Instant::now();
     server.signal("TERM");
     assert!(server.exited().await, "exit status 0");
@@ -708,5 +733,38 @@ async fn a_client_that_went_holds_the_stop_for_its_bound_alone() {
     eprintln!("a stop with a client gone: exited {stopped:?} after the signal");
     let bound = teletext_native::limits::STREAM_ACKNOWLEDGED_WITHIN + teletext_native::limits::QUIC_CLOSED_WITHIN;
     assert!(stopped < bound + PROMPTLY, "within the stop's own bounds, not {stopped:?}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-7002: a client that missed the stopping server's close, its
+/// packets lost both ways meanwhile, learns from the next process that its
+/// connection is gone at its next packet, by a stateless reset (RFC 9000
+/// section 10.3) whose token the next process makes with the key the last
+/// one used, derived from the handle secret the state directory keeps;
+/// not at its idle timeout, [`CLIENT_IDLE_AFTER`]. Before, each process
+/// made its key afresh, so the next one's resets were not the client's
+/// token and the client waited out its idle timeout.
+#[tokio::test]
+async fn the_next_process_resets_a_connection_the_last_one_held() {
+    let folder = scratch("reset");
+    let (certificate, key, trusted) = certificate(&folder, "server");
+    let state = folder.join("state");
+    let mut server = Server::start_with(&folder, &certificate, &key, Some(&state));
+    let relayed = relay(server.address).await;
+    let h3 = h3_to(relayed.address, &trusted).await;
+    let _socket = h3.push(server.address).await;
+    relayed.cut(true);
+    server.signal("TERM");
+    assert!(server.exited().await, "exit status 0");
+    let next = Server::start_with(&folder, &certificate, &key, Some(&state));
+    *relayed.target.lock().unwrap() = next.address;
+    relayed.cut(false);
+    let began = Instant::now();
+    let ended = timeout(WITHIN, h3.connection.closed()).await.expect("the connection ended in time");
+    let learnt = began.elapsed();
+    eprintln!("the next process's stateless reset: {ended:?} {learnt:?} after the relay passed packets again");
+    assert!(matches!(ended, quinn::ConnectionError::Reset), "reset by the next process, not {ended:?}");
+    assert!(learnt < PROMPTLY, "at the next packet, not at the idle timeout: {learnt:?}");
+    drop(next);
     let _ = std::fs::remove_dir_all(&folder);
 }

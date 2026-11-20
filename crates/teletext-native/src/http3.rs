@@ -28,10 +28,11 @@ use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
     QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_RECEIVE_BUFFER_BYTES, QUIC_SEND_WINDOW_BYTES, QUIC_STREAM_WINDOW_BYTES,
-    STREAM_ACKNOWLEDGED_WITHIN,
+    STATELESS_RESET_EVERY, STREAM_ACKNOWLEDGED_WITHIN,
 };
 use crate::serving::until_stopping;
 use crate::tls::Configured;
+use teletext_runtime::HandleSecret;
 
 /// Client-initiated bidirectional streams are numbered 0, 4, 8 and on:
 /// a stream identifier's two low bits are its type (RFC 9000 section
@@ -64,7 +65,7 @@ pub(crate) struct Listening {
 ///
 /// # Errors
 /// A socket that cannot be bound.
-pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<Listening, String> {
+pub(crate) fn endpoint(tls: &Configured, address: SocketAddr, reset_secret: Option<&HandleSecret>) -> Result<Listening, String> {
     let mut transport = quinn::TransportConfig::default();
     transport
         .max_concurrent_bidi_streams(VarInt::from_u32(MAX_CONCURRENT_STREAMS))
@@ -85,8 +86,67 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<Listenin
     let _ = state.set_recv_buffer_size((&socket).into(), QUIC_RECEIVE_BUFFER_BYTES);
     let receive_buffer = state.recv_buffer_size((&socket).into()).map_err(unbound)?;
     let runtime = quinn::default_runtime().ok_or_else(|| unbound(io::Error::other("no async runtime")))?;
-    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(config), socket, runtime).map_err(unbound)?;
+    let mut endpoint_config = match reset_secret {
+        Some(secret) => quinn::EndpointConfig::new(Arc::new(reset_key(secret))),
+        None => quinn::EndpointConfig::default(),
+    };
+    endpoint_config.min_reset_interval(STATELESS_RESET_EVERY);
+    // quinn's own generator checks a connection ID against a key of this
+    // process's, so a packet of a connection the last process held would
+    // be dropped unanswered; these are checked against nothing, and every
+    // short packet for an unknown connection is answered with a reset.
+    let ids = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &ring::rand::SystemRandom::new())
+        .map_err(|_| unbound(io::Error::other("no random bytes for QUIC's connection IDs")))?;
+    endpoint_config.cid_generator(move || Box::new(ConnectionIds { key: ids.clone(), made: 0 }));
+    let endpoint = quinn::Endpoint::new(endpoint_config, Some(config), socket, runtime).map_err(unbound)?;
     Ok(Listening { endpoint, send_segments: state.max_gso_segments(), receive_segments: state.gro_segments(), receive_buffer })
+}
+
+/// The bytes of a connection ID the server issues: quinn's own length.
+const CONNECTION_ID_BYTES: usize = 8;
+
+/// The connection IDs the server issues (RFC 9000 section 5.1): the first
+/// [`CONNECTION_ID_BYTES`] of HMAC-SHA-256 under a key made at random when
+/// the endpoint is, of a count, so that they are unpredictable to anyone
+/// without the key and never repeat in one process. No ID is checked
+/// against the key on arrival (quinn's `validate` left as it is): a
+/// packet for a connection this process does not know, as one the last
+/// process held, is then answered with a stateless reset.
+struct ConnectionIds {
+    key: ring::hmac::Key,
+    made: u64,
+}
+
+impl quinn::ConnectionIdGenerator for ConnectionIds {
+    fn generate_cid(&mut self) -> quinn::ConnectionId {
+        self.made = self.made.wrapping_add(1);
+        let tag = ring::hmac::sign(&self.key, &self.made.to_be_bytes());
+        quinn::ConnectionId::new(tag.as_ref().get(..CONNECTION_ID_BYTES).unwrap_or_default())
+    }
+
+    fn cid_len(&self) -> usize {
+        CONNECTION_ID_BYTES
+    }
+
+    fn cid_lifetime(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+/// What the stateless reset key is derived under, apart from every other
+/// use of the handle secret (VS-305's channel keys among them).
+const RESET_KEY_DOMAIN: &[u8] = b"neoteletext QUIC stateless reset key";
+
+/// The key QUIC's stateless reset tokens are made with (RFC 9000 section
+/// 10.3.1: a token is a function of a static key and the connection ID):
+/// HMAC-SHA-256 under `secret` of [`RESET_KEY_DOMAIN`]. The same secret
+/// gives the same key in the next process, which then answers a packet of
+/// a connection the last process held with a stateless reset, the
+/// client's token for it, and the client learns at once that the
+/// connection is gone, where otherwise it waits out its idle timeout.
+fn reset_key(secret: &HandleSecret) -> ring::hmac::Key {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.bytes());
+    ring::hmac::Key::new(ring::hmac::HMAC_SHA256, ring::hmac::sign(&key, RESET_KEY_DOMAIN).as_ref())
 }
 
 /// Accepts QUIC connections until the endpoint is closed, at most

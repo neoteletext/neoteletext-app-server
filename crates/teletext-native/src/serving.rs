@@ -30,6 +30,7 @@ use crate::limits::{
 use crate::proxy_protocol::{self, Header, Refused};
 use crate::tls::{ALPN_H2, Configured};
 use crate::{http3, tls};
+use teletext_runtime::HandleSecret;
 
 /// TLS on TCP, and what answers over it say of HTTP/3.
 #[derive(Clone)]
@@ -60,6 +61,12 @@ pub struct Direct<'tls> {
     /// only receive the protocol described in this specification and MUST
     /// not try to guess whether the protocol header is present or not".
     pub proxy_protocol: Option<IpAddr>,
+    /// The secret QUIC's stateless reset tokens are derived from
+    /// (REQ-7002; RFC 9000 section 10.3): the server's handle secret,
+    /// which a state directory keeps across restarts, so that the next
+    /// process can reset a connection the last one held. `None` makes a
+    /// key for this run alone.
+    pub reset_secret: Option<&'tls HandleSecret>,
 }
 
 /// The default port of `http` (RFC 9110 section 4.2.1).
@@ -142,10 +149,10 @@ impl Server {
     /// As [`Server::start`].
     pub fn start_bounded(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>, bounds: TcpBounds) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
-        let Some(Direct { tls, public_port, proxy_protocol }) = direct else {
+        let Some(Direct { tls, public_port, proxy_protocol, reset_secret }) = direct else {
             return Ok(Self { listener, secured: None, quic: None, offload: None, receive_buffer: None, routes, bounds });
         };
-        let listening = http3::endpoint(tls, address)?;
+        let listening = http3::endpoint(tls, address, reset_secret)?;
         let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
         Ok(Self {
             listener,

@@ -264,9 +264,6 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     // Before the server is said to be serving, so that a `SIGHUP` from then
     // on reloads and never ends the process, as its default would.
     reload_on_hangup(secured.clone(), arguments.tls.clone())?;
-    let proxy_protocol = if arguments.proxy_protocol { arguments.trusted_proxy } else { None };
-    let direct =
-        secured.as_ref().map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port, proxy_protocol })).transpose()?;
     let kept = arguments.state.as_deref().map(StateDirectory::open).transpose()?;
     if let Some(kept) = &kept {
         match kept.figures() {
@@ -276,6 +273,13 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         }
     }
     let (secret, rotated) = handle_secret(kept.as_ref())?;
+    let proxy_protocol = if arguments.proxy_protocol { arguments.trusted_proxy } else { None };
+    // The handle secret, kept across restarts in the state directory,
+    // gives the next process the QUIC stateless reset key (REQ-7002).
+    let direct = secured
+        .as_ref()
+        .map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port, proxy_protocol, reset_secret: Some(&secret) }))
+        .transpose()?;
     let mut hubs = BTreeMap::new();
     for spec in arguments.channels.as_deref().map(apps::read_channels).transpose()?.unwrap_or_default() {
         if hubs.contains_key(&spec.folder) {
