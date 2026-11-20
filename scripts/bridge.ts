@@ -7,10 +7,12 @@
 //   NEOTELETEXT_PROGRAM_SECRET=... node scripts/bridge.ts \
 //       --url wss://cf.neoteletext.com/demosite/program [--directory DIR] -- node src/main.ts
 //
-// When the connection closes it connects again after a pause that doubles,
-// up to 30 s, and declares the program's pages again; the channel then
-// sends `start` afresh. When the program ends it is started again the same
-// way, on a new connection, so the channel sees a program that started.
+// It connects as soon as the program starts: the channel speaks first,
+// with `start` (DOC-1965). When the connection closes the program is
+// started again, since a program's state is of one connection: the channel
+// sends `start` afresh on the next, after a pause that doubles, up to 30 s.
+// When the program ends it is started again the same way, on a new
+// connection, so the channel sees a program that started.
 // Node 22.4 or later: the WebSocket and the type stripping are built in.
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -58,7 +60,6 @@ class Bridge {
   readonly #secret: string;
   #program: ChildProcess | undefined;
   #socket: WebSocket | undefined;
-  #declaration: string | undefined;
   #waiting: string[] = [];
   #connectPause = FIRST_PAUSE_MS;
   #programPause = FIRST_PAUSE_MS;
@@ -83,7 +84,6 @@ class Bridge {
     const [program = "", ...rest] = this.#options.command;
     const child = spawn(program, rest, { cwd: this.#options.directory, stdio: ["pipe", "pipe", "inherit"] });
     this.#program = child;
-    this.#declaration = undefined;
     this.#waiting = [];
     const startedAt = Date.now();
     createInterface({ input: child.stdout! }).on("line", (line) => this.#fromProgram(line));
@@ -95,19 +95,17 @@ class Bridge {
       this.#programPause = steady ? FIRST_PAUSE_MS : Math.min(this.#programPause * 2, LONGEST_PAUSE_MS);
       say(`the program ended (${signal ?? code}); starting it again in ${pause} ms`);
       // The channel sees a program that started: a new connection.
-      this.#socket?.close();
+      const socket = this.#socket;
+      this.#socket = undefined;
+      socket?.close();
       setTimeout(() => this.#startProgram(), pause);
     });
     child.on("error", (error) => say(`cannot start ${program}: ${error.message}`));
+    this.#connect(child);
   }
 
   #fromProgram(line: string): void {
     if (line.trim() === "") return;
-    if (this.#declaration === undefined) {
-      this.#declaration = line;
-      this.#connect();
-      return;
-    }
     if (this.#socket?.readyState === WebSocket.OPEN) {
       this.#socket.send(line);
     } else if (this.#waiting.length < WAITING_LINES) {
@@ -115,9 +113,8 @@ class Bridge {
     }
   }
 
-  #connect(): void {
-    const declaration = this.#declaration;
-    if (declaration === undefined || this.#stopping) return;
+  #connect(program: ChildProcess): void {
+    if (this.#stopping || this.#program !== program) return;
     // Node's WebSocket takes headers in its second argument, beyond the
     // web's interface; the secret goes in one, never in the address.
     const init = { headers: { authorization: `Bearer ${this.#secret}` } };
@@ -126,7 +123,6 @@ class Bridge {
     socket.addEventListener("open", () => {
       say(`connected to ${this.#options.url}`);
       this.#connectPause = FIRST_PAUSE_MS;
-      socket.send(declaration);
       for (const line of this.#waiting.splice(0)) socket.send(line);
     });
     socket.addEventListener("message", (event) => {
@@ -137,9 +133,15 @@ class Bridge {
       if (this.#socket !== socket || this.#stopping) return;
       const pause = this.#connectPause;
       this.#connectPause = Math.min(this.#connectPause * 2, LONGEST_PAUSE_MS);
-      say(`the connection closed (${event.code} ${event.reason}); connecting again in ${pause} ms`);
+      say(`the connection closed (${event.code} ${event.reason}); starting the program again in ${pause} ms`);
       this.#socket = undefined;
-      setTimeout(() => this.#connect(), pause);
+      // The program's state was of that connection: it starts afresh, and
+      // its exit is not a fault to be paused for again.
+      const program = this.#program;
+      this.#program = undefined;
+      program?.removeAllListeners("exit");
+      program?.kill();
+      setTimeout(() => this.#startProgram(), pause);
     });
     socket.addEventListener("error", () => {
       // The close that follows connects again.
