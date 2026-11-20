@@ -27,7 +27,8 @@ use crate::connection::serve_halves;
 use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
-    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_SEND_WINDOW_BYTES, QUIC_STREAM_WINDOW_BYTES, STREAM_ACKNOWLEDGED_WITHIN,
+    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_RECEIVE_BUFFER_BYTES, QUIC_SEND_WINDOW_BYTES, QUIC_STREAM_WINDOW_BYTES,
+    STREAM_ACKNOWLEDGED_WITHIN,
 };
 use crate::serving::until_stopping;
 use crate::tls::Configured;
@@ -51,6 +52,11 @@ pub(crate) struct Listening {
     /// How many datagrams one receive may give (UDP generic receive
     /// offload, `UDP_GRO`), 1 where there is none.
     pub(crate) receive_segments: usize,
+    /// The bytes the system holds for the socket's received datagrams
+    /// until the server reads them, as it reports them: what
+    /// [`QUIC_RECEIVE_BUFFER_BYTES`] asked for, at most the system's own
+    /// bound (`net.core.rmem_max` on Linux).
+    pub(crate) receive_buffer: usize,
 }
 
 /// Binds UDP at `address` and listens for QUIC there, within the bounds
@@ -74,9 +80,13 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<Listenin
     let unbound = |error: io::Error| format!("cannot listen for QUIC on UDP {address}: {error}");
     let socket = std::net::UdpSocket::bind(address).map_err(unbound)?;
     let state = quinn::udp::UdpSocketState::new((&socket).into()).map_err(unbound)?;
+    // As much as the system allows of what is asked; less is no fault,
+    // and the serving line says what was had.
+    let _ = state.set_recv_buffer_size((&socket).into(), QUIC_RECEIVE_BUFFER_BYTES);
+    let receive_buffer = state.recv_buffer_size((&socket).into()).map_err(unbound)?;
     let runtime = quinn::default_runtime().ok_or_else(|| unbound(io::Error::other("no async runtime")))?;
     let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(config), socket, runtime).map_err(unbound)?;
-    Ok(Listening { endpoint, send_segments: state.max_gso_segments(), receive_segments: state.gro_segments() })
+    Ok(Listening { endpoint, send_segments: state.max_gso_segments(), receive_segments: state.gro_segments(), receive_buffer })
 }
 
 /// Accepts QUIC connections until the endpoint is closed, at most

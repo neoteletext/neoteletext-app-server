@@ -123,6 +123,19 @@ const _: () = assert!(QUIC_STREAM_WINDOW_BYTES as usize >= 4 * MAX_MESSAGE, "a s
 /// a viewer's upstream is a few bytes a key.
 pub const QUIC_CONNECTION_WINDOW_BYTES: u32 = 2 * QUIC_STREAM_WINDOW_BYTES;
 
+/// The bytes of received datagrams the system is asked to hold for the
+/// QUIC socket until the server reads them (`SO_RCVBUF`); the system gives
+/// at most its own bound, `net.core.rmem_max` on Linux, and the serving
+/// line says what was had. Every QUIC connection's packets arrive on the
+/// one socket, and a reconnect storm's handshakes come at once, each an
+/// Initial packet padded to 1,200 bytes (RFC 9000 section 14.1): at
+/// Linux's default 208 KiB, 10,000 viewers reconnecting over HTTP/3 after
+/// a restart overflowed it (58,889 datagrams dropped, counted by
+/// `UdpRcvbufErrors`), and each client waited out its handshake's
+/// doubling retransmission timer, 28 seconds in all (21 November 2026).
+/// 8 MiB holds about 7,000 such packets.
+pub const QUIC_RECEIVE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
 /// What the server sends one QUIC connection's peer and holds until it is
 /// acknowledged, at most (the connection's send window). quinn's own
 /// default is ten megabytes, which across [`MAX_QUIC_CONNECTIONS`] peers

@@ -113,6 +113,8 @@ pub struct Server {
     /// What the system batches of QUIC's datagrams: the segments one send
     /// and one receive may carry.
     offload: Option<(usize, usize)>,
+    /// The bytes the system holds of QUIC's received datagrams.
+    receive_buffer: Option<usize>,
     routes: Arc<Routes>,
     bounds: TcpBounds,
 }
@@ -141,7 +143,7 @@ impl Server {
     pub fn start_bounded(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>, bounds: TcpBounds) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
         let Some(Direct { tls, public_port, proxy_protocol }) = direct else {
-            return Ok(Self { listener, secured: None, quic: None, offload: None, routes, bounds });
+            return Ok(Self { listener, secured: None, quic: None, offload: None, receive_buffer: None, routes, bounds });
         };
         let listening = http3::endpoint(tls, address)?;
         let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
@@ -150,6 +152,7 @@ impl Server {
             secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc, proxy: proxy_protocol.map(|proxy| proxy.to_canonical()) }),
             quic: Some(listening.endpoint),
             offload: Some((listening.send_segments, listening.receive_segments)),
+            receive_buffer: Some(listening.receive_buffer),
             routes,
             bounds,
         })
@@ -160,6 +163,13 @@ impl Server {
     #[must_use]
     pub const fn quic_offload(&self) -> Option<(usize, usize)> {
         self.offload
+    }
+
+    /// The bytes the system holds of QUIC's received datagrams until they
+    /// are read, when QUIC is served.
+    #[must_use]
+    pub const fn quic_receive_buffer(&self) -> Option<usize> {
+        self.receive_buffer
     }
 
     /// The UDP address QUIC is served on, when it is.

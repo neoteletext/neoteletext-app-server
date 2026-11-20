@@ -329,6 +329,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         quic = server.quic_address().map(|address| address.to_string()),
         quic_send_segments = server.quic_offload().map(|(send, _)| send),
         quic_receive_segments = server.quic_offload().map(|(_, receive)| receive),
+        quic_receive_buffer = server.quic_receive_buffer(),
         proxy_protocol = arguments.proxy_protocol,
         channels = routes.hubs.keys().cloned().collect::<Vec<_>>().join(", "),
         state = kept.as_ref().map(|kept| kept.root().display().to_string()),
