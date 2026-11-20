@@ -43,8 +43,8 @@ pub const MOST_KEPT_STREAM_BYTES: usize = neoteletext_formats::picture_text::MAX
 pub const MOST_KEPT_PICTURES: usize = 512;
 /// The cost of all of a channel's kept pictures (PAR-17): each stream's
 /// bytes, its reader's memory as `Checker::held_bytes` states it, and each
-/// companion's message bytes as received. A quarter of the Cloudflare
-/// host's 128 MB for one channel.
+/// companion's message bytes as received: 32 MiB for one channel, the
+/// figure DEC-6842 set.
 pub const MOST_KEPT_COST: usize = 33_554_432;
 /// The memory of the readers of every stream a program sends to
 /// connections themselves (PAR-23), each as `Checker::held_bytes`
@@ -67,10 +67,8 @@ pub const MOST_KEPT_COST: usize = 33_554_432;
 /// budget's basis: a native host serving 50,000 viewers of one channel
 /// gives that channel about two gigabytes, the readers' gibibyte and about
 /// 13 to 16 KB of each connection's own state (measured at 10,000 and
-/// 30,000 connections with `teletext-load`). The Cloudflare host's Durable
-/// Object has 128 MB in all, so a WebAssembly build keeps a quarter of
-/// that, as `MOST_KEPT_COST` does.
-pub const MOST_CONNECTION_READER_BYTES: usize = if cfg!(target_family = "wasm") { 33_554_432 } else { 1_073_741_824 };
+/// 30,000 connections with `teletext-load`).
+pub const MOST_CONNECTION_READER_BYTES: usize = 1_073_741_824;
 /// The connections of one channel, each with its own stream of an
 /// ordinary page, that [`MOST_CONNECTION_READER_BYTES`] must hold on the
 /// native host (TODO-6895).
@@ -80,7 +78,7 @@ pub const CONNECTIONS_WITH_OWN_PICTURES: usize = 50_000;
 /// 15,151 bytes, measured, rounded up to 16 KiB; an ordinary NAPLPS
 /// page's is 1,160.
 pub const ORDINARY_READER_BYTES: usize = 16_384;
-const _: () = assert!(cfg!(target_family = "wasm") || CONNECTIONS_WITH_OWN_PICTURES * ORDINARY_READER_BYTES <= MOST_CONNECTION_READER_BYTES);
+const _: () = assert!(CONNECTIONS_WITH_OWN_PICTURES * ORDINARY_READER_BYTES <= MOST_CONNECTION_READER_BYTES);
 /// The least time between two fallback drawings of one picture (PAR-25).
 pub const FALLBACK_INTERVAL_MS: u64 = 500;
 /// The fallback drawings of one channel a second, sustained (PAR-25).

@@ -388,10 +388,9 @@ fn switching(opening: &Opening) -> Response<Whole> {
 /// The channel's program's WebSocket (REQ-1044): 404 for a channel whose
 /// program does not connect this way; 401 without the channel's secret,
 /// before anything else of the request is looked at, so that nothing is
-/// told to whoever lacks it, as the Cloudflare host's Worker answers
-/// (REQ-1024); 409 while a program is connected, one at a time; else 101,
-/// or 200 to an extended CONNECT, and what carried the request goes to
-/// the channel's program task.
+/// told to whoever lacks it; 409 while a program is connected, one at a
+/// time; else 101, or 200 to an extended CONNECT, and what carried the
+/// request goes to the channel's program task.
 fn program_upgrade<B>(hub: Hub, request: &Request<B>) -> Answer {
     let Some(door) = hub.door else { return Answer::Response(status(StatusCode::NOT_FOUND)) };
     if !door.admits(request.headers().get(AUTHORIZATION).map(HeaderValue::as_bytes)) {

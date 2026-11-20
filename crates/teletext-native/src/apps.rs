@@ -11,8 +11,7 @@
 //!   server restarts;
 //! - **a WebSocket** (REQ-1044): the program runs anywhere, on another
 //!   machine too, and connects to `<channel>program` with the channel's
-//!   secret, as it does to the Cloudflare host (REQ-1024); the module
-//!   `remote` serves it.
+//!   secret; the module `remote` serves it.
 //!
 //! Each time a program starts its channel is told, and sends it `start`
 //! and `connected` for each viewer connected (REQ-1481); while it is away

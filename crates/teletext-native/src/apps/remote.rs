@@ -1,11 +1,10 @@
 //! A channel's program over a WebSocket (REQ-1044), for a program on
-//! another machine, as the Cloudflare host takes one (REQ-1024): it
-//! connects to `<channel>program` with the channel's secret, one program at
-//! a time, and each text message is a line of the program protocol. Once
-//! in, it is served as a program on a Unix domain socket is: its channel is
-//! told it started and sends it `start` and `connected` for each open
-//! connection, its lines reach the channel, and when it goes its channel is
-//! told it ended.
+//! another machine: it connects to `<channel>program` with the channel's
+//! secret, one program at a time, and each text message is a line of the
+//! program protocol. Once in, it is served as a program on a Unix domain
+//! socket is: its channel is told it started and sends it `start` and
+//! `connected` for each open connection, its lines reach the channel, and
+//! when it goes its channel is told it ended.
 //!
 //! The HTTP side checks the secret and claims the door before it answers
 //! 101, or 200 to an extended CONNECT over HTTP/2 or HTTP/3 (REQ-6966), so
@@ -171,7 +170,7 @@ pub(super) async fn relay<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     },
                     line = outgoing.next() => {
                         let Some(line) = line else { return "the channel stopped".to_owned() };
-                        // One line a message, without its newline (REQ-1024).
+                        // One line a message, without its newline (REQ-1044).
                         let text = line.strip_suffix(b"\n").unwrap_or(&line);
                         if !write_frame(&mut writing, Opcode::Text, text).await {
                             return "writing to it failed".to_owned();
@@ -212,7 +211,7 @@ async fn hear<R: AsyncRead + Unpin>(mut reading: R, early: &[u8], arrived: &mpsc
                     }
                     continue;
                 }
-                // The protocol is text (REQ-1024); a pong only shows the
+                // The protocol is text (REQ-1044); a pong only shows the
                 // program is there, which any byte does.
                 Ok(Some(Message::Binary(_) | Message::Pong)) => continue,
                 Ok(Some(Message::Ping(payload))) => {

@@ -101,11 +101,6 @@ impl Slot {
         self.address
     }
 
-    /// The viewer it presents: its key identifier and lifetime.
-    pub(super) fn presented(&self) -> Option<(KeyId, Lifetime)> {
-        self.present.map(|present| (present.key_id, present.lifetime))
-    }
-
     /// `connected` waits for the opening challenge's answer.
     pub(super) const fn holds(&self) -> bool {
         self.opening
@@ -450,14 +445,6 @@ impl Channel {
         let handle = entry.handle;
         self.connections.get_mut(&connection)?.viewer.present = Some(present);
         Some(handle)
-    }
-
-    /// A connection given back after the channel's memory was lost presents
-    /// the viewer it proved before (DEC-1755 option 1): it was proven then,
-    /// so it is neither counted nor bounded as a new one (VS-304), and the
-    /// program hears of it in `connected`.
-    pub(super) fn viewer_resumed(&mut self, connection: ConnectionId, key_id: KeyId, lifetime: Lifetime, now: u64) {
-        let _ = self.present(connection, Present { key_id, lifetime }, now);
     }
 
     /// Room for one more viewer: at the bound, the viewer seen longest ago

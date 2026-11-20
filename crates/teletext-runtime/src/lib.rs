@@ -2,9 +2,9 @@
 //! decision 2): one channel's state, driven by the events a host gives it
 //! (a connection opened, a message arrived, a deadline passed) and
 //! answering with the bytes the host sends. It reads no clock, opens no
-//! socket and starts no thread, so the same code runs under tokio on every
-//! desktop and server system, in a Cloudflare Durable Object, and in
-//! WebAssembly, and its tests run with no network and a clock they set.
+//! socket and starts no thread, so its tests run with no network and a
+//! clock they set, and the native host drives it under tokio on every
+//! desktop and server system.
 //!
 //! Downstream to a receiver is a T42 stream and nothing else (DEC-1459);
 //! upstream is DOC-1931's events. The channel's program speaks the typed

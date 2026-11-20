@@ -77,7 +77,7 @@ fn the_page_runs_nothing_and_its_link_names_the_page_asked_for() {
     assert!(!CONTENT_SECURITY_POLICY.contains("script-src"));
 }
 
-/// REQ-1024 and REQ-1044: the program's WebSocket is the channel's
+/// REQ-1044: the program's WebSocket is the channel's
 /// `program`, on either host.
 #[test]
 fn the_programs_address_is_its_own_route() {
@@ -108,7 +108,7 @@ fn only_the_channels_secret_admits_its_program() {
     assert!(!same_secret(b"a", b"ab"));
 }
 
-/// REQ-1024: a message is a line, and one of several lines is those lines,
+/// REQ-1044: a message is a line, and one of several lines is those lines,
 /// without their ends or empty ones.
 #[test]
 fn a_programs_message_is_its_lines() {

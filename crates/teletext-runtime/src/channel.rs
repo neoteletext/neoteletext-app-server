@@ -49,13 +49,11 @@ use crate::viewer::{HandleSecret, RandomSource};
 mod animation;
 mod fallback;
 mod pictures;
-mod resume;
 mod rules;
 mod snapshots;
 mod table;
 mod viewers;
 
-pub use resume::Resume;
 pub use rules::DefaultRules;
 
 /// The service number audio and input records are sent on (the

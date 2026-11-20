@@ -15,10 +15,7 @@ use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
 use neoteletext_web::viewer_state;
 use serde_json::{Value, json};
 
-use super::{
-    ACKNOWLEDGEMENT_WAIT_MS, ANY, CONNECTION, Channel, ChannelConfig, Effect, InitialPage, ON, bare, connecteds, hello, key, line, message, select,
-    select_with, sent_to, told,
-};
+use super::{ANY, CONNECTION, Channel, ChannelConfig, Effect, InitialPage, ON, bare, connecteds, hello, key, line, message, select, sent_to, told};
 use crate::viewer::testing::{random, secret};
 use crate::viewer::tests::sign;
 use crate::viewer::{
@@ -491,62 +488,4 @@ pub(super) fn new_viewer(channel: &mut Channel, connection: u64, address: core::
 /// Whether `value` is a viewer's handle.
 pub(super) fn handle(value: &Value) -> bool {
     is_handle(value)
-}
-
-/// DEC-1755 option 1, TODO-4579: a connection given back to a new channel
-/// after the channel's memory was lost, as the Cloudflare host's Durable
-/// Object loses it at each hibernation, keeps what its receiver and its
-/// program cannot ask for again. Its receiver is sent nothing (no WELCOME,
-/// no challenge: it is not told a wake happened), and the program, started
-/// again, is told it with its selection, query, number and the viewer it
-/// proved, under the same handle.
-#[test]
-fn a_resumed_connection_keeps_its_viewer_selection_and_numbers() {
-    let mut before = channel_at(ADDRESS, &secret());
-    let challenge = open(&mut before, CONNECTION, 0);
-    before.received(CONNECTION, &proof(&ALICE, Lifetime::Remembered, &challenge, ADDRESS), 1);
-    before.received(CONNECTION, &message(&before, CONNECTION, &[select_with(0x302, 0, "q=1")]), 2);
-    let first = connecteds(&before.take_effects());
-    assert_eq!(first.len(), 1, "{first:?}");
-    // Input acted on and acknowledged, so that the numbers it runs on are
-    // not those of a new connection.
-    let on = neoteletext_input::event::Stamp { page: 0x302, sub: 0 };
-    before.received(CONNECTION, &message(&before, CONNECTION, &[key(on, Action::Press, false)]), 3);
-    before.deadline(3 + ACKNOWLEDGEMENT_WAIT_MS);
-    let _ = before.take_effects();
-    let kept = before.resume_of(CONNECTION).expect("a viewer's connection is kept");
-    let stored = serde_json::to_value(&kept).unwrap();
-    assert!(stored["acked"] != json!(0) && stored["record_id"] != json!(0), "the numbers ran on: {stored}");
-
-    let mut after = channel_at(ADDRESS, &secret());
-    let _ = after.take_effects();
-    after.resumed(CONNECTION, None, kept.clone(), 0);
-    after.program_started(0);
-    let effects = after.take_effects();
-    assert_eq!(sent_to(&effects, CONNECTION), [] as [u8; 0], "the receiver is sent nothing");
-    let lines = connecteds(&effects);
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    for field in ["request", "selection", "path", "query", "viewer", "remembered"] {
-        assert_eq!(lines[0][field], first[0][field], "{field}: {} against {}", lines[0], first[0]);
-    }
-    assert_eq!(after.resume_of(CONNECTION), Some(kept), "everything kept is as it was");
-    assert_eq!(after.viewers(), 1, "the viewer is known again");
-}
-
-/// The stored state is read as untrusted: a query longer than SELECT
-/// carries is not taken back.
-#[test]
-fn a_resumed_query_past_selects_bound_is_dropped() {
-    let mut before = channel_at(ADDRESS, &secret());
-    let _ = open(&mut before, CONNECTION, 0);
-    before.received(CONNECTION, &message(&before, CONNECTION, &[select_with(0x302, ANY, "q=1")]), 1);
-    let _ = before.take_effects();
-    let kept = before.resume_of(CONNECTION).unwrap();
-    let mut stored = serde_json::to_value(&kept).unwrap();
-    stored["parameters"] = json!("q".repeat(neoteletext_input::MAX_PAGE_PARAMETERS + 1));
-    let mut after = channel_at(ADDRESS, &secret());
-    after.resumed(CONNECTION, None, serde_json::from_value(stored).unwrap(), 0);
-    after.program_started(0);
-    let lines = connecteds(&after.take_effects());
-    assert_eq!(lines[0]["query"], json!(null), "{}", lines[0]);
 }

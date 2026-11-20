@@ -1,11 +1,11 @@
-//! What a channel's address answers over HTTP, on every host (the channel
-//! URL map's REQ-1693 item 7, DEC-1467 as amended by DEC-1669): the small
-//! page a web browser shows at `<channel>` and at each place in it, what a
-//! page's address shows (REQ-1728), the redirects to one spelling,
-//! `channel.ttx`, the viewers' WebSocket, the program's WebSocket and how
-//! its secret is checked (REQ-1024, REQ-1044), and 404 for anything else. A page is never
-//! served for reading: each one comes over the connection. The HTML itself
-//! is the engine's, one builder with a static channel's (REQ-1725).
+//! What a channel's address answers over HTTP (the channel URL map's
+//! REQ-1693 item 7, DEC-1467 as amended by DEC-1669): the small page a web
+//! browser shows at `<channel>` and at each place in it, what a page's
+//! address shows (REQ-1728), the redirects to one spelling, `channel.ttx`,
+//! the viewers' WebSocket, the program's WebSocket and how its secret is
+//! checked (REQ-1044), and 404 for anything else. A page is never served
+//! for reading: each one comes over the connection. The HTML itself is the
+//! engine's, one builder with a static channel's (REQ-1725).
 
 use alloc::borrow::ToOwned;
 use alloc::format;
@@ -23,8 +23,7 @@ use crate::protocol::PageNumber;
 
 /// The push WebSocket's path within a channel's folder.
 pub const PUSH: &str = "push";
-/// The program's WebSocket's path within a channel's folder (REQ-1024,
-/// REQ-1044).
+/// The program's WebSocket's path within a channel's folder (REQ-1044).
 pub const PROGRAM: &str = "program";
 /// What comes before the channel's secret in the program's
 /// `Authorization` header (RFC 6750 section 2.1).
@@ -50,7 +49,7 @@ pub enum Route {
     /// `<channel>push`.
     Push,
     /// `<channel>program`: the channel's program, with the channel's
-    /// secret (REQ-1024, REQ-1044).
+    /// secret (REQ-1044).
     Program,
     /// Anything else under the channel: 404.
     Missing,
@@ -146,7 +145,7 @@ pub fn same_secret(left: &[u8], right: &[u8]) -> bool {
 }
 
 /// Whether a program's upgrade may go ahead: its `Authorization` header
-/// is `Bearer ` and the channel's secret (REQ-1024, REQ-1044). A channel
+/// is `Bearer ` and the channel's secret (REQ-1044). A channel
 /// whose secret is empty admits no program.
 #[must_use]
 pub fn program_admitted(authorization: Option<&[u8]>, secret: &[u8]) -> bool {
@@ -155,7 +154,7 @@ pub fn program_admitted(authorization: Option<&[u8]>, secret: &[u8]) -> bool {
 }
 
 /// The lines of one text message from a program: one line a message, as the
-/// bridge and the kits send them (REQ-1024), though a message of several
+/// bridge and the kits send them (REQ-1044), though a message of several
 /// lines is read as those lines, as standard input would read them. Each
 /// line's trailing white space goes, and empty lines are skipped.
 pub fn program_lines(message: &[u8]) -> impl Iterator<Item = &[u8]> {
