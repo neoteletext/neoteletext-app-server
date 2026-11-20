@@ -837,6 +837,7 @@ dependencies = [
 name = "teletext-native"
 version = "0.1.0"
 dependencies = [
+ "h2",
  "hyper",
  "hyper-util",
  "listenfd",

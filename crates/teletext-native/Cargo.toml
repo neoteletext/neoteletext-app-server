@@ -30,6 +30,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync"
 # the owner's standing approval of pure-Rust libraries (DEC-6579).
 hyper = { workspace = true, features = ["server", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["tokio"] }
+# The hyper project's HTTP/2 (MIT), already built as hyper's own, as a
+# client that opens streams by extended CONNECT: teletext-load's viewers
+# over HTTP/2, and the tests'. Under the owner's standing approval of
+# pure-Rust libraries (DEC-6579), pinned as the programs' libraries are.
+h2 = { version = "=0.4.20", default-features = false }
 # TLS, and HTTP/3 over QUIC, served directly (DEC-6964).
 neoteletext-http3.workspace = true
 rustls.workspace = true
@@ -51,11 +56,8 @@ neoteletext-rules.workspace = true
 # The clients and the certificate of the tests of TLS, HTTP/2 and HTTP/3
 # served directly (DEC-6964), under the owner's standing approval of
 # pure-Rust libraries (DEC-6579), pinned as the programs' libraries are:
-# - h2 (MIT), the hyper project's HTTP/2, already built as hyper's own,
-#   here as a client that opens streams by extended CONNECT;
 # - rcgen (MIT OR Apache-2.0), which makes each test's certificate and key
 #   over `ring`, so that no key is kept in the repository.
-h2 = { version = "=0.4.20", default-features = false }
 rcgen = { version = "=0.14.10", default-features = false, features = ["ring", "pem"] }
 
 [lints]

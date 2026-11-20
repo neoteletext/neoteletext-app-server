@@ -6,12 +6,30 @@
 //!               [--caps none|regis|naplps] [--metrics HOST:PORT] [--sources N] [--open-rate R]
 //! teletext-load --url ws://HOST:PORT/FOLDER/push --mode churn   [--rate R] [--page 100] [--seconds 60]
 //! teletext-load --url ws://HOST:PORT/FOLDER/push --mode answers [--connections N] [--pages 100,101,102] [--selections S] [--rounds R]
+//!
+//! and with any mode: [--http 1|2|3 --ca FILE] [--tabs T] [--source-ports FIRST-LAST]
 //! ```
+//!
+//! `--http` is the version of HTTP the tabs reach the server over (1
+//! unless given): 1, each tab its own TCP connection and upgrade, without
+//! TLS for `ws://` and with it for `wss://`; 2 or 3, each viewer one TLS connection over TCP (RFC 8441) or
+//! one QUIC connection (RFC 9220), each of its tabs a stream of it, as a
+//! browser sharing one connection among a channel's tabs does (DEC-6979).
+//! The URL is then `https://HOST:PORT/FOLDER/push`. Over TLS `--ca` names
+//! the certificate of the authority that signed the server's, in PEM. `--tabs` is how many of
+//! `--connections` are one viewer's (1 unless given), each saying HELLO and
+//! SELECT on its own WebSocket. `--source-ports` binds the TCP connections
+//! to local ports from FIRST to LAST in turn, so that more connections
+//! than the system's ephemeral ports can be held to one server from one
+//! address, without changing the system's range.
 //!
 //! Every connection says HELLO and SELECTs a page (DOC-1921, DOC-1753),
 //! as a receiver does, answering the server's viewer-state challenge as
 //! a client that keeps no state (VS-501).
-//! - **hold** (decision 7): opens many connections and holds them; each
+//! - **hold** (decision 7): opens many connections and holds them, and
+//!   opens again whatever closes, a viewer's connection and then its tabs,
+//!   as a browser does after a restart, reporting how long after the
+//!   first loss every tab was open again (the reconnect storm); each
 //!   frame of `--page` is grouped with the same frame at the other
 //!   connections, and the spread between its first and last arrival is the
 //!   fan-out time. With `--metrics`, the server's administration address,
@@ -50,6 +68,7 @@
 )]
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -62,10 +81,15 @@ use neoteletext_input::VERSION;
 use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP};
 use neoteletext_input::event::{Event, Item, Select, write};
 use neoteletext_input::state::NoneReason;
-use neoteletext_web::consts::PUSH_SUBPROTOCOL;
 use neoteletext_web::records::{ChannelRecord, Read, RecordReader};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+
+use transport::{Duplex, Target, Version};
+
+// The binary's root is in `src/bin`, so its module's file is named.
+#[path = "teletext-load/transport.rs"]
+mod transport;
 
 /// A T42 packet's bytes.
 const PACKET: usize = 42;
@@ -82,8 +106,6 @@ const DEFAULT_OPEN_RATE: u64 = 10_000;
 const MOST_METRICS_BYTES: usize = 1 << 20;
 /// The family whose value is the server's resident memory, in bytes.
 const RESIDENT_MEMORY: &str = "process_resident_memory_bytes";
-/// The loopback network's first address, 127.0.0.1, as its four bytes.
-const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
 /// The loopback addresses `--sources` may name: 127.0.0.1 to 127.0.0.254.
 const MOST_SOURCES: usize = 254;
 /// The sub-code that asks for a page's first sub-page (DOC-1753).
@@ -120,8 +142,8 @@ enum Mode {
 }
 
 struct Arguments {
-    host: String,
-    path: String,
+    /// Where the tabs go, over which version of HTTP.
+    target: Target,
     mode: Mode,
     connections: usize,
     page: u16,
@@ -134,18 +156,42 @@ struct Arguments {
     caps: u32,
     /// The server's administration address, for its resident memory.
     metrics: Option<String>,
-    /// How many loopback addresses the connections come from.
-    sources: usize,
     /// Connections `hold` opens a second.
     open_rate: u64,
+    /// How many tabs are one viewer's.
+    tabs: usize,
 }
 
-fn arguments() -> Result<Arguments, String> {
+/// What [`arguments`] read, before the target is resolved.
+/// Between a viewer's tries to reach a server that is not answering, so
+/// that a viewer whose server is down does not spin; spread by viewer
+/// over a further [`RETRY_SPREAD_MS`], so that the viewers of a restarted
+/// server do not all try at once, as browsers' own waits differ.
+const RETRY_AFTER: Duration = Duration::from_millis(250);
+const RETRY_SPREAD_MS: u64 = 250;
+/// How often `hold` looks whether every tab is open again after a loss.
+const STORM_LOOK_EVERY: Duration = Duration::from_millis(20);
+
+/// What the command line says, before the target is resolved.
+struct Given {
+    host: String,
+    path: String,
+    version: Version,
+    /// `wss://`: HTTP/1.1 over TLS.
+    secure: bool,
+    ca: Option<String>,
+    sources: usize,
+    ports: Option<(u16, u16)>,
+    rest: Box<dyn FnOnce(Target) -> Arguments>,
+}
+
+fn arguments() -> Result<Given, String> {
     let mut url = None;
     let (mut mode, mut connections, mut page, mut seconds, mut rate, mut selections, mut rounds) =
         (Mode::Hold, 100_usize, 0x105_u16, 60_u64, 10_u64, 100_usize, 1_usize);
     let mut pages = vec![0x100_u16];
     let (mut caps, mut metrics, mut sources, mut open_rate) = (0_u32, None, 1_usize, DEFAULT_OPEN_RATE);
+    let (mut version, mut ca, mut tabs, mut ports) = (Version::Http1, None, 1_usize, None);
     let hexadecimal = |value: &str| u16::from_str_radix(value, 16).map_err(|_| format!("{value} is not a page in hexadecimal, such as 105"));
     let mut list = std::env::args().skip(1);
     while let Some(argument) = list.next() {
@@ -180,31 +226,44 @@ fn arguments() -> Result<Arguments, String> {
             "--sources" => {
                 sources = value.parse().ok().filter(|count| (1..=MOST_SOURCES).contains(count)).ok_or("--sources is a number from 1 to 254")?;
             }
+            "--http" => {
+                version = match value.as_str() {
+                    "1" => Version::Http1,
+                    "2" => Version::Http2,
+                    "3" => Version::Http3,
+                    other => return Err(format!("--http is 1, 2 or 3, not {other}")),
+                }
+            }
+            "--ca" => ca = Some(value),
+            "--tabs" => tabs = value.parse().ok().filter(|&tabs| tabs > 0).ok_or("--tabs is a number of tabs a viewer, 1 or more")?,
+            "--source-ports" => {
+                let (lowest, highest) = value.split_once('-').ok_or("--source-ports is FIRST-LAST")?;
+                let lowest: u16 = lowest.parse().map_err(|_| "--source-ports' first is a port")?;
+                let highest: u16 = highest.parse().map_err(|_| "--source-ports' last is a port")?;
+                let count = highest
+                    .checked_sub(lowest)
+                    .and_then(|span| span.checked_add(1))
+                    .filter(|_| lowest > 0)
+                    .ok_or("--source-ports is FIRST-LAST, FIRST at least 1 and not past LAST")?;
+                ports = Some((lowest, count));
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
     let url = url.ok_or("--url ws://HOST:PORT/FOLDER/push is needed")?;
-    let rest = url.strip_prefix("ws://").ok_or("only ws:// is supported")?;
+    let (rest, secure) = match version {
+        Version::Http1 => match url.strip_prefix("wss://") {
+            Some(rest) => (rest, true),
+            None => (url.strip_prefix("ws://").ok_or("over HTTP/1.1 the URL is ws:// or wss://")?, false),
+        },
+        Version::Http2 | Version::Http3 => (url.strip_prefix("https://").ok_or("over HTTP/2 and HTTP/3 the URL is https://")?, true),
+    };
     let (host, path) = rest.split_once('/').ok_or("the URL needs a path")?;
     if pages.is_empty() || rate == 0 {
         return Err("--pages needs a page and --rate more than 0".to_owned());
     }
-    Ok(Arguments {
-        host: host.to_owned(),
-        path: format!("/{path}"),
-        mode,
-        connections,
-        page,
-        pages,
-        selections,
-        rounds,
-        rate,
-        seconds,
-        caps,
-        metrics,
-        sources,
-        open_rate,
-    })
+    let rest = Box::new(move |target| Arguments { target, mode, connections, page, pages, selections, rounds, rate, seconds, caps, metrics, open_rate, tabs });
+    Ok(Given { host: host.to_owned(), path: format!("/{path}"), version, secure, ca, sources, ports, rest })
 }
 
 /// Arrivals of each frame of the page watched, by its content, as times
@@ -220,6 +279,15 @@ fn main() -> ExitCode {
         }
     };
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().enable_all().build() else { return ExitCode::FAILURE };
+    let Given { host, path, version, secure, ca, sources, ports, rest } = arguments;
+    let target = match runtime.block_on(Target::new(host, path, version, secure, ca.as_deref(), sources, ports)) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("teletext-load: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let arguments = rest(target);
     match arguments.mode {
         Mode::Hold => runtime.block_on(hold(arguments)),
         Mode::Churn => runtime.block_on(churn(arguments)),
@@ -245,19 +313,29 @@ async fn hold(arguments: Arguments) {
         },
         None => None,
     };
-    for batch in (0..arguments.connections).collect::<Vec<_>>().chunks(BATCH) {
+    let viewers = arguments.connections.div_ceil(arguments.tabs);
+    let lost: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    for batch in (0..viewers).collect::<Vec<_>>().chunks(BATCH) {
         let mut opening = Vec::new();
-        for &number in batch {
-            let (arguments, open, messages, bytes, arrivals) =
-                (Arc::clone(&arguments), Arc::clone(&open), Arc::clone(&messages), Arc::clone(&bytes), Arc::clone(&arrivals));
-            opening.push(tokio::spawn(async move { held(&arguments, number, start, &open, &messages, &bytes, &arrivals).await }));
+        for &viewer in batch {
+            let tabs = arguments.tabs.min(arguments.connections.saturating_sub(viewer.saturating_mul(arguments.tabs)));
+            let counters = Counters {
+                open: Arc::clone(&open),
+                messages: Arc::clone(&messages),
+                bytes: Arc::clone(&bytes),
+                arrivals: Arc::clone(&arrivals),
+                lost: Arc::clone(&lost),
+            };
+            let arguments = Arc::clone(&arguments);
+            opening.push(tokio::spawn(async move { viewing(&arguments, viewer, tabs, start, &counters).await }));
         }
-        let batch_size = u64::try_from(batch.len()).unwrap_or(u64::MAX);
+        let batch_size = u64::try_from(batch.len().saturating_mul(arguments.tabs)).unwrap_or(u64::MAX);
         let gap = Duration::from_millis(batch_size.saturating_mul(1_000).checked_div(arguments.open_rate).unwrap_or(0));
         tokio::time::sleep(gap).await;
         drop(opening);
     }
     let deadline = start.checked_add(Duration::from_secs(arguments.seconds)).unwrap_or(start);
+    tokio::spawn(storms(Arc::clone(&open), Arc::clone(&lost), u64::try_from(arguments.connections).unwrap_or(u64::MAX), Arc::clone(&arguments)));
     let (mut last_messages, mut last_bytes) = (0, 0);
     while Instant::now() < deadline {
         tokio::time::sleep(REPORT).await;
@@ -296,25 +374,100 @@ async fn hold(arguments: Arguments) {
     }
 }
 
-async fn held(arguments: &Arguments, number: usize, start: Instant, open: &AtomicU64, messages: &AtomicU64, bytes: &AtomicU64, arrivals: &Arrivals) {
-    let Some(mut connection) = Connection::open_from(arguments, number).await else { return };
+/// What every tab of `hold` adds to.
+struct Counters {
+    open: Arc<AtomicU64>,
+    messages: Arc<AtomicU64>,
+    bytes: Arc<AtomicU64>,
+    arrivals: Arrivals,
+    /// When a tab was first lost since every tab was last open.
+    lost: Arc<Mutex<Option<Instant>>>,
+}
+
+/// One viewer of `hold`, `number` among them, with `tabs` tabs: its
+/// connection, then its tabs, each held until it closes; and once every
+/// tab has closed, all again.
+async fn viewing(arguments: &Arguments, number: usize, tabs: usize, start: Instant, counters: &Counters) {
+    let pause = RETRY_AFTER.saturating_add(Duration::from_millis(u64::try_from(number).unwrap_or(0).checked_rem(RETRY_SPREAD_MS).unwrap_or(0)));
+    loop {
+        let Some(viewer) = arguments.target.viewer(number).await else {
+            tokio::time::sleep(pause).await;
+            continue;
+        };
+        let viewer = Arc::new(tokio::sync::Mutex::new(viewer));
+        let mut held = Vec::new();
+        for tab in 0..tabs {
+            let viewer = Arc::clone(&viewer);
+            let tab_number = number.saturating_mul(arguments.tabs).saturating_add(tab);
+            held.push(async move {
+                let opened = {
+                    let mut viewer = viewer.lock().await;
+                    Connection::open_on(arguments, &mut viewer, tab_number).await
+                };
+                if let Some(connection) = opened {
+                    hold_tab(arguments, connection, start, counters).await;
+                }
+            });
+        }
+        all(held).await;
+        tokio::time::sleep(pause).await;
+    }
+}
+
+/// Runs every one of `tasks` to its end, polled together on this task:
+/// they borrow the viewer's arguments and counters.
+async fn all<F: Future<Output = ()>>(tasks: Vec<F>) {
+    let mut pinned: Vec<std::pin::Pin<Box<F>>> = tasks.into_iter().map(Box::pin).collect();
+    std::future::poll_fn(|context| {
+        pinned.retain_mut(|task| task.as_mut().poll(context).is_pending());
+        if pinned.is_empty() { std::task::Poll::Ready(()) } else { std::task::Poll::Pending }
+    })
+    .await;
+}
+
+/// One tab of `hold`: SELECT, then every message counted until it closes.
+async fn hold_tab(arguments: &Arguments, mut connection: Connection, start: Instant, counters: &Counters) {
     if !connection.select(arguments.page, true).await {
         return;
     }
-    open.fetch_add(1, Ordering::Relaxed);
+    counters.open.fetch_add(1, Ordering::Relaxed);
     while let Some(payload) = connection.next_message().await {
-        messages.fetch_add(1, Ordering::Relaxed);
-        bytes.fetch_add(u64::try_from(payload.len()).unwrap_or(0), Ordering::Relaxed);
+        counters.messages.fetch_add(1, Ordering::Relaxed);
+        counters.bytes.fetch_add(u64::try_from(payload.len()).unwrap_or(0), Ordering::Relaxed);
         if header_page(&payload) == Some(arguments.page) {
             let key = hash(&payload);
             let at = start.elapsed();
-            let mut table = arrivals.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut table = counters.arrivals.lock().unwrap_or_else(PoisonError::into_inner);
             let entry = table.entry(key).or_insert((at, at, 0));
             entry.1 = entry.1.max(at);
             entry.2 = entry.2.saturating_add(1);
         }
     }
-    open.fetch_sub(1, Ordering::Relaxed);
+    counters.open.fetch_sub(1, Ordering::Relaxed);
+    counters.lost.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(Instant::now);
+}
+
+/// Reports each reconnect storm: once tabs have been lost, how long after
+/// the first loss all `total` were open again.
+async fn storms(open: Arc<AtomicU64>, lost: Arc<Mutex<Option<Instant>>>, total: u64, arguments: Arc<Arguments>) {
+    loop {
+        tokio::time::sleep(STORM_LOOK_EVERY).await;
+        if open.load(Ordering::Relaxed) < total {
+            continue;
+        }
+        let Some(first_loss) = lost.lock().unwrap_or_else(PoisonError::into_inner).take() else { continue };
+        let memory = match &arguments.metrics {
+            Some(address) => resident_memory(address)
+                .await
+                .map_or_else(|error| format!(", server resident unknown: {error}"), |bytes| format!(", server resident {bytes} bytes")),
+            None => String::new(),
+        };
+        println!(
+            "storm: all {total} tabs open again {} ms after the first loss (at {} ms since the Unix epoch){memory}",
+            first_loss.elapsed().as_millis(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis())
+        );
+    }
 }
 
 async fn churn(arguments: Arguments) {
@@ -335,7 +488,7 @@ async fn churn(arguments: Arguments) {
         tokio::spawn(async move {
             task_opened.fetch_add(1, Ordering::Relaxed);
             let page = task_arguments.page;
-            let done = match Connection::open(&task_arguments).await {
+            let done = match Connection::open(&task_arguments, 0).await {
                 Some(mut connection) => connection.select(page, true).await && connection.answer(page).await.is_some() && connection.close().await,
                 None => false,
             };
@@ -380,7 +533,7 @@ async fn answers(arguments: Arguments) {
 /// ones', and how many went unanswered.
 async fn timed(arguments: &Arguments) -> (Vec<Duration>, Vec<Duration>, usize) {
     let (mut first, mut later, mut unanswered) = (Vec::new(), Vec::new(), 0_usize);
-    let Some(mut connection) = Connection::open(arguments).await else { return (first, later, 1) };
+    let Some(mut connection) = Connection::open(arguments, 0).await else { return (first, later, 1) };
     for (index, &page) in arguments.pages.iter().cycle().take(arguments.selections).enumerate() {
         let sent = Instant::now();
         if !connection.select(page, index == 0).await {
@@ -409,55 +562,24 @@ fn report(what: &str, times: &mut [Duration]) {
 
 /// A push connection, as a receiver opens it.
 struct Connection {
-    stream: TcpStream,
+    stream: Box<dyn Duplex>,
     buffer: Vec<u8>,
     /// The capabilities HELLO gives besides the cursor and SELECT.
     caps: u32,
 }
 
 impl Connection {
-    /// Connects and upgrades, or `None`.
-    async fn open(arguments: &Arguments) -> Option<Self> {
-        Self::open_from(arguments, 0).await
+    /// A viewer of its own, `number` among them, and its one tab, or
+    /// `None`.
+    async fn open(arguments: &Arguments, number: usize) -> Option<Self> {
+        let mut viewer = arguments.target.viewer(number).await?;
+        Self::open_on(arguments, &mut viewer, number).await
     }
 
-    /// Connects from the loopback address `number` picks among
-    /// `--sources`, and upgrades, or `None`.
-    async fn open_from(arguments: &Arguments, number: usize) -> Option<Self> {
-        let mut stream = if arguments.sources > 1 {
-            let target = tokio::net::lookup_host(&arguments.host).await.ok()?.next()?;
-            let [first, second, third, fourth] = LOOPBACK;
-            let offset = u8::try_from(number.checked_rem(arguments.sources)?).ok()?;
-            let source = std::net::SocketAddr::from(([first, second, third, fourth.checked_add(offset)?], 0));
-            let socket = tokio::net::TcpSocket::new_v4().ok()?;
-            socket.bind(source).ok()?;
-            socket.connect(target).await.ok()?
-        } else {
-            TcpStream::connect(&arguments.host).await.ok()?
-        };
-        let _ = stream.set_nodelay(true);
-        let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {PUSH_SUBPROTOCOL}\r\n\r\n",
-            arguments.path, arguments.host
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut chunk = vec![0_u8; 16 * 1024];
-        // The 101 response's end.
-        loop {
-            let count = stream.read(&mut chunk).await.ok()?;
-            if count == 0 {
-                return None;
-            }
-            buffer.extend_from_slice(chunk.get(..count).unwrap_or(&[]));
-            if let Some(end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-                if !buffer.starts_with(b"HTTP/1.1 101") {
-                    return None;
-                }
-                buffer.drain(..end.saturating_add(4));
-                return Some(Self { stream, buffer, caps: arguments.caps });
-            }
-        }
+    /// A tab, `number` among them, on `viewer`, or `None`.
+    async fn open_on(arguments: &Arguments, viewer: &mut transport::Viewer, number: usize) -> Option<Self> {
+        let (stream, buffer) = arguments.target.tab(viewer, number).await?;
+        Some(Self { stream, buffer, caps: arguments.caps })
     }
 
     /// Sends SELECT of `page`'s first sub-page, after HELLO when `hello`.
