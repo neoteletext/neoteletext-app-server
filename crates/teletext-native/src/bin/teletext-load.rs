@@ -457,26 +457,50 @@ async fn hold_tab(arguments: &Arguments, mut connection: Connection, start: Inst
     counters.lost.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(Instant::now);
 }
 
+/// The shares of the tabs, in hundredths, at which a storm's progress is
+/// reported: a storm's last few tabs may wait out TCP's or QUIC's
+/// retransmission timers, which the time to the last one alone would hide.
+const STORM_MARKS: [u64; 3] = [50, 90, 99];
+/// Hundredths in the whole.
+const WHOLE: u64 = 100;
+
 /// Reports each reconnect storm: once tabs have been lost, how long after
-/// the first loss all `total` were open again.
+/// the first loss half, nine tenths, ninety-nine hundredths and all of
+/// the `total` were open again.
 async fn storms(open: Arc<AtomicU64>, lost: Arc<Mutex<Option<Instant>>>, total: u64, arguments: Arc<Arguments>) {
+    // Since the first loss: whether fewer than half were open, and when
+    // each mark was passed on the way back.
+    let mut fell = false;
+    let mut marks: Vec<u128> = Vec::new();
     loop {
         tokio::time::sleep(STORM_LOOK_EVERY).await;
-        if open.load(Ordering::Relaxed) < total {
+        let now = open.load(Ordering::Relaxed);
+        let Some(first_loss) = *lost.lock().unwrap_or_else(PoisonError::into_inner) else { continue };
+        let share = now.saturating_mul(WHOLE).checked_div(total).unwrap_or(WHOLE);
+        fell |= share < STORM_MARKS[0];
+        if fell {
+            while marks.len() < STORM_MARKS.len() && STORM_MARKS.get(marks.len()).is_some_and(|&mark| share >= mark) {
+                marks.push(first_loss.elapsed().as_millis());
+            }
+        }
+        if now < total {
             continue;
         }
-        let Some(first_loss) = lost.lock().unwrap_or_else(PoisonError::into_inner).take() else { continue };
+        lost.lock().unwrap_or_else(PoisonError::into_inner).take();
         let memory = match &arguments.metrics {
             Some(address) => resident_memory(address)
                 .await
                 .map_or_else(|error| format!(", server resident unknown: {error}"), |bytes| format!(", server resident {bytes} bytes")),
             None => String::new(),
         };
+        let passed: Vec<String> = STORM_MARKS.iter().zip(&marks).map(|(mark, at)| format!("{mark} % at {at} ms")).collect();
         println!(
-            "storm: all {total} tabs open again {} ms after the first loss (at {} ms since the Unix epoch){memory}",
+            "storm: all {total} tabs open again {} ms after the first loss (at {} ms since the Unix epoch); {}{memory}",
             first_loss.elapsed().as_millis(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis())
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis()),
+            if passed.is_empty() { "fewer than half were lost".to_owned() } else { passed.join(", ") }
         );
+        (fell, marks) = (false, Vec::new());
     }
 }
 

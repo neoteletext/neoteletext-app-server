@@ -37,6 +37,25 @@ const READ_BYTES: usize = 16 * 1024;
 /// endpoint's packets are handled by one task, which at tens of thousands
 /// of connections would be the client's bottleneck and not the server's.
 const QUIC_CLIENT_SOCKETS: usize = 16;
+/// The browser's QUIC timings (the engine's `neoteletext-transport`, its
+/// REQ-6985), so that a load client's viewer gives up on a handshake, and
+/// learns of a silent connection, as a browser's does: a handshake not
+/// answered within five seconds is tried again, and a connection silent
+/// for fifteen, pinged every five, is lost. quinn's own client waits
+/// thirty seconds for either, so that a handshake sent while a server
+/// restarts, to a port with no socket, would hold a viewer that long.
+const CLIENT_HANDSHAKE_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+const CLIENT_IDLE_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
+const CLIENT_KEEP_ALIVE_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The bytes of received datagrams each client socket asks the system to
+/// hold. At Linux's default 208 KiB, the server's answers to 10,000
+/// viewers' handshakes after a restart overflowed the sixteen sockets
+/// (16,643 datagrams dropped, counted by `UdpRcvbufErrors` on the client's
+/// machine, 21 November 2026), and the viewers waited out their
+/// handshakes' timeouts: the load client, not the server, set the pace.
+const QUIC_CLIENT_RECEIVE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
 /// What the load client names itself as (RFC 9110 section 10.1.5).
 const USER_AGENT: &[u8] = b"teletext-load";
 /// How long an HTTP/2 viewer waits for the server's SETTINGS, and how
@@ -128,10 +147,20 @@ impl Target {
             Version::Http2 => tls = Some(TlsConnector::from(Arc::new(config(ALPN_H2)?))),
             Version::Http3 => {
                 let crypto = QuicClientConfig::try_from(config(ALPN_H3)?).map_err(|error| error.to_string())?;
-                let client = quinn::ClientConfig::new(Arc::new(crypto));
+                let mut client = quinn::ClientConfig::new(Arc::new(crypto));
+                let mut transport = quinn::TransportConfig::default();
+                transport.max_idle_timeout(Some(CLIENT_IDLE_AFTER.try_into().map_err(|_| "the idle time")?)).keep_alive_interval(Some(CLIENT_KEEP_ALIVE_EVERY));
+                client.transport_config(Arc::new(transport));
                 let any = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
                 for _ in 0..QUIC_CLIENT_SOCKETS {
-                    let mut endpoint = quinn::Endpoint::client(any.parse().map_err(|_| "an address")?).map_err(|error| format!("a QUIC socket: {error}"))?;
+                    let socket = std::net::UdpSocket::bind(any).map_err(|error| format!("a QUIC socket: {error}"))?;
+                    let state = quinn::udp::UdpSocketState::new((&socket).into()).map_err(|error| format!("a QUIC socket: {error}"))?;
+                    // As much as the system allows: a storm's handshakes
+                    // answer every viewer at once.
+                    let _ = state.set_recv_buffer_size((&socket).into(), QUIC_CLIENT_RECEIVE_BUFFER_BYTES);
+                    let runtime = quinn::default_runtime().ok_or("no async runtime")?;
+                    let mut endpoint =
+                        quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime).map_err(|error| format!("a QUIC socket: {error}"))?;
                     endpoint.set_default_client_config(client.clone());
                     quic.push(endpoint);
                 }
@@ -200,7 +229,7 @@ impl Target {
                     ServerName::IpAddress(address) => std::net::IpAddr::from(*address).to_string(),
                     _ => return None,
                 };
-                let connection = endpoint.connect(self.address, &name).ok()?.await.ok()?;
+                let connection = tokio::time::timeout(CLIENT_HANDSHAKE_WITHIN, endpoint.connect(self.address, &name).ok()?).await.ok()?.ok()?;
                 let mut control = connection.open_uni().await.ok()?;
                 let mut opening = Vec::new();
                 open_client_control(&mut opening);
