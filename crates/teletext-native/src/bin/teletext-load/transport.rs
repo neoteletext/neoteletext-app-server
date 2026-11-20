@@ -191,7 +191,7 @@ impl Target {
                     }
                     tokio::time::sleep(SETTINGS_LOOK_EVERY).await;
                 }
-                Some(Viewer::Http2 { sender })
+                Some(Viewer::Http2 { sender, ended })
             }
             Version::Http3 => {
                 let endpoint = self.quic.get(number.checked_rem(self.quic.len())?)?;
@@ -340,6 +340,8 @@ pub enum Viewer {
     Http1,
     Http2 {
         sender: SendRequest<Bytes>,
+        /// Set once the connection has ended.
+        ended: watch::Receiver<bool>,
     },
     Http3 {
         connection: quinn::Connection,
@@ -347,6 +349,18 @@ pub enum Viewer {
         /// (RFC 9114 section 6.2.1).
         _control: quinn::SendStream,
     },
+}
+
+impl Viewer {
+    /// Whether the viewer's connection may still carry a new tab: always
+    /// over HTTP/1.1, where each tab makes its own.
+    pub fn alive(&self) -> bool {
+        match self {
+            Self::Http1 => true,
+            Self::Http2 { ended, .. } => !*ended.borrow(),
+            Self::Http3 { connection, .. } => connection.close_reason().is_none(),
+        }
+    }
 }
 
 /// A tab's WebSocket on an HTTP/2 stream.

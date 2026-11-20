@@ -27,7 +27,8 @@
 //! as a receiver does, answering the server's viewer-state challenge as
 //! a client that keeps no state (VS-501).
 //! - **hold** (decision 7): opens many connections and holds them, and
-//!   opens again whatever closes, a viewer's connection and then its tabs,
+//!   opens again whatever closes or fails to open, a tab on its viewer's
+//!   connection while that lasts, else the connection and then its tabs,
 //!   as a browser does after a restart, reporting how long after the
 //!   first loss every tab was open again (the reconnect storm); each
 //!   frame of `--page` is grouped with the same frame at the other
@@ -399,13 +400,22 @@ async fn viewing(arguments: &Arguments, number: usize, tabs: usize, start: Insta
         for tab in 0..tabs {
             let viewer = Arc::clone(&viewer);
             let tab_number = number.saturating_mul(arguments.tabs).saturating_add(tab);
+            // A tab that cannot open, or closes, opens again, as a
+            // browser's does, for as long as its viewer's connection may
+            // carry it; once that has gone, the viewer connects again.
             held.push(async move {
-                let opened = {
-                    let mut viewer = viewer.lock().await;
-                    Connection::open_on(arguments, &mut viewer, tab_number).await
-                };
-                if let Some(connection) = opened {
-                    hold_tab(arguments, connection, start, counters).await;
+                loop {
+                    let opened = {
+                        let mut viewer = viewer.lock().await;
+                        if !viewer.alive() {
+                            return;
+                        }
+                        Connection::open_on(arguments, &mut viewer, tab_number).await
+                    };
+                    match opened {
+                        Some(connection) => hold_tab(arguments, connection, start, counters).await,
+                        None => tokio::time::sleep(pause).await,
+                    }
                 }
             });
         }
