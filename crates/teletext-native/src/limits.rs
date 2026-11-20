@@ -100,6 +100,15 @@ pub const QUIC_STREAM_WINDOW_BYTES: u32 = 256 * 1024;
 /// the server has read it (the connection's window, RFC 9000 section 4.1).
 pub const QUIC_CONNECTION_WINDOW_BYTES: u32 = 1024 * 1024;
 
+/// What the server sends one QUIC connection's peer and holds until it is
+/// acknowledged, at most (the connection's send window). quinn's own
+/// default is ten megabytes, which across [`MAX_QUIC_CONNECTIONS`] peers
+/// that read slowly would be more memory than the machine has; a quarter
+/// of a megabyte is a page's records many times over and a picture's
+/// largest stream (1 MiB) in four windows, as a TCP connection's send
+/// buffer holds about as much before its writes wait.
+pub const QUIC_SEND_WINDOW_BYTES: u64 = 256 * 1024;
+
 /// A QUIC connection on which nothing has arrived for this long is closed
 /// (the idle timeout, RFC 9000 section 10.1). It is longer than
 /// `connection::PING_AFTER`, after which a quiet WebSocket is pinged, so

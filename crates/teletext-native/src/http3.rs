@@ -27,7 +27,7 @@ use crate::connection::serve_halves;
 use crate::http::{Answer, Routes, Source, Whole, decide};
 use crate::limits::{
     H3_DATA_FRAME_BYTES, H3_HEAD_WITHIN, H3_READ_BYTES, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_QUIC_CONNECTIONS, MAX_UNIDIRECTIONAL_STREAMS,
-    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_STREAM_WINDOW_BYTES, STREAM_ACKNOWLEDGED_WITHIN,
+    QUIC_CLOSED_WITHIN, QUIC_CONNECTION_WINDOW_BYTES, QUIC_IDLE_AFTER, QUIC_SEND_WINDOW_BYTES, QUIC_STREAM_WINDOW_BYTES, STREAM_ACKNOWLEDGED_WITHIN,
 };
 use crate::serving::until_stopping;
 use crate::tls::Configured;
@@ -42,22 +42,41 @@ fn wire(code: Code) -> VarInt {
     VarInt::from_u32(code.value())
 }
 
+/// The QUIC endpoint, and what the system batches of its datagrams.
+pub(crate) struct Listening {
+    pub(crate) endpoint: quinn::Endpoint,
+    /// How many datagrams one send may carry (UDP generic segmentation
+    /// offload, `UDP_SEGMENT`, on Linux since 4.18), 1 where there is none.
+    pub(crate) send_segments: usize,
+    /// How many datagrams one receive may give (UDP generic receive
+    /// offload, `UDP_GRO`), 1 where there is none.
+    pub(crate) receive_segments: usize,
+}
+
 /// Binds UDP at `address` and listens for QUIC there, within the bounds
 /// of [`crate::limits`].
 ///
 /// # Errors
 /// A socket that cannot be bound.
-pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<quinn::Endpoint, String> {
+pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<Listening, String> {
     let mut transport = quinn::TransportConfig::default();
     transport
         .max_concurrent_bidi_streams(VarInt::from_u32(MAX_CONCURRENT_STREAMS))
         .max_concurrent_uni_streams(VarInt::from_u32(MAX_UNIDIRECTIONAL_STREAMS))
         .stream_receive_window(VarInt::from_u32(QUIC_STREAM_WINDOW_BYTES))
         .receive_window(VarInt::from_u32(QUIC_CONNECTION_WINDOW_BYTES))
+        .send_window(QUIC_SEND_WINDOW_BYTES)
+        // No QUIC datagrams (RFC 9221) are taken: HTTP/3 here uses none.
+        .datagram_receive_buffer_size(None)
         .max_idle_timeout(Some(QUIC_IDLE_AFTER.try_into().map_err(|error| format!("the QUIC idle time cannot be told: {error}"))?));
     let mut config = quinn::ServerConfig::with_crypto(Arc::clone(&tls.quic) as Arc<dyn quinn::crypto::ServerConfig>);
     config.transport_config(Arc::new(transport)).max_incoming(MAX_QUIC_CONNECTIONS);
-    quinn::Endpoint::server(config, address).map_err(|error| format!("cannot listen for QUIC on UDP {address}: {error}"))
+    let unbound = |error: io::Error| format!("cannot listen for QUIC on UDP {address}: {error}");
+    let socket = std::net::UdpSocket::bind(address).map_err(unbound)?;
+    let state = quinn::udp::UdpSocketState::new((&socket).into()).map_err(unbound)?;
+    let runtime = quinn::default_runtime().ok_or_else(|| unbound(io::Error::other("no async runtime")))?;
+    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(config), socket, runtime).map_err(unbound)?;
+    Ok(Listening { endpoint, send_segments: state.max_gso_segments(), receive_segments: state.gro_segments() })
 }
 
 /// Accepts QUIC connections until the endpoint is closed, at most
@@ -158,14 +177,17 @@ async fn connection(incoming: quinn::Incoming, routes: Arc<Routes>, stopping: wa
 /// its control stream is read to the connection's end, QPACK's streams
 /// are read and dropped, since there is no dynamic table for them to
 /// speak of, and a stream of any other type is stopped.
+///
+/// Each piece is read as QUIC holds it, so that no buffer of this side's
+/// is kept for the three streams a connection keeps open as long as it
+/// lasts.
 async fn unidirectional(connection: quinn::Connection, mut recv: RecvStream, opened: Arc<Mutex<Opened>>) {
-    let mut buffer = vec![0_u8; H3_READ_BYTES];
     let mut kind = varint::Reader::default();
-    let (kind, mut at, mut filled) = loop {
-        let Ok(Some(count)) = recv.read(&mut buffer).await else { return };
-        let (taken, kind) = kind.read(buffer.get(..count).unwrap_or(&[]));
+    let (kind, mut piece, mut at) = loop {
+        let Ok(Some(chunk)) = recv.read_chunk(H3_READ_BYTES, true).await else { return };
+        let (taken, kind) = kind.read(&chunk.bytes);
         if let Some(kind) = kind {
-            break (kind, taken, count);
+            break (kind, chunk.bytes, taken);
         }
     };
     let what = opened.lock().unwrap_or_else(PoisonError::into_inner).open(kind);
@@ -180,15 +202,15 @@ async fn unidirectional(connection: quinn::Connection, mut recv: RecvStream, ope
     };
     loop {
         if let Some(control) = &mut control {
-            while at < filled {
-                match control.read(buffer.get(at..filled).unwrap_or(&[])) {
+            while at < piece.len() {
+                match control.read(piece.get(at..).unwrap_or(&[])) {
                     Ok((taken, _)) => at = at.saturating_add(taken),
                     Err(error) => return fail(&connection, error.code),
                 }
             }
         }
-        match recv.read(&mut buffer).await {
-            Ok(Some(count)) => (at, filled) = (0, count),
+        match recv.read_chunk(H3_READ_BYTES, true).await {
+            Ok(Some(chunk)) => (piece, at) = (chunk.bytes, 0),
             // RFC 9114 section 6.2.1, RFC 9204 section 4.2: these streams
             // last as long as the connection.
             Ok(None) | Err(quinn::ReadError::Reset(_)) => return fail(&connection, Code::ClosedCriticalStream),
@@ -222,7 +244,7 @@ struct Reading {
 
 impl Reading {
     fn new(recv: RecvStream, connection: quinn::Connection) -> Self {
-        Self { recv, connection, message: Message::new(), raw: vec![0; H3_READ_BYTES], at: 0, filled: 0, ended: false }
+        Self { recv, connection, message: Message::new(), raw: Vec::new(), at: 0, filled: 0, ended: false }
     }
 
     /// The request's header section, still encoded.
@@ -237,6 +259,7 @@ impl Reading {
                     None => {}
                 }
             }
+            self.raw.resize(H3_READ_BYTES, 0);
             match self.recv.read(&mut self.raw).await {
                 Ok(Some(count)) => (self.at, self.filled) = (0, count),
                 _ => return Err(NoHead::Gone),
@@ -279,8 +302,15 @@ impl AsyncRead for Reading {
             if this.ended {
                 return Poll::Ready(Ok(()));
             }
+            // Everything read has been taken: the buffer is needed only
+            // while a read is made, and is let go while none comes, so
+            // that an idle stream holds none.
+            this.raw.resize(H3_READ_BYTES, 0);
             let mut raw = ReadBuf::new(&mut this.raw);
-            ready!(Pin::new(&mut this.recv).poll_read(context, &mut raw))?;
+            if Pin::new(&mut this.recv).poll_read(context, &mut raw).map_err(io::Error::from)?.is_pending() {
+                this.raw = Vec::new();
+                return Poll::Pending;
+            }
             let count = raw.filled().len();
             if count == 0 {
                 return Poll::Ready(Ok(()));
