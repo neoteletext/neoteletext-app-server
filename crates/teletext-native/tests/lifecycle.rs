@@ -410,6 +410,16 @@ fn caddyrouter_passes_the_server_through_and_is_its_trusted_proxy() {
     assert!(!container.contains("app.neottx.com:") && !container.contains("8090"), "the container's Caddy proxies nothing to the server");
 }
 
+/// REQ-7004: production's unit allows the server more file descriptors
+/// than `MAX_TCP_CONNECTIONS`, so the bound, and not the descriptor limit,
+/// is what refuses a connection past it.
+#[test]
+fn the_units_descriptor_limit_is_above_the_tcp_connection_bound() {
+    let deploy = include_str!("../../../deploy/ionos/deploy.sh");
+    let limit: usize = deploy.lines().find_map(|line| line.strip_prefix("LimitNOFILE=")).expect("the unit sets LimitNOFILE").parse().unwrap();
+    assert!(limit > teletext_native::limits::MAX_TCP_CONNECTIONS, "LimitNOFILE={limit}");
+}
+
 /// REQ-7003: a renewed certificate is taken by a reload and not a
 /// restart. The unit the deploy script writes reloads by `SIGHUP`, and
 /// the certificate sync asks systemd for a reload, never a restart, still

@@ -19,13 +19,13 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 use tokio_rustls::TlsAcceptor;
 
 use crate::http::{Routes, Source, answer};
 use crate::limits::{
     H2_DEAD_AFTER_PING, H2_MAX_FRAME_BYTES, H2_PING_AFTER, HANDSHAKE_WITHIN, MAX_CONCURRENT_STREAMS, MAX_HEADER_LIST_BYTES, MAX_PROXY_HEADER_BYTES,
-    PROXY_HEADER_WITHIN,
+    MAX_TCP_CONNECTIONS, MAX_TLS_HANDSHAKES, PROXY_HEADER_WITHIN,
 };
 use crate::proxy_protocol::{self, Header, Refused};
 use crate::tls::{ALPN_H2, Configured};
@@ -88,12 +88,30 @@ pub fn public_port(origin: &str) -> Result<u16, String> {
     }
 }
 
+/// How many TCP connections, and TLS handshakes among them, the server
+/// serves at once: [`MAX_TCP_CONNECTIONS`] and [`MAX_TLS_HANDSHAKES`], or
+/// smaller figures a test can reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TcpBounds {
+    /// TCP connections at once; one more is closed when it is accepted.
+    pub connections: usize,
+    /// TLS handshakes in progress at once; a connection that would be one
+    /// more is closed before its handshake is read.
+    pub handshakes: usize,
+}
+
+impl TcpBounds {
+    /// The server's own bounds.
+    pub const SERVED: Self = Self { connections: MAX_TCP_CONNECTIONS, handshakes: MAX_TLS_HANDSHAKES };
+}
+
 /// The viewers' address, listening.
 pub struct Server {
     listener: TcpListener,
     secured: Option<Secured>,
     quic: Option<quinn::Endpoint>,
     routes: Arc<Routes>,
+    bounds: TcpBounds,
 }
 
 impl std::fmt::Debug for Server {
@@ -110,8 +128,16 @@ impl Server {
     /// An address that cannot be read, or a UDP socket that cannot be
     /// bound there.
     pub fn start(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>) -> Result<Self, String> {
+        Self::start_bounded(listener, direct, routes, TcpBounds::SERVED)
+    }
+
+    /// [`Server::start`] with `bounds` in place of the server's own.
+    ///
+    /// # Errors
+    /// As [`Server::start`].
+    pub fn start_bounded(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>, bounds: TcpBounds) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
-        let Some(Direct { tls, public_port, proxy_protocol }) = direct else { return Ok(Self { listener, secured: None, quic: None, routes }) };
+        let Some(Direct { tls, public_port, proxy_protocol }) = direct else { return Ok(Self { listener, secured: None, quic: None, routes, bounds }) };
         let quic = http3::endpoint(tls, address)?;
         let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
         Ok(Self {
@@ -119,6 +145,7 @@ impl Server {
             secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc, proxy: proxy_protocol.map(|proxy| proxy.to_canonical()) }),
             quic: Some(quic),
             routes,
+            bounds,
         })
     }
 
@@ -139,13 +166,24 @@ impl Server {
         if let Some(endpoint) = &self.quic {
             tokio::spawn(http3::accept(endpoint.clone(), Arc::clone(&self.routes), told.clone()));
         }
+        let open = Arc::new(Semaphore::new(self.bounds.connections));
+        let handshakes = Arc::new(Semaphore::new(self.bounds.handshakes));
         tokio::pin!(stopped);
         loop {
             tokio::select! {
                 accepted = self.listener.accept() => {
                     let Ok((stream, peer)) = accepted else { continue };
+                    let Ok(place) = Arc::clone(&open).try_acquire_owned() else {
+                        // Closed unread; no address is logged (REQ-1049).
+                        tracing::debug!(target: "serving", "closed a TCP connection: every place is taken");
+                        continue;
+                    };
                     let _ = stream.set_nodelay(true);
-                    tokio::spawn(connection(stream, peer, Arc::clone(&self.routes), self.secured.clone(), told.clone()));
+                    let (routes, secured, told, handshakes) = (Arc::clone(&self.routes), self.secured.clone(), told.clone(), Arc::clone(&handshakes));
+                    tokio::spawn(async move {
+                        connection(stream, peer, routes, secured, told, handshakes).await;
+                        drop(place);
+                    });
                 }
                 () = &mut stopped => break,
             }
@@ -266,7 +304,14 @@ macro_rules! served {
 /// Serves one TCP connection: HTTP/1.1 as it is, or, under TLS, what the
 /// client chose of HTTP/2 and HTTP/1.1 (RFC 7301), after the PROXY
 /// protocol header when a proxy relays the connection.
-async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, secured: Option<Secured>, told: watch::Receiver<bool>) {
+async fn connection(
+    mut stream: TcpStream,
+    peer: SocketAddr,
+    routes: Arc<Routes>,
+    secured: Option<Secured>,
+    told: watch::Receiver<bool>,
+    handshakes: Arc<Semaphore>,
+) {
     let proxy = secured.as_ref().and_then(|secured| secured.proxy);
     let source = match proxy {
         None => Source::Peer(peer.ip()),
@@ -295,7 +340,12 @@ async fn connection(mut stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>
         served!(http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades(), told);
         return;
     };
+    let Ok(handshaking) = handshakes.try_acquire_owned() else {
+        tracing::debug!(target: "serving", "closed a TCP connection: every TLS handshake place is taken");
+        return;
+    };
     let Ok(Ok(session)) = tokio::time::timeout(HANDSHAKE_WITHIN, secured.acceptor.accept(stream)).await else { return };
+    drop(handshaking);
     if session.get_ref().1.alpn_protocol() == Some(ALPN_H2) {
         let mut builder = http2::Builder::new(TokioExecutor::new());
         builder

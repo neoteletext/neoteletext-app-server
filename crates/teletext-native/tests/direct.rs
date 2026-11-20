@@ -39,7 +39,7 @@ use teletext_native::http::Routes;
 use teletext_native::hub;
 use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, PROXY_HEADER_WITHIN};
 use teletext_native::proxy_protocol::SIGNATURE;
-use teletext_native::serving::{Direct, Server, public_port};
+use teletext_native::serving::{Direct, Server, TcpBounds, public_port};
 use teletext_native::state::SystemRandomSource;
 use teletext_native::stats::ServerStats;
 use teletext_native::tls::{self, ALPN_H2, ALPN_H3, ALPN_HTTP1, Files};
@@ -114,6 +114,11 @@ async fn running_behind(certificate: &Certificate, proxy: IpAddr) -> Running {
 /// `public`'s port text, given the port it listens on; with `proxy`,
 /// behind that proxy.
 async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>) -> Running {
+    running_with(certificate, public, proxy, TcpBounds::SERVED).await
+}
+
+/// [`running_at`], serving TCP within `bounds`.
+async fn running_with(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>, bounds: TcpBounds) -> Running {
     let listener = TcpListener::bind(ANY_LOCAL_PORT).await.unwrap();
     let address = listener.local_addr().unwrap();
     let scheme = if certificate.is_some() { "https" } else { "http" };
@@ -136,7 +141,7 @@ async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> S
         Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: proxy });
     let secured = certificate.map(|certificate| tls::load(&certificate.files).unwrap());
     let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy });
-    let server = Server::start(listener, direct, routes).unwrap();
+    let server = Server::start_bounded(listener, direct, routes, bounds).unwrap();
     let quic = server.quic_address();
     let serving = tokio::spawn(async move {
         server.run(std::future::pending()).await;
@@ -1106,4 +1111,94 @@ fn the_server_stops_at_start_with_proxy_protocol_and_no_trusted_proxy_or_no_tls(
     assert!(!started && log.contains("--proxy-protocol needs --trusted-proxy"), "{log}");
     let (started, log) = run(&["--trusted-proxy".as_ref(), "127.0.0.1".as_ref()]);
     assert!(!started && log.contains("--proxy-protocol needs --tls-certificate and --tls-key"), "{log}");
+}
+
+// ------------------------------------------------------------ TCP bounds
+
+/// Whether the server serves `stream`: answers a GET of `channel.ttx`
+/// over HTTP/1.1, keeping the connection open, or closes it unanswered.
+async fn served(stream: &mut TcpStream) -> bool {
+    let request = format!("GET {} HTTP/1.1\r\nHost: {HOST}\r\n\r\n", path("channel.ttx"));
+    if stream.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    // The whole answer, its head and then the content its length says, so
+    // that the next request's answer starts where it should.
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let mut byte = [0_u8; 1];
+        match timeout(WITHIN, stream.read(&mut byte)).await.expect("an answer or a close in time") {
+            Ok(1) => head.push(byte[0]),
+            _ => return false,
+        }
+    }
+    let head = String::from_utf8(head).unwrap();
+    let length: usize = head.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").map(|value| value.parse().unwrap())).unwrap();
+    let mut content = vec![0_u8; length];
+    stream.read_exact(&mut content).await.is_ok() && head.starts_with("HTTP/1.1 200")
+}
+
+/// Connects until the server serves the connection, as it does once a
+/// place it held for another has been let go.
+async fn served_again(running: &Running) -> TcpStream {
+    let began = Instant::now();
+    loop {
+        let mut stream = TcpStream::connect(running.address).await.unwrap();
+        if served(&mut stream).await {
+            return stream;
+        }
+        assert!(began.elapsed() < WITHIN, "a place was never let go");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// REQ-7004: TCP connections over the bound are closed unanswered, and the bound is
+/// what the server serves at once, not a count of all it has served:
+/// with room for two, two connections are each served and kept open, a
+/// third is closed with nothing sent, and once one of the two ends a new
+/// one is served. The server's own bound is `MAX_TCP_CONNECTIONS`.
+#[tokio::test]
+async fn tcp_connections_past_the_bound_are_closed_unanswered() {
+    let running = running_with(None, |port| format!(":{port}"), None, TcpBounds { connections: 2, handshakes: 2 }).await;
+    let mut first = TcpStream::connect(running.address).await.unwrap();
+    let mut second = TcpStream::connect(running.address).await.unwrap();
+    assert!(served(&mut first).await && served(&mut second).await, "at the bound, each is served");
+    let mut third = TcpStream::connect(running.address).await.unwrap();
+    assert!(!served(&mut third).await, "past the bound, closed unanswered");
+    drop(first);
+    let mut again = served_again(&running).await;
+    assert!(served(&mut second).await && served(&mut again).await, "both open ones still served");
+}
+
+/// REQ-7004: TLS handshakes in progress over the bound are refused, and a place is
+/// let go when its handshake ends: with room for one handshake, a TCP
+/// connection that sends nothing holds the one place, so another's
+/// handshake fails, closed before its `ClientHello` is read; once the
+/// first is gone a handshake succeeds again. The server's own bound is
+/// `MAX_TLS_HANDSHAKES`.
+#[tokio::test]
+async fn tls_handshakes_past_the_bound_are_refused() {
+    let certificate = certificate("handshakes");
+    let running = running_with(Some(&certificate), |port| format!(":{port}"), None, TcpBounds { connections: 8, handshakes: 1 }).await;
+    let connector = TlsConnector::from(Arc::new(client_tls(&certificate, &[ALPN_HTTP1])));
+    let handshake = || async {
+        let stream = TcpStream::connect(running.address).await.unwrap();
+        timeout(WITHIN, connector.connect(ServerName::try_from(HOST).unwrap(), stream)).await.expect("a handshake, or its refusal, in time")
+    };
+    assert!(handshake().await.is_ok(), "a handshake when a place is free");
+    let silent = TcpStream::connect(running.address).await.unwrap();
+    // Until the server has taken the silent connection's place: then
+    // every other handshake is refused.
+    let began = Instant::now();
+    while handshake().await.is_ok() {
+        assert!(began.elapsed() < WITHIN, "the silent connection never took the place");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(handshake().await.is_err(), "past the bound, refused");
+    drop(silent);
+    let began = Instant::now();
+    while handshake().await.is_err() {
+        assert!(began.elapsed() < WITHIN, "the place was never let go");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

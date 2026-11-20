@@ -8,6 +8,8 @@
 
 use std::time::Duration;
 
+use teletext_runtime::kept::CONNECTIONS_WITH_OWN_PICTURES;
+
 use crate::connection::{DEAD_AFTER_PING, PING_AFTER};
 
 /// How long a TLS handshake over TCP, or a QUIC handshake, may take before
@@ -118,6 +120,31 @@ pub const H3_READ_BYTES: usize = 4 * 1024;
 /// The largest DATA frame the server writes on an HTTP/3 stream: one
 /// write's bytes, up to this, are one frame.
 pub const H3_DATA_FRAME_BYTES: usize = 16 * 1024;
+
+/// The TCP connections served at once, whatever they carry; one more is
+/// closed as soon as it is accepted, with nothing read from it. A TCP
+/// connection holds a file descriptor and its socket's buffers in the
+/// kernel, and its task here, until it ends, however little its peer
+/// sends; this bounds what all peers together can make the server hold
+/// that way. It is above [`CONNECTIONS_WITH_OWN_PICTURES`], the channel's
+/// connections the server is built to carry (DEC-6898, REQ-6897), each of
+/// which may be a TCP connection of its own over HTTP/1.1, and below the
+/// 65,536 descriptors production's unit allows (`LimitNOFILE` in
+/// `deploy/ionos/deploy.sh`, checked by the lifecycle tests), leaving the
+/// rest for the QUIC socket, the programs' pipes and the server's files.
+pub const MAX_TCP_CONNECTIONS: usize = 60_000;
+const _: () = assert!(MAX_TCP_CONNECTIONS > CONNECTIONS_WITH_OWN_PICTURES, "every connection the server is built to carry may be a TCP connection");
+
+/// The TLS handshakes over TCP in progress at once; a connection that
+/// would be one more is closed before its `ClientHello` is read. A
+/// handshake costs the server a signature, and one in progress holds its
+/// place for up to [`HANDSHAKE_WITHIN`], so a peer that starts handshakes
+/// faster than they finish could otherwise hold every TCP place and keep
+/// every core signing. A signature over `ring` takes well under a
+/// millisecond on the server's cores, so a thousand handshakes in flight
+/// is a burst of new viewers far larger than the channels have seen,
+/// while what a stalled thousand hold is a thousand small buffers.
+pub const MAX_TLS_HANDSHAKES: usize = 1_024;
 
 /// How long a stop waits, after closing every QUIC connection with
 /// `H3_NO_ERROR`, for the endpoint to be idle before the server exits. A
