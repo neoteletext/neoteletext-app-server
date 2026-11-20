@@ -56,6 +56,9 @@ const PROMPTLY: Duration = Duration::from_secs(5);
 const PING: [u8; 6] = [0x89, 0x80, 0, 0, 0, 0];
 const PONG_OPCODE: u8 = 0xA;
 const CLOSE_OPCODE: u8 = 0x8;
+/// A masked Close of no payload, with the key 0: a client's answer to
+/// the server's Close.
+const CLOSE_ANSWER: [u8; 6] = [0x88, 0x80, 0, 0, 0, 0];
 /// `Sec-WebSocket-Version`'s one value (RFC 6455 section 4.1).
 const VERSION: &str = "13";
 const PUSH_HEADERS: [(&str, &str); 2] = [("sec-websocket-version", VERSION), ("sec-websocket-protocol", PUSH_SUBPROTOCOL)];
@@ -399,10 +402,68 @@ async fn a_stop_tells_an_http3_client_at_once() {
 
 // ---------------------------------------------------------------- HTTP/2
 
+/// Everything a stream gives, copied as it is read, so that a test can
+/// read the frames the server sent after the HTTP/2 client has read them.
+struct Tapped<S> {
+    inner: S,
+    read: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Tapped<S> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let before = buffer.filled().len();
+        let polled = std::pin::Pin::new(&mut this.inner).poll_read(context, buffer);
+        this.read.lock().unwrap().extend_from_slice(&buffer.filled()[before..]);
+        polled
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Tapped<S> {
+    fn poll_write(self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>, bytes: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_write(context, bytes)
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(context)
+    }
+
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(context)
+    }
+}
+
+/// An HTTP/2 frame's type (RFC 9113 section 4.1) and the types read here
+/// (sections 6.1 and 6.8), and the `END_STREAM` flag (section 6.1).
+const H2_FRAME_HEADER_BYTES: usize = 9;
+const H2_DATA: u8 = 0x0;
+const H2_GOAWAY: u8 = 0x7;
+const H2_END_STREAM: u8 = 0x1;
+
+/// The frames a server sent, from its first: each one's type, flags,
+/// stream and payload.
+fn h2_frames(mut bytes: &[u8]) -> Vec<(u8, u8, u32, Vec<u8>)> {
+    let mut frames = Vec::new();
+    while bytes.len() >= H2_FRAME_HEADER_BYTES {
+        let length = usize::from(bytes[0]) << 16 | usize::from(bytes[1]) << 8 | usize::from(bytes[2]);
+        let Some(payload) = bytes.get(H2_FRAME_HEADER_BYTES..H2_FRAME_HEADER_BYTES + length) else { break };
+        let stream = u32::from_be_bytes(bytes[5..9].try_into().unwrap()) & 0x7FFF_FFFF;
+        frames.push((bytes[3], bytes[4], stream, payload.to_vec()));
+        bytes = &bytes[H2_FRAME_HEADER_BYTES + length..];
+    }
+    frames
+}
+
 /// REQ-7002: at `SIGTERM` an HTTP/2 client is sent GOAWAY with
-/// `NO_ERROR` (RFC 9113 section 6.8), after which it can open no stream,
-/// and its push WebSocket, opened by extended CONNECT before, is still
-/// sent its Close with the code that says try again.
+/// `NO_ERROR` (RFC 9113 section 6.8) before its push WebSocket, opened by
+/// extended CONNECT, is sent its Close with the code that says try again
+/// and its stream ended; the frames the server sent are read as the
+/// client read them, since once the server has exited the client's own
+/// view of why its connection ended may be the TCP connection's end.
 #[tokio::test]
 async fn a_stop_sends_an_http2_client_goaway() {
     let folder = scratch("h2");
@@ -410,7 +471,8 @@ async fn a_stop_sends_an_http2_client_goaway() {
     let mut server = Server::start(&folder, &certificate, &key);
     let stream = TcpStream::connect(server.address).await.unwrap();
     let session = TlsConnector::from(Arc::new(client_tls(&trusted, ALPN_H2))).connect(ServerName::try_from(HOST).unwrap(), stream).await.unwrap();
-    let (sender, connection) = h2::client::handshake(session).await.unwrap();
+    let read = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (sender, connection) = h2::client::handshake(Tapped { inner: session, read: Arc::clone(&read) }).await.unwrap();
     tokio::spawn(connection);
     let mut request = Request::builder().method(Method::CONNECT).uri(format!("https://{HOST}:{}/{FOLDER}/push", server.address.port()));
     for (name, value) in PUSH_HEADERS {
@@ -445,14 +507,25 @@ async fn a_stop_sends_an_http2_client_goaway() {
         bytes.extend_from_slice(&part);
     };
     assert_eq!(code, CLOSE_RESTARTING, "try again");
-    let refused = match timeout(WITHIN, sender.ready()).await.expect("an answer in time") {
-        Ok(mut ready) => ready.send_request(Request::get(format!("https://{HOST}/{FOLDER}/channel.ttx")).body(()).unwrap(), true).map(|_| ()).unwrap_err(),
-        Err(error) => error,
-    };
     eprintln!("HTTP/2, from SIGTERM to the WebSocket's Close: {:?}", signalled.map(|at| at.elapsed()));
-    assert!(refused.is_go_away() && refused.is_remote(), "GOAWAY from the server, not {refused:?}");
-    assert_eq!(refused.reason(), Some(h2::Reason::NO_ERROR));
+    // As a WebSocket client does (RFC 6455 section 5.5.1): a Close in
+    // answer, masked with the key 0, and this side's end of the stream,
+    // unless the server has already ended the stream both ways.
+    let _ = send.send_data(Bytes::from_static(&CLOSE_ANSWER), true);
+    // Until the server ends the stream: its last frame on it.
+    while let Some(Ok(_)) = timeout(WITHIN, receive.data()).await.expect("the stream's end in time") {}
     assert!(server.exited().await, "exit status 0");
+    let frames = h2_frames(&read.lock().unwrap());
+    let goaway = frames.iter().position(|(kind, ..)| *kind == H2_GOAWAY).expect("a GOAWAY frame");
+    let (_, _, _, payload) = &frames[goaway];
+    assert_eq!(u32::from_be_bytes(payload[4..8].try_into().unwrap()), u32::from(h2::Reason::NO_ERROR), "GOAWAY's error code is NO_ERROR");
+    let ended = frames.iter().position(|(kind, flags, stream, _)| *kind == H2_DATA && flags & H2_END_STREAM != 0 && *stream == u32::from(send.stream_id()));
+    assert!(
+        ended.is_some_and(|ended| goaway < ended),
+        "GOAWAY before the WebSocket's stream ends: {:?}",
+        frames.iter().map(|(kind, flags, stream, _)| (kind, flags, stream)).collect::<Vec<_>>()
+    );
+    drop(sender);
     let _ = std::fs::remove_dir_all(&folder);
 }
 
