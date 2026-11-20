@@ -40,7 +40,7 @@ use teletext_native::http::Routes;
 use teletext_native::hub;
 use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, MAX_PUSH_WEBSOCKETS, PROXY_HEADER_WITHIN};
 use teletext_native::proxy_protocol::SIGNATURE;
-use teletext_native::serving::{Direct, Server, TcpBounds, public_port};
+use teletext_native::serving::{self, Direct, Server, TcpBounds, public_port};
 use teletext_native::state::SystemRandomSource;
 use teletext_native::stats::ServerStats;
 use teletext_native::tls::{self, ALPN_H2, ALPN_H3, ALPN_HTTP1, Files};
@@ -92,7 +92,10 @@ struct Running {
     /// The channel's address, which a viewer's proof is made for.
     channel: String,
     stats: Arc<ServerStats>,
-    serving: tokio::task::JoinHandle<()>,
+    /// The server's task, which ends with what its stop leaves, once
+    /// `stop` is sent or dropped.
+    serving: tokio::task::JoinHandle<serving::Stopped>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Drop for Running {
@@ -196,10 +199,15 @@ async fn running_full(
     let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap(), proxy_protocol: proxy });
     let server = Server::start_bounded(listener, direct, routes, bounds).unwrap();
     let quic = server.quic_address();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let serving = tokio::spawn(async move {
-        server.run(std::future::pending()).await;
+        server
+            .run(async {
+                let _ = stopped.await;
+            })
+            .await
     });
-    Running { address, quic, descriptor, channel: channel_address, stats, serving }
+    Running { address, quic, descriptor, channel: channel_address, stats, serving, stop: Some(stop) }
 }
 
 /// A client's TLS that trusts `certificate` alone and offers `alpn`.
@@ -1459,4 +1467,35 @@ async fn push_websockets_past_the_bound_are_answered_503_over_every_version() {
         assert!(began.elapsed() < WITHIN, "the first WebSocket's place was never let go");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// REQ-7002: once the server stops listening, a new QUIC handshake is
+/// refused at once with `CONNECTION_REFUSED`, as a TCP connection is no
+/// longer accepted, so that a client reaches the next process and not the
+/// one about to close; and on a connection made before, which has been
+/// sent GOAWAY, a new request is reset with `H3_REQUEST_REJECTED`.
+#[tokio::test]
+async fn a_stopping_server_refuses_new_quic_handshakes() {
+    let certificate = certificate("refusing");
+    let mut running = running(Some(&certificate)).await;
+    let before = h3_to(&running, &certificate).await;
+    running.stop.take().unwrap().send(()).unwrap();
+    let stopped = timeout(WITHIN, &mut running.serving).await.expect("the server stops listening in time").unwrap();
+    let mut endpoint = quinn::Endpoint::client(ANY_LOCAL_PORT.parse().unwrap()).unwrap();
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_tls(&certificate, &[ALPN_H3])).unwrap())));
+    let refused = timeout(WITHIN, endpoint.connect(running.quic.unwrap(), HOST).unwrap()).await.expect("an answer in time");
+    assert!(
+        matches!(refused, Err(quinn::ConnectionError::ConnectionClosed(ref close)) if close.error_code == quinn::TransportErrorCode::CONNECTION_REFUSED),
+        "refused, not {refused:?}"
+    );
+    // A request on a connection made before, after its GOAWAY, is not
+    // processed (RFC 9114 section 5.2).
+    let fields = h3_fields(&running, "GET", "channel.ttx", None, &[]);
+    let mut section = Vec::new();
+    qpack::encode(fields.iter().map(|field| (field.name.as_slice(), field.value.as_slice())), &mut section);
+    let (_, mut receive) = h3_send_section(&before, &section).await;
+    let mut buffer = [0_u8; 64];
+    let rejected = timeout(WITHIN, receive.read(&mut buffer)).await.expect("an answer in time");
+    assert!(matches!(rejected, Err(quinn::ReadError::Reset(code)) if code.into_inner() == u64::from(Code::RequestRejected.value())), "{rejected:?}");
+    drop(stopped);
 }

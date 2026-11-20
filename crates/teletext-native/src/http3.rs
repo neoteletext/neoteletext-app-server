@@ -85,6 +85,14 @@ pub(crate) fn endpoint(tls: &Configured, address: SocketAddr) -> Result<Listenin
 pub(crate) async fn accept(endpoint: quinn::Endpoint, routes: Arc<Routes>, stopping: watch::Receiver<bool>) {
     let open = Arc::new(Semaphore::new(MAX_QUIC_CONNECTIONS));
     while let Some(incoming) = endpoint.accept().await {
+        // As TCP is listened on no more once the server is stopping, a
+        // QUIC handshake is then refused at once with CONNECTION_REFUSED
+        // (RFC 9000 section 10.3), so that a client starts its connection
+        // to the next process rather than to this one, about to close it.
+        if *stopping.borrow() {
+            incoming.refuse();
+            continue;
+        }
         let Ok(place) = Arc::clone(&open).try_acquire_owned() else {
             incoming.refuse();
             continue;
