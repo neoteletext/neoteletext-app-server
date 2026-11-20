@@ -2,13 +2,14 @@
 //! proxy in front, as before; or, given a certificate and key, TLS on TCP
 //! with HTTP/2 or HTTP/1.1 as the client chooses, and HTTP/3 over QUIC on
 //! UDP at the same address and port, which every answer over TCP then
-//! names in `Alt-Svc`.
+//! names in `Alt-Svc` at the port viewers reach the server at.
 
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use hyper::Uri;
 use hyper::header::{ALT_SVC, HeaderValue};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -25,9 +26,47 @@ use crate::{http3, tls};
 #[derive(Clone)]
 struct Secured {
     acceptor: TlsAcceptor,
-    /// `Alt-Svc: h3=":<port>"` (RFC 7838 section 3), the port QUIC is
-    /// served on.
+    /// `Alt-Svc: h3=":<port>"` (RFC 7838 section 3), the port viewers
+    /// reach QUIC at ([`Direct::public_port`]).
     alt_svc: HeaderValue,
+}
+
+/// What the server serves TLS with, and where viewers reach it.
+#[derive(Clone, Copy, Debug)]
+pub struct Direct<'tls> {
+    /// The certificate and key, read.
+    pub tls: &'tls Configured,
+    /// The port viewers reach the server at, which `Alt-Svc` names
+    /// (REQ-6965): [`public_port`] of the server's origin. It is the
+    /// listening port only when nothing relays connections to the server
+    /// from another port (DEC-6972).
+    pub public_port: u16,
+}
+
+/// The default port of `http` (RFC 9110 section 4.2.1).
+const HTTP_PORT: u16 = 80;
+/// The default port of `https` (RFC 9110 section 4.2.2).
+const HTTPS_PORT: u16 = 443;
+
+/// The port viewers reach the server at (REQ-6965): the one `origin`
+/// names, or its scheme's default when it names none.
+///
+/// # Errors
+/// An origin that is not an `http` or `https` address, naming it.
+pub fn public_port(origin: &str) -> Result<u16, String> {
+    let address: Uri = origin.parse().map_err(|error| format!("cannot read the public port from the origin {origin}: {error}"))?;
+    let default = match address.scheme_str() {
+        Some("https") => HTTPS_PORT,
+        Some("http") => HTTP_PORT,
+        _ => return Err(format!("cannot read the public port from the origin {origin}: it must start http:// or https://")),
+    };
+    match address.authority().map(|authority| (authority.port_u16(), authority.as_str() == authority.host())) {
+        Some((Some(port), _)) => Ok(port),
+        // The host alone: no port is named.
+        Some((None, true)) => Ok(default),
+        // More than the host, and not a port: one over 65,535, or a user.
+        _ => Err(format!("cannot read the public port from the origin {origin}: what follows its host is not a port")),
+    }
 }
 
 /// The viewers' address, listening.
@@ -45,17 +84,17 @@ impl std::fmt::Debug for Server {
 }
 
 impl Server {
-    /// Takes `listener`, and with `tls` binds UDP at its address and port
-    /// for QUIC. Without `tls` no UDP socket is made.
+    /// Takes `listener`, and with `direct` binds UDP at its address and
+    /// port for QUIC. Without `direct` no UDP socket is made.
     ///
     /// # Errors
     /// An address that cannot be read, or a UDP socket that cannot be
     /// bound there.
-    pub fn start(listener: TcpListener, tls: Option<&Configured>, routes: Arc<Routes>) -> Result<Self, String> {
+    pub fn start(listener: TcpListener, direct: Option<Direct<'_>>, routes: Arc<Routes>) -> Result<Self, String> {
         let address = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
-        let Some(tls) = tls else { return Ok(Self { listener, secured: None, quic: None, routes }) };
+        let Some(Direct { tls, public_port }) = direct else { return Ok(Self { listener, secured: None, quic: None, routes }) };
         let quic = http3::endpoint(tls, address)?;
-        let alt_svc = HeaderValue::from_str(&format!("h3=\":{}\"", address.port())).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
+        let alt_svc = HeaderValue::from_str(&format!("h3=\":{public_port}\"")).map_err(|error| format!("cannot name the QUIC port: {error}"))?;
         Ok(Self { listener, secured: Some(Secured { acceptor: TlsAcceptor::from(Arc::clone(&tls.tcp)), alt_svc }), quic: Some(quic), routes })
     }
 
@@ -145,4 +184,26 @@ async fn connection(stream: TcpStream, peer: SocketAddr, routes: Arc<Routes>, se
 /// As [`tls::load`].
 pub fn secure(files: Option<&tls::Files>) -> Result<Option<Configured>, String> {
     files.map(tls::load).transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::public_port;
+
+    /// REQ-6965: the public port is the origin's, or its scheme's default
+    /// (RFC 9110 sections 4.2.1 and 4.2.2), whatever the host is written
+    /// as; and text that is no `http` or `https` origin is refused, named.
+    #[test]
+    fn the_public_port_is_the_origins_or_its_schemes_default() {
+        assert_eq!(public_port("https://app.neottx.com"), Ok(443));
+        assert_eq!(public_port("http://app.neottx.com"), Ok(80));
+        assert_eq!(public_port("https://app.neottx.com:9443"), Ok(9443));
+        assert_eq!(public_port("http://127.0.0.1:8090"), Ok(8090));
+        assert_eq!(public_port("https://[2001:db8::1]"), Ok(443));
+        assert_eq!(public_port("https://[2001:db8::1]:8443"), Ok(8443));
+        for refused in ["app.neottx.com:9443", "wss://app.neottx.com", "", "https://app.neottx.com:99999", "https://user@app.neottx.com"] {
+            let error = public_port(refused).unwrap_err();
+            assert!(error.starts_with(&format!("cannot read the public port from the origin {refused}: ")), "{error}");
+        }
+    }
 }

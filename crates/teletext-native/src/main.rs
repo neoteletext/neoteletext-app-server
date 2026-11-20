@@ -27,7 +27,11 @@
 //! chain and its private key in PEM, with which the server serves TLS
 //! itself and needs no proxy (REQ-6965): HTTP/2 and HTTP/1.1 on TCP, and
 //! HTTP/3 over QUIC on UDP at the same address and port, each carrying a
-//! channel's push and program connections (REQ-6966). `--origin` then starts `https://`. The
+//! channel's push and program connections (REQ-6966). `--origin` then
+//! starts `https://`, and its port, 443 when it names none, is the one
+//! every answer over TCP names HTTP/3 at in `Alt-Svc`: the port viewers
+//! reach the server at, which is not the listening port when a proxy
+//! relays connections to it (DEC-6972). The
 //! files are read once, at start, and a file that cannot be read, or a key
 //! that is not the certificate's, stops the server there. Without them the
 //! server serves plain HTTP/1.1 and listens on no UDP port.
@@ -69,7 +73,7 @@ use hyper_util::rt::TokioIo;
 use listenfd::ListenFd;
 use teletext_native::http::Routes;
 use teletext_native::logging::{self, Format};
-use teletext_native::serving::{self, Server};
+use teletext_native::serving::{self, Direct, Server};
 use teletext_native::state::{StateDirectory, SystemRandomSource, random_secret};
 use teletext_native::stats::ServerStats;
 use teletext_native::{admin, apps, hub, tls};
@@ -232,6 +236,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     // Before any channel's program is started: a certificate or key that
     // cannot be used stops the server here (REQ-6965).
     let secured = serving::secure(arguments.tls.as_ref())?;
+    let direct = secured.as_ref().map(|tls| serving::public_port(&arguments.origin).map(|public_port| Direct { tls, public_port })).transpose()?;
     let kept = arguments.state.as_deref().map(StateDirectory::open).transpose()?;
     if let Some(kept) = &kept {
         match kept.figures() {
@@ -274,7 +279,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
     };
     let listening = listener.local_addr().map_err(|error| format!("cannot read the address listened on: {error}"))?;
     let routes = Arc::new(Routes { hubs, connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: arguments.trusted_proxy });
-    let server = Server::start(listener, secured.as_ref(), Arc::clone(&routes))?;
+    let server = Server::start(listener, direct, Arc::clone(&routes))?;
     let mut administering = None;
     if let Some(address) = &arguments.admin {
         let admin = TcpListener::bind(address).await.map_err(|error| format!("cannot listen on {address} for administration: {error}"))?;

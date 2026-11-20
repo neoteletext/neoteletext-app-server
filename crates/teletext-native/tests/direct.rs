@@ -27,7 +27,7 @@ use teletext_http3::stream::{Control, ControlEvent, Message, MessageEvent, Role,
 use teletext_http3::{Code, frame, varint};
 use teletext_native::http::Routes;
 use teletext_native::hub;
-use teletext_native::serving::Server;
+use teletext_native::serving::{Direct, Server, public_port};
 use teletext_native::state::SystemRandomSource;
 use teletext_native::stats::ServerStats;
 use teletext_native::tls::{self, ALPN_H2, ALPN_H3, ALPN_HTTP1, Files};
@@ -84,12 +84,19 @@ impl Drop for Running {
 }
 
 async fn running(certificate: Option<&Certificate>) -> Running {
+    running_at(certificate, |port| format!(":{port}")).await
+}
+
+/// The server, reached by viewers at the origin of [`HOST`] with
+/// `public`'s port text, given the port it listens on.
+async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> String) -> Running {
     let listener = TcpListener::bind(ANY_LOCAL_PORT).await.unwrap();
     let address = listener.local_addr().unwrap();
     let scheme = if certificate.is_some() { "https" } else { "http" };
+    let origin = format!("{scheme}://{HOST}{}", public(address.port()));
     let config = ChannelConfig {
         name: "Test".to_owned(),
-        address: format!("{scheme}://{HOST}:{}/{FOLDER}/", address.port()),
+        address: format!("{origin}/{FOLDER}/"),
         initial_page: InitialPage::new(0x100).unwrap(),
         epoch_at_start_ms: 0,
         other_addresses: Vec::new(),
@@ -102,7 +109,8 @@ async fn running(certificate: Option<&Certificate>) -> Running {
     let descriptor = Arc::clone(&hub.descriptor);
     let routes = Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats, trusted_proxy: None });
     let secured = certificate.map(|certificate| tls::load(&certificate.files).unwrap());
-    let server = Server::start(listener, secured.as_ref(), routes).unwrap();
+    let direct = secured.as_ref().map(|tls| Direct { tls, public_port: public_port(&origin).unwrap() });
+    let server = Server::start(listener, direct, routes).unwrap();
     let quic = server.quic_address();
     let serving = tokio::spawn(async move {
         server.run(std::future::pending()).await;
@@ -615,6 +623,25 @@ async fn tls_offers_http2_and_http1_and_names_http3() {
     assert!(answer.ends_with(std::str::from_utf8(&running.descriptor).unwrap()), "{answer}");
     let missing = http1_get(tls_to(&running, &certificate, &[ALPN_HTTP1]).await, "/nothing/here").await;
     assert!(missing.starts_with("HTTP/1.1 404") && missing.to_ascii_lowercase().contains("alt-svc: h3="), "every answer: {missing}");
+}
+
+/// REQ-6965: `Alt-Svc` names the port viewers reach the server at, the
+/// origin's, and not the port it listens on: 443 for an `https` origin
+/// that names none, and the origin's own when it names another, as behind
+/// a proxy that relays connections to the server (DEC-6972). The server
+/// named its listening port before.
+#[tokio::test]
+async fn alt_svc_names_the_origins_port_and_not_the_listening_port() {
+    const ELSEWHERE: u16 = 8443;
+    let certificate = certificate("tls-public-port");
+    for (public, port) in [(String::new(), 443), (format!(":{ELSEWHERE}"), ELSEWHERE)] {
+        let running = running_at(Some(&certificate), |_| public.clone()).await;
+        assert_ne!(running.address.port(), port, "the kernel chose another port to listen on");
+        let answer = http1_get(tls_to(&running, &certificate, &[ALPN_HTTP1]).await, &path("channel.ttx")).await;
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.to_ascii_lowercase().contains(&format!("alt-svc: h3=\":{port}\"\r\n")), "{answer}");
+        assert_eq!(running.quic, Some(running.address), "QUIC is still served at the listening port");
+    }
 }
 
 /// REQ-6965, REQ-6966: over TLS an HTTP/1.1 upgrade still opens the push
