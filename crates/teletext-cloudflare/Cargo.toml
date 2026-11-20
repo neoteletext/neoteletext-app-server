@@ -17,6 +17,10 @@ teletext-runtime.workspace = true
 worker.workspace = true
 getrandom.workspace = true
 wasm-bindgen.workspace = true
+# Each viewer's WebSocket attachment, what the runtime keeps of its
+# connection across hibernation, written as JSON (DEC-1755 option 1).
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
