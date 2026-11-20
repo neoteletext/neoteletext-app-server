@@ -101,6 +101,11 @@ impl Slot {
         self.address
     }
 
+    /// The viewer it presents: its key identifier and lifetime.
+    pub(super) fn presented(&self) -> Option<(KeyId, Lifetime)> {
+        self.present.map(|present| (present.key_id, present.lifetime))
+    }
+
     /// `connected` waits for the opening challenge's answer.
     pub(super) const fn holds(&self) -> bool {
         self.opening
@@ -409,7 +414,22 @@ impl Channel {
         if before.is_some_and(|before| before.key_id != present.key_id) {
             self.leave(connection, now);
         }
-        if !known {
+        let Some(handle) = self.present(connection, present, now) else { return };
+        let began = before.is_none_or(|before| before.key_id != present.key_id);
+        match outstanding.purpose {
+            Purpose::Opening => self.opening_over(connection, now),
+            Purpose::Request | Purpose::Offer if began => {
+                let remembered = present.lifetime == Lifetime::Remembered;
+                self.tell(&ServerMessage::ViewerBegan(ViewerBegan { connection, viewer: handle, remembered }));
+            }
+            Purpose::Request | Purpose::Offer => {}
+        }
+    }
+
+    /// `connection` presents the viewer of `present`, entered in the table
+    /// if it is not there (VS-303): its handle.
+    fn present(&mut self, connection: ConnectionId, present: Present, now: u64) -> Option<Handle> {
+        if !self.viewers.table.contains_key(&present.key_id) {
             self.make_room();
             let handle = self.viewers.key.handle(&present.key_id);
             let entry = Entry { handle, connections: BTreeSet::new(), lifetime: present.lifetime, seen: now, idle_since: None };
@@ -418,7 +438,7 @@ impl Channel {
             self.viewers.seen.insert((now, present.key_id));
         }
         let viewers = &mut self.viewers;
-        let Some(entry) = viewers.table.get_mut(&present.key_id) else { return };
+        let entry = viewers.table.get_mut(&present.key_id)?;
         viewers.seen.remove(&(entry.seen, present.key_id));
         entry.seen = now;
         viewers.seen.insert((now, present.key_id));
@@ -428,18 +448,16 @@ impl Channel {
         entry.lifetime = present.lifetime;
         entry.connections.insert(connection);
         let handle = entry.handle;
-        let began = before.is_none_or(|before| before.key_id != present.key_id);
-        if let Some(state) = self.connections.get_mut(&connection) {
-            state.viewer.present = Some(present);
-        }
-        match outstanding.purpose {
-            Purpose::Opening => self.opening_over(connection, now),
-            Purpose::Request | Purpose::Offer if began => {
-                let remembered = present.lifetime == Lifetime::Remembered;
-                self.tell(&ServerMessage::ViewerBegan(ViewerBegan { connection, viewer: handle, remembered }));
-            }
-            Purpose::Request | Purpose::Offer => {}
-        }
+        self.connections.get_mut(&connection)?.viewer.present = Some(present);
+        Some(handle)
+    }
+
+    /// A connection given back after the channel's memory was lost presents
+    /// the viewer it proved before (DEC-1755 option 1): it was proven then,
+    /// so it is neither counted nor bounded as a new one (VS-304), and the
+    /// program hears of it in `connected`.
+    pub(super) fn viewer_resumed(&mut self, connection: ConnectionId, key_id: KeyId, lifetime: Lifetime, now: u64) {
+        let _ = self.present(connection, Present { key_id, lifetime }, now);
     }
 
     /// Room for one more viewer: at the bound, the viewer seen longest ago

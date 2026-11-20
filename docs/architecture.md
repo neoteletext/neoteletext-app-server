@@ -101,10 +101,12 @@ Each host is a short async loop: wait for whatever comes next (a socket, an appl
 Its `DurableObject` trait's async handlers do not need `Send`.
 
 - **One Durable Object per channel** is the design's single actor per channel, with Cloudflare's routing to it: every connection to a channel reaches the same object, which TODO-2023 item 3 asks of a native deployment too.
-- **Hibernation:** an idle channel's object is evicted while its WebSockets stay open.
-  - What must survive goes to the object's SQLite storage through the runtime's `Store` effects: published pages, sessions, each connection's tuned pages.
-  - Each connection's last-sent versions are lost, so after a wake every tuned page goes whole once (DOC-1949), about 1 KB a page.
-  - A live channel keeps its object awake, and is billed for it.
+- **Hibernation:** an idle channel's object loses its memory while its WebSockets stay open (DEC-1755 option 1, proposed; TODO-4579).
+  - Each viewer's WebSocket attachment carries what the runtime keeps of its connection (`channel::Resume`, from `Channel::resume_of`: WELCOME's agreement, the numbers the receiver counts on, the selection and its query, the proven viewer's key identifier), written as JSON after every event that changed it, within Cloudflare's 16,384-byte limit on an attachment. Nothing else is stored, and it goes with the WebSocket.
+  - At a wake each connection is given back (`Channel::resumed`) and a connected program is sent `start` and `connected` for each, as after a restart, and sends each its page again: about 1 KB a page.
+  - A live channel keeps its object awake, and is billed for it. A quiet one was seen to hibernate within 30 seconds on 21 November 2026 (the end-to-end test against the deployment).
+- **The push upgrade** is the native host's (DOC-1917), answered by the Worker before the object wakes: 403 with `Origin`, 426 naming `neottx.10` without it, and the object's 101 names it. Cloudflare takes a WebSocket over an HTTP/1.1 upgrade only: it offers no extended CONNECT over HTTP/2 or HTTP/3 (DEC-6962).
+- **Deployment:** `deploy/cloudflare/deploy.sh` (TODO-1304): the pinned tools, the version to roll back to, `wrangler deploy`, and the checks after against `cf.neoteletext.com`. Its tests: `npm test` in the crate, against `wrangler dev` or, with `NEOTELETEXT_URL`, the deployment (`test/end-to-end.test.ts`).
 - **Channels:** the variable `CHANNELS` in `wrangler.toml` lists the channels served, each `{"folder","name","wheel","default_rules"}`, the last two read as the native host reads them from its channels file (RULE-53): `wheel` false and `default_rules` `"none"` when left out, and any other value a fault of the configuration that stops the channel's object.
 - **Static pages** should be served by the Worker itself from the edge's cache or R2, without waking the channel's object; as built (decision 20) the object answers them (an rdm to-do).
 - **Applications:** there are no processes. A program runs wherever its owner runs it and opens a WebSocket to its channel's Durable Object over `wss://`, with the channel's secret, so the object stays the server of every connection it holds and can hibernate (decision 17, requirement 1.5).
@@ -112,7 +114,7 @@ Its `DurableObject` trait's async handlers do not need `Send`.
   - 128 MB of memory per isolate;
   - 30 seconds of CPU per request by default, up to 5 minutes;
   - the Worker's compressed size, which the dependencies must keep small.
-- **Clock and randomness:** the clock comes from the host as every event's time. Random session tokens come from `getrandom`, with the WebAssembly back end Cloudflare needs (a library to approve).
+- **Clock and randomness:** the clock comes from the host as every event's time. Random bytes for the viewer-handle secret and viewer-state challenges come from `getrandom`, with the WebAssembly back end Cloudflare needs (a library to approve).
 
 ### 3.4 WebAssembly beyond Cloudflare
 
@@ -181,7 +183,7 @@ Every `neoteletext-*` dependency is a git dependency on the engine's public repo
 
   The server ran 21 threads throughout, and 50,000 tabs took 0.9 to 2.4 GB. Memory here is the process's; the kernel's memory for each TCP socket is not in it, and an idle socket held no buffer memory (`/proc/net/sockstat` showed none). **Where HTTP/3 helps:** a viewer's tabs sharing one connection, as the browser shares a channel's (DEC-6979): four tabs a connection hold about a quarter of the memory of a tab's own QUIC connection and come back after a restart several times faster than over TCP, whose storms end in a tail of handshakes waiting out TCP's doubling retransmission timer after the host's device queue (fq_codel, 10,240 packets) dropped their packets; and QUIC costs no file descriptor a connection. **Where it does not:** a tab with a connection of its own costs 2.7 times the memory of HTTP/1.1 over TLS and, with the browser's five-second keep-alive, ten to twenty times the CPU at rest; HTTP/2 without sharing likewise costs 2.4 times the memory. **The one QUIC endpoint was the bottleneck:** quinn handles an endpoint's packets on one task and accepts each handshake under its lock, so with one UDP socket 50,000 one-tab viewers reconnecting overflowed it (4,717,050 datagrams dropped) and took 288 seconds; with a socket a core sharing the port, 10.7 seconds. Measured along the way (each in its commit): with Linux's default 208 KiB receive buffer 10,000 HTTP/3 viewers overflowed the socket by 58,889 datagrams, none with 8 MiB; and 1,115 of 10,000 QUIC connections missed the stopping server's close in the burst of its packets and waited out their 15-second idle timeout, the delay production showed on 20 November 2026, until the next process could reset them. Not measured: a NAPLPS or ReGIS page a tab (the earlier figures above), and production's machine, whose queue discipline and `rmem_max` set what it can take.
 
-Not built: tuning (DOC-1950, the browser's decision 104), a sign-in bound to a viewer key (REQ-6745; cookies set by applications are withdrawn, DEC-6471, and viewer state is built, DOC-1924), WebSocket and WebAssembly applications (DOC-1965), ACME (decision 5), the Cloudflare host, the carousel.
+Not built: tuning (DOC-1950, the browser's decision 104), a sign-in bound to a viewer key (REQ-6745; cookies set by applications are withdrawn, DEC-6471, and viewer state is built, DOC-1924), WebSocket and WebAssembly applications (DOC-1965), ACME (decision 5), the carousel. The Cloudflare host runs at `cf.neoteletext.com` since 21 November 2026 (section 3.3), without the operator's figures (TODO-1306) or static pages served by the Worker.
 
 ## 6. Security of pictures
 

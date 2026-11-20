@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::String;
 
 use neoteletext_web::channel::SETTINGS_FILE;
-use neoteletext_web::consts::PUSH_SUBPROTOCOL;
+pub use neoteletext_web::consts::{PUSH_SUBPROTOCOL, WEBSOCKET_VERSION};
 use neoteletext_web::map::Place;
 use neoteletext_web::small_page::{self, PublicPage as Shown};
 pub use neoteletext_web::small_page::{CONTENT_SECURITY_POLICY, PUBLIC_CONTENT_SECURITY_POLICY};
@@ -105,6 +105,24 @@ pub enum PushRefusal {
     /// It does not offer the input protocol's subprotocol: another program
     /// or another version (DEC-1759 lesson 14): 426, naming the one spoken.
     Subprotocol,
+}
+
+/// 403 Forbidden (RFC 9110 section 15.5.4).
+const FORBIDDEN: u16 = 403;
+/// 426 Upgrade Required (RFC 9110 section 15.5.22).
+const UPGRADE_REQUIRED: u16 = 426;
+
+impl PushRefusal {
+    /// The status every host answers it with: 403 for `Origin`, and 426
+    /// for the subprotocol, whose answer also names [`PUSH_SUBPROTOCOL`] in
+    /// `Sec-WebSocket-Protocol` (and, over HTTP/1.1, `Upgrade: websocket`).
+    #[must_use]
+    pub const fn status(self) -> u16 {
+        match self {
+            Self::Origin => FORBIDDEN,
+            Self::Subprotocol => UPGRADE_REQUIRED,
+        }
+    }
 }
 
 /// Whether a push upgrade may go ahead, from whether it carried `Origin`
