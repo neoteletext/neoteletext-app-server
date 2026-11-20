@@ -204,8 +204,14 @@ impl Target {
     }
 
     /// A viewer's connection, `number` among them, over which its tabs
-    /// are opened.
+    /// are opened; `None` when it is not made within
+    /// [`CLIENT_HANDSHAKE_WITHIN`], as a browser gives up on a handshake
+    /// and tries again, rather than wait on one a server never saw.
     pub async fn viewer(&self, number: usize) -> Option<Viewer> {
+        tokio::time::timeout(CLIENT_HANDSHAKE_WITHIN, self.connect_viewer(number)).await.ok().flatten()
+    }
+
+    async fn connect_viewer(&self, number: usize) -> Option<Viewer> {
         match self.version {
             Version::Http1 => Some(Viewer::Http1),
             Version::Http2 => {
@@ -253,8 +259,13 @@ impl Target {
     }
 
     /// Opens a tab's push WebSocket on `viewer`, `number` among the tabs:
-    /// the WebSocket and what came after its answer's head.
+    /// the WebSocket and what came after its answer's head; `None` when it
+    /// is not open within [`CLIENT_HANDSHAKE_WITHIN`].
     pub async fn tab(&self, viewer: &mut Viewer, number: usize) -> Option<(Box<dyn Duplex>, Vec<u8>)> {
+        tokio::time::timeout(CLIENT_HANDSHAKE_WITHIN, self.open_tab(viewer, number)).await.ok().flatten()
+    }
+
+    async fn open_tab(&self, viewer: &mut Viewer, number: usize) -> Option<(Box<dyn Duplex>, Vec<u8>)> {
         match viewer {
             Viewer::Http1 => {
                 let stream = self.tcp(number).await?;
