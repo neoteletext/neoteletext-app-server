@@ -300,10 +300,10 @@ enum Opening {
 /// spoken. `Upgrade` is a field of an HTTP/1.1 connection, which HTTP/2
 /// and HTTP/3 do not carry (RFC 9113 section 8.2.2, RFC 9114 section 4.2).
 fn refused_upgrade(refusal: PushRefusal, opening: &Opening) -> Response<Whole> {
+    let mut response = status(StatusCode::from_u16(refusal.status()).unwrap_or(StatusCode::BAD_REQUEST));
     match refusal {
-        PushRefusal::Origin => status(StatusCode::FORBIDDEN),
+        PushRefusal::Origin => response,
         PushRefusal::Subprotocol => {
-            let mut response = status(StatusCode::UPGRADE_REQUIRED);
             let headers = response.headers_mut();
             if matches!(opening, Opening::Upgrade(_)) {
                 headers.insert(UPGRADE, HeaderValue::from_static(WEBSOCKET));
