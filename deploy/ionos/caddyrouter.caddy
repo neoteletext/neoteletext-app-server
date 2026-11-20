@@ -1,10 +1,13 @@
 # BEGIN neoteletext (~/devel/neoteletext-app-server/deploy/ionos/deploy.sh
 # replaces everything to END). The neoteletext nspawn container, with its own
-# network namespace. TLS terminates here. app.neottx.com, the NeoTeletext
-# server, goes straight to the server's socket at 10.70.0.18:8090; the other
-# names go to Caddy inside the container at 10.70.0.18:8080: the static site
-# on www.neottx.com and the redirects from neottx.com and the neoteletext.com
-# names.
+# network namespace. app.neottx.com, the NeoTeletext server, ends TLS in the
+# server itself: caddyrouter passes the name's TCP connections through, still
+# encrypted, with the viewer's address in a PROXY protocol version 2 header,
+# by the layer 4 listener wrapper in its global options
+# (caddyrouter-global.caddy, DEC-6972); this block's app.neottx.com site is
+# reached only by HTTP/3, which still ends here. The other names go to Caddy
+# inside the container at 10.70.0.18:8080: the static site on www.neottx.com
+# and the redirects from neottx.com and the neoteletext.com names.
 (neoteletext_log) {
 	log {
 		output file /var/log/caddy/neoteletext.com.log {
@@ -16,12 +19,19 @@
 	}
 }
 # The server keys its per-address limits on the viewer's address, which it
-# takes from the last X-Forwarded-For entry when the peer is its trusted
-# proxy, this Caddy (--trusted-proxy 10.70.0.17). With no trusted_proxies
-# here, Caddy drops whatever X-Forwarded-For a client sent and writes the
-# address it connected from, so a client cannot name another address.
+# takes from the PROXY version 2 header this Caddy, its trusted proxy
+# (--trusted-proxy 10.70.0.17 --proxy-protocol), writes before TLS; it reads
+# no X-Forwarded-For then.
 app.neottx.com {
-	reverse_proxy http://10.70.0.18:8090
+	reverse_proxy https://10.70.0.18:8090 {
+		transport http {
+			# HTTP/1.1 to the server: Caddy hands a WebSocket it took by extended
+			# CONNECT upstream as an HTTP/1.1 Upgrade, which HTTP/2 cannot carry.
+			versions 1.1
+			tls_server_name app.neottx.com
+			proxy_protocol v2
+		}
+	}
 	encode zstd gzip
 	import neoteletext_log
 }

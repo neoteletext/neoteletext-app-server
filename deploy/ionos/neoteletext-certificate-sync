@@ -1,0 +1,36 @@
+#!/bin/bash
+# Gives the NeoTeletext server (container neoteletext) the certificate Caddy
+# (container caddyrouter) keeps for app.neottx.com, which the server ends TLS
+# with since caddyrouter passes the name's TLS through (neoteletext-app-server
+# DEC-6972). Run by neoteletext-certificate.path whenever Caddy writes the
+# certificate or its key; installs only a matching pair, and restarts the
+# server only when the pair changed, since it reads them at start.
+set -euo pipefail
+source_dir=/var/lib/machines/caddyrouter/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/app.neottx.com
+target_dir=/var/lib/machines/neoteletext/opt/neoteletext/tls
+# The container runs with private users: its ubuntu (1000), the server's
+# user, is this host's 1431175168 + 1000.
+owner=1431176168
+certificate=$source_dir/app.neottx.com.crt
+key=$source_dir/app.neottx.com.key
+[ -s "$certificate" ] && [ -s "$key" ] || { echo "no certificate or key in $source_dir" >&2; exit 1; }
+# Caddy writes the two files one after the other: a pair caught between
+# the writes does not match, and the second write runs this again.
+if [ "$(openssl x509 -in "$certificate" -noout -pubkey | sha256sum)" != "$(openssl pkey -in "$key" -pubout | sha256sum)" ]; then
+    echo "certificate and key do not match yet; waiting for the next write" >&2
+    exit 0
+fi
+install -d -o "$owner" -g "$owner" -m 0700 "$target_dir"
+if cmp -s "$certificate" "$target_dir/app.neottx.com.crt" && cmp -s "$key" "$target_dir/app.neottx.com.key"; then
+    echo "unchanged"
+    exit 0
+fi
+install -o "$owner" -g "$owner" -m 0644 "$certificate" "$target_dir/app.neottx.com.crt.new"
+install -o "$owner" -g "$owner" -m 0600 "$key" "$target_dir/app.neottx.com.key.new"
+mv "$target_dir/app.neottx.com.key.new" "$target_dir/app.neottx.com.key"
+mv "$target_dir/app.neottx.com.crt.new" "$target_dir/app.neottx.com.crt"
+echo "installed $(openssl x509 -in "$target_dir/app.neottx.com.crt" -noout -enddate)"
+if [ "${1:-}" != "--no-restart" ] && systemctl -M neoteletext is-active --quiet neoteletext.service; then
+    systemctl -M neoteletext restart neoteletext.service
+    echo "server restarted"
+fi

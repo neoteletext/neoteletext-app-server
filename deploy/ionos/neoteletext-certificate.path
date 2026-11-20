@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch Caddy's certificate for app.neottx.com, for the NeoTeletext server
+
+[Path]
+PathChanged=/var/lib/machines/caddyrouter/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/app.neottx.com/app.neottx.com.crt
+PathChanged=/var/lib/machines/caddyrouter/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/app.neottx.com/app.neottx.com.key
+Unit=neoteletext-certificate.service
+
+[Install]
+WantedBy=multi-user.target

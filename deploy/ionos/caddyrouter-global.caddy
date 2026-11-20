@@ -1,0 +1,29 @@
+# caddyrouter's global options for NeoTeletext (DEC-6972), placed by hand in
+# /etc/caddy/Caddyfile's global block, after `https_port 443`: deploy.sh
+# replaces only the block between BEGIN and END neoteletext. Needs a Caddy
+# built with caddy-l4 (xcaddy build v2.11.9 --with
+# github.com/mholt/caddy-l4@1353123db5e20715b645f93874218821b42630a9),
+# installed beside the apt package with dpkg-divert.
+	# app.neottx.com's TLS passes through, still encrypted, to the NeoTeletext
+	# server, which ends TLS itself, with the viewer's address in a PROXY
+	# protocol version 2 header (caddy-l4; neoteletext-app-server DEC-6972).
+	# ACME's TLS-ALPN challenge for the name stays here, so Caddy keeps
+	# renewing the certificate the server is given. Every other connection
+	# falls through to the sites below.
+	servers :443 {
+		listener_wrappers {
+			layer4 {
+				@neoteletext {
+					tls sni app.neottx.com
+					not tls alpn acme-tls/1
+				}
+				route @neoteletext {
+					proxy {
+						proxy_protocol v2
+						upstream 10.70.0.18:8090
+					}
+				}
+			}
+			tls
+		}
+	}

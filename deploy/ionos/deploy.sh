@@ -252,7 +252,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # X-Forwarded-For names each viewer; the administration listener stays on
 # the container's loopback, which nothing outside the container reaches.
 StateDirectory=neoteletext
-ExecStart=$app/bin/teletext-server --listen 10.70.0.18:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 10.70.0.17
+ExecStart=$app/bin/teletext-server --listen 10.70.0.18:8090 --origin https://app.neottx.com --channels $app/channels.json --admin-listen 127.0.0.1:9464 --trusted-proxy 10.70.0.17 --tls-certificate $app/tls/app.neottx.com.crt --tls-key $app/tls/app.neottx.com.key --proxy-protocol
 Restart=on-failure
 # The server stops within 10 s of SIGTERM (requirement 5.1).
 TimeoutStopSec=15
@@ -299,6 +299,10 @@ ssh "$edge" 'set -e; block=$(mktemp); cat > "$block"; candidate=$(mktemp)
     sudo systemctl reload caddy && echo "replaced and reloaded"' < "$here/caddyrouter.caddy"
 
 say "inside the container"
-ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "server %{http_code}\n" http://10.70.0.18:8090/; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
+ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy; curl -s -o /dev/null -w "readyz %{http_code}\n" http://127.0.0.1:9464/readyz
     for h in www.neottx.com neottx.com app.neoteletext.com neoteletext.com; do curl -s -o /dev/null -w "$h via Caddy %{http_code}\n" -H "Host: $h" http://10.70.0.18:8080/; done
-    for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code}\n" http://10.70.0.18:8090/$c/channel.ttx; done'
+'
+# The server's socket takes only TLS after a PROXY header from caddyrouter
+# (DEC-6972), so each channel is checked as a viewer reaches it, by name.
+say "each channel through caddyrouter"
+for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code} HTTP/%{http_version}\n" "https://app.neottx.com/$c/channel.ttx"; done

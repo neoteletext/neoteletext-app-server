@@ -1,0 +1,6 @@
+[Unit]
+Description=Give the NeoTeletext server Caddy's certificate for app.neottx.com
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/neoteletext-certificate-sync
