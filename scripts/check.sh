@@ -143,8 +143,30 @@ check_limit_figures() {
     scripts/limit-figures.sh "${manifest%Cargo.toml}src/limits.rs" . || fail "a limit's figure is written beside its name: use the constant (REQ-6608)"
 }
 
+# REQ-6967: every bound on HTTP/2, HTTP/3 and QUIC input is a named
+# constant, defined once: those of the HTTP/3 layer in its limits module,
+# those of the native host in its own.
+readonly DIRECT_BOUNDS=(
+    "crates/teletext-http3/src/limits.rs:MAX_FIELD_SECTION_BYTES FIELD_OVERHEAD_BYTES MAX_SETTINGS_BYTES MAX_VARINT_BYTES MAX_PREFIXED_INTEGER"
+    "crates/teletext-native/src/limits.rs:HANDSHAKE_WITHIN MAX_CONCURRENT_STREAMS MAX_UNIDIRECTIONAL_STREAMS MAX_HEADER_LIST_BYTES H2_MAX_FRAME_BYTES H2_PING_AFTER H2_DEAD_AFTER_PING MAX_QUIC_CONNECTIONS QUIC_STREAM_WINDOW_BYTES QUIC_CONNECTION_WINDOW_BYTES QUIC_IDLE_AFTER H3_HEAD_WITHIN H3_READ_BYTES H3_DATA_FRAME_BYTES"
+)
+
+check_direct_bounds() {
+    step "each bound of REQ-6967 is a constant defined once"
+    local entry file name found
+    for entry in "${DIRECT_BOUNDS[@]}"; do
+        file="${entry%%:*}"
+        for name in ${entry#*:}; do
+            found="$(git grep -lE "const $name:" -- 'crates/*.rs' | tr '\n' ' ')"
+            [[ "$found" == "$file " ]] || fail "$name must be defined in $file and nowhere else; found in: ${found:-no file}"
+            [[ "$(git grep -cE "const $name:" -- "$file" | cut -d: -f2)" == 1 ]] || fail "$name is defined more than once in $file"
+        done
+    done
+}
+
 check_workspace() {
     check_engine_pin
+    check_direct_bounds
     check_limit_figures
     check_rules_vectors
     check_kit_fixture

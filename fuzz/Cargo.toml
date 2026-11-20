@@ -19,6 +19,8 @@ members = ["."]
 libfuzzer-sys = "=0.4.13"
 teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
+# The HTTP/3 layer, whose readers take what any QUIC peer sends (REQ-6967).
+teletext-http3 = { path = "../crates/teletext-http3" }
 # The engine's input writer, to write viewer state's messages as a
 # receiver does.
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "a81ac8f1981b34f6a8874e02d780ecd2caae908c", default-features = false }
@@ -109,6 +111,13 @@ bench = false
 [[bin]]
 name = "animation_json"
 path = "fuzz_targets/animation_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http3_reader"
+path = "fuzz_targets/http3_reader.rs"
 test = false
 doc = false
 bench = false

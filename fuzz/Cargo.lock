@@ -824,6 +824,7 @@ dependencies = [
  "neoteletext-rules",
  "neoteletext-web",
  "ring",
+ "teletext-http3",
  "teletext-native",
  "teletext-runtime",
 ]
