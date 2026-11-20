@@ -99,10 +99,12 @@ Each host is a short async loop: wait for whatever comes next (a socket, an appl
 Its `DurableObject` trait's async handlers do not need `Send`.
 
 - **One Durable Object per channel** is the design's single actor per channel, with Cloudflare's routing to it: every connection to a channel reaches the same object, which TODO-2023 item 3 asks of a native deployment too.
-- **Hibernation:** an idle channel's object is evicted while its WebSockets stay open.
-  - What must survive goes to the object's SQLite storage through the runtime's `Store` effects: published pages, sessions, each connection's tuned pages.
-  - Each connection's last-sent versions are lost, so after a wake every tuned page goes whole once (DOC-1949), about 1 KB a page.
-  - A live channel keeps its object awake, and is billed for it.
+- **Hibernation:** an idle channel's object loses its memory while its WebSockets stay open (DEC-1755 option 1, proposed; TODO-4579).
+  - Each viewer's WebSocket attachment carries what the runtime keeps of its connection (`channel::Resume`, from `Channel::resume_of`: WELCOME's agreement, the numbers the receiver counts on, the selection and its query, the proven viewer's key identifier), written as JSON after every event that changed it, within Cloudflare's 16,384-byte limit on an attachment. Nothing else is stored, and it goes with the WebSocket.
+  - At a wake each connection is given back (`Channel::resumed`) and a connected program is sent `start` and `connected` for each, as after a restart, and sends each its page again: about 1 KB a page.
+  - A live channel keeps its object awake, and is billed for it. A quiet one was seen to hibernate within 30 seconds on 21 November 2026 (the end-to-end test against the deployment).
+- **The push upgrade** is the native host's (DOC-1917), answered by the Worker before the object wakes: 403 with `Origin`, 426 naming `neottx.10` without it, and the object's 101 names it. Cloudflare takes a WebSocket over an HTTP/1.1 upgrade only: it offers no extended CONNECT over HTTP/2 or HTTP/3 (DEC-6962).
+- **Deployment:** `deploy/cloudflare/deploy.sh` (TODO-1304): the pinned tools, the version to roll back to, `wrangler deploy`, and the checks after against `cf.neoteletext.com`. Its tests: `npm test` in the crate, against `wrangler dev` or, with `NEOTELETEXT_URL`, the deployment (`test/end-to-end.test.ts`).
 - **Channels:** the variable `CHANNELS` in `wrangler.toml` lists the channels served, each `{"folder","name","wheel","default_rules"}`, the last two read as the native host reads them from its channels file (RULE-53): `wheel` false and `default_rules` `"none"` when left out, and any other value a fault of the configuration that stops the channel's object.
 - **Static pages** should be served by the Worker itself from the edge's cache or R2, without waking the channel's object; as built (decision 20) the object answers them (an rdm to-do).
 - **Applications:** there are no processes. A program runs wherever its owner runs it and opens a WebSocket to its channel's Durable Object over `wss://`, with the channel's secret, so the object stays the server of every connection it holds and can hibernate (decision 17, requirement 1.5).
@@ -110,7 +112,7 @@ Its `DurableObject` trait's async handlers do not need `Send`.
   - 128 MB of memory per isolate;
   - 30 seconds of CPU per request by default, up to 5 minutes;
   - the Worker's compressed size, which the dependencies must keep small.
-- **Clock and randomness:** the clock comes from the host as every event's time. Random session tokens come from `getrandom`, with the WebAssembly back end Cloudflare needs (a library to approve).
+- **Clock and randomness:** the clock comes from the host as every event's time. Random bytes for the viewer-handle secret and viewer-state challenges come from `getrandom`, with the WebAssembly back end Cloudflare needs (a library to approve).
 
 ### 3.4 WebAssembly beyond Cloudflare
 
@@ -160,7 +162,7 @@ Every `neoteletext-*` dependency is a git dependency on the engine's public repo
 
 - **The server behind a layer 4 proxy** (20 November 2026, branch `direct-http3`; DEC-6972, REQ-6974, REQ-6965 version 2): `--proxy-protocol` and the PROXY protocol version 2 header read before TLS (`proxy_protocol.rs`, `serving.rs`), and `Alt-Svc` naming the origin's port. Section 3.2 says what, section 7 what bounds it. Not yet run against caddy-l4 itself: the tests write the header as the specification lays it out.
 
-Not built: tuning (DOC-1950, the browser's decision 104), a sign-in bound to a viewer key (REQ-6745; cookies set by applications are withdrawn, DEC-6471, and viewer state is built, DOC-1924), WebSocket and WebAssembly applications (DOC-1965), ACME (decision 5), the Cloudflare host, the carousel.
+Not built: tuning (DOC-1950, the browser's decision 104), a sign-in bound to a viewer key (REQ-6745; cookies set by applications are withdrawn, DEC-6471, and viewer state is built, DOC-1924), WebSocket and WebAssembly applications (DOC-1965), ACME (decision 5), the carousel. The Cloudflare host runs at `cf.neoteletext.com` since 21 November 2026 (section 3.3), without the operator's figures (TODO-1306) or static pages served by the Worker.
 
 ## 6. Security of pictures
 
