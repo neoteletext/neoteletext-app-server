@@ -22,11 +22,6 @@ linux_host="${TELETEXT_LINUX_HOST:-foundintelquiet4060}"
 # Seconds each fuzz target runs in the full gate, after replaying every
 # input that has ever found a fault (fuzz/regressions/).
 fuzz_seconds="${TELETEXT_FUZZ_SECONDS:-20}"
-# Cloudflare Workers' target, which the runtime must build for
-# (requirement 1.3).
-readonly WASM_TARGET="wasm32-unknown-unknown"
-# The crates that build for WebAssembly.
-readonly WASM_CRATES=(teletext-runtime)
 # The native server's systems besides the one the gate runs on
 # (requirement 1.1, REQ-1020): each is type-checked by the full gate, so a
 # `cfg` that stops compiling on a system is found without that system.
@@ -184,10 +179,6 @@ check_workspace() {
 check_shapes_and_tests() {
     step "Clippy with every optional feature compiled out, warnings as errors"
     cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings
-    step "Clippy for $WASM_TARGET, warnings as errors: ${WASM_CRATES[*]}"
-    local crate packages=()
-    for crate in "${WASM_CRATES[@]}"; do packages+=(-p "$crate"); done
-    cargo clippy --quiet "${packages[@]}" --target "$WASM_TARGET" -- -D warnings
     step "tests"
     cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail
 }

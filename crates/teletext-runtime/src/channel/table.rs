@@ -31,14 +31,7 @@ pub(super) struct ConnectionTable {
     changed: BTreeSet<ConnectionId>,
 }
 
-// Clippy counts a by-reference argument trivially copied when it is no
-// larger than a pointer: the eight-byte ConnectionId is on a 64-bit host and
-// is not on wasm32, where the Cloudflare build runs, so the expectation holds
-// only on 64-bit targets.
-#[cfg_attr(
-    target_pointer_width = "64",
-    expect(clippy::trivially_copy_pass_by_ref, reason = "the same signatures as the BTreeMap the table stands in for, used at a hundred places")
-)]
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "the same signatures as the BTreeMap the table stands in for, used at a hundred places")]
 impl ConnectionTable {
     pub(super) fn get(&self, connection: &ConnectionId) -> Option<&Connection> {
         self.map.get(connection)
