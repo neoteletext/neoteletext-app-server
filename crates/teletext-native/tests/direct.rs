@@ -35,6 +35,7 @@ use neoteletext_web::viewer_state::{self, ChannelIdentity, MAX_SIGNED_BYTES};
 use quinn::crypto::rustls::{HandshakeData, QuicClientConfig};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use rustls::pki_types::{CertificateDer, ServerName};
+use teletext_native::apps::{self, ChannelSpec, Program, Secret};
 use teletext_native::http::Routes;
 use teletext_native::hub;
 use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, PROXY_HEADER_WITHIN};
@@ -47,6 +48,7 @@ use teletext_runtime::viewer::MOST_NEW_VIEWERS_PER_ADDRESS_PER_HOUR;
 use teletext_runtime::{Channel, ChannelConfig, HandleSecret, InitialPage};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 use tokio::time::{Instant, timeout};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
@@ -117,8 +119,30 @@ async fn running_at(certificate: Option<&Certificate>, public: impl Fn(u16) -> S
     running_with(certificate, public, proxy, TcpBounds::SERVED).await
 }
 
+/// What the test channel is, beside its server.
+enum Hosted {
+    /// A channel with no program.
+    Plain,
+    /// A channel whose program connects over a WebSocket with this secret
+    /// (REQ-1044).
+    Program(&'static str),
+    /// A channel with no program whose commands from its connections come
+    /// to the test instead of its task.
+    Observed(mpsc::Sender<hub::Command>),
+}
+
+/// [`running`] with TLS from `certificate`, hosting `hosted`.
+async fn running_hosting(certificate: &Certificate, hosted: Hosted) -> Running {
+    running_full(Some(certificate), |port| format!(":{port}"), None, TcpBounds::SERVED, hosted).await
+}
+
 /// [`running_at`], serving TCP within `bounds`.
 async fn running_with(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>, bounds: TcpBounds) -> Running {
+    running_full(certificate, public, proxy, bounds, Hosted::Plain).await
+}
+
+/// [`running_with`], hosting `hosted`.
+async fn running_full(certificate: Option<&Certificate>, public: impl Fn(u16) -> String, proxy: Option<IpAddr>, bounds: TcpBounds, hosted: Hosted) -> Running {
     let listener = TcpListener::bind(ANY_LOCAL_PORT).await.unwrap();
     let address = listener.local_addr().unwrap();
     let scheme = if certificate.is_some() { "https" } else { "http" };
@@ -135,7 +159,24 @@ async fn running_with(certificate: Option<&Certificate>, public: impl Fn(u16) ->
     };
     let stats = Arc::new(ServerStats::default());
     let channel = Channel::new(config, &HandleSecret::new([0; 32]), Box::new(SystemRandomSource::new()));
-    let hub = hub::spawn(FOLDER, channel, Instant::now(), None, Arc::clone(&stats));
+    let link = match &hosted {
+        Hosted::Program(secret) => Some(
+            apps::start(ChannelSpec {
+                folder: FOLDER.to_owned(),
+                name: "Test".to_owned(),
+                program: Program::WebSocket(Secret::new(secret.as_bytes())),
+                initial_page: InitialPage::new(0x100).unwrap(),
+                wheel: false,
+                default_rules: teletext_runtime::channel::DefaultRules::None,
+            })
+            .unwrap(),
+        ),
+        Hosted::Plain | Hosted::Observed(_) => None,
+    };
+    let mut hub = hub::spawn(FOLDER, channel, Instant::now(), link, Arc::clone(&stats));
+    if let Hosted::Observed(commands) = hosted {
+        hub.commands = commands;
+    }
     let descriptor = Arc::clone(&hub.descriptor);
     let routes =
         Arc::new(Routes { hubs: BTreeMap::from([(FOLDER.to_owned(), hub)]), connections: AtomicU64::new(1), stats: Arc::clone(&stats), trusted_proxy: proxy });
@@ -1233,4 +1274,147 @@ async fn an_upgraded_websocket_keeps_its_tcp_place() {
     assert!(!served(&mut other).await, "the WebSocket holds the one place");
     drop(socket);
     served_again(&running).await;
+}
+
+// ------------------------------------- the program route and the address
+
+/// The secret the program route's test channel is given.
+const PROGRAM_SECRET: &str = "correct horse battery staple";
+/// A final text frame's first byte (RFC 6455 section 5.2), and the mask
+/// bit every client frame carries (section 5.3).
+const TEXT_FINAL: u8 = 0x81;
+const MASK_BIT: u8 = 0x80;
+
+/// A short line the program sends as one masked text message, the key 0.
+fn program_line(line: &[u8]) -> Vec<u8> {
+    let mut message = vec![TEXT_FINAL, MASK_BIT | u8::try_from(line.len()).unwrap(), 0, 0, 0, 0];
+    message.extend_from_slice(line);
+    message
+}
+
+/// The `type` of a line the server sent the program.
+fn line_type(payload: &[u8]) -> String {
+    let line = teletext_runtime::json::parse(payload).unwrap();
+    line.get("type").and_then(teletext_runtime::json::Value::text).unwrap().to_owned()
+}
+
+/// A line the server refuses whole (REQ-1475): it is not an object.
+const REFUSED_LINE: &[u8] = b"[]";
+
+fn bearer(secret: &str) -> String {
+    format!("Bearer {secret}")
+}
+
+/// REQ-6966, REQ-1044, REQ-4120: over HTTP/2 the program route opened by
+/// extended CONNECT is checked as the HTTP/1.1 upgrade is: 401 without
+/// the channel's secret and with another, 200 with it, after which the
+/// server sends the program `start` and answers a line it refuses with
+/// `refused`, each a text message in the stream's DATA frames; and 409 for
+/// a second program while the first is connected.
+#[tokio::test]
+async fn http2_opens_the_program_route_by_extended_connect() {
+    let certificate = certificate("h2-program");
+    let running = running_hosting(&certificate, Hosted::Program(PROGRAM_SECRET)).await;
+    let mut sender = h2_to(&running, &certificate).await;
+    let version = [("sec-websocket-version", VERSION)];
+    let (refused, _) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "program", Some("websocket"), &version), false).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED, "no secret");
+    let wrong = bearer("correct horse battery stapl");
+    let (refused, _) =
+        h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "program", Some("websocket"), &[version[0], ("authorization", &wrong)]), false).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED, "another secret");
+    let right = bearer(PROGRAM_SECRET);
+    let with_secret = [version[0], ("authorization", right.as_str())];
+    let (opened, mut send) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "program", Some("websocket"), &with_secret), false).await;
+    assert_eq!(opened.status(), StatusCode::OK);
+    let mut receive = opened.into_body();
+    let mut frames = Frames::default();
+    let mut next_line = async || loop {
+        if let Some((first, payload)) = frames.next() {
+            if first == TEXT_FINAL {
+                return line_type(&payload);
+            }
+            continue;
+        }
+        let part = timeout(WITHIN, receive.data()).await.expect("a line in time").expect("the stream stays open").unwrap();
+        receive.flow_control().release_capacity(part.len()).unwrap();
+        frames.0.extend_from_slice(&part);
+    };
+    assert_eq!(next_line().await, "start", "start comes first");
+    send.send_data(Bytes::from(program_line(REFUSED_LINE)), false).unwrap();
+    while next_line().await != "refused" {}
+    let (refused, _) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "program", Some("websocket"), &with_secret), false).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT, "one program at a time");
+}
+
+/// The `type` of the next line the server sends the program on an
+/// HTTP/3 stream.
+async fn h3_line(frames: &mut Frames, stream: &mut H3Stream) -> String {
+    loop {
+        if let Some((first, payload)) = frames.next() {
+            if first == TEXT_FINAL {
+                return line_type(&payload);
+            }
+            continue;
+        }
+        frames.0.extend(stream.content().await.expect("the stream stays open"));
+    }
+}
+
+/// REQ-6966, REQ-1044, REQ-4120: over HTTP/3 the program route opened by
+/// extended CONNECT (RFC 9220) is checked as over HTTP/1.1: 401 without
+/// the channel's secret and with another, 200 with it, after which the
+/// server sends `start` and answers a refused line with `refused`, in the
+/// stream's DATA frames; and 409 for a second program.
+#[tokio::test]
+async fn http3_opens_the_program_route_by_extended_connect() {
+    let certificate = certificate("h3-program");
+    let running = running_hosting(&certificate, Hosted::Program(PROGRAM_SECRET)).await;
+    let h3 = h3_to(&running, &certificate).await;
+    let version = ("sec-websocket-version", VERSION);
+    let (status, _, _) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "program", Some("websocket"), &[version]), false).await;
+    assert_eq!(status, 401, "no secret");
+    let wrong = bearer("correct horse battery stapl");
+    let (status, _, _) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "program", Some("websocket"), &[version, ("authorization", &wrong)]), false).await;
+    assert_eq!(status, 401, "another secret");
+    let right = bearer(PROGRAM_SECRET);
+    let with_secret = [version, ("authorization", right.as_str())];
+    let (status, _, mut stream) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "program", Some("websocket"), &with_secret), false).await;
+    assert_eq!(status, 200);
+    let mut frames = Frames::default();
+    assert_eq!(h3_line(&mut frames, &mut stream).await, "start", "start comes first");
+    let mut data = Vec::new();
+    frame::write(frame::DATA, &program_line(REFUSED_LINE), &mut data);
+    stream.send.write_all(&data).await.unwrap();
+    while h3_line(&mut frames, &mut stream).await != "refused" {}
+    let (status, _, _) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "program", Some("websocket"), &with_secret), false).await;
+    assert_eq!(status, 409, "one program at a time");
+}
+
+/// The address the next connection to open tells its channel.
+async fn opened_with(commands: &mut mpsc::Receiver<hub::Command>) -> Option<IpAddr> {
+    loop {
+        if let hub::Command::Opened { address, .. } = timeout(WITHIN, commands.recv()).await.expect("a command in time").expect("the channel is there") {
+            return address;
+        }
+    }
+}
+
+/// REQ-6966 (VS-304): a push WebSocket opened by extended CONNECT tells
+/// its channel the peer address of the TCP connection over HTTP/2 and of
+/// the QUIC connection over HTTP/3, here the loopback address both were
+/// made from, for the bound on new viewers.
+#[tokio::test]
+async fn the_viewers_address_over_extended_connect_is_the_connections_peer() {
+    let certificate = certificate("address");
+    let (commands, mut observed) = mpsc::channel(hub::OUTBOX);
+    let running = running_hosting(&certificate, Hosted::Observed(commands)).await;
+    let mut sender = h2_to(&running, &certificate).await;
+    let (opened, _h2_stream) = h2_ask(&mut sender, h2_request(&running, Method::CONNECT, "push", Some("websocket"), &PUSH_HEADERS), false).await;
+    assert_eq!(opened.status(), StatusCode::OK);
+    assert_eq!(opened_with(&mut observed).await, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), "HTTP/2: the TCP peer's");
+    let h3 = h3_to(&running, &certificate).await;
+    let (status, _, _h3_stream) = h3_ask(&h3, &h3_fields(&running, "CONNECT", "push", Some("websocket"), &PUSH_HEADERS), false).await;
+    assert_eq!(status, 200);
+    assert_eq!(opened_with(&mut observed).await, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), "HTTP/3: the QUIC peer's");
 }
