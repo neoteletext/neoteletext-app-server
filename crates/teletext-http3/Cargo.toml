@@ -1,0 +1,15 @@
+[package]
+name = "teletext-http3"
+description = "HTTP/3 without input or output: QUIC variable-length integers, RFC 9114 frames, stream types and SETTINGS, and RFC 9204 QPACK field sections with no dynamic table, every reader bounded"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# No dependencies: it reads byte slices and writes byte vectors, so that it
+# can move to the engine unchanged (DEC-6964 item 3).
+[dependencies]
+
+[lints]
+workspace = true

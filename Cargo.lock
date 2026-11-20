@@ -899,6 +899,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "teletext-http3"
+version = "0.1.0"
+
+[[package]]
 name = "teletext-native"
 version = "0.1.0"
 dependencies = [

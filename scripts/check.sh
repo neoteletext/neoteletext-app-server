@@ -88,7 +88,7 @@ $out_of_date"
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root. Every crate root must be listed.
 readonly NO_PANIC_ROOTS=(crates/teletext-runtime/src/lib.rs crates/teletext-native/src/lib.rs crates/teletext-native/src/main.rs
-    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-cloudflare/src/lib.rs)
+    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-cloudflare/src/lib.rs crates/teletext-http3/src/lib.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate root"
@@ -119,10 +119,12 @@ check_engine_pin() {
 
 # DEC-1759 lesson 19: a receiver is known by the capabilities in HELLO alone.
 # Its `User-Agent` and HELLO's agent text are never read, so nothing can
-# branch on a product's name.
+# branch on a product's name. QPACK's static table (RFC 9204 appendix A) is
+# left out: it is the RFC's list of field names, whole, and reads nothing.
 check_no_agent_text() {
     step "no server code reads a receiver's agent text"
-    if git grep -nEi 'user[-_]agent|hello \{[^}]*agent' -- 'crates/*.rs' ':!crates/*/tests/*' ':!crates/*/tests.rs' ':!crates/*/bin/*'; then
+    if git grep -nEi 'user[-_]agent|hello \{[^}]*agent' -- 'crates/*.rs' ':!crates/*/tests/*' ':!crates/*/tests.rs' ':!crates/*/bin/*' \
+        ':!crates/teletext-http3/src/qpack/static_table.rs'; then
         fail "server code reads a receiver's agent text (DEC-1759 lesson 19)"
     fi
 }
