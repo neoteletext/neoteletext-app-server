@@ -100,6 +100,11 @@ pub struct Target {
     /// With `--source-ports`, the local ports TCP connections are bound
     /// to, the first and how many.
     ports: Option<(u16, u16)>,
+    /// How many TCP connections have been tried, which picks each one's
+    /// port in turn: a port another program holds, or one still waiting
+    /// out an old connection, is then passed by on the next try rather
+    /// than tried by the same tab for ever.
+    tried: std::sync::atomic::AtomicUsize,
     /// With `--sources`, how many loopback addresses TCP connections come
     /// from.
     sources: usize,
@@ -166,7 +171,7 @@ impl Target {
                 }
             }
         }
-        Ok(Self { host, path, version, address, name, tls, quic, ports, sources })
+        Ok(Self { host, path, version, address, name, tls, quic, ports, tried: std::sync::atomic::AtomicUsize::new(0), sources })
     }
 
     /// A TCP connection, from the source address and port `number` picks.
@@ -180,7 +185,10 @@ impl Target {
             None
         };
         let port = match self.ports {
-            Some((first, count)) => first.checked_add(u16::try_from(number.checked_rem(usize::from(count))?).ok()?)?,
+            Some((first, count)) => {
+                let attempt = self.tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                first.checked_add(u16::try_from(attempt.checked_rem(usize::from(count))?).ok()?)?
+            }
             None => 0,
         };
         if source_ip.is_some() || port != 0 {
@@ -381,6 +389,20 @@ pub enum Viewer {
 }
 
 impl Viewer {
+    /// How the viewer's QUIC connection ended, once it has: the server
+    /// closed it (as at a stop, `H3_NO_ERROR`), it went silent past the
+    /// idle timeout, or otherwise; `None` over TCP or while it lasts.
+    pub fn ended_by(&self) -> Option<&'static str> {
+        let Self::Http3 { connection, .. } = self else { return None };
+        Some(match connection.close_reason()? {
+            quinn::ConnectionError::ApplicationClosed(_) => "closed by the server",
+            quinn::ConnectionError::TimedOut => "timed out",
+            quinn::ConnectionError::ConnectionClosed(_) => "closed by the server's QUIC",
+            quinn::ConnectionError::Reset => "reset",
+            _ => "otherwise",
+        })
+    }
+
     /// Whether the viewer's connection may still carry a new tab: always
     /// over HTTP/1.1, where each tab makes its own.
     pub fn alive(&self) -> bool {

@@ -316,6 +316,7 @@ async fn hold(arguments: Arguments) {
     };
     let viewers = arguments.connections.div_ceil(arguments.tabs);
     let lost: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let ended: Arc<Mutex<BTreeMap<&'static str, u64>>> = Arc::new(Mutex::new(BTreeMap::new()));
     for batch in (0..viewers).collect::<Vec<_>>().chunks(BATCH) {
         let mut opening = Vec::new();
         for &viewer in batch {
@@ -326,6 +327,7 @@ async fn hold(arguments: Arguments) {
                 bytes: Arc::clone(&bytes),
                 arrivals: Arc::clone(&arrivals),
                 lost: Arc::clone(&lost),
+                ended: Arc::clone(&ended),
             };
             let arguments = Arc::clone(&arguments);
             opening.push(tokio::spawn(async move { viewing(&arguments, viewer, tabs, start, &counters).await }));
@@ -336,7 +338,13 @@ async fn hold(arguments: Arguments) {
         drop(opening);
     }
     let deadline = start.checked_add(Duration::from_secs(arguments.seconds)).unwrap_or(start);
-    tokio::spawn(storms(Arc::clone(&open), Arc::clone(&lost), u64::try_from(arguments.connections).unwrap_or(u64::MAX), Arc::clone(&arguments)));
+    tokio::spawn(storms(
+        Arc::clone(&open),
+        Arc::clone(&lost),
+        Arc::clone(&ended),
+        u64::try_from(arguments.connections).unwrap_or(u64::MAX),
+        Arc::clone(&arguments),
+    ));
     let (mut last_messages, mut last_bytes) = (0, 0);
     while Instant::now() < deadline {
         tokio::time::sleep(REPORT).await;
@@ -383,6 +391,8 @@ struct Counters {
     arrivals: Arrivals,
     /// When a tab was first lost since every tab was last open.
     lost: Arc<Mutex<Option<Instant>>>,
+    /// How viewers' QUIC connections ended, and how many of each.
+    ended: Arc<Mutex<BTreeMap<&'static str, u64>>>,
 }
 
 /// One viewer of `hold`, `number` among them, with `tabs` tabs: its
@@ -420,6 +430,11 @@ async fn viewing(arguments: &Arguments, number: usize, tabs: usize, start: Insta
             });
         }
         all(held).await;
+        if let Some(how) = viewer.lock().await.ended_by() {
+            let mut ended = counters.ended.lock().unwrap_or_else(PoisonError::into_inner);
+            let count = ended.entry(how).or_insert(0);
+            *count = count.saturating_add(1);
+        }
         tokio::time::sleep(pause).await;
     }
 }
@@ -467,7 +482,13 @@ const WHOLE: u64 = 100;
 /// Reports each reconnect storm: once tabs have been lost, how long after
 /// the first loss half, nine tenths, ninety-nine hundredths and all of
 /// the `total` were open again.
-async fn storms(open: Arc<AtomicU64>, lost: Arc<Mutex<Option<Instant>>>, total: u64, arguments: Arc<Arguments>) {
+async fn storms(
+    open: Arc<AtomicU64>,
+    lost: Arc<Mutex<Option<Instant>>>,
+    ended: Arc<Mutex<BTreeMap<&'static str, u64>>>,
+    total: u64,
+    arguments: Arc<Arguments>,
+) {
     // Since the first loss: whether fewer than half were open, and when
     // each mark was passed on the way back.
     let mut fell = false;
@@ -494,11 +515,14 @@ async fn storms(open: Arc<AtomicU64>, lost: Arc<Mutex<Option<Instant>>>, total: 
             None => String::new(),
         };
         let passed: Vec<String> = STORM_MARKS.iter().zip(&marks).map(|(mark, at)| format!("{mark} % at {at} ms")).collect();
+        let how: Vec<String> =
+            std::mem::take(&mut *ended.lock().unwrap_or_else(PoisonError::into_inner)).into_iter().map(|(how, count)| format!("{count} {how}")).collect();
         println!(
-            "storm: all {total} tabs open again {} ms after the first loss (at {} ms since the Unix epoch); {}{memory}",
+            "storm: all {total} tabs open again {} ms after the first loss (at {} ms since the Unix epoch); {}; QUIC connections ended: {}{memory}",
             first_loss.elapsed().as_millis(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis()),
-            if passed.is_empty() { "fewer than half were lost".to_owned() } else { passed.join(", ") }
+            if passed.is_empty() { "fewer than half were lost".to_owned() } else { passed.join(", ") },
+            if how.is_empty() { "none".to_owned() } else { how.join(", ") }
         );
         (fell, marks) = (false, Vec::new());
     }
