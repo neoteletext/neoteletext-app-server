@@ -1,7 +1,10 @@
 //! Every bound the server keeps on TLS, HTTP/2, HTTP/3 and QUIC input when
 //! it serves them itself (DEC-6964 item 6, REQ-6967), each defined here
 //! and nowhere else. The HTTP/3 layer's own bounds, on what it reads from
-//! a stream, are `teletext_http3::limits`.
+//! a stream, are `teletext_http3::limits`. With them, the two bounds on
+//! the PROXY protocol header read before TLS (REQ-6974), whose
+//! specification is `HAProxy` Technologies' "The PROXY protocol, Versions 1
+//! & 2".
 
 use std::time::Duration;
 
@@ -13,6 +16,32 @@ use crate::connection::{DEAD_AFTER_PING, PING_AFTER};
 /// peer that connects and says nothing from holding a socket or a place
 /// among [`MAX_QUIC_CONNECTIONS`] for longer.
 pub const HANDSHAKE_WITHIN: Duration = Duration::from_secs(10);
+
+/// The smallest datagram every IP host must accept, and the IP and TCP
+/// headers in it, as the PROXY protocol's section 2 counts them.
+const SMALLEST_DATAGRAM_BYTES: usize = 576;
+const IP_AND_TCP_HEADER_BYTES: usize = 40;
+
+/// The longest PROXY protocol header accepted, its 16 fixed bytes
+/// included (REQ-6974 item 8). The specification's section 2: "Both
+/// formats are designed to fit in the smallest TCP segment that any
+/// TCP/IP host is required to support (576 - 40 = 536 bytes)", and a
+/// sender "must always ensure that the header is sent at once". The
+/// longest header the server makes use of is 52 bytes, TCP over IPv6;
+/// the rest is room for the TLV vectors a proxy may add, which are
+/// skipped.
+pub const MAX_PROXY_HEADER_BYTES: usize = SMALLEST_DATAGRAM_BYTES - IP_AND_TCP_HEADER_BYTES;
+
+/// How long after a TCP connection is accepted its whole PROXY protocol
+/// header may take to come, before the connection is dropped (REQ-6974
+/// item 8). The specification's section 2: "The receiver may apply a
+/// short timeout and decide to abort the connection if the protocol
+/// header is not seen within a few seconds (at least 3 seconds to cover a
+/// TCP retransmit)". The proxy writes the header itself, at once, over
+/// the machine's own network, so no viewer's slow link is in it; five
+/// seconds covers a retransmit with room, and [`HANDSHAKE_WITHIN`] starts
+/// after it.
+pub const PROXY_HEADER_WITHIN: Duration = Duration::from_secs(5);
 
 /// The streams a peer may have open at once on one HTTP/2 connection
 /// (`SETTINGS_MAX_CONCURRENT_STREAMS`, RFC 9113 section 6.5.2) or one

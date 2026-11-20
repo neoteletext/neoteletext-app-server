@@ -145,14 +145,15 @@ check_limit_figures() {
 
 # REQ-6967: every bound on HTTP/2, HTTP/3 and QUIC input is a named
 # constant, defined once: those of the HTTP/3 layer in its limits module,
-# those of the native host in its own.
+# those of the native host in its own. REQ-6974: so are the two bounds on
+# the PROXY protocol header, the last two of the native host's.
 readonly DIRECT_BOUNDS=(
     "crates/teletext-http3/src/limits.rs:MAX_FIELD_SECTION_BYTES FIELD_OVERHEAD_BYTES MAX_SETTINGS_BYTES MAX_VARINT_BYTES MAX_PREFIXED_INTEGER"
-    "crates/teletext-native/src/limits.rs:HANDSHAKE_WITHIN MAX_CONCURRENT_STREAMS MAX_UNIDIRECTIONAL_STREAMS MAX_HEADER_LIST_BYTES H2_MAX_FRAME_BYTES H2_PING_AFTER H2_DEAD_AFTER_PING MAX_QUIC_CONNECTIONS QUIC_STREAM_WINDOW_BYTES QUIC_CONNECTION_WINDOW_BYTES QUIC_IDLE_AFTER H3_HEAD_WITHIN H3_READ_BYTES H3_DATA_FRAME_BYTES"
+    "crates/teletext-native/src/limits.rs:HANDSHAKE_WITHIN MAX_CONCURRENT_STREAMS MAX_UNIDIRECTIONAL_STREAMS MAX_HEADER_LIST_BYTES H2_MAX_FRAME_BYTES H2_PING_AFTER H2_DEAD_AFTER_PING MAX_QUIC_CONNECTIONS QUIC_STREAM_WINDOW_BYTES QUIC_CONNECTION_WINDOW_BYTES QUIC_IDLE_AFTER H3_HEAD_WITHIN H3_READ_BYTES H3_DATA_FRAME_BYTES MAX_PROXY_HEADER_BYTES PROXY_HEADER_WITHIN"
 )
 
 check_direct_bounds() {
-    step "each bound of REQ-6967 is a constant defined once"
+    step "each bound of REQ-6967 and REQ-6974 is a constant defined once"
     local entry file name found
     for entry in "${DIRECT_BOUNDS[@]}"; do
         file="${entry%%:*}"

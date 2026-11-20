@@ -27,6 +27,7 @@ mod http3;
 pub mod hub;
 pub mod limits;
 pub mod logging;
+pub mod proxy_protocol;
 pub mod serving;
 pub mod state;
 pub mod stats;
