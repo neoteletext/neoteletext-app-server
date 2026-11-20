@@ -4,6 +4,12 @@
 # built with caddy-l4 (xcaddy build v2.11.9 --with
 # github.com/mholt/caddy-l4@1353123db5e20715b645f93874218821b42630a9),
 # installed beside the apt package with dpkg-divert.
+#
+# The host (crowdwaveaudio) forwards UDP 443 to the server (DEC-6978):
+#   /etc/systemd/nspawn/neoteletext.nspawn, [Network]: Port=udp:443:8090
+#   ufw route allow in on ens6 out on ve-neoteletext to 10.70.0.18 port 8090 proto udp
+# and until the container next starts, the same element in the live map:
+#   nft add element ip io.systemd.nat map_port_ipport '{ udp . 443 : 10.70.0.18 . 8090 }'
 	# app.neottx.com's TLS passes through, still encrypted, to the NeoTeletext
 	# server, which ends TLS itself, with the viewer's address in a PROXY
 	# protocol version 2 header (caddy-l4; neoteletext-app-server DEC-6972).
@@ -11,6 +17,10 @@
 	# renewing the certificate the server is given. Every other connection
 	# falls through to the sites below.
 	servers :443 {
+		# No HTTP/3 here: the host forwards UDP 443 to the NeoTeletext server,
+		# which ends QUIC itself (neoteletext-app-server DEC-6978), so this
+		# Caddy neither listens on UDP nor names h3 in Alt-Svc.
+		protocols h1 h2
 		listener_wrappers {
 			layer4 {
 				@neoteletext {

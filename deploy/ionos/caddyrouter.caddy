@@ -4,8 +4,10 @@
 # server itself: caddyrouter passes the name's TCP connections through, still
 # encrypted, with the viewer's address in a PROXY protocol version 2 header,
 # by the layer 4 listener wrapper in its global options
-# (caddyrouter-global.caddy, DEC-6972); this block's app.neottx.com site is
-# reached only by HTTP/3, which still ends here. The other names go to Caddy
+# (caddyrouter-global.caddy, DEC-6972), and the host forwards UDP 443 to the
+# server, which ends HTTP/3 too (DEC-6978). This block's app.neottx.com site
+# is reached by no viewer: it stays so that Caddy keeps renewing the name's
+# certificate, which the server is given. The other names go to Caddy
 # inside the container at 10.70.0.18:8080: the static site on www.neottx.com
 # and the redirects from neottx.com and the neoteletext.com names.
 (neoteletext_log) {
