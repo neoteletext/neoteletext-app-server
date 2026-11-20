@@ -29,7 +29,6 @@ unknown-git = "deny"
 # unpublished (neoteletext-common DEVELOPMENT.md section 11).
 allow-git = [
     "https://github.com/neoteletext/neoteletext-renderer-teletext",
-    "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext",
     "https://github.com/neoteletext/neoteletext-renderer-regis",
     "file:///Users/andrewstuart/devel/neoteletext-renderer-regis",
     "https://github.com/neoteletext/neoteletext-renderer-naplps",

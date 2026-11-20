@@ -85,7 +85,7 @@ The host is a short async loop: wait for whatever comes next (a socket, an appli
 
 ## 4. The engine
 
-Every `neoteletext-*` dependency is a git dependency on the engine's public repository, `https://github.com/neoteletext/neoteletext-renderer-teletext`, at one `rev`, with `default-features = false` and the features named; the check script refuses two revisions. Until 28 October 2026 it was the engine's local repository, `file:///Users/andrewstuart/devel/neoteletext-renderer-teletext`, whose history the gates and deploys copied to the Linux host; the engine went public that day, on the owner's instruction, and the dependency moved to it at the same commit, `e09a589`.
+Every `neoteletext-*` dependency is a git dependency on the engine's public repository, `https://github.com/neoteletext/neoteletext-renderer-teletext`, at one `rev`, with `default-features = false` and the features named; the check script refuses two revisions. Until 28 October 2026 it was the engine's local repository, `file:///Users/andrewstuart/devel/neoteletext-renderer-teletext`, whose history the gates and deploys copied to the Linux host; the engine went public that day, on the owner's instruction, and the dependency moved to it at the same commit, `e09a589`. It went back to the local repository while later commits were unpublished, and returned to GitHub on 21 November 2026 at `3f02881`, the commit the browser pins. The ReGIS and NAPLPS renderers stay on the `file://` sources the engine itself names them by at that commit, so that the build holds one copy of each; `deploy/ionos/deploy.sh` builds the server on the development machine, where they resolve, and rewrites them to GitHub where it builds `neottx` on the builder.
 
 ## 5. What is built
 
