@@ -16,7 +16,7 @@
 //! **Readers** (TODO-6836, TODO-6837). Each kept picture's stream is read
 //! by the receiver's reader as it comes, and the reader is kept to read
 //! the next append. Readers are counted at what they hold
-//! ([`Checker::held_bytes`]: each reader as its renderer reports it,
+//! (`Checker::held_bytes`: each reader as its renderer reports it,
 //! measured again after every append it takes). When holding one would pass `MOST_KEPT_COST`, the
 //! readers of the pictures least recently written are let go; and a
 //! reader that refused an append, having read bytes that are not kept, is
@@ -42,13 +42,13 @@ pub const MOST_KEPT_STREAM_BYTES: usize = neoteletext_formats::picture_text::MAX
 /// The pages and sub-codes with a kept picture, for one channel (PAR-17).
 pub const MOST_KEPT_PICTURES: usize = 512;
 /// The cost of all of a channel's kept pictures (PAR-17): each stream's
-/// bytes, its reader's memory as [`Checker::held_bytes`] states it, and each
+/// bytes, its reader's memory as `Checker::held_bytes` states it, and each
 /// companion's message bytes as received. A quarter of the Cloudflare
 /// host's 128 MB for one channel.
 pub const MOST_KEPT_COST: usize = 33_554_432;
 /// The memory of the readers of every stream a program sends to
-/// connections themselves (PAR-23), each as [`Checker::held_bytes`]
-/// states it after the message it read, with the [`ReaderFonts`] they
+/// connections themselves (PAR-23), each as `Checker::held_bytes`
+/// states it after the message it read, with the `ReaderFonts` they
 /// share counted once, for all of a channel's connections together; a
 /// message that would pass it is refused (TODO-6836, TODO-6845).
 ///
