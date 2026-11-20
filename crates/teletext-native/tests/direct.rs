@@ -21,6 +21,11 @@ use hyper::header::{ALT_SVC, ORIGIN, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSI
 use hyper::{Method, Request, StatusCode};
 use neoteletext_core::consts::PACKET_BYTES;
 use neoteletext_core::packet::Packet;
+use neoteletext_http3::limits::MAX_FIELD_SECTION_BYTES;
+use neoteletext_http3::qpack::{self, Field};
+use neoteletext_http3::settings::Settings;
+use neoteletext_http3::stream::{Control, ControlEvent, Message, MessageEvent, Role, open_control};
+use neoteletext_http3::{Code, frame, varint};
 use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::event::{Event, Item, write as write_item};
 use neoteletext_input::state::{Algorithm, CHALLENGE_BYTES, Lifetime, StateProof};
@@ -30,11 +35,6 @@ use neoteletext_web::viewer_state::{self, ChannelIdentity, MAX_SIGNED_BYTES};
 use quinn::crypto::rustls::{HandshakeData, QuicClientConfig};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use rustls::pki_types::{CertificateDer, ServerName};
-use teletext_http3::limits::MAX_FIELD_SECTION_BYTES;
-use teletext_http3::qpack::{self, Field};
-use teletext_http3::settings::Settings;
-use teletext_http3::stream::{Control, ControlEvent, Message, MessageEvent, Role, open_control};
-use teletext_http3::{Code, frame, varint};
 use teletext_native::http::Routes;
 use teletext_native::hub;
 use teletext_native::limits::{MAX_PROXY_HEADER_BYTES, PROXY_HEADER_WITHIN};
@@ -356,7 +356,7 @@ async fn h3_to(running: &Running, certificate: &Certificate) -> H3 {
     let mut theirs = timeout(WITHIN, connection.accept_uni()).await.expect("the server's control stream in time").unwrap();
     let mut kind = [0_u8; 1];
     theirs.read_exact(&mut kind).await.unwrap();
-    assert_eq!(u64::from(kind[0]), teletext_http3::stream::CONTROL);
+    assert_eq!(u64::from(kind[0]), neoteletext_http3::stream::CONTROL);
     let mut reader = Control::new(Role::Client);
     let settings = loop {
         let mut byte = [0_u8; 1];
@@ -595,7 +595,7 @@ async fn http3_input_over_its_bounds_is_a_connection_error() {
     send.write_all(&over).await.unwrap();
     assert_eq!(closed_with(&h3).await, u64::from(Code::ExcessiveLoad.value()));
 
-    for kind in [teletext_http3::stream::CONTROL, teletext_http3::stream::PUSH] {
+    for kind in [neoteletext_http3::stream::CONTROL, neoteletext_http3::stream::PUSH] {
         let h3 = h3_to(&running, &certificate).await;
         let mut second = h3.connection.open_uni().await.unwrap();
         let mut opening = Vec::new();

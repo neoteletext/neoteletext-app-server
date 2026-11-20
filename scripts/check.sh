@@ -88,7 +88,7 @@ $out_of_date"
 # The crates that read input from outside their process, each with the
 # same no-panic lint list at its root. Every crate root must be listed.
 readonly NO_PANIC_ROOTS=(crates/teletext-runtime/src/lib.rs crates/teletext-native/src/lib.rs crates/teletext-native/src/main.rs
-    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-cloudflare/src/lib.rs crates/teletext-http3/src/lib.rs)
+    crates/teletext-native/src/bin/teletext-load.rs crates/teletext-cloudflare/src/lib.rs)
 
 check_no_panic_lists() {
     step "the no-panic lint list is the same in every crate root"
@@ -119,12 +119,10 @@ check_engine_pin() {
 
 # DEC-1759 lesson 19: a receiver is known by the capabilities in HELLO alone.
 # Its `User-Agent` and HELLO's agent text are never read, so nothing can
-# branch on a product's name. QPACK's static table (RFC 9204 appendix A) is
-# left out: it is the RFC's list of field names, whole, and reads nothing.
+# branch on a product's name.
 check_no_agent_text() {
     step "no server code reads a receiver's agent text"
-    if git grep -nEi 'user[-_]agent|hello \{[^}]*agent' -- 'crates/*.rs' ':!crates/*/tests/*' ':!crates/*/tests.rs' ':!crates/*/bin/*' \
-        ':!crates/teletext-http3/src/qpack/static_table.rs'; then
+    if git grep -nEi 'user[-_]agent|hello \{[^}]*agent' -- 'crates/*.rs' ':!crates/*/tests/*' ':!crates/*/tests.rs' ':!crates/*/bin/*'; then
         fail "server code reads a receiver's agent text (DEC-1759 lesson 19)"
     fi
 }
@@ -144,11 +142,11 @@ check_limit_figures() {
 }
 
 # REQ-6967: every bound on HTTP/2, HTTP/3 and QUIC input is a named
-# constant, defined once: those of the HTTP/3 layer in its limits module,
-# those of the native host in its own. REQ-6974: so are the two bounds on
+# constant, defined once in the native host's limits module; the HTTP/3
+# layer's own are the engine's (neoteletext_http3::limits, REQ-6986), held
+# to one definition by the engine's gate. REQ-6974: so are the two bounds on
 # the PROXY protocol header, the last two of the native host's.
 readonly DIRECT_BOUNDS=(
-    "crates/teletext-http3/src/limits.rs:MAX_FIELD_SECTION_BYTES FIELD_OVERHEAD_BYTES MAX_SETTINGS_BYTES MAX_VARINT_BYTES MAX_PREFIXED_INTEGER"
     "crates/teletext-native/src/limits.rs:HANDSHAKE_WITHIN MAX_CONCURRENT_STREAMS MAX_UNIDIRECTIONAL_STREAMS MAX_HEADER_LIST_BYTES H2_MAX_FRAME_BYTES H2_PING_AFTER H2_DEAD_AFTER_PING MAX_QUIC_CONNECTIONS QUIC_STREAM_WINDOW_BYTES QUIC_CONNECTION_WINDOW_BYTES QUIC_IDLE_AFTER H3_HEAD_WITHIN H3_READ_BYTES H3_DATA_FRAME_BYTES MAX_PROXY_HEADER_BYTES PROXY_HEADER_WITHIN"
 )
 

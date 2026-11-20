@@ -1,7 +1,7 @@
 //! Every bound the server keeps on TLS, HTTP/2, HTTP/3 and QUIC input when
 //! it serves them itself (DEC-6964 item 6, REQ-6967), each defined here
 //! and nowhere else. The HTTP/3 layer's own bounds, on what it reads from
-//! a stream, are `teletext_http3::limits`. With them, the two bounds on
+//! a stream, are `neoteletext_http3::limits`. With them, the two bounds on
 //! the PROXY protocol header read before TLS (REQ-6974), whose
 //! specification is `HAProxy` Technologies' "The PROXY protocol, Versions 1
 //! & 2".
@@ -65,7 +65,7 @@ pub const MAX_UNIDIRECTIONAL_STREAMS: u32 = 8;
 /// (`SETTINGS_MAX_HEADER_LIST_SIZE`, RFC 9113 section 6.5.2): the bound
 /// HTTP/3's field sections have, by the same measure, so that a request
 /// is bounded alike whichever carried it.
-pub const MAX_HEADER_LIST_BYTES: u32 = teletext_http3::limits::MAX_FIELD_SECTION_BYTES;
+pub const MAX_HEADER_LIST_BYTES: u32 = neoteletext_http3::limits::MAX_FIELD_SECTION_BYTES;
 
 /// The largest HTTP/2 frame taken (`SETTINGS_MAX_FRAME_SIZE`): 2^14
 /// bytes, the smallest RFC 9113 section 4.2 allows and its initial value.

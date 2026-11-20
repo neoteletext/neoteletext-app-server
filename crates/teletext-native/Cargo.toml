@@ -31,7 +31,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "sync"
 hyper = { workspace = true, features = ["server", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 # TLS, and HTTP/3 over QUIC, served directly (DEC-6964).
-teletext-http3.workspace = true
+neoteletext-http3.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 quinn.workspace = true

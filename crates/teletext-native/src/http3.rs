@@ -1,5 +1,5 @@
 //! HTTP/3 on QUIC (REQ-6965, REQ-6966): `quinn` carries the streams and
-//! `teletext_http3` reads and writes what is on them. Each request stream
+//! `neoteletext_http3` reads and writes what is on them. Each request stream
 //! is decided by [`crate::http::decide`], as a request over TCP is, and
 //! a stream that an extended CONNECT opened (RFC 9220) is then served as
 //! a WebSocket's connection, its bytes the payload of DATA frames.
@@ -14,11 +14,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hyper::ext::Protocol;
 use hyper::header::{CONTENT_LENGTH, DATE, HeaderName, HeaderValue};
 use hyper::{Method, Request, Response, Uri, Version};
+use neoteletext_http3::limits::MAX_FIELD_SECTION_BYTES;
+use neoteletext_http3::message::{self, CONNECTION_SPECIFIC, STATUS};
+use neoteletext_http3::stream::{Control, Message, MessageEvent, Opened, Role, Unidirectional, open_control};
+use neoteletext_http3::{Code, Error, Scope, frame, qpack, varint};
 use quinn::{RecvStream, SendStream, VarInt};
-use teletext_http3::limits::MAX_FIELD_SECTION_BYTES;
-use teletext_http3::message::{self, CONNECTION_SPECIFIC, STATUS};
-use teletext_http3::stream::{Control, Message, MessageEvent, Opened, Role, Unidirectional, open_control};
-use teletext_http3::{Code, Error, Scope, frame, qpack, varint};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::Semaphore;
 
