@@ -21,8 +21,16 @@
 #      connection, REQ-1041), and the container's Caddy, which serves the
 #      home page on www.neottx.com and the redirects;
 #   4. caddyrouter's site blocks, checked as a candidate before the live
-#      Caddyfile changes: app.neottx.com straight to the server's socket at
-#      10.70.0.18:8090, the other names to the container's Caddy.
+#      Caddyfile changes: app.neottx.com's TCP passed through, still
+#      encrypted, to the server's socket at 10.70.0.18:8090 by the layer 4
+#      listener wrapper (DEC-6972), the other names to the container's Caddy;
+#   5. on the host, the certificate sync that gives the server Caddy's
+#      certificate for app.neottx.com, run once before the server starts.
+# Before anything changes it refuses to go on unless what this deploy cannot
+# write is in place: caddyrouter's Caddy has caddy-l4 and its global options
+# hold caddyrouter-global.caddy's listener wrapper (placed by hand, since
+# this script replaces only the neoteletext block), and the host forwards
+# UDP 443 to the server (DEC-6978).
 # DNS is not touched here: the three names are A records, DNS only, to the
 # host (74.208.133.103), as lockinatime.com's are.
 #
@@ -34,6 +42,13 @@ repo=$(cd "$here/../.." && pwd)
 devel=$(cd "$repo/.." && pwd)
 target=neoteletext      # ~/.ssh/config alias: 10.70.0.18 via crowdwaveaudio
 edge=caddyrouter        # ~/.ssh/config alias for the TLS edge
+host=crowdwaveaudio     # ~/.ssh/config alias for the machine both containers run on
+# Where the host keeps the certificate sync and its units (DEC-6972).
+certificate_sync=/usr/local/sbin/neoteletext-certificate-sync
+certificate_units=(neoteletext-certificate.path neoteletext-certificate.service)
+# The host's port map for the server's QUIC listener (DEC-6978).
+nspawn_file=/etc/systemd/nspawn/neoteletext.nspawn
+quic_port_line=Port=udp:443:8090
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
 channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisgallery neoteletext-server-channel-regisdemo neoteletext-server-channel-naplpsdemo neoteletext-server-channel-audiodemo neoteletext-server-channel-musicplayer)
@@ -68,6 +83,23 @@ for c in "${channels[@]}" neoteletext-www "$python_channels"; do [ -d "$devel/$c
 [ -f "$dataset_source/analysis.sqlite" ] && [ -f "$dataset_source/hackaday.sqlite" ] || die "no Hackaday dataset in $dataset_source"
 [ -f "$gallery_source/sets.json" ] && [ -f "$gallery_source/kept.txt" ] && [ -d "$gallery_source/regis" ] || die "no ReGIS gallery in $gallery_source"
 [ -n "$engine_rev" ] || die "no engine rev in $repo/Cargo.toml"
+
+say "what this deploy relies on but does not write, read before anything changes"
+# The server's socket takes only TLS after a PROXY header (DEC-6972): with
+# a Caddy that cannot pass app.neottx.com through, or a global block
+# without the wrapper, the site block below would leave the name with no
+# way to the server. Compared without comments, as text in order.
+caddy_options() { grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+ssh "$edge" 'caddy list-modules 2>/dev/null' | grep -qx 'caddy.listeners.layer4' ||
+    die "caddyrouter's Caddy has no layer4 module: install the caddy-l4 build named in $here/caddyrouter-global.caddy first"
+wanted_options=$(caddy_options < "$here/caddyrouter-global.caddy")
+live_options=$(ssh "$edge" 'sudo cat /etc/caddy/Caddyfile 2>/dev/null' | caddy_options)
+[[ "$live_options" == *"$wanted_options"* ]] ||
+    die "caddyrouter's /etc/caddy/Caddyfile lacks the global options of $here/caddyrouter-global.caddy: place them in its global block by hand first"
+# shellcheck disable=SC2029
+ssh "$host" "sudo grep -qx '$quic_port_line' $nspawn_file" ||
+    die "$host's $nspawn_file lacks $quic_port_line, so HTTP/3 would not reach the server (DEC-6978)"
+echo "caddy-l4, the layer 4 listener wrapper and the UDP 443 forward are in place"
 
 say "backups on the container, stamped $stamp"
 # Data the channels download is left out: nothing below overwrites it.
@@ -207,6 +239,32 @@ ssh "$target" 'set -e
         sudo rsync -a --delete ~/incoming/neoteletext-server-channels/tmp/pictures/ /opt/neoteletext/pictures/
     fi
     du -sh ~/hackaday-analysis/analysis.sqlite ~/hackaday-analysis/audio ~/whatsthatsound/data/clips /opt/neoteletext/pictures 2>/dev/null || true'
+
+say "the certificate sync on $host, and the server's certificate"
+# The server ends TLS with the certificate Caddy keeps for app.neottx.com
+# (DEC-6972); the path unit copies it into the container whenever Caddy
+# renews it. Each file is installed only when it differs, and the sync is
+# run once here, without restarting the server, so the certificate is in
+# place before the service below starts.
+# shellcheck disable=SC2029
+if ! ssh "$host" "sudo cmp -s - $certificate_sync" < "$here/neoteletext-certificate-sync"; then
+    ssh "$host" "sudo install -m 755 /dev/stdin $certificate_sync.new && sudo mv $certificate_sync.new $certificate_sync" < "$here/neoteletext-certificate-sync"
+fi
+units_changed=no
+for unit in "${certificate_units[@]}"; do
+    # shellcheck disable=SC2029
+    if ! ssh "$host" "sudo cmp -s - /etc/systemd/system/$unit" < "$here/$unit"; then
+        ssh "$host" "sudo install -m 644 /dev/stdin /etc/systemd/system/$unit" < "$here/$unit"
+        units_changed=yes
+    fi
+done
+# shellcheck disable=SC2029
+ssh "$host" "set -e; if [ $units_changed = yes ]; then sudo systemctl daemon-reload; fi
+    sudo systemctl enable --now neoteletext-certificate.path >/dev/null 2>&1
+    sudo $certificate_sync --no-restart"
+# shellcheck disable=SC2029
+ssh "$target" "sudo test -s $app/tls/app.neottx.com.crt && sudo test -s $app/tls/app.neottx.com.key" ||
+    die "no certificate and key in the container's $app/tls; the server could not start (see $certificate_sync's output above)"
 
 say "the channels file, the service, its socket and the container's Caddy"
 # default_rules (neoteletext-common's page-rules.md RULE-53): under push
