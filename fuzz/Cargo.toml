@@ -23,17 +23,17 @@ teletext-runtime = { path = "../crates/teletext-runtime" }
 teletext-native = { path = "../crates/teletext-native" }
 # The engine's input writer, to write viewer state's messages as a
 # receiver does.
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # The receivers' decoder of a page's rule table, which every table the
 # server sends must pass (page-rules.md RULE-59, RULE-83), and the engine's
 # packet type, to read the records sent.
-neoteletext-rules = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # Ed25519 signing, to make proofs that verify (DEC-6471, approved by name).
 ring = { version = "=0.17.14", default-features = false }
 # The engine's base64, to write the packets as a program does; its records
 # reader, to find the challenges; its signed bytes.
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 
 [profile.release]
 debug = 1

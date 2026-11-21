@@ -24,37 +24,37 @@ teletext-runtime = { path = "crates/teletext-runtime", default-features = false 
 # The engine, imported at one commit and never copied (CLAUDE.md,
 # requirement 2.5): its page model, TTI reader and page encoder, its input
 # protocol, its audio encoder, and its web pieces (the WebSocket handshake).
-neoteletext-core = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
-neoteletext-formats = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false, features = ["tti", "alloc", "write-text", "picture-text"] }
-neoteletext-input = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
-neoteletext-audio = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false, features = ["encode"] }
-neoteletext-web = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false, features = ["tti", "alloc", "write-text", "picture-text"] }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false, features = ["encode"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # HTTP/3 without input or output, the layer the server built and the
 # engine now holds with its client side (REQ-6986, neoteletext-common's
 # DEC-6979 item 8): frames, stream types, SETTINGS and QPACK with no
 # dynamic table, read and written by the server's HTTP/3 (REQ-6967). No
 # dependency of its own.
-neoteletext-http3 = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88" }
+neoteletext-http3 = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c" }
 # The instruments' interfaces, which the server checks every block, patch
 # and bank with, so that the encoder and the receiver's checks are one
 # implementation (server.md SRV-87, SRV-88; MIDI-21). Only the feature
 # `interface`, every family's messages, patch packer and check, bank image
 # and restatement tracker, with no synthesis code: the server never plays
 # a sound.
-neoteletext-audio-instruments = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false, features = ["interface"] }
+neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false, features = ["interface"] }
 # A public page's picture (REQ-1728 item 4).
-neoteletext-image = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # The mosaic fallback (renderer parity PAR-11, PAR-25): a picture's pixels
 # converted into a page of Level 1 mosaics, without the image decoders,
 # which the server never needs.
-neoteletext-picture = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # The engine's Opus decoder, to hold each packet a program sends to the
 # profile the receivers decode (decision 21, the engine's E.123).
 # The page rule table's codec and checks (page-rules.md RULE-56, RULE-59):
 # the server encodes each table with the crate every receiver decodes it
 # with, and checks what it encoded with that crate's decoder.
-neoteletext-rules = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
-neoteletext-opus = { git = "https://github.com/neoteletext/neoteletext-renderer-teletext", rev = "3f028815cfd5102726ccdd0e5cada9edbd3e4e88", default-features = false }
+neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
+neoteletext-opus = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "40faa0d8a42e6a231a1a44dac85a1f4dc3d0cc6c", default-features = false }
 # The ReGIS renderer, pinned to one commit as the engine is (its DEC-6270):
 # a program's ReGIS is checked with the receiver's own code before it is
 # sent (DEC-6335; the renderer's REQ-6332). MIT; no dependencies.
