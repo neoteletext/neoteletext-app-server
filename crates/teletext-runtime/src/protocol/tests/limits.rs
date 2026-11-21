@@ -542,6 +542,18 @@ fn the_limits_of_what_a_table_reads_and_names() {
     pair("MAX_WATCHED", &watched(count("MAX_WATCHED")), &watched(count("MAX_WATCHED") + 1));
 }
 
+/// `MAX_PAINT_WATCHED` (neoteletext-common's DEC-7031 item 4): the distinct
+/// numbered drawings a table's `painted` triggers name.
+#[test]
+fn the_limit_of_painted_drawings() {
+    let painted = |many: usize| {
+        let list: Vec<Value> =
+            (1..=many).map(|drawing| json!({"name":format!("r{drawing}"),"on":{"event":"painted","target":{"object":drawing}},"run":"g"})).collect();
+        with_rules(&list)
+    };
+    pair("MAX_PAINT_WATCHED", &painted(count("MAX_PAINT_WATCHED")), &painted(count("MAX_PAINT_WATCHED") + 1));
+}
+
 /// `MAX_FRAME`, `MAX_CYCLE_PERIOD` (ANIM-14): an operation's frame and a
 /// cycle's period, in a group.
 #[test]
@@ -558,7 +570,7 @@ fn the_limits_of_frames() {
 /// message reaches. The two lists are the whole table.
 #[test]
 fn every_limit_is_tested_or_a_receivers() {
-    const TESTED: [&str; 32] = [
+    const TESTED: [&str; 33] = [
         "MAX_GROUP_COMMANDS",
         "MAX_GROUPS",
         "MAX_GROUP_DEPTH",
@@ -588,6 +600,7 @@ fn every_limit_is_tested_or_a_receivers() {
         "MAX_TABLE_VALUES",
         "MAX_TABLE_TARGETS",
         "MAX_WATCHED",
+        "MAX_PAINT_WATCHED",
         "MAX_TABLE_BYTES",
         "MAX_CYCLE_PERIOD",
         "MAX_FRAME",
