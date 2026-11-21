@@ -118,3 +118,23 @@ fn a_programs_message_is_its_lines() {
     assert_eq!(lines, [&b"one"[..], b" two", b"two"]);
     assert_eq!(program_lines(b"\n\r\n").count(), 0);
 }
+
+/// REQ-6927 item 2, DEC-6953 item 1: an upgrade is answered with the newest
+/// push subprotocol it offers that the server speaks. A receiver of version
+/// 11 offers both and is answered 11; one of version 10 offers 10 alone and
+/// is answered 10; one that offers neither is refused, and so is any that
+/// carries `Origin`.
+#[test]
+fn a_push_upgrade_is_answered_with_the_newest_version_offered() {
+    let answered = |offered: &[&[u8]]| push_upgrade(false, offered.iter().copied());
+    assert_eq!(answered(&[b"neottx.11, neottx.10"]), Ok("neottx.11"));
+    assert_eq!(answered(&[b"neottx.10, neottx.11"]), Ok("neottx.11"));
+    assert_eq!(answered(&[b"neottx.10", b"neottx.11"]), Ok("neottx.11"), "one header line each");
+    assert_eq!(answered(&[b"neottx.10"]), Ok("neottx.10"));
+    assert_eq!(answered(&[b"chat, neottx.10"]), Ok("neottx.10"));
+    assert_eq!(answered(&[]), Err(PushRefusal::Subprotocol), "none offered");
+    for refused in [&b"neottx.9"[..], b"neottx.12", b"neottx.100", b"chat"] {
+        assert_eq!(answered(&[refused]), Err(PushRefusal::Subprotocol), "{refused:?}");
+    }
+    assert_eq!(push_upgrade(true, [&b"neottx.11"[..]].into_iter()), Err(PushRefusal::Origin));
+}

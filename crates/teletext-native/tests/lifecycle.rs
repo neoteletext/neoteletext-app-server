@@ -559,7 +559,7 @@ fn proof_of(seed: &[u8; 32], challenge: &[u8; CHALLENGE_BYTES], address: &str) -
     let pair = Ed25519KeyPair::from_seed_unchecked(seed).unwrap();
     let identity = ChannelIdentity::read(address).unwrap();
     let mut signed = [0_u8; MAX_SIGNED_BYTES];
-    let length = viewer_state::signed_bytes(Algorithm::Ed25519, Lifetime::Visit, challenge, &identity, &mut signed).unwrap();
+    let length = viewer_state::signed_bytes(neoteletext_input::VERSION, Algorithm::Ed25519, Lifetime::Visit, challenge, &identity, &mut signed).unwrap();
     (pair.public_key().as_ref().try_into().unwrap(), pair.sign(&signed[..length]).as_ref().try_into().unwrap())
 }
 

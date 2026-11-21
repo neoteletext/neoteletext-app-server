@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::String;
 
 use neoteletext_web::channel::SETTINGS_FILE;
-pub use neoteletext_web::consts::{PUSH_SUBPROTOCOL, WEBSOCKET_VERSION};
+pub use neoteletext_web::consts::{PUSH_SUBPROTOCOL, PUSH_SUBPROTOCOL_OLDEST, WEBSOCKET_VERSION};
 use neoteletext_web::map::Place;
 use neoteletext_web::small_page::{self, PublicPage as Shown};
 pub use neoteletext_web::small_page::{CONTENT_SECURITY_POLICY, PUBLIC_CONTENT_SECURITY_POLICY};
@@ -129,11 +129,21 @@ impl PushRefusal {
 ///
 /// # Errors
 /// The reason it is refused.
-pub fn push_upgrade<'a>(origin: bool, mut offered: impl Iterator<Item = &'a [u8]>) -> Result<(), PushRefusal> {
+pub fn push_upgrade<'a>(origin: bool, offered: impl Iterator<Item = &'a [u8]>) -> Result<&'static str, PushRefusal> {
     if origin {
         return Err(PushRefusal::Origin);
     }
-    if offered.any(|value| offers_subprotocol(value, PUSH_SUBPROTOCOL)) { Ok(()) } else { Err(PushRefusal::Subprotocol) }
+    // The newest version spoken that any value offers (REQ-6927 item 2,
+    // DEC-6953 item 1): a receiver of version 11 offers 11 and 10, and one
+    // of version 10 offers 10 alone.
+    let mut oldest = false;
+    for value in offered {
+        if offers_subprotocol(value, PUSH_SUBPROTOCOL) {
+            return Ok(PUSH_SUBPROTOCOL);
+        }
+        oldest |= offers_subprotocol(value, PUSH_SUBPROTOCOL_OLDEST);
+    }
+    if oldest { Ok(PUSH_SUBPROTOCOL_OLDEST) } else { Err(PushRefusal::Subprotocol) }
 }
 
 /// Whether two secrets are the same, in time that does not depend on

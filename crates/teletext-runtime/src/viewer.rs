@@ -279,7 +279,12 @@ fn acceptable_key(public_key: &[u8; PUBLIC_KEY_BYTES]) -> bool {
 /// [`Invalid`] for an unknown algorithm, a public key that is no
 /// acceptable point, a signature whose `S` is not below the group's order,
 /// or a signature that verifies under no identity of the channel.
-pub(crate) fn verify(proof: &StateProof<'_>, challenge: &[u8; CHALLENGE_BYTES], identities: &[ChannelIdentity]) -> Result<(KeyId, Lifetime), Invalid> {
+pub(crate) fn verify(
+    version: u32,
+    proof: &StateProof<'_>,
+    challenge: &[u8; CHALLENGE_BYTES],
+    identities: &[ChannelIdentity],
+) -> Result<(KeyId, Lifetime), Invalid> {
     let Algorithm::Ed25519 = proof.algorithm;
     let mut s = [0_u8; 32];
     for (byte, signature_byte) in s.iter_mut().zip(proof.signature.iter().skip(SIGNATURE_BYTES / 2)) {
@@ -291,7 +296,7 @@ pub(crate) fn verify(proof: &StateProof<'_>, challenge: &[u8; CHALLENGE_BYTES], 
     let key = UnparsedPublicKey::new(&ED25519, proof.public_key);
     let mut signed = [0_u8; MAX_SIGNED_BYTES];
     for identity in identities {
-        let Ok(length) = viewer_state::signed_bytes(proof.algorithm, proof.lifetime, challenge, identity, &mut signed) else { continue };
+        let Ok(length) = viewer_state::signed_bytes(version, proof.algorithm, proof.lifetime, challenge, identity, &mut signed) else { continue };
         let Some(bytes) = signed.get(..length) else { continue };
         if key.verify(bytes, proof.signature).is_ok() {
             return Ok((viewer_state::key_id(proof.algorithm, proof.public_key), proof.lifetime));

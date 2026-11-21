@@ -417,9 +417,12 @@ fn upgrade<B>(routes: &Routes, hub: Hub, request: &Request<B>, address: Option<I
         Err(response) => return Answer::Response(*response),
     };
     let offered = request.headers().get_all(SEC_WEBSOCKET_PROTOCOL).iter().map(HeaderValue::as_bytes);
-    if let Err(refusal) = push_upgrade(request.headers().contains_key(ORIGIN), offered) {
-        return Answer::Response(refused_upgrade(refusal, &opening));
-    }
+    // The subprotocol answered names the version the connection speaks
+    // (REQ-6927 item 2, DEC-6953 item 1).
+    let subprotocol = match push_upgrade(request.headers().contains_key(ORIGIN), offered) {
+        Ok(subprotocol) => subprotocol,
+        Err(refusal) => return Answer::Response(refused_upgrade(refusal, &opening)),
+    };
     let Ok(place) = Arc::clone(&routes.websockets).try_acquire_owned() else {
         // REQ-7006: every place is taken; a receiver tries again later, as
         // after any refusal of the connection (DOC-1917).
@@ -428,7 +431,7 @@ fn upgrade<B>(routes: &Routes, hub: Hub, request: &Request<B>, address: Option<I
     };
     let connection = routes.connections.fetch_add(1, Ordering::Relaxed);
     let mut response = switching(&opening);
-    response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(PUSH_SUBPROTOCOL));
+    response.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, HeaderValue::from_static(subprotocol));
     Answer::Push { response, hub, connection, address, place }
 }
 

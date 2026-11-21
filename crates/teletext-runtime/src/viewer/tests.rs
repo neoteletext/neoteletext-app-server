@@ -21,10 +21,15 @@ const CHANNEL: &str = "https://example.org/news/";
 /// A browser's proof for `channel` of `challenge`, signed with `seed`:
 /// its public key and signature.
 pub(crate) fn sign(seed: &[u8; 32], lifetime: Lifetime, challenge: &[u8; CHALLENGE_BYTES], channel: &str) -> ([u8; 32], [u8; 64]) {
+    sign_under(neoteletext_input::VERSION, seed, lifetime, challenge, channel)
+}
+
+/// A proof as [`sign`] makes it, under push protocol version `version`.
+pub(crate) fn sign_under(version: u32, seed: &[u8; 32], lifetime: Lifetime, challenge: &[u8; CHALLENGE_BYTES], channel: &str) -> ([u8; 32], [u8; 64]) {
     let pair = Ed25519KeyPair::from_seed_unchecked(seed).unwrap();
     let identity = ChannelIdentity::read(channel).unwrap();
     let mut signed = [0_u8; MAX_SIGNED_BYTES];
-    let length = viewer_state::signed_bytes(Algorithm::Ed25519, lifetime, challenge, &identity, &mut signed).unwrap();
+    let length = viewer_state::signed_bytes(version, Algorithm::Ed25519, lifetime, challenge, &identity, &mut signed).unwrap();
     let signature: [u8; 64] = pair.sign(&signed[..length]).as_ref().try_into().unwrap();
     let public_key: [u8; 32] = pair.public_key().as_ref().try_into().unwrap();
     (public_key, signature)
@@ -43,7 +48,7 @@ fn proof<'a>(public_key: &'a [u8; 32], signature: &'a [u8; 64]) -> StateProof<'a
 #[test]
 fn a_proof_verifies_and_gives_its_key_identifier() {
     let (public_key, signature) = sign(&SEED, Lifetime::Visit, &CHALLENGE, CHANNEL);
-    let verified = verify(&proof(&public_key, &signature), &CHALLENGE, &identities_of(&[CHANNEL]));
+    let verified = verify(neoteletext_input::VERSION, &proof(&public_key, &signature), &CHALLENGE, &identities_of(&[CHANNEL]));
     assert_eq!(verified, Ok((viewer_state::key_id(Algorithm::Ed25519, &public_key), Lifetime::Visit)));
 }
 
@@ -57,22 +62,22 @@ fn any_byte_changed_fails_the_proof() {
     for index in 0..CHALLENGE_BYTES {
         let mut other = CHALLENGE;
         other[index] ^= 1;
-        assert_eq!(verify(&proof(&public_key, &signature), &other, &channel), Err(Invalid), "challenge byte {index}");
+        assert_eq!(verify(neoteletext_input::VERSION, &proof(&public_key, &signature), &other, &channel), Err(Invalid), "challenge byte {index}");
     }
     for index in 0..public_key.len() {
         let mut other = public_key;
         other[index] ^= 1;
-        assert_eq!(verify(&proof(&other, &signature), &CHALLENGE, &channel), Err(Invalid), "public key byte {index}");
+        assert_eq!(verify(neoteletext_input::VERSION, &proof(&other, &signature), &CHALLENGE, &channel), Err(Invalid), "public key byte {index}");
     }
     for index in 0..signature.len() {
         let mut other = signature;
         other[index] ^= 1;
-        assert_eq!(verify(&proof(&public_key, &other), &CHALLENGE, &channel), Err(Invalid), "signature byte {index}");
+        assert_eq!(verify(neoteletext_input::VERSION, &proof(&public_key, &other), &CHALLENGE, &channel), Err(Invalid), "signature byte {index}");
     }
     let remembered = StateProof { lifetime: Lifetime::Remembered, ..proof(&public_key, &signature) };
-    assert_eq!(verify(&remembered, &CHALLENGE, &channel), Err(Invalid), "the lifetime is signed");
+    assert_eq!(verify(neoteletext_input::VERSION, &remembered, &CHALLENGE, &channel), Err(Invalid), "the lifetime is signed");
     for other in ["http://example.org/news/", "https://example.org/news/sport/", "https://example.org/", "https://example.org:8443/news/"] {
-        assert_eq!(verify(&proof(&public_key, &signature), &CHALLENGE, &identities_of(&[other])), Err(Invalid), "{other}");
+        assert_eq!(verify(neoteletext_input::VERSION, &proof(&public_key, &signature), &CHALLENGE, &identities_of(&[other])), Err(Invalid), "{other}");
     }
 }
 
@@ -82,7 +87,7 @@ fn any_byte_changed_fails_the_proof() {
 fn a_channel_verifies_under_each_of_its_addresses() {
     let addresses = ["http://example.org/news/", CHANNEL];
     let (public_key, signature) = sign(&SEED, Lifetime::Visit, &CHALLENGE, CHANNEL);
-    assert!(verify(&proof(&public_key, &signature), &CHALLENGE, &identities_of(&addresses)).is_ok());
+    assert!(verify(neoteletext_input::VERSION, &proof(&public_key, &signature), &CHALLENGE, &identities_of(&addresses)).is_ok());
     let five = ["http://a.example/x/", "http://b.example/x/", "http://c.example/x/", "http://d.example/x/", "http://e.example/x/"];
     let (read, refused) = identities(five.iter().copied());
     assert_eq!((read.len(), refused), (MOST_CHANNEL_ADDRESSES, Vec::from(["http://e.example/x/"])));
@@ -102,7 +107,7 @@ fn a_non_canonical_signature_is_refused() {
         carry = sum >> 8;
     }
     assert_eq!(carry, 0, "S + ℓ fits in 256 bits");
-    assert_eq!(verify(&proof(&public_key, &signature), &CHALLENGE, &identities_of(&[CHANNEL])), Err(Invalid));
+    assert_eq!(verify(neoteletext_input::VERSION, &proof(&public_key, &signature), &CHALLENGE, &identities_of(&[CHANNEL])), Err(Invalid));
 }
 
 /// VS-301: a public key of small order, or not a canonical encoding, is
@@ -113,7 +118,7 @@ fn a_small_order_or_non_canonical_key_is_refused() {
     let signature = [0_u8; 64];
     for key in &SMALL_ORDER_POINTS {
         assert!(!acceptable_key(key));
-        assert_eq!(verify(&proof(key, &signature), &CHALLENGE, &channel), Err(Invalid));
+        assert_eq!(verify(neoteletext_input::VERSION, &proof(key, &signature), &CHALLENGE, &channel), Err(Invalid));
     }
     let mut negative_neutral = SMALL_ORDER_POINTS[0];
     negative_neutral[31] |= SIGN_BIT;

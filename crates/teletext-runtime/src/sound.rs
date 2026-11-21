@@ -205,38 +205,13 @@ impl Sounds {
                     flags,
                     duck: *duck,
                     page: page.map(|page| page.0),
+                    music: None,
                 };
                 Ok(alloc::vec![command.record()])
             }
-            Sound::Stop(StopSound { channel, fade_ms, .. }) => {
-                let command = Command {
-                    channel: *channel,
-                    sequence: self.next(*channel)?,
-                    operation: STOP,
-                    handle: 0,
-                    generation: 0,
-                    gain: 0,
-                    fade_ms: *fade_ms,
-                    flags: 0,
-                    duck: 0,
-                    page: None,
-                };
-                Ok(alloc::vec![command.record()])
-            }
+            Sound::Stop(StopSound { channel, fade_ms, .. }) => Ok(alloc::vec![channel_command(*channel, self.next(*channel)?, STOP, 0, *fade_ms).record()]),
             Sound::Gain(GainSound { channel, gain, fade_ms, .. }) => {
-                let command = Command {
-                    channel: *channel,
-                    sequence: self.next(*channel)?,
-                    operation: GAIN,
-                    handle: 0,
-                    generation: 0,
-                    gain: *gain,
-                    fade_ms: *fade_ms,
-                    flags: 0,
-                    duck: 0,
-                    page: None,
-                };
-                Ok(alloc::vec![command.record()])
+                Ok(alloc::vec![channel_command(*channel, self.next(*channel)?, GAIN, *gain, *fade_ms).record()])
             }
             // Every synthesizer kind is taken by `synth` first.
             _ => Ok(Vec::new()),
@@ -458,4 +433,10 @@ impl Sounds {
             _ => Ok(Sent::default()),
         })())
     }
+}
+
+/// A command that belongs to its audio channel alone, a stop or a set gain:
+/// it names no sound, no page and no level of music.
+const fn channel_command(channel: u8, sequence: u16, operation: u8, gain: u8, fade_ms: u16) -> Command {
+    Command { channel, sequence, operation, handle: 0, generation: 0, gain, fade_ms, flags: 0, duck: 0, page: None, music: None }
 }

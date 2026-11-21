@@ -968,7 +968,7 @@ async fn prove(sender: &mut h2::client::SendRequest<Bytes>, running: &Running, k
     let pair = Ed25519KeyPair::from_seed_unchecked(key_seed).unwrap();
     let identity = ChannelIdentity::read(&running.channel).unwrap();
     let mut signed = [0_u8; MAX_SIGNED_BYTES];
-    let length = viewer_state::signed_bytes(Algorithm::Ed25519, Lifetime::Visit, &challenge, &identity, &mut signed).unwrap();
+    let length = viewer_state::signed_bytes(neoteletext_input::VERSION, Algorithm::Ed25519, Lifetime::Visit, &challenge, &identity, &mut signed).unwrap();
     let public_key: [u8; 32] = pair.public_key().as_ref().try_into().unwrap();
     let signature: [u8; 64] = pair.sign(&signed[..length]).as_ref().try_into().unwrap();
     let proof = StateProof { algorithm: Algorithm::Ed25519, lifetime: Lifetime::Visit, public_key: &public_key, signature: &signature };
