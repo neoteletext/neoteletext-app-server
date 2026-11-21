@@ -157,6 +157,7 @@ say "the server binary into $app/bin"
 ssh "$target" "sudo install -d $app/bin && sudo install -m 755 /dev/stdin $app/bin/teletext-server.new && sudo mv $app/bin/teletext-server.new $app/bin/teletext-server" < "$server_binary"
 
 say "the channels and the home page into $app/current, the channels' user's"
+# shellcheck disable=SC2029 # the folders are this script's own, named here for the container
 ssh "$target" "sudo install -d -o ubuntu -g ubuntu $app/current $state_dir"
 for c in "${channels[@]}"; do
     rsync -a --delete --exclude node_modules --exclude tmp --exclude .git --exclude .idea "$devel/$c/" "$target:$app/current/$c/"
@@ -287,6 +288,11 @@ say "the channels file, the service, its socket and the container's Caddy"
 # since 21 November 2026 (TODO-6918): its typing, pointer and animation
 # pages, 102 to 107, each send a table of their own asking for exactly
 # what they use, and its other pages take no input.
+# The gate reads this file as JSON with each variable replaced as text
+# (scripts/check.sh, check_deploy_scripts): it holds variables alone, no
+# command substitution.
+# shellcheck disable=SC2029 # the file's place is this script's own, named here for the container
+# shellcheck disable=SC2087 # the file is written out here, from this script's variables; the container only stores it
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com","default_rules":"send_all"},
@@ -304,6 +310,7 @@ EOF
 # shellcheck disable=SC2029
 socket_changed=$(ssh "$target" "sudo cmp -s - /etc/systemd/system/neoteletext.socket && echo no || echo yes" < "$here/neoteletext.socket")
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.socket >/dev/null" < "$here/neoteletext.socket"
+# shellcheck disable=SC2087 # the unit is written out here, from this script's variables; the container only stores it
 ssh "$target" "sudo tee /etc/systemd/system/neoteletext.service >/dev/null" <<EOF
 [Unit]
 Description=NeoTeletext app server

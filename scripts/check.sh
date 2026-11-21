@@ -29,7 +29,7 @@ fuzz_seconds="${TELETEXT_FUZZ_SECONDS:-20}"
 # hand, as REQ-1020's State records (TODO-2055).
 readonly NATIVE_TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc)
 # What the gates read.
-readonly CHECKED_PATHS=(crates fuzz scripts tests .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)
+readonly CHECKED_PATHS=(crates fuzz scripts tests deploy .githooks Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml deny.toml)
 
 # The TypeScript kit's repository, and the commit whose
 # test/fixtures/hello.jsonl the server's tests/fixtures/kit-channel.jsonl is
@@ -158,8 +158,65 @@ check_direct_bounds() {
     done
 }
 
+# The deployment scripts change production and are run by no test, so the
+# gate reads them (TODO-7142): each parses, ShellCheck at the one version
+# below finds nothing in it (what is accepted is disabled at its line, with
+# its reason, in the script), and the channels file deploy.sh writes is
+# JSON the server can read. Nothing of a script is run: the channels file
+# is cut out of its here-document as text and each variable in it replaced
+# as text, because a shell given a here-document also runs its command
+# substitutions, and this script's reach the servers by ssh.
+readonly SHELLCHECK_VERSION="0.11.0"
+readonly DEPLOY_SCRIPT="deploy/ionos/deploy.sh"
+# What stands for a variable's value in the channels file as it is read.
+readonly CHANNELS_FILE_VALUE="value-of-"
+
+check_deploy_scripts() {
+    step "the deployment scripts parse, pass ShellCheck $SHELLCHECK_VERSION, and $DEPLOY_SCRIPT's channels file is JSON"
+    need_tool shellcheck "install ShellCheck $SHELLCHECK_VERSION (the system package), which reads the deployment scripts"
+    need_tool jq "install jq (the system package), which reads the channels file here"
+    shellcheck --version | grep -qxF "version: $SHELLCHECK_VERSION" ||
+        fail "ShellCheck $SHELLCHECK_VERSION is needed, found $(shellcheck --version | sed -n 's/^version: //p'): another version finds other things"
+    local script scripts=()
+    while IFS= read -r script; do
+        # A shell script is known by its first line.
+        if [[ "$(head -1 "$script")" == "#!"*sh ]]; then
+            scripts+=("$script")
+        fi
+    done < <(git ls-files -- deploy)
+    [[ " ${scripts[*]} " == *" $DEPLOY_SCRIPT "* ]] || fail "$DEPLOY_SCRIPT is not among the shell scripts under deploy/"
+    for script in "${scripts[@]}"; do
+        bash -n "$script" || fail "$script does not parse"
+    done
+    shellcheck "${scripts[@]}" || fail "ShellCheck finds the above in the deployment scripts: mend it, or disable it at its line with its reason"
+
+    # The channels file: the lines between the command that writes it and
+    # the here-document's end.
+    local written channels
+    written="$(awk '/channels\.json >\/dev\/null" <<EOF$/ { inside = 1; next } inside && /^EOF$/ { ended = 1; exit } inside { print } END { if (!ended) exit 1 }' "$DEPLOY_SCRIPT")" ||
+        fail "$DEPLOY_SCRIPT has no here-document, ended by EOF, that writes channels.json"
+    [[ -n "$written" ]] || fail "$DEPLOY_SCRIPT's here-document for channels.json is empty"
+    channels="$(sed -E "s/\\\$([A-Za-z_][A-Za-z0-9_]*)/$CHANNELS_FILE_VALUE\\1/g" <<<"$written")"
+    # Whatever of the shell is left would be expanded, or run, when the
+    # script writes the file: only plain variables are read here.
+    if grep -nE '[$`\\]' <<<"$channels"; then
+        fail "$DEPLOY_SCRIPT's channels file holds something of the shell other than a plain variable, on the lines above"
+    fi
+    jq -e '
+        (.channels | type == "array" and length > 0)
+        and all(.channels[];
+            (.folder | type == "string" and length > 0)
+            and (.name | type == "string" and length > 0)
+            and (.directory | type == "string" and length > 0)
+            and (.command | type == "array" and length > 0 and all(.[]; type == "string")))
+        and ([.channels[].folder] | length == (unique | length))
+    ' <<<"$channels" >/dev/null ||
+        fail "$DEPLOY_SCRIPT's channels file is not JSON, or an entry lacks its folder, name, command or directory, or two entries share a folder"
+}
+
 check_workspace() {
     check_engine_pin
+    check_deploy_scripts
     check_direct_bounds
     check_limit_figures
     check_rules_vectors
