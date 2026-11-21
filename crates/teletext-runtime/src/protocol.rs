@@ -21,6 +21,7 @@ use alloc::vec::Vec;
 
 use neoteletext_core::limits;
 use neoteletext_input::keys;
+use neoteletext_web::consts::{MAX_DEFAULT_PAINT_RATE, MAX_LINE_SPEED, MIN_LINE_SPEED};
 use schemars::generate::SchemaSettings;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, Visitor};
@@ -1418,6 +1419,10 @@ pub enum Rule {
     InvalidNaplpsLinks,
     /// A `parts` list outside its bounds (PAR-21).
     InvalidPictureParts,
+    /// A `regis` or `naplps` message's `line_speed` or `default_rate`
+    /// outside its range, whose detail names the constant, or stated
+    /// without `restart` (neoteletext-common's DEC-7031 item 6).
+    InvalidPaint,
 }
 
 // ------------------------------------------------------- program to server
@@ -2229,6 +2234,15 @@ pub enum OperatorLevel {
 /// Its bytes are `data`, or `parts` (exactly one of them, PAR-21), and
 /// `"kept"` keeps them for every connection that shows the sub-page now or
 /// later (PAR-16).
+///
+/// With `restart` it may say how the stream it begins is painted
+/// (neoteletext-common's DEC-7031; REQ-7024, REQ-7025): `line_speed`
+/// replays its bytes at a line's speed, and `default_rate` paints
+/// gradually every numbered drawing that sets no `T` of its own. The
+/// receiver is told in a PAINT record right before the stream's first
+/// REGIS record, and a kept picture keeps both values and says them to
+/// every connection it is given to. A message without `restart` states
+/// neither: the stream goes on as it was begun.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = picture::data_or_parts)]
@@ -2243,6 +2257,20 @@ pub struct Regis {
     /// renderer for it, with nothing drawn and no numbered drawings.
     #[serde(default)]
     pub restart: bool,
+    /// The line speed the stream this message begins is replayed at, in
+    /// bits a second, ten bits a byte: the engine's `MIN_LINE_SPEED` (300)
+    /// to `MAX_LINE_SPEED` (115,200). Only with `restart`; left out, the
+    /// picture is drawn at once.
+    #[serde(default)]
+    #[schemars(range(min = MIN_LINE_SPEED, max = MAX_LINE_SPEED))]
+    pub line_speed: Option<u32>,
+    /// The paint rate of every numbered drawing of the stream this message
+    /// begins that sets no `T` of its own, in a drawing's `T` units: 1 to
+    /// the engine's `MAX_DEFAULT_PAINT_RATE` (32,767). Only with `restart`;
+    /// left out, such a drawing appears at once.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = MAX_DEFAULT_PAINT_RATE))]
+    pub default_rate: Option<u32>,
     /// The bytes, exact base64: ReGIS commands as a terminal would receive
     /// them inside a device control string, without the string's framing.
     #[serde(default)]
@@ -2266,6 +2294,13 @@ pub struct Regis {
 /// Its bytes are `data`, or `parts` (exactly one of them, PAR-21), and
 /// `"kept"` keeps them for every connection that shows the sub-page now or
 /// later (PAR-16).
+///
+/// With `restart` it may give `line_speed`, which replays the stream it
+/// begins at a line's speed (neoteletext-common's DEC-7031; REQ-7024), a
+/// WAIT's time added to the line's. The receiver is told in a PAINT record
+/// right before the stream's first NAPLPS record, and a kept picture keeps
+/// the speed and says it to every connection it is given to. A message
+/// without `restart` states none: the stream goes on as it was begun.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = picture::data_or_parts)]
@@ -2280,6 +2315,13 @@ pub struct Naplps {
     /// renderer for it, with nothing drawn.
     #[serde(default)]
     pub restart: bool,
+    /// The line speed the stream this message begins is replayed at, in
+    /// bits a second, ten bits a byte: the engine's `MIN_LINE_SPEED` (300)
+    /// to `MAX_LINE_SPEED` (115,200). Only with `restart`; left out, the
+    /// picture is drawn at once.
+    #[serde(default)]
+    #[schemars(range(min = MIN_LINE_SPEED, max = MAX_LINE_SPEED))]
+    pub line_speed: Option<u32>,
     /// The bytes, exact base64: NAPLPS as a terminal would receive it.
     #[serde(default)]
     pub data: Option<Base64>,

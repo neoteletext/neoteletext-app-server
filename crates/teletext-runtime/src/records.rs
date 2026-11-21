@@ -19,10 +19,13 @@ use neoteletext_formats::text::Text;
 use neoteletext_formats::tti::link_destination;
 use neoteletext_web::records::index::{IndexMagazine, IndexPage};
 use neoteletext_web::records::links::SubPageLinks;
+use neoteletext_web::records::paint::{self as paint_record, PaintRecord};
 use neoteletext_web::records::redirect::RedirectRecord;
+use neoteletext_web::records::sheet::SheetKind;
 use neoteletext_web::records::subpages::SubPageEntry;
 use neoteletext_web::records::{index, links, log, redirect as redirect_record, subpages};
 
+use crate::kept::{Paint, PictureLanguage};
 use crate::page::address;
 use crate::protocol::{AuthorLevel, AuthorLog, LinkKey, Magazine, Page, Redirect, SubPages};
 
@@ -93,6 +96,28 @@ pub(crate) fn regis(page: u16, sub: u16, generation: u16, offset: u32, data: &[u
 /// need, the stream `generation` of the sub-page, from `offset` in it.
 pub(crate) fn naplps(page: u16, sub: u16, generation: u16, offset: u32, data: &[u8], record_id: &mut u8) -> Result<Vec<u8>, Refused> {
     stream(crate::protocol::check::TYPE_NAPLPS, page, sub, generation, offset, data, record_id)
+}
+
+/// How `generation` of a sub-page's stream of `language` is painted, as
+/// one PAINT record (neoteletext-common's DEC-7031 item 1), which goes
+/// immediately before that generation's first REGIS or NAPLPS record.
+pub(crate) fn paint(page: u16, sub: u16, language: PictureLanguage, generation: u16, paint: Paint, record_id: &mut u8) -> Result<Vec<u8>, Refused> {
+    let record = PaintRecord {
+        page: address(page),
+        subcode: EngineSubCode::new(sub),
+        language: match language {
+            PictureLanguage::Regis => SheetKind::Regis,
+            PictureLanguage::Naplps => SheetKind::Naplps,
+        },
+        generation,
+        line_speed: paint.line_speed,
+        default_rate: paint.default_rate,
+    };
+    let mut sent = None;
+    let bytes = collect(|out| sent = Some(paint_record::encode(record, SERVICE, *record_id, out)));
+    sent.ok_or_else(String::new)?.map_err(|error| alloc::format!("{error:?}"))?;
+    *record_id = record_id.wrapping_add(1);
+    Ok(bytes)
 }
 
 /// A stream of a sub-page's bytes as records of type `kind`.

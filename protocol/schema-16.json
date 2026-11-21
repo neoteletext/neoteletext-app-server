@@ -8038,6 +8038,28 @@
               "default": null,
               "description": "The bytes, exact base64: ReGIS commands as a terminal would receive\nthem inside a device control string, without the string's framing."
             },
+            "default_rate": {
+              "default": null,
+              "description": "The paint rate of every numbered drawing of the stream this message\nbegins that sets no `T` of its own, in a drawing's `T` units: 1 to\nthe engine's `MAX_DEFAULT_PAINT_RATE` (32,767). Only with `restart`;\nleft out, such a drawing appears at once.",
+              "format": "uint32",
+              "maximum": 32767,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "line_speed": {
+              "default": null,
+              "description": "The line speed the stream this message begins is replayed at, in\nbits a second, ten bits a byte: the engine's `MIN_LINE_SPEED` (300)\nto `MAX_LINE_SPEED` (115,200). Only with `restart`; left out, the\npicture is drawn at once.",
+              "format": "uint32",
+              "maximum": 115200,
+              "minimum": 300,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "page": {
               "$ref": "#/$defs/PageNumber",
               "description": "The page."
@@ -8181,6 +8203,17 @@
               ],
               "default": null,
               "description": "The bytes, exact base64: NAPLPS as a terminal would receive it."
+            },
+            "line_speed": {
+              "default": null,
+              "description": "The line speed the stream this message begins is replayed at, in\nbits a second, ten bits a byte: the engine's `MIN_LINE_SPEED` (300)\nto `MAX_LINE_SPEED` (115,200). Only with `restart`; left out, the\npicture is drawn at once.",
+              "format": "uint32",
+              "maximum": 115200,
+              "minimum": 300,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "page": {
               "$ref": "#/$defs/PageNumber",
@@ -9714,6 +9747,11 @@
         {
           "const": "invalid_picture_parts",
           "description": "A `parts` list outside its bounds (PAR-21).",
+          "type": "string"
+        },
+        {
+          "const": "invalid_paint",
+          "description": "A `regis` or `naplps` message's `line_speed` or `default_rate`\noutside its range, whose detail names the constant, or stated\nwithout `restart` (neoteletext-common's DEC-7031 item 6).",
           "type": "string"
         }
       ]

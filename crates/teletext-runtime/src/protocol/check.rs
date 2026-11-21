@@ -15,6 +15,7 @@ use neoteletext_core::policy::is_safe_output_char;
 use neoteletext_core::types::SubCode;
 use neoteletext_formats::log::LogRefused;
 use neoteletext_web::base64;
+use neoteletext_web::consts::{MAX_DEFAULT_PAINT_RATE, MAX_LINE_SPEED, MIN_LINE_SPEED};
 use neoteletext_web::records::redirect::{MAX_ADDRESS, RedirectRecord, encode};
 use unicode_normalization::{IsNormalized, is_nfc, is_nfc_quick};
 
@@ -1018,9 +1019,39 @@ fn check_shown_subpage(root: &Path<'_>, sub: super::SubCode) -> Checked {
     Ok(())
 }
 
+/// How a `regis` or `naplps` message says the stream it begins is painted
+/// (neoteletext-common's DEC-7031 item 6): a line speed and a default
+/// paint rate, each within the engine's range for the PAINT record that
+/// carries it, and only on the message that begins the generation they are
+/// for, since a receiver takes them when the generation starts.
+fn check_paint(root: &Path<'_>, restart: bool, line_speed: Option<u32>, default_rate: Option<u32>) -> Checked {
+    let begun = |field: &'static str| {
+        if restart {
+            return Ok(());
+        }
+        let detail = format!("`{field}` is for the stream a message begins: it is given with `restart: true`");
+        Err(fault(&root.field(field), Rule::InvalidPaint, detail))
+    };
+    if let Some(speed) = line_speed {
+        begun("line_speed")?;
+        if !(MIN_LINE_SPEED..=MAX_LINE_SPEED).contains(&speed) {
+            let detail = format!("{speed} bits a second: MIN_LINE_SPEED ({MIN_LINE_SPEED}) to MAX_LINE_SPEED ({MAX_LINE_SPEED})");
+            return Err(fault(&root.field("line_speed"), Rule::InvalidPaint, detail));
+        }
+    }
+    if let Some(rate) = default_rate {
+        begun("default_rate")?;
+        if !(1..=u32::from(MAX_DEFAULT_PAINT_RATE)).contains(&rate) {
+            return Err(fault(&root.field("default_rate"), Rule::InvalidPaint, format!("{rate}: 1 to MAX_DEFAULT_PAINT_RATE ({MAX_DEFAULT_PAINT_RATE})")));
+        }
+    }
+    Ok(())
+}
+
 fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
     check_audience(&root.field("connections"), &regis.connections)?;
     check_shown_subpage(root, regis.sub)?;
+    check_paint(root, regis.restart, regis.line_speed, regis.default_rate)?;
     check_picture_bytes(root, regis.data.as_ref(), regis.parts.as_deref(), MOST_REGIS_BYTES)
 }
 
@@ -1029,6 +1060,7 @@ fn check_regis(root: &Path<'_>, regis: &super::Regis) -> Checked {
 fn check_naplps(root: &Path<'_>, naplps: &super::Naplps) -> Checked {
     check_audience(&root.field("connections"), &naplps.connections)?;
     check_shown_subpage(root, naplps.sub)?;
+    check_paint(root, naplps.restart, naplps.line_speed, None)?;
     check_picture_bytes(root, naplps.data.as_ref(), naplps.parts.as_deref(), MOST_REGIS_BYTES)
 }
 
@@ -1210,6 +1242,11 @@ pub(crate) const TYPE_REGIS_CURSOR: u8 = 16;
 /// NAPLPS renderer's REQ-6408 item 2), which only the `naplps` message sends.
 pub(crate) const TYPE_NAPLPS: u8 = 17;
 
+/// The record type that says how a generation of a sub-page's ReGIS or
+/// NAPLPS is painted (neoteletext-common's DEC-7031 item 1), which only
+/// the `regis` and `naplps` messages send.
+const TYPE_PAINT: u8 = neoteletext_web::records::TYPE_PAINT;
+
 /// The audio profile's record types a `packets` message may not carry: a
 /// sound's OBJECT, DATA and CONTROL records (the engine's `record.rs`).
 const AUDIO_RECORD_TYPES: [u8; 3] = [neoteletext_audio::record::TYPE_OBJECT, neoteletext_audio::record::TYPE_DATA, neoteletext_audio::record::TYPE_CONTROL];
@@ -1233,11 +1270,12 @@ fn check_packets(path: &Path<'_>, packets: &str) -> Checked {
         }
         // A record's type is in its first fragment: no record of a
         // sub-page's ReGIS, its drawing links or its cursor can begin
-        // here, so none passes unchecked (DEC-6335, REQ-6372).
+        // here, so none passes unchecked (DEC-6335, REQ-6372); nor the
+        // PAINT record that says how such a stream is painted.
         if let Some(Ok(fragment)) = neoteletext_audio::idl::fragment(&packet)
             && fragment.index == 0
             && let Some(kind) = fragment.data.get(1)
-            && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR, TYPE_NAPLPS].contains(kind)
+            && [TYPE_REGIS, TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR, TYPE_NAPLPS, TYPE_PAINT].contains(kind)
         {
             let detail = "a record of a sub-page's ReGIS or NAPLPS goes in a regis, regis_links, regis_cursor or naplps message, which checks it";
             return Err(fault(&path.item(index), Rule::InvalidPacket, detail.to_string()));
