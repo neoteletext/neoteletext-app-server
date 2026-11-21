@@ -276,7 +276,10 @@ say "the channels file, the service, its socket and the container's Caddy"
 # since is given none, and musicplayer is the first. regisgallery's
 # program handles no input at all, so since 19 November 2026 it is given
 # none either: a page that requests no events keeps the wheel stepping
-# its sub-pages over the picture (DEC-6633 item 2).
+# its sub-pages over the picture (DEC-6633 item 2). naplps is given none
+# since 21 November 2026 (TODO-6918): its typing, pointer and animation
+# pages, 102 to 107, each send a table of their own asking for exactly
+# what they use, and its other pages take no input.
 ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
 {"channels":[
   {"folder":"home","name":"NeoTeletext","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-home-www.neoteletext.com","default_rules":"send_all"},
@@ -286,7 +289,7 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo","wheel":true,"default_rules":"send_all"},
   {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
   {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo","wheel":true,"default_rules":"send_all"},
-  {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo","default_rules":"send_all"},
+  {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo"},
   {"folder":"audio","name":"Audio demo","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-audiodemo","default_rules":"send_all"},
   {"folder":"musicplayer","name":"Music player","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-musicplayer"}
 ]}
