@@ -887,6 +887,13 @@ pub(crate) fn compiled(message: &super::RulesMessage) -> Result<Option<crate::ru
     check_rules(&Path::Root, message).map_err(|fault| Refusal { message: Some(MessageType::Rules), path: fault.path, rule: fault.rule, detail: fault.detail })
 }
 
+/// `table` without its rules of the "painted" trigger: what a connection
+/// of a push protocol version before painting is sent (the engine's
+/// DEC-7074 item 2).
+pub(crate) fn without_painted(table: &super::RuleTable) -> super::RuleTable {
+    rules::without_painted(table)
+}
+
 /// A command sent directly, as its record's type and body for a connection
 /// whose table in force has `names` (RULE-114).
 ///

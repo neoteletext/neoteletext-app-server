@@ -1069,8 +1069,25 @@ pub(crate) fn compile(path: &Path<'_>, given: &RuleTable, (page, sub): (u16, u16
     table.check(neoteletext_web::records::body_check).map_err(|refused| engine_fault(path, refused))?;
     let compiled = Compiled::of(&table, names).map_err(|refused| engine_fault(path, refused))?;
     // A table whose groups place NAPLPS objects is written again for each
-    // connection's stream generation when it is sent.
-    Ok(if holds_naplps_objects(given) { compiled.recompiled_from(alloc::sync::Arc::new(given.clone())) } else { compiled })
+    // connection's stream generation when it is sent, and one with a
+    // "painted" rule without it for a connection of an older version.
+    let (naplps_objects, painted) = (holds_naplps_objects(given), given.rules.iter().any(is_painted));
+    Ok(if naplps_objects || painted { compiled.recompiled_from(alloc::sync::Arc::new(given.clone()), naplps_objects, painted) } else { compiled })
+}
+
+/// Whether one of a rule's triggers is "painted", the engine's trigger 22.
+fn is_painted(rule: &PageRule) -> bool {
+    rule.on.0.iter().any(|trigger| matches!(trigger, RuleTrigger::Painted(_)))
+}
+
+/// `given` without every rule that has a "painted" trigger, the rest in
+/// their order: the table a connection of a version before painting is
+/// sent (the engine's DEC-7074 item 2). The rule goes whole, whatever other
+/// triggers it has, as the decision says.
+pub(crate) fn without_painted(given: &RuleTable) -> RuleTable {
+    let mut older = given.clone();
+    older.rules.retain(|rule| !is_painted(rule));
+    older
 }
 
 /// Whether a group of `given`, named or a rule's own, holds a

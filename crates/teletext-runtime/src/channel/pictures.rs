@@ -24,7 +24,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use neoteletext_input::caps::{NAPLPS_CAP, REGIS_CAP};
 
 use super::{Channel, Connection, Level};
-use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, Paint, PictureLanguage, ReaderFonts, StreamChange};
+use crate::kept::{
+    self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, PAINTING_VERSION, Paint, PictureLanguage, ReaderFonts,
+    StreamChange,
+};
 use crate::protocol::{
     self, AuthorLevel, AuthorLog, ConnectionId, Connections, DrawingLink, MessageType, NaplpsObjects, PictureAudience, ProgramMessage, Refusal, Rule,
     ServerMessage,
@@ -169,10 +172,19 @@ impl Connection {
         *counter
     }
 
+    /// How a generation it is about to be sent is said to be painted:
+    /// `paint`, or nothing on a connection whose version does not know
+    /// the PAINT record, where the picture paints at once (the engine's
+    /// DEC-7074 item 2).
+    const fn paint_said(&self, paint: Option<Paint>) -> Option<Paint> {
+        if self.version < PAINTING_VERSION { None } else { paint }
+    }
+
     /// A new generation of its stream of `language` for the kept picture
     /// of `page`, `sub`, nothing of it sent yet: `paint` is said before
     /// its first record.
     const fn next_kept_stream(&mut self, language: PictureLanguage, page: u16, sub: u16, paint: Option<Paint>) -> PictureStream {
+        let paint = self.paint_said(paint);
         let generation = self.next_generation(language);
         PictureStream { page, sub, generation, offset: 0, paint, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false }
     }
@@ -213,6 +225,7 @@ impl Connection {
     ) -> Result<Notes, String> {
         let (fonts, total) = readers;
         if let Some(Begun(paint)) = begins {
+            let paint = self.paint_said(paint);
             let generation = self.next_generation(language);
             let mut checker = Checker::new(language, fonts);
             if language == PictureLanguage::Regis {

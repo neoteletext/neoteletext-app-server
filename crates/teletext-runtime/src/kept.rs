@@ -379,6 +379,16 @@ pub(crate) struct KeptObjects {
     pub title: Option<NaplpsTitle>,
 }
 
+/// The first push protocol version whose receivers know painting as a
+/// show: the PAINT record and the rule table's trigger 22, "painted"
+/// (the engine's DEC-7074 item 1). A connection that agreed an older
+/// version is sent neither (DEC-7074 item 2): its receiver would read past
+/// the record, but would refuse whole a table that holds the trigger.
+pub(crate) const PAINTING_VERSION: u32 = 11;
+// Both sides of the rule exist only while an older version is spoken; when
+// none is, this fails and the rule and its code are removed.
+const _: () = assert!(neoteletext_input::OLDEST_VERSION < PAINTING_VERSION && PAINTING_VERSION <= neoteletext_input::VERSION);
+
 /// How one generation of a picture's stream is painted, as the message
 /// that began it said (neoteletext-common's DEC-7031 item 6; REQ-7024,
 /// REQ-7025): what a PAINT record carries besides the place and the

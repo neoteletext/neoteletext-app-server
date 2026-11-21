@@ -136,11 +136,24 @@ pub(crate) struct Compiled {
     image: Vec<u8>,
     /// The names, by number.
     names: Names,
-    /// The table as its program gave it, kept only while its groups place
-    /// NAPLPS objects, whose records name the generation of the stream
-    /// each connection has (ANIM-11, ANIM-21; DEC-6654 item 11): the table
-    /// is written again for that generation when it is sent.
-    source: Option<alloc::sync::Arc<crate::protocol::RuleTable>>,
+    /// The table as its program gave it, kept only while it is written
+    /// again when it is sent: for a table whose groups place NAPLPS
+    /// objects, whose records name the generation of the stream each
+    /// connection has (ANIM-11, ANIM-21; DEC-6654 item 11), and for one
+    /// with a rule of the "painted" trigger, which a connection of a
+    /// version before painting is sent without (the engine's DEC-7074
+    /// item 2).
+    source: Option<Source>,
+}
+
+/// A table as its program gave it, and why it is kept.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Source {
+    table: alloc::sync::Arc<crate::protocol::RuleTable>,
+    /// Its groups place NAPLPS objects.
+    naplps_objects: bool,
+    /// A rule of it has the "painted" trigger.
+    painted: bool,
 }
 
 /// A synthesizer by its name in the protocol, and its family's codec code
@@ -269,20 +282,42 @@ impl Compiled {
         Self::of(&table, names).ok()
     }
 
-    /// This table, noted as written from `source`, to be written again for
-    /// each connection's NAPLPS stream generation.
-    pub(crate) fn recompiled_from(self, source: alloc::sync::Arc<crate::protocol::RuleTable>) -> Self {
-        Self { source: Some(source), ..self }
+    /// This table, noted as written from `table`, to be written again for
+    /// a connection: for its NAPLPS stream's generation when
+    /// `naplps_objects`, and without its "painted" rules for a connection
+    /// of an older version when `painted`.
+    pub(crate) fn recompiled_from(self, table: alloc::sync::Arc<crate::protocol::RuleTable>, naplps_objects: bool, painted: bool) -> Self {
+        Self { source: Some(Source { table, naplps_objects, painted }), ..self }
     }
 
-    /// This table as it is sent to a connection whose NAPLPS stream of the
-    /// page has `generation` (ANIM-21): itself, or, when its groups place
-    /// NAPLPS objects, written again for that generation. The program's
-    /// table compiled once already, so it compiles again; were it not to,
-    /// this table is sent as it is.
-    pub(crate) fn for_naplps_generation(self: &alloc::sync::Arc<Self>, generation: u16) -> alloc::sync::Arc<Self> {
-        let Some(source) = &self.source else { return alloc::sync::Arc::clone(self) };
-        crate::protocol::check::recompiled(source, (self.page, self.sub), generation).map_or_else(|| alloc::sync::Arc::clone(self), alloc::sync::Arc::new)
+    /// This table as it is sent to a connection of push protocol `version`
+    /// whose NAPLPS stream of the page has `generation`: itself, or
+    /// written again from what the program gave.
+    ///
+    /// - When its groups place NAPLPS objects, it is written for that
+    ///   generation (ANIM-21).
+    /// - When a rule of it has the "painted" trigger and the connection's
+    ///   version is before painting, it is written without every such
+    ///   rule, since that receiver would refuse the whole table for the
+    ///   trigger (the engine's DEC-7074 item 2). The rule's numbers in a
+    ///   report are then those of the table sent, which is the one noted
+    ///   as sent to the connection.
+    ///
+    /// The program's table compiled once already, so it compiles again
+    /// for a generation; were it not to, this table is sent as it is.
+    /// Without its "painted" rules it is another table: were that one
+    /// refused, the connection is sent none, never the trigger.
+    pub(crate) fn for_connection(self: &alloc::sync::Arc<Self>, generation: u16, version: u32) -> Option<alloc::sync::Arc<Self>> {
+        let Some(source) = &self.source else { return Some(alloc::sync::Arc::clone(self)) };
+        let place = (self.page, self.sub);
+        if source.painted && version < crate::kept::PAINTING_VERSION {
+            let older = crate::protocol::check::without_painted(&source.table);
+            return crate::protocol::check::recompiled(&older, place, generation).map(alloc::sync::Arc::new);
+        }
+        if !source.naplps_objects {
+            return Some(alloc::sync::Arc::clone(self));
+        }
+        Some(crate::protocol::check::recompiled(&source.table, place, generation).map_or_else(|| alloc::sync::Arc::clone(self), alloc::sync::Arc::new))
     }
 
     /// The image, as the RULES records carry it.

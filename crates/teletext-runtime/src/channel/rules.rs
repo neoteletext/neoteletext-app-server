@@ -330,8 +330,10 @@ impl Channel {
         let table = table.or_else(|| self.default_table(page, sub));
         for connection in self.showing(&message.connections, page, sub) {
             let Some(state) = self.connections.get_mut(&connection) else { continue };
-            // Its NAPLPS objects for the stream this connection has (ANIM-21).
-            let table = table.as_ref().map(|table| table.for_naplps_generation(state.naplps_generation_for(page, sub)));
+            // Its NAPLPS objects for the stream this connection has
+            // (ANIM-21), and no "painted" rule for a connection of a
+            // version before painting (the engine's DEC-7074 item 2).
+            let table = table.as_ref().and_then(|table| table.for_connection(state.naplps_generation_for(page, sub), state.version));
             let bytes = state.rules.record((page, sub), table, &mut state.record_id);
             // Inside a frame open for the page, it waits for the frame's
             // end with the rest (ANIM-2).
