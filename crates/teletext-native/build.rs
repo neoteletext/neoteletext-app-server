@@ -40,6 +40,10 @@ fn main() -> ExitCode {
     }
 }
 
+/// What every refusal of the count's file ends with (REQ-7050 item 3):
+/// whatever stopped the count, the file is what a person can put right.
+const ADVICE: &str = "correct the file, or delete it to count again from 1";
+
 /// This compile's version, after counting it.
 fn version() -> Result<String, String> {
     let major = variable("CARGO_PKG_VERSION_MAJOR")?;
@@ -47,7 +51,7 @@ fn version() -> Result<String, String> {
     let never_made = Path::new(&variable("OUT_DIR")?).join(NEVER_MADE);
     println!("cargo::rerun-if-changed={}", never_made.display());
     let file = PathBuf::from(variable("CARGO_MANIFEST_DIR")?).join(ROOT_FROM_CRATE).join(COUNT_FILE);
-    let count = counted(&file).map_err(|error| format!("the build number in {}: {error}", file.display()))?;
+    let count = counted(&file).map_err(|error| format!("the build number in {}: {error}; {ADVICE}", file.display()))?;
     Ok(format!("{major}.{minor}.{count}"))
 }
 
@@ -69,9 +73,9 @@ fn counted(path: &Path) -> Result<u64, String> {
     let previous = match text.trim() {
         "" => 0,
         digits if u64::try_from(text.len()).is_ok_and(|length| length <= MAX_COUNT_FILE_BYTES) => {
-            digits.parse::<u64>().map_err(|error| format!("{digits:?} is not a count ({error}); correct the file, or delete it to count again from 1"))?
+            digits.parse::<u64>().map_err(|error| format!("{digits:?} is not a count ({error})"))?
         }
-        _ => return Err(format!("it holds more than {MAX_COUNT_FILE_BYTES} bytes; correct the file, or delete it to count again from 1")),
+        _ => return Err(format!("it holds more than {MAX_COUNT_FILE_BYTES} bytes")),
     };
     let count = previous.checked_add(1).ok_or("the count has reached the largest number it can hold")?;
     write(&mut file, count).map_err(|error| format!("cannot write it: {error}"))?;

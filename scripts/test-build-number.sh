@@ -205,11 +205,7 @@ run_test letters_are_not_a_count letters_are_not_a_count
 run_test a_negative_number_is_not_a_count a_negative_number_is_not_a_count
 run_test more_than_forty_bytes_are_not_a_count more_than_forty_bytes_are_not_a_count
 run_test the_largest_count_fails_the_build_naming_the_file the_largest_count_fails_the_build_naming_the_file
-if [[ -n "${BUILD_NUMBER_TEST_IGNORED:-}" ]]; then
-    run_test the_largest_count_is_refused_saying_to_correct_or_delete_it the_largest_count_is_refused_saying_to_correct_or_delete_it
-else
-    ignore_test the_largest_count_is_refused_saying_to_correct_or_delete_it "fault: at 18446744073709551615 the build fails saying only that the count has reached the largest number it can hold, not to correct or delete the file (REQ-7050 item 3), reported for a Fable fix; BUILD_NUMBER_TEST_IGNORED=1 runs it"
-fi
+run_test the_largest_count_is_refused_saying_to_correct_or_delete_it the_largest_count_is_refused_saying_to_correct_or_delete_it
 run_test two_builds_at_once_take_two_numbers two_builds_at_once_take_two_numbers
 run_test the_version_argument_starts_nothing the_version_argument_starts_nothing
 
