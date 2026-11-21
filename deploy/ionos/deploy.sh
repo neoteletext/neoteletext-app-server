@@ -14,7 +14,7 @@
 #      a pinned uv and the engine's neottx for its QR codes; and the Hackaday
 #      dataset both Hackaday channels read, and nothing else (DEC-1568);
 #      the ReGIS gallery's kept pictures, as their ReGIS source, for the
-#      gallery channel (REQ-6347);
+#      ReGIS channel's gallery section (DEC-7035);
 #      each demo channel's state file, outside the folder replaced, is
 #      backed up first and never replaced (REQ-1057);
 #   3. the channels file, the service and its socket (a restart refuses no
@@ -51,7 +51,7 @@ nspawn_file=/etc/systemd/nspawn/neoteletext.nspawn
 quic_port_line=Port=udp:443:8090
 builder=${TELETEXT_LINUX_HOST:-foundintelquiet4060}
 app=/opt/neoteletext
-channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisgallery neoteletext-server-channel-regisdemo neoteletext-server-channel-naplpsdemo neoteletext-server-channel-audiodemo neoteletext-server-channel-musicplayer)
+channels=(neoteletext-server-channel-home-www.neoteletext.com neoteletext-server-channel-hackaday neoteletext-server-channel-demosite neoteletext-server-channel-uicomponentsdemo neoteletext-server-channel-regisdemo neoteletext-server-channel-naplpsdemo neoteletext-server-channel-audiodemo neoteletext-server-channel-musicplayer)
 # The old Hackaday channel, Python, beside the Python kit.
 python_channels=neoteletext-server-channels
 # The development machine's uv, so uv.lock is read by the version that wrote it.
@@ -60,8 +60,9 @@ uv_version=0.13.6
 # the development machine's folder, copied to the container in its own layout.
 dataset_source=$devel/neoteletext-hackaday
 dataset=$app/data/neoteletext-hackaday
-# The ReGIS gallery the gallery channel serves (REQ-6347): the folder here
-# with sets.json, kept.txt and regis/, and where its kept pictures go.
+# The ReGIS gallery the ReGIS channel's gallery section serves (DEC-7035):
+# the folder here with sets.json, kept.txt and regis/, and where its kept
+# pictures go.
 gallery_source=${REGIS_GALLERY:-$devel/regisexperiment/corpus}
 gallery=$app/regisgallery
 # The engine the server is pinned to builds the neottx the old channel runs.
@@ -277,10 +278,12 @@ say "the channels file, the service, its socket and the container's Caddy"
 # for. The nine channels deployed on 18 November 2026 are given
 # "send_all", the default table that sends every kind of input as push
 # protocol 8 did, until each sends tables of its own; a channel written
-# since is given none, and musicplayer is the first. regisgallery's
-# program handles no input at all, so since 19 November 2026 it is given
-# none either: a page that requests no events keeps the wheel stepping
-# its sub-pages over the picture (DEC-6633 item 2). naplps is given none
+# since is given none, and musicplayer is the first. regis, the one ReGIS
+# channel since the gallery channel was merged into it (DEC-7035), is
+# given none and no channel-wide wheel: every page of it that wants input
+# sends a table of its own, and a page that requests no events, as each
+# of its gallery's pictures is, keeps the wheel stepping its sub-pages
+# over the picture (DEC-6633 item 2). naplps is given none
 # since 21 November 2026 (TODO-6918): its typing, pointer and animation
 # pages, 102 to 107, each send a table of their own asking for exactly
 # what they use, and its other pages take no input.
@@ -291,8 +294,7 @@ ssh "$target" "sudo tee $app/channels.json >/dev/null" <<EOF
   {"folder":"oldhackaday","name":"Hackaday (old)","command":["env","NEOTTX=$app/tools/neottx","uv","run","--frozen","--no-dev","python","-m","hackaday","--dataset","$dataset"],"directory":"current/$python_channels/hackaday","default_rules":"send_all"},
   {"folder":"demosite","name":"NeoTeletext demo site","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/demosite.sqlite"],"directory":"current/neoteletext-server-channel-demosite","default_rules":"send_all"},
   {"folder":"uicomponentsdemo","name":"NeoTeletext UI components demo","command":["node","src/main.ts","--pictures","$app/pictures","--state","$state_dir/uicomponentsdemo.sqlite"],"directory":"current/neoteletext-server-channel-uicomponentsdemo","wheel":true,"default_rules":"send_all"},
-  {"folder":"regisgallery","name":"ReGIS gallery","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisgallery"},
-  {"folder":"regis","name":"ReGIS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-regisdemo","wheel":true,"default_rules":"send_all"},
+  {"folder":"regis","name":"ReGIS","command":["node","src/main.ts","--gallery","$gallery"],"directory":"current/neoteletext-server-channel-regisdemo"},
   {"folder":"naplps","name":"NAPLPS test","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-naplpsdemo"},
   {"folder":"audio","name":"Audio demo","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-audiodemo","default_rules":"send_all"},
   {"folder":"musicplayer","name":"Music player","command":["node","src/main.ts"],"directory":"current/neoteletext-server-channel-musicplayer"}
@@ -343,6 +345,12 @@ ssh "$target" "set -e; sudo systemctl daemon-reload
     # the service, running as caddy, then cannot open it.
     sudo runuser -u caddy -- caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || { echo 'the container Caddyfile does not validate' >&2; exit 1; }
     sudo systemctl enable caddy >/dev/null 2>&1; sudo systemctl restart caddy"
+# The ReGIS gallery channel was merged into the ReGIS channel (DEC-7035):
+# its folder, which no entry of the channels file runs once the server has
+# restarted on the file above, is removed. It is in this deploy's
+# current.bak-$stamp.tgz, without its node_modules.
+# shellcheck disable=SC2029
+ssh "$target" "rm -rf $app/current/neoteletext-server-channel-regisgallery"
 
 say "caddyrouter: the neoteletext site blocks"
 # The block between its BEGIN and END lines is replaced whole (or the first
@@ -374,4 +382,4 @@ ssh "$target" 'sleep 3; systemctl is-active neoteletext.socket neoteletext caddy
 # The server's socket takes only TLS after a PROXY header from caddyrouter
 # (DEC-6972), so each channel is checked as a viewer reaches it, by name.
 say "each channel through caddyrouter"
-for c in home hackaday oldhackaday demosite uicomponentsdemo regisgallery regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code} HTTP/%{http_version}\n" "https://app.neottx.com/$c/channel.ttx"; done
+for c in home hackaday oldhackaday demosite uicomponentsdemo regis naplps audio musicplayer; do curl -s -o /dev/null -w "$c channel.ttx %{http_code} HTTP/%{http_version}\n" "https://app.neottx.com/$c/channel.ttx"; done
