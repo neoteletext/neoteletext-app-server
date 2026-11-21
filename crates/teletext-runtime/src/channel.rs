@@ -328,7 +328,9 @@ struct Connection {
     /// The input count acted on, modulo 65 536 (DOC-1943).
     acked: u16,
     /// What it holds: keys and buttons down, whose releases the program is
-    /// owed if the page loses the input (REQ-207).
+    /// owed if the page loses the input (REQ-207). A press is held only
+    /// when the table of the page it was pressed on asks for its release
+    /// (DEC-7065 item 1).
     held: Held,
     /// The rule that sent the press of each thing held, which a release
     /// the server gives for it names (RULE-37).
@@ -1158,7 +1160,11 @@ impl Channel {
         }
         let before = state.held;
         let mut owed = Vec::new();
-        state.held.take(item, &mut |released, on| owed.push((released, on)));
+        // A press is held only when its page's table asks for its release
+        // (DEC-7065 item 1).
+        if !rules::press_not_kept(item, sender) {
+            state.held.take(item, &mut |released, on| owed.push((released, on)));
+        }
         let let_go = before != state.held;
         self.lost(connection, owed);
         if let Some(state) = self.connections.get_mut(&connection) {

@@ -19,8 +19,9 @@ use alloc::vec::Vec;
 use neoteletext_audio_instruments::midi::{PatchField, family};
 use neoteletext_audio_instruments::watch;
 use neoteletext_core::types::SubCode as EngineSubCode;
+use neoteletext_input::event::KeyCode;
 use neoteletext_input::keys;
-use neoteletext_rules::table::{self, KeyKind, Table, Target, TargetKind, Value};
+use neoteletext_rules::table::{self, Key, KeyKind, Table, Target, TargetKind, Trigger, Value};
 use neoteletext_rules::{limits, names};
 use neoteletext_web::records::rules::{RulesRecord, encode as encode_rules, encode_image};
 use neoteletext_web::records::write_packets;
@@ -60,11 +61,76 @@ const DEFAULT_RULES: [&str; 13] =
 /// The name of the default table's one group (RULE-53).
 const DEFAULT_GROUP: &str = "send";
 
+/// The releases a table asks for (DEC-7065 item 1): the key classes of
+/// its `key_up` triggers and the buttons of its `release` triggers. A
+/// press is kept as held, and its lost release given, only when the table
+/// of the page it was pressed on asks for that key's or button's release.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub(crate) struct ReleasesAsked {
+    /// A `key_up` trigger's key set is empty: any key (RULE-10).
+    any_key: bool,
+    /// The keys the `key_up` triggers name, whatever their modifiers and
+    /// whichever row each is of.
+    keys: Vec<Key>,
+    /// A `release` trigger's button is `ANY_BUTTON`.
+    any_button: bool,
+    /// Bit `n` set when a `release` trigger names button `n`.
+    buttons: u8,
+}
+
+// Every button a `release` trigger may name has its bit in `buttons`.
+const _: () = assert!((limits::MAX_BUTTON as u32) < u8::BITS);
+
+impl ReleasesAsked {
+    /// What `table`'s rules ask for, whatever their conditions and whether
+    /// or not their groups report: the decision reads the triggers alone.
+    fn of(table: &Table) -> Self {
+        let mut asked = Self::default();
+        for trigger in table.rules.iter().flat_map(|rule| rule.triggers.iter()) {
+            match trigger {
+                Trigger::KeyUp { keys } if keys.keys.is_empty() => asked.any_key = true,
+                Trigger::KeyUp { keys } => {
+                    for key in keys.keys.iter() {
+                        if !asked.keys.contains(key) {
+                            asked.keys.push(*key);
+                        }
+                    }
+                }
+                Trigger::Release { button, .. } if *button == limits::ANY_BUTTON => asked.any_button = true,
+                Trigger::Release { button, .. } => asked.buttons |= 1_u8.checked_shl(u32::from(*button)).unwrap_or(0),
+                _ => {}
+            }
+        }
+        asked
+    }
+
+    /// Whether a `key_up` trigger's key class includes the key of a KEY
+    /// event, named as RULE-10 names a key: a character or a named key by
+    /// its code, a physical key by the event's `base` when it has one,
+    /// else by its character (DOC-1937).
+    pub(crate) fn key(&self, key: KeyCode, base: Option<char>) -> bool {
+        let is_character = |code: u32| matches!(key, KeyCode::Character(character) if u32::from(character) == code);
+        let names_it = |named: &Key| match named.kind {
+            KeyKind::Character => is_character(named.code),
+            KeyKind::Named => key == KeyCode::Functional(named.code),
+            KeyKind::Physical => base.map_or_else(|| is_character(named.code), |base| u32::from(base) == named.code),
+        };
+        self.any_key || self.keys.iter().any(names_it)
+    }
+
+    /// Whether a `release` trigger names `button`, or any button.
+    pub(crate) fn button(&self, button: u8) -> bool {
+        self.any_button || 1_u8.checked_shl(u32::from(button)).is_some_and(|bit| self.buttons & bit != 0)
+    }
+}
+
 /// One page's table, ready to send: its image and its names.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Compiled {
     page: u16,
     sub: u16,
+    /// The releases its rules ask for.
+    releases: ReleasesAsked,
     /// The image as `neoteletext_rules::encode` wrote it and
     /// `neoteletext_rules::check` passed it.
     image: Vec<u8>,
@@ -188,7 +254,7 @@ impl Compiled {
         let length = neoteletext_rules::encode(table, neoteletext_web::records::body_check, &mut image)?;
         image.truncate(length);
         neoteletext_rules::check(&image, table.page, table.sub, neoteletext_web::records::body_check)?;
-        Ok(Self { page: table.page, sub: table.sub, image, names, source: None })
+        Ok(Self { page: table.page, sub: table.sub, releases: ReleasesAsked::of(table), image, names, source: None })
     }
 
     /// The default table of a channel whose configuration says
@@ -235,6 +301,11 @@ impl Compiled {
     /// (RULE-41): as many as the image needs.
     pub(crate) fn records(&self, generation: u16, record_id: &mut u8) -> Vec<u8> {
         packets(record_id, |id, out| encode_image(address(self.page), EngineSubCode::new(self.sub), generation, &self.image, SERVICE, id, out).is_ok())
+    }
+
+    /// The releases its rules ask for (DEC-7065).
+    pub(crate) const fn releases(&self) -> &ReleasesAsked {
+        &self.releases
     }
 
     /// The name of rule `number`.

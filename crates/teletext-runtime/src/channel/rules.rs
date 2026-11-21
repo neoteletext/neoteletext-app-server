@@ -90,6 +90,10 @@ pub(super) struct Sender {
     tick: u32,
     /// The target the pointer was inside, when the rule named one.
     target: Option<RuleTarget>,
+    /// Whether the table the event was reported under asks for the
+    /// release of what the event presses (DEC-7065 item 1): only then is
+    /// the press kept as held.
+    release_asked: bool,
 }
 
 impl Sender {
@@ -97,6 +101,36 @@ impl Sender {
     pub(super) fn input(&self, connection: ConnectionId, page: PageNumber, sub: SubCode, lost: bool, event: InputEvent) -> InputMessage {
         InputMessage { connection, page, sub, lost, rule: self.rule.clone(), row: self.row, tick: self.tick, target: self.target.clone(), event }
     }
+}
+
+/// Whether `table` asks for the release of what `item` presses (DEC-7065
+/// item 1): a `key_up` trigger whose key class includes the key, or a
+/// `release` trigger that names the button. A contact is the left button
+/// to a table (RULE-46). False for an item that presses nothing.
+fn release_asked(table: &Compiled, item: &Item<'_>) -> bool {
+    /// The button a table's triggers know a TOUCH contact as.
+    const CONTACT_BUTTON: u8 = 0;
+    let asked = table.releases();
+    match item {
+        Item::Event(Event::Key(key)) => asked.key(key.key, key.base),
+        Item::Event(Event::Mouse(mouse)) => asked.button(mouse.button),
+        Item::Event(Event::Touch(_)) => asked.button(CONTACT_BUTTON),
+        _ => false,
+    }
+}
+
+/// Whether `item` is a press that is not kept as held, because the table
+/// of the page it was pressed on asks for no release of it (DEC-7065
+/// item 1): a program that asked to hear no key come up is owed no lost
+/// release. A key's repeat is its press again.
+pub(super) fn press_not_kept(item: &Item<'_>, sender: &Sender) -> bool {
+    let goes_down = match item {
+        Item::Event(Event::Key(key)) => matches!(key.action, Action::Press | Action::Repeat),
+        Item::Event(Event::Mouse(mouse)) => mouse.action == MouseAction::Press,
+        Item::Event(Event::Touch(touch)) => touch.action == MouseAction::Press,
+        _ => false,
+    };
+    goes_down && !sender.release_asked
 }
 
 /// Keeps `sender` as the rule of `contact`'s latest move.
@@ -128,11 +162,12 @@ fn held_of(item: &Item<'_>) -> Option<(Released, bool)> {
 }
 
 /// Follows `item` in the list of what is held and the rule that sent its
-/// press: a press is kept, a release forgets it.
+/// press: a press whose release the page's table asks for is kept, a
+/// release forgets it.
 pub(super) fn held_by(pressed_by: &mut Vec<(Released, Sender)>, item: &Item<'_>, sender: &Sender) {
     let Some((held, pressed)) = held_of(item) else { return };
     pressed_by.retain(|(kept, _)| *kept != held);
-    if pressed {
+    if pressed && sender.release_asked {
         if pressed_by.len() >= MOST_PRESSES_KEPT {
             pressed_by.remove(0);
         }
@@ -462,7 +497,7 @@ impl Channel {
                     self.stale_input(now);
                     return;
                 };
-                let sender = Sender { rule, row, tick: event.tick, target };
+                let sender = Sender { rule, row, tick: event.tick, target, release_asked: release_asked(&table, &item) };
                 self.input(connection, &item, &sender, now);
                 if let Some(pick) = pick {
                     self.input(connection, &Item::Event(Event::Pick(pick)), &sender, now);
