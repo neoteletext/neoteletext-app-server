@@ -33,6 +33,7 @@ mod fields;
 mod kept;
 mod moves;
 mod naplps;
+mod painting;
 mod regis;
 mod rules;
 mod snapshot;
