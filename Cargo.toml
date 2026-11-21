@@ -6,6 +6,9 @@ members = ["crates/*"]
 exclude = ["tools"]
 
 [workspace.package]
+# The server's version takes this one's first two numbers; its third is
+# the number of the compile, counted in the ignored build-number by
+# crates/teletext-native/build.rs and never written here (REQ-7050).
 version = "0.1.0"
 edition = "2024"
 # At most three stable releases behind the pinned toolchain (DEVELOPMENT.md

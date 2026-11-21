@@ -1,6 +1,9 @@
 target/
 /tools
 tmp/
+# The count of this checkout's compiles of the server, which its build
+# script raises on every one (crates/teletext-native/build.rs).
+/build-number
 .claude/
 fuzz/corpus/
 fuzz/artifacts/

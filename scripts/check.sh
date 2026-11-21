@@ -228,7 +228,9 @@ linux_steps() {
     step "Linux on $linux_host: Clippy and tests"
     need_host
     # By content, with the host's own times (DEVELOPMENT.md section 9.3).
-    rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude fuzz/corpus --exclude fuzz/artifacts \
+    # The count of compiles stays each machine's own (REQ-7050): excluded,
+    # so rsync neither sends this machine's nor deletes the host's.
+    rsync -a --no-times --checksum --delete --exclude target --exclude tools --exclude .git --exclude /build-number --exclude fuzz/corpus --exclude fuzz/artifacts \
         ./ "$linux_host:teletext-server-check/"
     # The engine is a git dependency on its public repository, which the
     # host fetches by itself. rustup installs the toolchain

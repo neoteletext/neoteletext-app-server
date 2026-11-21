@@ -6,7 +6,12 @@
 //!                 [--trusted-proxy ADDRESS]
 //!                 [--tls-certificate FILE --tls-key FILE [--proxy-protocol]]
 //! teletext-server rotate-viewer-secret [--state DIRECTORY]
+//! teletext-server --version
 //! ```
+//!
+//! `--version`, alone, prints the server's version and does nothing else
+//! (REQ-7050): its third number is the number of the compile that made the
+//! program, which the build script counts.
 //!
 //! `--listen` is where it accepts connections (`0.0.0.0:8090` by
 //! default), unless systemd passes it a listening socket, which it then
@@ -126,8 +131,31 @@ struct Arguments {
     rotate: bool,
 }
 
+/// The argument that, alone, prints the version (REQ-7050).
+const VERSION_ARGUMENT: &str = "--version";
+/// The program's name beside its version.
+const PROGRAM: &str = "teletext-server";
+
+// REQ-7050: the version is the same wherever one build states it. The
+// library's constant and this program are compiled apart, each from the
+// build script's variable, and a program linked to a library of another
+// compile does not build.
+const _: () =
+    assert!(same_bytes(teletext_native::VERSION.as_bytes(), env!("TELETEXT_SERVER_VERSION").as_bytes()), "the library and the program are of two compiles");
+
+/// Whether two byte strings are equal, where the compiler can ask.
+const fn same_bytes(mut left: &[u8], mut right: &[u8]) -> bool {
+    loop {
+        match (left.split_first(), right.split_first()) {
+            (None, None) => return true,
+            (Some((first, rest)), Some((other, others))) if *first == *other => (left, right) = (rest, others),
+            _ => return false,
+        }
+    }
+}
+
 /// How the server is run.
-const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS] [--tls-certificate FILE --tls-key FILE [--proxy-protocol]], or teletext-server rotate-viewer-secret [--state DIRECTORY]";
+const USAGE: &str = "usage: teletext-server [--listen ADDRESS] [--origin URL] [--channels FILE] [--state DIRECTORY] [--admin-listen ADDRESS] [--log-format auto|json|text] [--trusted-proxy ADDRESS] [--tls-certificate FILE --tls-key FILE [--proxy-protocol]], or teletext-server rotate-viewer-secret [--state DIRECTORY], or teletext-server --version";
 
 fn arguments() -> Result<Arguments, String> {
     // systemd separates several state directories with colons; the first is ours.
@@ -200,6 +228,13 @@ fn passed_socket() -> Result<Option<std::net::TcpListener>, String> {
 }
 
 fn main() -> ExitCode {
+    // Before the log starts and before anything is read or opened: the
+    // version alone, on standard output.
+    let mut given = std::env::args().skip(1);
+    if given.next().as_deref() == Some(VERSION_ARGUMENT) && given.next().is_none() {
+        println!("{PROGRAM} {}", teletext_native::VERSION);
+        return ExitCode::SUCCESS;
+    }
     let arguments = match arguments() {
         Ok(arguments) => arguments,
         Err(error) => {
@@ -327,7 +362,7 @@ async fn serve(arguments: Arguments, passed: Option<std::net::TcpListener>) -> R
         tokio::spawn(administer(admin, Arc::clone(&stats)));
     }
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = teletext_native::VERSION,
         listen = %listening,
         origin = arguments.origin,
         quic = server.quic_address().map(|address| address.to_string()),

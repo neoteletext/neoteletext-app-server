@@ -2365,19 +2365,21 @@ pub fn line(message: &ServerMessage) -> Vec<u8> {
     bytes
 }
 
-/// `/stats.json`'s document: the server's figures and each channel's, by
-/// folder, from the same types as `stats` (DOC-1968).
+/// `/stats.json`'s document: the version of the server that wrote it, as
+/// the host states it (REQ-7050), then the server's figures and each
+/// channel's, by folder, from the same types as `stats` (DOC-1968).
 #[must_use]
-pub fn figures_document(server: &ServerFigures, channels: &BTreeMap<String, ChannelCounts>) -> Vec<u8> {
+pub fn figures_document(server_version: &str, server: &ServerFigures, channels: &BTreeMap<String, ChannelCounts>) -> Vec<u8> {
     #[derive(Serialize)]
     struct Document<'a> {
         #[serde(rename = "type")]
         kind: &'static str,
+        server_version: &'a str,
         server: &'a ServerFigures,
         channels: &'a BTreeMap<String, ChannelCounts>,
     }
     // As `line`: these types serialise without fail.
-    let mut bytes = serde_json::to_vec(&Document { kind: "stats", server, channels }).unwrap_or_default();
+    let mut bytes = serde_json::to_vec(&Document { kind: "stats", server_version, server, channels }).unwrap_or_default();
     bytes.push(b'\n');
     bytes
 }

@@ -33,3 +33,9 @@ pub mod state;
 pub mod stats;
 pub mod tls;
 pub mod websocket;
+
+/// The server's version (REQ-7050): the workspace's major and minor
+/// numbers, then the number of this compile, which the build script counts
+/// (`build.rs`). The one definition: the log's `serving` event,
+/// `--version`, `/stats.json` and `/metrics` all state this.
+pub const VERSION: &str = env!("TELETEXT_SERVER_VERSION");

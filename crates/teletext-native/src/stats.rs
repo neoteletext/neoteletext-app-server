@@ -387,7 +387,7 @@ impl ServerStats {
     pub fn document(&self) -> Vec<u8> {
         let latest = self.channels.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let channels: BTreeMap<String, ChannelCounts> = latest.iter().map(|(folder, figures)| (folder.clone(), self.channel(folder, figures))).collect();
-        protocol::figures_document(&self.server(), &channels)
+        protocol::figures_document(crate::VERSION, &self.server(), &channels)
     }
 
     /// A channel's figures, as the protocol types them.
@@ -467,7 +467,7 @@ impl ServerStats {
             }
         };
         let one = |value: u64| vec![(String::new(), as_float(value))];
-        family("teletext_build_info", "gauge", "The server's version.", &[(format!("{{version=\"{}\"}}", env!("CARGO_PKG_VERSION")), 1.0)]);
+        family("teletext_build_info", "gauge", "The server's version.", &[(format!("{{version=\"{}\"}}", crate::VERSION), 1.0)]);
         family(
             "process_start_time_seconds",
             "gauge",

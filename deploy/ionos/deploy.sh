@@ -146,6 +146,10 @@ if [ "$build" = 1 ]; then
 fi
 server_binary=$deploy_target/$musl/release/teletext-server
 [ -x "$server_binary" ] || die "no server binary at $server_binary; run without --no-build"
+# Its third number counts this checkout's compiles on this machine
+# (REQ-7050), in the ignored build-number at the checkout's root, which the
+# build above raised and no tracked file holds.
+say "the server is $("$server_binary" --version)"
 
 say "the server binary into $app/bin"
 # shellcheck disable=SC2029
