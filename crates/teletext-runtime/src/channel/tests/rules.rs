@@ -729,3 +729,268 @@ fn a_connection_that_selected_nothing_is_sent_no_other_pages_table() {
     channel.from_program(&flash_table("200", "0000"), 1);
     assert_eq!(rules_sent(&channel.take_effects(), CONNECTION), []);
 }
+
+// ------------------------------------------- what is held (DEC-7065)
+
+/// The rule that reports every press on the held-input page: rule 0, so
+/// that the engine's `input_key` vector, of rule 0, is its report.
+const PRESSES: &str = "down";
+
+/// A table of the vectors' page whose rule 0 reports every key press and
+/// every button press, and whose further rules, one each, have `triggers`
+/// and report.
+fn presses_and(triggers: &[Value]) -> Value {
+    let mut rules = alloc::vec![
+        json!({"name": PRESSES, "on": [{"event": "key", "keys": "any"}, {"event": "press", "target": "page", "button": "any"}], "do": [{"type": "report"}]})
+    ];
+    rules
+        .extend(triggers.iter().enumerate().map(|(number, trigger)| json!({"name": alloc::format!("up_{number}"), "on": trigger, "do": [{"type": "report"}]})));
+    json!({"rules": rules})
+}
+
+/// A channel of no default table whose connection agreed TOUCH, shows the
+/// vectors' page and has `table` in force there, and that table's
+/// generation.
+fn on_a_page_whose_table_is(table: &Value) -> (Channel, u16) {
+    use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP, TOUCH_CAP};
+    let mut channel = channel_of_opened(DefaultRules::None);
+    let hello =
+        Item::Event(Event::Hello { version: neoteletext_input::VERSION, caps: CURSOR_CAP | SELECT_CAP | REGIS_CAP | NAPLPS_CAP | TOUCH_CAP, agent: None });
+    channel.received(CONNECTION, &bare(&[hello, select(0, ANY)]), 0);
+    channel.deadline(ACKNOWLEDGEMENT_WAIT_MS);
+    channel.received(CONNECTION, &bare(&[select(VECTORS.page, VECTORS.sub)]), ACKNOWLEDGEMENT_WAIT_MS + 1);
+    let selected: Vec<Value> = told(&channel.take_effects()).into_iter().filter(|line| line["type"] == "selected").collect();
+    assert_eq!(selected.len(), 1, "{selected:?}");
+    // A redirect answers the selection it is the program's answer to.
+    assert_eq!(selected[0]["request"], json!(SELECTION_REQUEST), "{selected:?}");
+    channel.from_program(&line(&json!({"type": "rules", "connections": "all", "page": "101", "sub": "0001", "table": table})), ACKNOWLEDGEMENT_WAIT_MS + 2);
+    assert_eq!(refusals(&channel.take_effects()), [] as [Value; 0], "{table}");
+    let generation = channel.rules_generation(CONNECTION, VECTORS.page, VECTORS.sub).unwrap();
+    (channel, generation)
+}
+
+/// The request number of the selection of the vectors' page in
+/// `on_a_page_whose_table_is`, the connection's second.
+const SELECTION_REQUEST: u64 = 2;
+
+/// The page tick of the engine's `RULE_EVENT` vectors.
+const VECTOR_TICK: u32 = 412;
+
+/// The page tick the held-input tests' own presses fired at.
+const PRESS_TICK: u32 = 77;
+
+/// `pressed`, on the vectors' page, as rule 0's report of it at
+/// `PRESS_TICK`, in a table of `generation`.
+fn reported(pressed: &Item<'_>, generation: u16) -> Vec<u8> {
+    let carried = bare(core::slice::from_ref(pressed));
+    let event = RuleEvent { on: VECTORS, generation, rule: 0, row: NO_RULE, tick: PRESS_TICK, target: Target::NONE, body: RuleBody::Input(&carried) };
+    bare(&[Item::Event(Event::RuleEvent(event))])
+}
+
+/// A key on the vectors' page: `key` with `base`.
+fn key_on_vectors(action: Action, key: char, base: Option<char>) -> Item<'static> {
+    use neoteletext_input::event::{Key, KeyCode};
+    Item::Event(Event::Key(Key { on: VECTORS, action, key: KeyCode::Character(key), mods: 0, text: None, base, lost: false }))
+}
+
+/// Button `button` pressed on the vectors' page.
+fn button_on_vectors(button: u8) -> Item<'static> {
+    let at = Point { column: 7, row: 9, pixels: None, mods: 0 };
+    Item::Event(Event::Mouse(Mouse { on: VECTORS, action: MouseAction::Press, button, at, device: Device::Mouse }))
+}
+
+/// Contact `id` touching down on the vectors' page.
+fn contact_on_vectors(id: u8) -> Item<'static> {
+    Item::Event(Event::Touch(neoteletext_input::event::Touch { on: VECTORS, action: MouseAction::Press, id, column: 5, row: 6, pixels: None }))
+}
+
+/// The three ways a connection's selection leaves the page it pressed on
+/// (REQ-5548 item 2): a SELECT of another page, a program's `redirect` to
+/// one, and the connection's end.
+#[derive(Clone, Copy, Debug)]
+enum Leaving {
+    /// The receiver selects page 200.
+    Select,
+    /// The program redirects the connection to page 200.
+    Redirect,
+    /// The connection closes.
+    Close,
+}
+
+const LEAVINGS: [Leaving; 3] = [Leaving::Select, Leaving::Redirect, Leaving::Close];
+
+impl Leaving {
+    /// Leaves the page, at `now`.
+    fn leave(self, channel: &mut Channel, now: u64) {
+        match self {
+            Self::Select => channel.received(CONNECTION, &bare(&[select(0x200, ANY)]), now),
+            Self::Redirect => {
+                channel.from_program(
+                    &line(&json!({"type": "redirect", "connection": CONNECTION, "request": SELECTION_REQUEST, "page": "200", "sub": "3F7F"})),
+                    now,
+                );
+            }
+            Self::Close => channel.closed(CONNECTION, now),
+        }
+    }
+}
+
+/// One input the program is told, as the held-input tests compare it: its
+/// kind, action, key, button, contact, `lost`, rule and tick.
+type Heard = (Value, Value, Value, Value, Value, Value, Value, Value);
+
+/// `line` as the held-input tests compare it.
+fn heard(line: &Value) -> Heard {
+    let event = &line["event"];
+    (
+        event["kind"].clone(),
+        event["action"].clone(),
+        event["key"].clone(),
+        event["button"].clone(),
+        event["contact"].clone(),
+        line["lost"].clone(),
+        line["rule"].clone(),
+        line["tick"].clone(),
+    )
+}
+
+/// The lost release of a press on the vectors' page, as `heard` gives it:
+/// `kind`, and its key, button or contact as `which`.
+fn lost_release(kind: &str, which: (Value, Value, Value), tick: u32) -> Heard {
+    (json!(kind), json!("release"), which.0, which.1, which.2, json!(true), json!(PRESSES), json!(tick))
+}
+
+/// The lost release of the `input_key` vector's key `a`.
+fn lost_key_a(tick: u32) -> Heard {
+    lost_release("key", (json!("a"), Value::Null, Value::Null), tick)
+}
+
+/// Sends each of `reports`, checking that the program hears each press
+/// once, not marked lost and named with rule 0 (DEC-7065 item 2: presses
+/// are reported as before), then leaves the page `leaving`'s way, and gives
+/// the lost inputs the program is told, in order, having checked that each
+/// comes before `left` and that `left` is told.
+fn lost_on_leaving(channel: &mut Channel, reports: &[Vec<u8>], leaving: Leaving) -> Vec<Heard> {
+    for (now, report) in (10..).zip(reports) {
+        channel.received(CONNECTION, report, now);
+        let lines = inputs(&channel.take_effects());
+        assert_eq!(
+            lines.iter().map(|line| (line["lost"].clone(), line["rule"].clone())).collect::<Vec<_>>(),
+            [(json!(false), json!(PRESSES))],
+            "{leaving:?}: {lines:?}"
+        );
+    }
+    leaving.leave(channel, 100);
+    let lines = told(&channel.take_effects());
+    let left = lines.iter().position(|line| line["type"] == "left").unwrap_or_else(|| panic!("{leaving:?}: no left in {lines:?}"));
+    let lost: Vec<usize> = lines.iter().enumerate().filter(|(_, line)| line["type"] == "input" && line["lost"] == json!(true)).map(|(at, _)| at).collect();
+    assert!(lost.iter().all(|at| *at < left), "{leaving:?}: a lost release after left: {lines:?}");
+    lost.iter().map(|at| heard(&lines[*at])).collect()
+}
+
+/// DEC-7065 item 1 (REQ-5548 items 1 and 2): a table that reports key
+/// presses and has no `key_up` rule asks for no key's release, so a key
+/// pressed there, and its automatic repeat, is not held, and leaving the
+/// page by a SELECT, a program's redirect or the connection's end gives the
+/// program no input marked lost. Fails on the code before commit 1f33a8d,
+/// which gave the press's lost release.
+#[test]
+fn a_press_whose_release_no_rule_asks_for_is_not_held() {
+    for leaving in LEAVINGS {
+        let (mut channel, generation) = on_a_page_whose_table_is(&presses_and(&[]));
+        let press = restamped(&vector("rule_event", "input_key"), generation, 0);
+        let repeat = reported(&key_on_vectors(Action::Repeat, 'a', None), generation);
+        assert_eq!(lost_on_leaving(&mut channel, &[press, repeat], leaving), [], "{leaving:?}");
+    }
+}
+
+/// DEC-7065 item 1 (REQ-5548 items 1 and 2): a `key_up` rule whose key set
+/// names the key, or is `"any"`, asks for its release, whatever the rule's
+/// condition and whether its commands report, so the press is held and
+/// leaving the page, by a SELECT, a program's redirect or the connection's
+/// end, gives exactly one lost release, an `input` of action `release`
+/// named with the press's rule and tick, before `left`; a button pressed
+/// on the same page, whose release no rule asks for, gives none. Fails on
+/// the code before commit 1f33a8d, which gave the button's too.
+#[test]
+fn a_press_whose_release_a_key_up_rule_asks_for_is_held() {
+    let quiet = json!({"name": "quiet", "when": {"read": {"of": "variable", "variable": "v0"}, "op": "==", "value": 5},
+        "on": {"event": "key_up", "keys": [{"char": "a"}]}, "do": [{"type": "variable", "op": "set", "variable": "v1", "value": 1}]});
+    let mut quietly = presses_and(&[]);
+    quietly["rules"].as_array_mut().unwrap().push(quiet);
+    let tables = [
+        ("the key named", presses_and(&[json!({"event": "key_up", "keys": [{"char": "z"}, {"char": "a"}]})])),
+        ("any key", presses_and(&[json!({"event": "key_up", "keys": "any"})])),
+        ("a condition that is false and no report", quietly),
+    ];
+    for (what, table) in tables {
+        for leaving in LEAVINGS {
+            let (mut channel, generation) = on_a_page_whose_table_is(&table);
+            let press = restamped(&vector("rule_event", "input_key"), generation, 0);
+            let button = reported(&button_on_vectors(0), generation);
+            assert_eq!(lost_on_leaving(&mut channel, &[press, button], leaving), [lost_key_a(VECTOR_TICK)], "{what}, {leaving:?}");
+        }
+    }
+}
+
+/// DEC-7065 item 1 (REQ-5548 item 1): a `key_up` rule whose key set names
+/// only other keys, by character, by name or as physical keys, does not
+/// ask for this key's release: leaving gives no lost release. Fails on the
+/// code before commit 1f33a8d.
+#[test]
+fn a_key_up_rule_for_another_key_holds_nothing() {
+    let other_keys = json!({"event": "key_up", "keys": [{"char": "b"}, {"name": "Enter"}, {"physical": "s"}]});
+    for leaving in LEAVINGS {
+        let (mut channel, generation) = on_a_page_whose_table_is(&presses_and(core::slice::from_ref(&other_keys)));
+        let press = restamped(&vector("rule_event", "input_key"), generation, 0);
+        assert_eq!(lost_on_leaving(&mut channel, &[press], leaving), [], "{leaving:?}");
+    }
+}
+
+/// DEC-7065 item 1 (REQ-5548 item 1): a button press is held only when a
+/// `release` rule names its button or `"any"`; a touch contact is button 0
+/// to a table (RULE-46). Each table is pressed with button 0, button 2, a
+/// first touch contact and the key `a` (whose release no rule here asks
+/// for), and on leaving the program hears exactly the lost releases of what
+/// the table asks to hear come up. Fails on the code before commit
+/// 1f33a8d, which gave all four.
+#[test]
+fn a_button_press_is_held_only_when_a_release_rule_asks_for_its_button() {
+    let release = |button: Value| json!({"event": "release", "target": "page", "button": button});
+    let button = |number: u8| lost_release("mouse", (Value::Null, json!(number), Value::Null), PRESS_TICK);
+    let contact = lost_release("touch", (Value::Null, Value::Null, json!(1)), PRESS_TICK);
+    let cases = [
+        ("no release rule", presses_and(&[]), Vec::new()),
+        ("button 0", presses_and(&[release(json!(0))]), alloc::vec![button(0), contact.clone()]),
+        ("any button", presses_and(&[release(json!("any"))]), alloc::vec![button(0), button(2), contact.clone()]),
+        ("button 1 only", presses_and(&[release(json!(1))]), Vec::new()),
+        ("button 2 only", presses_and(&[release(json!(2))]), alloc::vec![button(2)]),
+    ];
+    for (what, table, expected) in cases {
+        let (mut channel, generation) = on_a_page_whose_table_is(&table);
+        let reports = [
+            reported(&button_on_vectors(0), generation),
+            reported(&button_on_vectors(2), generation),
+            reported(&contact_on_vectors(1), generation),
+            reported(&key_on_vectors(Action::Press, 'a', None), generation),
+        ];
+        // The order of the releases is not what is tested.
+        let sorted = |mut list: Vec<Heard>| {
+            list.sort_by_key(|heard| alloc::format!("{heard:?}"));
+            list
+        };
+        assert_eq!(sorted(lost_on_leaving(&mut channel, &reports, Leaving::Select)), sorted(expected), "{what}");
+    }
+}
+
+/// DEC-7065 item 1, RULE-10, DOC-1937 (REQ-5548 item 1): a `key_up` rule's
+/// physical key names a KEY event by its `base` when it has one, else by
+/// its character: with `{"physical": "a"}`, the key `q` whose base is `a` is
+/// held, and the key `a` whose base is `q` is not. Fails on the code before
+/// commit 1f33a8d, which held both.
+#[test]
+fn a_physical_key_is_matched_by_its_base() {
+    let (mut channel, generation) = on_a_page_whose_table_is(&presses_and(&[json!({"event": "key_up", "keys": [{"physical": "a"}]})]));
+    let reports = [reported(&key_on_vectors(Action::Press, 'q', Some('a')), generation), reported(&key_on_vectors(Action::Press, 'a', Some('q')), generation)];
+    assert_eq!(lost_on_leaving(&mut channel, &reports, Leaving::Select), [lost_release("key", (json!("q"), Value::Null, Value::Null), PRESS_TICK)]);
+}
