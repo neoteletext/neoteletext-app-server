@@ -161,3 +161,21 @@ fn metrics_are_in_the_prometheus_text_format() {
     assert!(text.contains("teletext_channel_event_duration_seconds_count{channel=\"hackaday\"} 3\n"), "{text}");
     assert_eq!(stats.not_ready(), Vec::<String>::new());
 }
+
+/// REQ-7050 item 4, verification (g): `/stats.json`'s document states the
+/// server's version as `server_version`, and the `stats` line sent to a
+/// channel's program carries no version, so the protocol is unchanged.
+#[test]
+fn the_document_states_the_version_and_the_line_to_a_program_does_not() {
+    let stats = ServerStats::default();
+    stats.record("hackaday", figures());
+    let document = value(&stats.document());
+    assert_eq!(document.get("server_version").and_then(Value::text), Some(crate::VERSION));
+    assert!(document.get("server").and_then(|server| server.get("server_version")).is_none(), "not a field of the server's figures");
+    let line = value(&stats.line("hackaday", &figures()));
+    for name in ["server_version", "version"] {
+        assert!(line.get(name).is_none(), "the stats line carries {name}");
+        assert!(line.get("server").and_then(|server| server.get(name)).is_none(), "the stats line's server carries {name}");
+        assert!(line.get("channel").and_then(|channel| channel.get(name)).is_none(), "the stats line's channel carries {name}");
+    }
+}

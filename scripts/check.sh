@@ -181,6 +181,10 @@ check_shapes_and_tests() {
     cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings
     step "tests"
     cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail
+    # REQ-7050's tests that run Cargo: in a worktree of their own, so that
+    # neither this checkout's count nor its build lock is touched (TODO-7052).
+    step "the compile count and --version (REQ-7050)"
+    scripts/test-build-number.sh HEAD
 }
 
 commit_steps() { check_workspace; }

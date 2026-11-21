@@ -878,6 +878,74 @@ fn probes_and_metrics_are_on_the_administration_listener() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// What `--version` alone prints, checked to be `teletext-server`, a
+/// space, the version and a line end, with nothing on standard error; the
+/// version returned.
+fn version_printed() -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_teletext-server")).arg("--version").env_remove("RUST_LOG").stdin(Stdio::null()).output().unwrap();
+    assert!(output.status.success(), "--version failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stderr, b"", "--version writes nothing to standard error");
+    let printed = String::from_utf8(output.stdout).unwrap();
+    let version = printed.strip_prefix("teletext-server ").and_then(|rest| rest.strip_suffix('\n')).unwrap_or_else(|| panic!("--version printed {printed:?}"));
+    version.to_owned()
+}
+
+/// REQ-7050 item 1: three numbers, the first two the workspace's.
+fn assert_counted_version(version: &str) {
+    let numbers: Vec<&str> = version.split('.').collect();
+    assert_eq!(numbers.len(), 3, "{version} is three numbers");
+    assert_eq!(
+        &numbers[..2],
+        [env!("CARGO_PKG_VERSION_MAJOR"), env!("CARGO_PKG_VERSION_MINOR")],
+        "{version} starts with the workspace's major and minor numbers"
+    );
+    let count = numbers[2];
+    assert!(
+        !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()) && count.parse::<u64>().is_ok_and(|count| count >= 1),
+        "{version}'s third number is a count from 1"
+    );
+}
+
+/// REQ-7050 items 4 and 5, verification (c): one build states one version
+/// in the `serving` event, in `/stats.json`'s `server_version`, in
+/// `/metrics`' `teletext_build_info` and by `--version` of the same program.
+#[test]
+fn one_build_states_one_version_everywhere() {
+    let printed = version_printed();
+    assert_counted_version(&printed);
+    let folder = scratch("version");
+    let answering = r#"read -r _; read -r _; printf '%s\n' '{"type":"description","page":"100","public":false}'; while read -r _; do :; done"#;
+    let file = channels(&folder, answering);
+    let mut server = serve(&["--channels", &file.display().to_string(), "--admin-listen", ANY_LOCAL_PORT], &[], Stdio::piped());
+    let mut stderr = BufReader::new(server.child.stderr.take().unwrap());
+    let serving = serving_line(&mut stderr);
+    let fields = serving.get("fields").unwrap();
+    assert_eq!(fields.get("version").and_then(Value::text), Some(printed.as_str()), "the serving event: {serving:?}");
+    let admin = fields.get("admin").and_then(Value::text).unwrap();
+    let statistics = until_status(admin, "/stats.json", 200);
+    let document = json::parse(statistics.strip_suffix(b"\n").unwrap_or(&statistics)).unwrap();
+    assert_eq!(document.get("server_version").and_then(Value::text), Some(printed.as_str()), "/stats.json: {}", String::from_utf8_lossy(&statistics));
+    let metrics = String::from_utf8(until_status(admin, "/metrics", 200)).unwrap();
+    let stated: Vec<&str> = metrics.lines().filter(|line| line.starts_with("teletext_build_info")).collect();
+    assert_eq!(stated, [format!("teletext_build_info{{version=\"{printed}\"}} 1")], "/metrics: {metrics}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// REQ-7050 item 4, verification (d): `--version` alone prints
+/// `teletext-server <version>` and a line end, succeeds and writes nothing to
+/// standard error; beside another argument it is not the command, and is
+/// refused as an unknown argument with no version printed.
+#[test]
+fn the_version_argument_alone_prints_the_version_and_with_another_is_refused() {
+    assert_counted_version(&version_printed());
+    let refused =
+        Command::new(env!("CARGO_BIN_EXE_teletext-server")).args(["--version", "--listen"]).env_remove("RUST_LOG").stdin(Stdio::null()).output().unwrap();
+    assert!(!refused.status.success(), "--version with another argument was taken");
+    assert_eq!(refused.stdout, b"", "no version printed");
+    let said = String::from_utf8(refused.stderr).unwrap();
+    assert!(said.contains("unknown argument --version"), "{said}");
+}
+
 /// `/readyz` says a channel can answer, not that its program started: a
 /// program still loading reads nothing, as the demo site does for half a
 /// minute, and a viewer in that time is told DENIED 503 (requirement 8.4).
