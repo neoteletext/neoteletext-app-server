@@ -24,7 +24,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use neoteletext_input::caps::{NAPLPS_CAP, REGIS_CAP};
 
 use super::{Channel, Connection, Level};
-use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, PictureLanguage, ReaderFonts, StreamChange};
+use crate::kept::{self, Checker, Companion, KeptPicture, KeptRefusal, MOST_CONNECTION_READER_BYTES, Notes, Paint, PictureLanguage, ReaderFonts, StreamChange};
 use crate::protocol::{
     self, AuthorLevel, AuthorLog, ConnectionId, Connections, DrawingLink, MessageType, NaplpsObjects, PictureAudience, ProgramMessage, Refusal, Rule,
     ServerMessage,
@@ -39,6 +39,10 @@ pub(super) struct PictureStream {
     pub(super) generation: u16,
     /// The bytes sent of it.
     pub(super) offset: u32,
+    /// How this generation is painted, until it is said: the PAINT record
+    /// goes immediately before the generation's first stream record
+    /// (neoteletext-common's DEC-7031 item 6), and is then taken.
+    pub(super) paint: Option<Paint>,
     /// The receiver's reader of a stream the program sent this connection
     /// itself; none for a kept picture's, which its own reader checks.
     pub(super) checker: Option<Checker>,
@@ -101,6 +105,11 @@ impl Drop for HeldCount {
     }
 }
 
+/// A message with `restart` begins a generation of a stream, painted as
+/// it says, or at once when it says nothing.
+#[derive(Clone, Copy)]
+pub(super) struct Begun(Option<Paint>);
+
 /// The capability bit of a picture language (PAR-1).
 pub(super) const fn capability(language: PictureLanguage) -> u32 {
     match language {
@@ -160,6 +169,14 @@ impl Connection {
         *counter
     }
 
+    /// A new generation of its stream of `language` for the kept picture
+    /// of `page`, `sub`, nothing of it sent yet: `paint` is said before
+    /// its first record.
+    const fn next_kept_stream(&mut self, language: PictureLanguage, page: u16, sub: u16, paint: Option<Paint>) -> PictureStream {
+        let generation = self.next_generation(language);
+        PictureStream { page, sub, generation, offset: 0, paint, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false }
+    }
+
     /// Whether the sub-page whose frame it was sent last is `page`, `sub`.
     pub(super) fn has_shown(&self, page: u16, sub: u16) -> bool {
         self.shown.as_ref().is_some_and(|shown| shown.page == page && shown.sub == sub)
@@ -180,7 +197,8 @@ impl Connection {
     /// Reads a message's bytes as its receiver will, starting the
     /// sub-page's stream again when asked; a connection with no stream of
     /// its own of the sub-page is passed over until one is started. A
-    /// ReGIS stream begins with the page's sheet (ANIM-17).
+    /// ReGIS stream begins with the page's sheet (ANIM-17). `begins` is
+    /// given for a restart, with how the new generation is painted.
     ///
     /// # Errors
     /// What the receiver would refuse (REQ-6332, PAR-23).
@@ -190,11 +208,11 @@ impl Connection {
         readers: (&ReaderFonts, &Arc<AtomicUsize>),
         page: u16,
         sub: u16,
-        restart: bool,
+        begins: Option<Begun>,
         bytes: &[u8],
     ) -> Result<Notes, String> {
         let (fonts, total) = readers;
-        if restart {
+        if let Some(Begun(paint)) = begins {
             let generation = self.next_generation(language);
             let mut checker = Checker::new(language, fonts);
             if language == PictureLanguage::Regis {
@@ -206,7 +224,7 @@ impl Connection {
             }
             let held = HeldCount::new(total, checker.held_bytes());
             *self.stream_mut(language) =
-                Some(PictureStream { page, sub, generation, offset: 0, checker: Some(checker), held, kept: false, pending: false, macro_logged: false });
+                Some(PictureStream { page, sub, generation, offset: 0, paint, checker: Some(checker), held, kept: false, pending: false, macro_logged: false });
         }
         let Some(stream) = self.stream_mut(language).as_mut().filter(|stream| stream.page == page && stream.sub == sub && !stream.kept) else {
             return Ok(Vec::new());
@@ -244,9 +262,8 @@ impl Connection {
     /// language is the kept one from then.
     pub(super) fn begin_kept(&mut self, page: u16, sub: u16, kept: &KeptPicture) -> Result<Vec<u8>, records::Refused> {
         let language = kept.language;
-        let generation = self.next_generation(language);
-        let mut stream =
-            PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
+        let mut stream = self.next_kept_stream(language, page, sub, kept.paint);
+        let generation = stream.generation;
         let mut bytes = stream_records(language, &mut stream, &kept.stream, &mut self.record_id)?;
         *self.stream_mut(language) = Some(stream);
         if let Some(objects) = &kept.objects {
@@ -263,20 +280,27 @@ impl Connection {
     }
 }
 
-/// The records of `bytes` on at `stream`'s offset, which moves on.
+/// The records of `bytes` on at `stream`'s offset, which moves on; before
+/// the first of a generation, the PAINT record that says how it is painted
+/// (neoteletext-common's DEC-7031 item 6), in the same bytes, so that the
+/// two go in one sending and inside one frame.
 fn stream_records(language: PictureLanguage, stream: &mut PictureStream, bytes: &[u8], record_id: &mut u8) -> Result<Vec<u8>, records::Refused> {
-    let sent = match language {
+    let mut sent = match stream.paint.take() {
+        Some(paint) => records::paint(stream.page, stream.sub, language, stream.generation, paint, record_id)?,
+        None => Vec::new(),
+    };
+    sent.extend_from_slice(&match language {
         PictureLanguage::Regis => records::regis(stream.page, stream.sub, stream.generation, stream.offset, bytes, record_id)?,
         PictureLanguage::Naplps => records::naplps(stream.page, stream.sub, stream.generation, stream.offset, bytes, record_id)?,
-    };
+    });
     stream.offset = stream.offset.saturating_add(u32::try_from(bytes.len()).unwrap_or(u32::MAX));
     Ok(sent)
 }
 
 /// What a kept message changed, for the connections taking the picture.
 enum Delta<'a> {
-    /// The stream began again with these bytes.
-    Restarted(&'a [u8]),
+    /// The stream began again with these bytes, painted so.
+    Restarted(&'a [u8], Option<Paint>),
     /// These bytes were added to the stream.
     Appended(&'a [u8]),
     /// The objects changed.
@@ -385,23 +409,29 @@ impl Channel {
     /// kept, or to the connections named that show the sub-page and agreed
     /// the language. Those named are read before any is sent; one whose
     /// receiver would refuse the bytes refuses the message, and the streams
-    /// of every target, which read it, are started again.
+    /// of every target, which read it, are started again. `begins` is given
+    /// for a message with `restart`, with how the generation it begins is
+    /// painted (neoteletext-common's DEC-7031 item 6).
     pub(super) fn picture_stream(
         &mut self,
         language: PictureLanguage,
         audience: &PictureAudience,
-        page: u16,
-        sub: u16,
-        restart: bool,
+        (page, sub): (u16, u16),
+        begins: Option<Begun>,
         bytes: &[u8],
     ) -> Result<(), Refusal> {
         let kind = stream_type(language);
+        let restart = begins.is_some();
         let Some(connections) = audience.connections() else {
             let (change, notes) = self.kept.stream(page, sub, language, restart, bytes).map_err(|refused| kept_refusal(kind, refused))?;
+            let paint = begins.and_then(|Begun(paint)| paint);
+            if restart {
+                self.kept.set_paint(page, sub, paint);
+            }
             let viewers = self.viewers_of(page, sub);
             self.author_notes(&viewers, page, notes);
             let delta = match change {
-                StreamChange::Restarted => Delta::Restarted(bytes),
+                StreamChange::Restarted => Delta::Restarted(bytes, paint),
                 StreamChange::Appended => Delta::Appended(bytes),
             };
             self.deliver_kept(page, sub, &delta);
@@ -434,7 +464,7 @@ impl Channel {
         let mut notes: Notes = Vec::new();
         for connection in &targets {
             let Some(state) = self.connections.get_mut(connection) else { continue };
-            match state.read_own(language, (self.kept.fonts(), &self.own_readers), page, sub, restart, bytes) {
+            match state.read_own(language, (self.kept.fonts(), &self.own_readers), page, sub, begins, bytes) {
                 Ok(found) => {
                     for note in found {
                         if !notes.contains(&note) {
@@ -517,13 +547,15 @@ impl Channel {
     /// `regis`.
     pub(super) fn regis(&mut self, message: &protocol::Regis) -> Result<(), Refusal> {
         let bytes = message.data.as_ref().map(|data| protocol::check::bytes_of(data)).unwrap_or_default();
-        self.picture_stream(PictureLanguage::Regis, &message.connections, message.page.0, message.sub.0, message.restart, &bytes)
+        let begins = message.restart.then(|| Begun(Paint::of(message.line_speed, message.default_rate)));
+        self.picture_stream(PictureLanguage::Regis, &message.connections, (message.page.0, message.sub.0), begins, &bytes)
     }
 
     /// `naplps`.
     pub(super) fn naplps(&mut self, message: &protocol::Naplps) -> Result<(), Refusal> {
         let bytes = message.data.as_ref().map(|data| protocol::check::bytes_of(data)).unwrap_or_default();
-        self.picture_stream(PictureLanguage::Naplps, &message.connections, message.page.0, message.sub.0, message.restart, &bytes)
+        let begins = message.restart.then(|| Begun(Paint::of(message.line_speed, None)));
+        self.picture_stream(PictureLanguage::Naplps, &message.connections, (message.page.0, message.sub.0), begins, &bytes)
     }
 
     /// A companion of a kept picture (PAR-16): kept, then given to the
@@ -740,10 +772,8 @@ fn undefined_note(missing: &[u8]) -> String {
 /// The records of a kept change for a connection taking the picture.
 fn kept_change(state: &mut Connection, language: PictureLanguage, page: u16, sub: u16, delta: &Delta<'_>) -> Result<Vec<u8>, records::Refused> {
     match delta {
-        Delta::Restarted(bytes) => {
-            let generation = state.next_generation(language);
-            let mut stream =
-                PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
+        Delta::Restarted(bytes, paint) => {
+            let mut stream = state.next_kept_stream(language, page, sub, *paint);
             let sent = stream_records(language, &mut stream, bytes, &mut state.record_id)?;
             *state.stream_mut(language) = Some(stream);
             Ok(sent)
@@ -767,9 +797,8 @@ fn kept_change(state: &mut Connection, language: PictureLanguage, page: u16, sub
 /// An empty picture for a connection that took a forgotten one (PAR-19): a
 /// new generation of no bytes, and the links and cursor it had removed.
 fn empty_picture(state: &mut Connection, language: PictureLanguage, page: u16, sub: u16, forgotten: &KeptPicture) -> Result<Vec<u8>, records::Refused> {
-    let generation = state.next_generation(language);
-    let mut stream =
-        PictureStream { page, sub, generation, offset: 0, checker: None, held: HeldCount::none(), kept: true, pending: false, macro_logged: false };
+    // An empty picture is painted at once: no PAINT record.
+    let mut stream = state.next_kept_stream(language, page, sub, None);
     let mut bytes = stream_records(language, &mut stream, &[], &mut state.record_id)?;
     if forgotten.links.is_some() {
         bytes.extend_from_slice(&records::drawing_links(page, sub, &[], &mut state.record_id)?);

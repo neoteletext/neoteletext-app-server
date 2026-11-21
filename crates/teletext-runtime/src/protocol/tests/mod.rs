@@ -21,6 +21,7 @@ mod limits;
 mod log;
 mod packets;
 mod page;
+mod painting;
 mod picture;
 mod redirect;
 mod reply;

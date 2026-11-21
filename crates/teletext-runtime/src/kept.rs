@@ -379,9 +379,37 @@ pub(crate) struct KeptObjects {
     pub title: Option<NaplpsTitle>,
 }
 
+/// How one generation of a picture's stream is painted, as the message
+/// that began it said (neoteletext-common's DEC-7031 item 6; REQ-7024,
+/// REQ-7025): what a PAINT record carries besides the place and the
+/// generation. At least one value is stated: a stream begun with neither
+/// has no `Paint` and is sent no record.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Paint {
+    /// The line speed the stream is replayed at, in bits a second.
+    pub line_speed: Option<u32>,
+    /// The paint rate of every ReGIS numbered drawing that sets none.
+    pub default_rate: Option<u16>,
+}
+
+impl Paint {
+    /// What a message's two fields state, or none when it gives neither.
+    /// A rate the record cannot hold is left out: the message's check
+    /// refused it before this.
+    pub(crate) fn of(line_speed: Option<u32>, default_rate: Option<u32>) -> Option<Self> {
+        let default_rate = default_rate.and_then(|rate| u16::try_from(rate).ok());
+        (line_speed.is_some() || default_rate.is_some()).then_some(Self { line_speed, default_rate })
+    }
+}
+
 /// One kept picture (PAR-16).
 pub(crate) struct KeptPicture {
     pub language: PictureLanguage,
+    /// How its stream is painted, as the message that began it said: sent
+    /// as a PAINT record before the stream to every connection given the
+    /// picture (neoteletext-common's DEC-7031 item 6). A restart without
+    /// the values clears it.
+    pub paint: Option<Paint>,
     /// Every byte since its last restart, in order.
     pub stream: Vec<u8>,
     /// The receiver's reader, having read `stream`; none once it was let
@@ -418,6 +446,7 @@ impl KeptPicture {
     fn with_checker(language: PictureLanguage, checker: Checker) -> Self {
         Self {
             language,
+            paint: None,
             stream: Vec::new(),
             reader_held: checker.held_bytes(),
             checker: Ok(checker),
@@ -689,6 +718,15 @@ impl KeptPictures {
                 picture.checker = Err(Released::Refused);
                 Err(KeptRefusal { path: "data", rule: refused.rule, detail: refused.detail })
             }
+        }
+    }
+
+    /// Says how the kept stream of `page` and `sub` is painted, after the
+    /// restart that began it was kept; a restart without the values has
+    /// already cleared what the picture held.
+    pub(crate) fn set_paint(&mut self, page: u16, sub: u16, paint: Option<Paint>) {
+        if let Some(picture) = self.pictures.get_mut(&(page, sub)) {
+            picture.paint = paint;
         }
     }
 
