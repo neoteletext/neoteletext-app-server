@@ -11326,6 +11326,25 @@
             "channel"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The painting of the page's picture or of a numbered drawing\nfinishes.",
+          "properties": {
+            "event": {
+              "const": "painted",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/RuleTarget",
+              "description": "What was painted: `\"page\"`, the page's whole picture, or\n`{\"object\": n}`, the ReGIS numbered drawing `n`, 1 to 65,535, which\nin a rule with `rows` may be a constant plus the row's parameter.\n`\"any\"`, a control and a rectangle are refused, and a table names at\nmost the engine's `MAX_PAINT_WATCHED` distinct drawings."
+            }
+          },
+          "required": [
+            "event",
+            "target"
+          ],
+          "type": "object"
         }
       ]
     },

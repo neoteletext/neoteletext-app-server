@@ -250,6 +250,23 @@ impl Scope<'_> {
         }
     }
 
+    /// A `painted` trigger's target (neoteletext-common's DEC-7031 item
+    /// 4): the page's whole picture, or one ReGIS numbered drawing, in a
+    /// rule with rows a constant plus the row's parameter. Every drawing
+    /// named is one the receiver watches, so "any" is refused, and a
+    /// control or a rectangle is never painted.
+    fn painted_target(&self, path: &Path<'_>, target: &RuleTarget, rows: bool) -> Result<TriggerTarget, Fault> {
+        match target {
+            RuleTarget::Page(_) => Ok(TriggerTarget::PAGE),
+            RuleTarget::Object { object } if !matches!(Number::from(*object), Number::Any) => self.trigger_target(path, target, rows),
+            _ => Err(fault(
+                path,
+                Rule::InvalidRules,
+                "a `painted` trigger's target is \"page\", the page's whole picture, or one numbered drawing, `{\"object\": n}`".to_string(),
+            )),
+        }
+    }
+
     /// One key (RULE-10): its kind and its code.
     fn key(path: &Path<'_>, key: &RuleKey) -> Result<Key, Fault> {
         let character = |path: &Path<'_>, text: &str| {
@@ -331,6 +348,7 @@ impl Scope<'_> {
                     CueChoice::Numbered(number) => number.get(),
                 },
             },
+            RuleTrigger::Painted(painted) => Trigger::Painted { target: self.painted_target(&path.field("target"), &painted.target, rows.is_some())? },
         })
     }
 

@@ -927,6 +927,22 @@ pub struct CueTrigger {
     pub number: CueChoice,
 }
 
+/// `painted`: the painting of the page's whole picture, or of one ReGIS
+/// numbered drawing, finishes (neoteletext-common's DEC-7031 item 4,
+/// REQ-7026). The receiver raises it when a picture replayed at a line
+/// speed, or a drawing painted gradually, has become whole; no command
+/// causes it.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PaintedTrigger {
+    /// What was painted: `"page"`, the page's whole picture, or
+    /// `{"object": n}`, the ReGIS numbered drawing `n`, 1 to 65,535, which
+    /// in a rule with `rows` may be a constant plus the row's parameter.
+    /// `"any"`, a control and a rectangle are refused, and a table names at
+    /// most the engine's `MAX_PAINT_WATCHED` distinct drawings.
+    pub target: RuleTarget,
+}
+
 /// A rule's trigger (RULE-9, RULE-35), by `event`: the event that can
 /// make the rule fire.
 #[derive(Clone, PartialEq, Eq, Debug, JsonSchema)]
@@ -967,6 +983,9 @@ pub enum RuleTrigger {
     After(TimerTrigger),
     /// A cue of a playing sound is heard.
     Cue(CueTrigger),
+    /// The painting of the page's picture or of a numbered drawing
+    /// finishes.
+    Painted(PaintedTrigger),
 }
 
 /// The triggers DEC-6635 item 7 withdraws, refused by name.
@@ -993,6 +1012,7 @@ impl<'de> Deserialize<'de> for RuleTrigger {
                 "every" => Self::Every(typed(object, "")?),
                 "after" => Self::After(typed(object, "")?),
                 "cue" => Self::Cue(typed(object, "")?),
+                "painted" => Self::Painted(typed(object, "")?),
                 withdrawn if WITHDRAWN_TRIGGERS.contains(&withdrawn) => {
                     return Err(Fault::new(
                         "event",
@@ -1006,7 +1026,7 @@ impl<'de> Deserialize<'de> for RuleTrigger {
                         other,
                         &[
                             "key", "key_up", "press", "release", "enter", "leave", "wheel", "move", "open", "close", "text", "focus", "blur", "becomes",
-                            "every", "after", "cue",
+                            "every", "after", "cue", "painted",
                         ],
                     ));
                 }
